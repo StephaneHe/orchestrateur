@@ -1189,6 +1189,9 @@ kbd {
     background: var(--state-color);
     box-shadow: 0 0 6px var(--state-color);
   }
+  /* Idle cards have nothing to signal — hide the dot so only the name
+     shows, and the visual noise of a grey dot on every quiet card is gone. */
+  .musician.is-fan[data-state="idle"] .m-cdot { display: none; }
   .musician.is-fan .m-cname { text-transform: uppercase; }
   .musician.is-fan .m-cbadge {
     min-width: 14px; padding: 0 4px; height: 14px;
