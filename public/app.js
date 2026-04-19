@@ -205,10 +205,12 @@ class Musician {
       this.el.style.setProperty("--r", (this.pos.r || 0) + "deg");
       this.el.style.zIndex = this.pos.z || 0;
       this.el.classList.add("is-fan");
+      this.el.dataset.hand = String(this.pos.hand ?? 0);
     } else {
       this.el.style.removeProperty("--r");
       this.el.style.zIndex = "";
       this.el.classList.remove("is-fan");
+      delete this.el.dataset.hand;
     }
   }
 }
@@ -231,10 +233,16 @@ function computeLayout(musicians, viewport) {
   return computeDesktopArc(musicians, viewport);
 }
 
-// Mobile: fan-of-cards ("hand of playing cards"). All cards share a single
-// anchor point (like cards held between two fingers) and only differ in
-// rotation — rank-0 card vertical in front, others fan out behind it.
-// Swiping (either direction) moves the front card to the back of the deck.
+// Mobile: hand-of-playing-cards fan. Each "hand" holds up to CARDS_PER_HAND
+// cards. Within a hand:
+//   • card bottoms lie on an arc (pivot below the hand line),
+//   • card rotations increase from leftmost (negative) to rightmost (positive),
+//   • rank 0 is centered and sits on top (highest z).
+// When there are too many cards for one hand, extra hands stack above the
+// primary, each dimmer and smaller for depth. User swipes the stage left or
+// right (either direction) to rotate the deck.
+const CARDS_PER_HAND = 5;
+
 function computeFanLayout(musicians, viewport) {
   const n = musicians.length;
   if (!n) return;
@@ -247,30 +255,57 @@ function computeFanLayout(musicians, viewport) {
   const w = viewport.w;
   const h = viewport.h;
   const cx = w / 2;
-  const cardW  = Math.min(260, Math.round(w * 0.70));
-  const anchorY = h - 130;           // just above the composer sheet
 
-  // Wider spread for small hands, compressed for large ones.
-  const maxDeg = Math.min(42, 6 * (n - 1));
-  const step   = n > 1 ? (2 * maxDeg) / (n - 1) : 0;
-  const mid    = (n - 1) / 2;
+  // Split into hands of up to CARDS_PER_HAND, primary-first.
+  const hands = [];
+  for (let i = 0; i < n; i += CARDS_PER_HAND) hands.push(deck.slice(i, i + CARDS_PER_HAND));
+  const handCount = hands.length;
 
-  for (let k = 0; k < n; k++) {
-    const m = deck[k];
-    const slot = apexSlot(n, k);     // rank 0 → 0, rank 1 → +1, rank 2 → -1, …
-    const idx  = slot + mid;         // linear 0..n-1 left-to-right
-    const thetaDeg = -maxDeg + idx * step;
-    // Slight optical lift on the far-edge cards so they peek over the
-    // front card; purely cosmetic.
-    const liftY = Math.abs(slot) * 3;
-    m.pos = {
-      x: cx,
-      y: anchorY - liftY,
-      w: cardW,
-      r: thetaDeg,
-      z: 100 - k,                    // rank 0 sits on top of the fan
-      fan: true,
-    };
+  const topPad    = 72;
+  const bottomPad = 150;                // composer + chip
+  const usableH   = h - topPad - bottomPad;
+
+  // Hand baseline Y — where the CENTER card's bottom lives. Primary hand
+  // sits near the composer; subsequent hands climb by handStepY.
+  const handStepY = handCount <= 1 ? 0 : Math.min(220, (usableH - 140) / (handCount - 1));
+
+  for (let hi = 0; hi < handCount; hi++) {
+    const hand     = hands[hi];
+    const size     = hand.length;
+    const scale    = Math.max(0.8, 1 - hi * 0.12);
+    const cardW    = Math.round(Math.min(210, w * 0.56) * scale);
+
+    // Fan geometry: pivot sits BELOW this hand's baseline by R. Card
+    // bottoms trace an arc of radius R around the pivot.
+    const R        = 320 * scale;
+    const baseY    = h - bottomPad - hi * handStepY;     // centre-card bottom
+    const pivotY   = baseY + R;
+
+    // Angular spread — tight enough that edge cards stay mostly on screen.
+    const maxDeg   = size === 1 ? 0 : Math.min(22, 5.5 * (size - 1));
+    const step     = size > 1 ? (2 * maxDeg) / (size - 1) : 0;
+    const mid      = (size - 1) / 2;
+
+    for (let k = 0; k < size; k++) {
+      const m    = hand[k];
+      const slot = apexSlot(size, k);      // 0 → centre, then ±1, ±2, …
+      const slotIdx  = slot + mid;          // 0..size-1 left-to-right
+      const thetaDeg = -maxDeg + slotIdx * step;
+      const theta    = (thetaDeg * Math.PI) / 180;
+      const bx = cx      + R * Math.sin(theta);
+      const by = pivotY  - R * Math.cos(theta);
+
+      m.pos = {
+        x: bx,
+        y: by,
+        w: cardW,
+        r: thetaDeg,
+        // Primary hand on top; within a hand, rank 0 is topmost (centered).
+        z: (handCount - hi) * 100 + (size - k),
+        fan: true,
+        hand: hi,
+      };
+    }
   }
 }
 
