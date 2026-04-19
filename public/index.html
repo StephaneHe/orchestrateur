@@ -1,156 +1,184 @@
 <!doctype html>
-<html lang="en">
+<html lang="fr">
 <head>
 <meta charset="utf-8">
-<title>PHOSPHOR/03 — AGENT ORCHESTRATION COCKPIT</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230a0b0c'/%3E%3Cpath d='M4 4h24v24H4z' fill='none' stroke='%23ffb347' stroke-width='2'/%3E%3Cpath d='M10 10 L22 10 L22 16 L16 16 L16 22' fill='none' stroke='%23ffb347' stroke-width='2'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="./vendor/xterm.css">
+<title>Orchestre · Agent Conductor</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230a0908'/%3E%3Cpath d='M6 22 Q16 4 26 22' fill='none' stroke='%23e8a15c' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='26' r='2.5' fill='%23e8a15c'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="./fonts/fonts.css">
 <link rel="stylesheet" href="./styles.css">
 </head>
-<body data-palette="matrix">
+<body data-theme="cinematic">
 
-<div id="app">
+<div id="stage" class="stage">
 
-  <!-- ============ HEADER ============================================ -->
-  <header class="header">
-    <div class="wordmark">
-      <span class="mark"></span>
-      PHOSPHOR<span style="color:var(--accent-primary)">/</span>03
-      <span class="sub">AGENT ORCHESTRATION COCKPIT</span>
+  <!-- Topbar -------------------------------------------------------- -->
+  <header class="topbar">
+    <div class="brand">
+      Orchestre
+      <span class="brand-sub">SALLE DE DIRECTION</span>
     </div>
-
-    <div class="header-center">
-      <div class="stat"><span>UPTIME</span><span class="val" id="stat-uptime">00:00:00</span></div>
-      <div class="stat"><span>TURNS</span><span class="val" id="stat-turns">0</span></div>
-      <div class="stat"><span>EVENTS</span><span class="val" id="stat-events">0</span></div>
-      <div class="stat agents"><span>AGENTS</span><span class="val" id="stat-agents">0/0</span></div>
-    </div>
-
-    <div class="header-right">
-      <button id="sound-toggle" class="sound-toggle" title="Sound OFF — click to enable">🔕</button>
-      <div class="kbd-hints">
-        <span><kbd>T</kbd> tweaks</span>
-        <span><kbd>Esc</kbd> close</span>
-      </div>
-      <div class="conn alive" id="conn">
-        <span class="dot"></span><span class="lbl">WSS · LINK …</span>
-      </div>
+    <div class="topbar-actions">
+      <button id="btn-add"      class="pill">+ PROJET</button>
+      <button id="btn-briefing" class="pill pill-accent">
+        <span class="pill-dot"></span>Briefing
+      </button>
+      <button id="btn-tweaks"   class="pill-icon" title="Paramètres visuels">⚙</button>
     </div>
   </header>
 
-  <!-- ============ STRIP ============================================ -->
-  <div class="strip">
-    <span class="tick" id="strip-clock">----·--·-- · --:--:--</span>
-    <span class="ruler"></span>
-    <span>HOST</span><span class="sid" id="strip-host">—</span>
-    <span class="ruler"></span>
-    <span>LOCAL</span><span class="sid" id="strip-local">—</span>
-    <span class="ruler"></span>
-    <span>TAILSCALE</span><span class="sid" id="strip-tailscale">—</span>
+  <!-- Luminous thread layer (SVG full-screen) ---------------------- -->
+  <svg id="threads" class="threads" xmlns="http://www.w3.org/2000/svg"></svg>
+
+  <!-- The arc is populated by app.js ------------------------------- -->
+  <div id="arc" class="arc"></div>
+
+  <!-- Conductor composer ------------------------------------------- -->
+  <div id="composer" class="composer">
+    <div class="composer-chip-row">
+      <button id="target-chip" class="target-chip">
+        <span class="tc-dot"></span>
+        <span class="tc-label">à tout l'orchestre</span>
+        <span class="tc-caret">▾</span>
+      </button>
+      <div id="target-menu" class="target-menu" hidden></div>
+    </div>
+    <div class="composer-box">
+      <textarea id="composer-input"
+                placeholder="Parle à tout l'orchestre — ou @ pour choisir un musicien"
+                rows="1"></textarea>
+      <button id="composer-send" class="composer-send" disabled>
+        <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+          <path d="M1 8 L14 1.5 L11 8 L14 14.5 Z"/>
+        </svg>
+      </button>
+    </div>
+    <div class="composer-hint">
+      <kbd>↵</kbd> envoyer · <kbd>⇧ ↵</kbd> nouvelle ligne · <kbd>Esc</kbd> fermer
+    </div>
   </div>
 
-  <!-- ============ DISCONNECT BANNER ================================ -->
-  <div class="banner-disc" id="banner-disc">
-    ⚠ WEBSOCKET LINK LOST · CENTRAL MAY STILL BE RUNNING
-    <button onclick="App.reconnect()">RECONNECT</button>
+  <!-- Empty-fleet hint --------------------------------------------- -->
+  <div id="empty-hint" class="empty-hint" hidden>
+    <div class="empty-title">Aucun musicien</div>
+    <div class="empty-sub">Ajoute un projet pour commencer — <kbd>+ PROJET</kbd> en haut à droite.</div>
   </div>
-
-  <!-- ============ MAIN ============================================== -->
-  <main class="main">
-
-    <!-- -------- TERMINAL -------------------------------------------- -->
-    <section class="terminal">
-      <div class="terminal-chrome">
-        <span class="title">CENTRAL / commander's console</span>
-        <span class="session-id" id="term-title-sub">· pty pending</span>
-        <span class="spacer"></span>
-        <span class="attach-badge" id="attach-badge" hidden>UPLOADING…</span>
-        <button class="term-attach" id="term-attach" title="Attach image(s) — also supports paste and drag-and-drop">📎</button>
-        <button class="term-send" id="term-send" title="Submit the current draft. Plain Enter submits; Shift+Enter inserts a newline.">SEND ↵</button>
-        <span class="t-stats">
-          <span>STATE <span class="n" id="term-state">init</span></span>
-          <span>RX <span class="n" id="term-rx">0</span></span>
-        </span>
-      </div>
-
-      <input type="file" id="term-attach-input" accept="image/*" multiple style="display:none">
-      <div class="term-host" id="term-host"></div>
-      <div class="composer-bar">
-        <select id="target-select" class="target-select" title="Route message to a project (@name prefix), or leave on — central — to let the central decide">
-          <option value="">— central —</option>
-        </select>
-        <span class="composer-prompt">›</span>
-      </div>
-    </section>
-
-    <!-- -------- PANEL STACK ---------------------------------------- -->
-    <section class="stack" id="stack">
-      <div class="stack-header">
-        <span class="title">FLEET · <span class="count" id="fleet-count">0</span></span>
-        <span class="spacer"></span>
-        <input class="search" id="fleet-search" placeholder="search panels">
-        <button class="fleet-add" id="fleet-add" title="Add a project from I:\Dev">+ ADD</button>
-      </div>
-
-      <div id="panel-host"></div>
-    </section>
-
-  </main>
-
-  <!-- ============ FOOTER =========================================== -->
-  <footer class="footer">
-    <span>PHOSPHOR/03</span>
-    <span>BUILD 2026.04.19</span>
-    <span>·</span>
-    <span>STREAM-JSONL v2</span>
-    <span>·</span>
-    <span>XTERM.JS 5.5 BOUND</span>
-    <span class="spacer"></span>
-    <span class="heartbeat" id="heartbeat">▮▯▮▯▮ waiting</span>
-  </footer>
 
 </div>
 
-<!-- ============ TWEAKS PANEL =================================== -->
-<div class="tweaks" id="tweaks">
-  <h3>TWEAKS</h3>
+<!-- Overlay: focused musician ---------------------------------------- -->
+<div id="overlay-focused" class="overlay" hidden>
+  <div class="overlay-scrim"></div>
+  <div class="panel-focused" role="dialog" aria-modal="true">
+    <header class="pf-head">
+      <span class="pf-dot"></span>
+      <div class="pf-title">
+        <div class="pf-name"></div>
+        <div class="pf-sub"></div>
+      </div>
+      <button class="pf-session-chip" title="Attacher / détacher une session Claude">
+        <span class="psc-label">SID</span>
+        <span class="psc-id">—</span>
+      </button>
+      <span class="pf-state-tag"></span>
+      <button class="pf-close" aria-label="Fermer">✕</button>
+    </header>
+    <div class="pf-body"></div>
+    <footer class="pf-compose">
+      <textarea class="pf-input"
+                placeholder="Réponds à ce musicien…"
+                rows="1"></textarea>
+      <button class="pf-send" disabled>
+        <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+          <path d="M1 8 L14 1.5 L11 8 L14 14.5 Z"/>
+        </svg>
+      </button>
+    </footer>
+  </div>
+</div>
 
-  <div class="group">
-    <div class="group-label">Palette</div>
-    <div class="row" data-tweak="palette">
-      <button data-v="matrix" class="on">MATRIX</button>
-      <button data-v="amber">AMBER</button>
-      <button data-v="ghost">GHOST</button>
-      <button data-v="crimson">CRIMSON</button>
+<!-- Overlay: briefing ------------------------------------------------ -->
+<div id="overlay-briefing" class="overlay" hidden>
+  <div class="overlay-scrim"></div>
+  <div class="panel-briefing" role="dialog" aria-modal="true">
+    <header class="pb-head">
+      <div>
+        <div class="pb-title">Briefing de l'orchestre</div>
+        <div class="pb-sub"><span class="pb-count">0</span> musiciens · <span class="pb-attn">0</span> à vérifier</div>
+      </div>
+      <button class="pb-close" aria-label="Fermer">✕</button>
+    </header>
+    <div class="pb-body"></div>
+  </div>
+</div>
+
+<!-- Overlay: add project -------------------------------------------- -->
+<div id="overlay-add" class="overlay" hidden>
+  <div class="overlay-scrim"></div>
+  <div class="panel-add" role="dialog" aria-modal="true">
+    <header class="pa-head">
+      <div class="pa-title">Nouveau musicien</div>
+      <button class="pa-close" aria-label="Fermer">✕</button>
+    </header>
+    <section class="pa-section">
+      <div class="pa-section-lbl">Un dossier sous <code>I:\Dev</code></div>
+      <div class="pa-candidates"></div>
+    </section>
+    <section class="pa-section">
+      <div class="pa-section-lbl">Ou un chemin ailleurs</div>
+      <div class="pa-manual">
+        <input class="pa-manual-name" placeholder="nom (lettres/chiffres/_.-)">
+        <input class="pa-manual-path" placeholder="chemin absolu, doit exister">
+        <button class="pa-manual-add">AJOUTER</button>
+      </div>
+      <div class="pa-manual-err" hidden></div>
+    </section>
+  </div>
+</div>
+
+<!-- Overlay: session picker ----------------------------------------- -->
+<div id="overlay-session" class="overlay" hidden>
+  <div class="overlay-scrim"></div>
+  <div class="panel-session" role="dialog" aria-modal="true">
+    <header class="ps-head">
+      <div>
+        <div class="ps-title">Session Claude — <span class="ps-project"></span></div>
+        <div class="ps-sub"><span class="ps-path"></span></div>
+      </div>
+      <button class="ps-close" aria-label="Fermer">✕</button>
+    </header>
+    <div class="ps-meta">
+      <div><span class="ps-k">attachée</span> <span class="ps-attached">aucune</span>
+        <button class="ps-detach" hidden>DÉTACHER</button>
+      </div>
+    </div>
+    <div class="ps-list-head">
+      <span>SID</span><span>Quand</span><span>Branche · taille · turns</span><span>Contenu</span>
+    </div>
+    <div class="ps-list"></div>
+  </div>
+</div>
+
+<!-- Tweaks panel ---------------------------------------------------- -->
+<div id="tweaks" class="tweaks" hidden>
+  <div class="tweaks-title">Réglages</div>
+  <div class="tweaks-row">
+    <div class="tweaks-lbl">Palette</div>
+    <div class="tweaks-seg" data-tweak="theme">
+      <button data-v="cinematic" class="on">CINÉMA</button>
+      <button data-v="matrix">MATRIX</button>
+      <button data-v="monochrome">ENCRE</button>
     </div>
   </div>
-
-  <div class="group">
-    <div class="group-label">Density</div>
-    <div class="row" data-tweak="density">
-      <button data-v="normal" class="on">NORMAL</button>
-      <button data-v="compact">COMPACT</button>
-    </div>
-  </div>
-
-  <div class="group">
-    <div class="group-label">Scanlines</div>
-    <div class="row" data-tweak="scanlines">
-      <button data-v="off" class="on">OFF</button>
-      <button data-v="faint">FAINT</button>
-    </div>
-  </div>
-
-  <div class="group">
-    <div class="group-label">Close</div>
-    <div class="row">
-      <button onclick="App.toggleTweaks(false)">HIDE  (Esc)</button>
+  <div class="tweaks-row">
+    <div class="tweaks-lbl">Intensité halo</div>
+    <div class="tweaks-seg" data-tweak="halo">
+      <button data-v="0.6">SOBRE</button>
+      <button data-v="1" class="on">NORMAL</button>
+      <button data-v="1.4">INTENSE</button>
     </div>
   </div>
 </div>
 
-<script src="./vendor/xterm.js"></script>
-<script src="./vendor/addon-fit.js"></script>
 <script src="./app.js"></script>
 </body>
 </html>

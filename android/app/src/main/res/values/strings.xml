@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- App drawer label. Avoid special characters (some launchers drop
-         apps whose label contains '/' or non-printables). -->
-    <string name="app_name">Phosphor</string>
-</resources>

@@ -601,6 +601,45 @@ app.delete('/api/projects/:name/attach', (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- Direct dispatch (conductor → musician) -------------------------
+//
+// The Orchestre UI talks to sub-agents *directly* — no central claude
+// routing. POST /api/dispatch with {project, prompt} spawns
+// scripts/dispatch.mjs, which turns the prompt into `claude -p --resume
+// <sid>`. stream-json events are appended to logs/<project>.jsonl by
+// dispatch.mjs; the viewer's /api/sse/fleet picks them up and the panel
+// updates live.
+//
+// We respond 202 Accepted immediately (fire-and-forget) so the UI isn't
+// blocked for the whole turn — a sub-agent tour can take minutes.
+app.post('/api/dispatch', express.json({ limit: '16kb' }), (req, res) => {
+  const name = req.body?.project;
+  const prompt = req.body?.prompt;
+  if (typeof name !== 'string' || !name) return res.status(400).json({ error: 'missing project' });
+  if (typeof prompt !== 'string' || !prompt.trim()) return res.status(400).json({ error: 'empty prompt' });
+
+  const proj = config.projects.find(p => p.name === name);
+  if (!proj) return res.status(404).json({ error: `unknown project "${name}"` });
+
+  const dispatchScript = path.join(__dirname, 'scripts', 'dispatch.mjs');
+
+  // Feed the prompt via stdin so we don't have to worry about argv quoting
+  // for multi-line or special-character content.
+  const child = spawn(process.execPath, [dispatchScript, name, '--prompt-stdin'], {
+    cwd: __dirname,
+    env: { ...process.env, ANTHROPIC_API_KEY: '' },   // defense in depth
+    stdio: ['pipe', 'ignore', 'ignore'],              // dispatch script writes directly to the log file
+    windowsHide: true,
+    detached: false,
+  });
+  child.on('error', (err) => {
+    console.error('[dispatch] spawn error:', err.message);
+  });
+  child.stdin.end(prompt);
+
+  res.status(202).json({ ok: true, project: name, pid: child.pid });
+});
+
 // ---------- Add / remove a project at runtime ------------------------------
 //
 // The original brief had the project list come from config.json at boot time.
