@@ -1189,9 +1189,13 @@ kbd {
     background: var(--state-color);
     box-shadow: 0 0 6px var(--state-color);
   }
-  /* Idle cards have nothing to signal — hide the dot so only the name
-     shows, and the visual noise of a grey dot on every quiet card is gone. */
-  .musician.is-fan[data-state="idle"] .m-cdot { display: none; }
+  /* Corner dot only lights up when the user has something to act on
+     (input = question waiting, unread = new messages). Other states —
+     idle, live streaming, thinking — are pure activity signals that don't
+     require attention, so no dot. */
+  .musician.is-fan .m-cdot { display: none; }
+  .musician.is-fan[data-state="input"]  .m-cdot,
+  .musician.is-fan[data-state="unread"] .m-cdot { display: inline-block; }
   .musician.is-fan .m-cname { text-transform: uppercase; }
   .musician.is-fan .m-cbadge {
     min-width: 14px; padding: 0 4px; height: 14px;
