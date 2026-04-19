@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Orchestre</string>
+    <string name="connect">Se connecter</string>
+    <string name="unlock">Déverrouiller</string>
+    <string name="biometric_title">Orchestre</string>
+    <string name="biometric_subtitle">Authentifie-toi pour accéder au dashboard</string>
+    <string name="biometric_cancel">Annuler</string>
+    <string name="url_hint">Adresse du serveur (http://ip:7777)</string>
+    <string name="token_hint">Token (32 octets hex)</string>
+</resources>
