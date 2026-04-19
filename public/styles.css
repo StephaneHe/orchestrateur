@@ -1119,3 +1119,74 @@ kbd {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--card-border); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--fg-3); }
+
+/* ============================================================
+   MOBILE — hand-of-cards fan, swipe to rotate, tap to focus
+   Breakpoint aligned with MOBILE_BREAKPOINT in app.js (768px).
+   Applied additively: layout switches, typography & colors stay.
+   ============================================================ */
+@media (max-width: 767.98px) {
+  /* Topbar — shrink & strip to essentials */
+  .topbar { padding: 10px 14px; }
+  .brand { font-size: 14px; }
+  .brand-sub { display: none; }
+  .topbar-actions .pill { padding: 6px 10px; font-size: 11px; }
+  .topbar-actions .pill-accent .pill-dot { display: none; }
+  .pill-icon { display: none; }
+
+  /* Fan: each card's (x,y) anchors its BOTTOM-CENTRE, and it rotates
+     around that point. Disable transitions on rotate to avoid motion
+     sickness during rapid swipes. */
+  .musician {
+    transition:
+      left 0.45s cubic-bezier(0.22, 1, 0.36, 1),
+      top  0.45s cubic-bezier(0.22, 1, 0.36, 1),
+      transform 0.45s cubic-bezier(0.22, 1, 0.36, 1),
+      filter 0.3s ease,
+      opacity 0.3s ease;
+  }
+  .musician.is-fan {
+    transform: translate(-50%, -100%) rotate(var(--r, 0deg));
+    transform-origin: 50% 100%;
+    touch-action: none;              /* stage owns the pan */
+    user-select: none;
+  }
+
+  /* Composer — bottom sheet, full-width, compact hint */
+  .composer {
+    left: 0; right: 0; bottom: 0;
+    transform: none;
+    width: 100%;
+    padding: 10px 12px 14px;
+    background: linear-gradient(180deg, transparent, var(--bg-0) 30%);
+    gap: 8px;
+  }
+  .composer-box { padding: 5px 5px 5px 12px; }
+  #composer-input { font-size: 15px; }         /* prevent iOS zoom-on-focus */
+  .composer-hint { display: none; }
+  .target-chip { padding: 5px 10px 5px 8px; font-size: 11px; }
+  .target-menu { min-width: min(320px, calc(100vw - 24px)); }
+  .mention-menu { left: 12px; right: 12px; min-width: 0; }
+
+  /* Focused panel — full-screen bottom sheet on mobile */
+  .panel-focused {
+    width: 100vw; height: 100vh;
+    max-width: none; max-height: none;
+    border-radius: 0;
+  }
+  .pf-head { padding: 14px; gap: 10px; }
+  .pf-body { padding: 14px; font-size: 12px; }
+  .pf-body .ev-text.md { width: 100%; display: block; font-size: 13px; }
+  .pf-body .ev-ts { display: none; }           /* saves precious horizontal space */
+  .pf-compose { padding: 10px; }
+  .pf-input { font-size: 15px; }
+
+  .panel-briefing, .panel-add, .panel-session {
+    width: 100vw; height: 100vh;
+    max-width: none; max-height: none;
+    border-radius: 0;
+  }
+
+  /* Hide the harp-string threads on mobile (too busy in a cramped fan) */
+  .threads { display: none; }
+}

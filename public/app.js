@@ -201,6 +201,15 @@ class Musician {
     this.el.style.setProperty("--x", this.pos.x + "px");
     this.el.style.setProperty("--y", this.pos.y + "px");
     this.el.style.setProperty("--w", this.pos.w + "px");
+    if (this.pos.fan) {
+      this.el.style.setProperty("--r", (this.pos.r || 0) + "deg");
+      this.el.style.zIndex = this.pos.z || 0;
+      this.el.classList.add("is-fan");
+    } else {
+      this.el.style.removeProperty("--r");
+      this.el.style.zIndex = "";
+      this.el.classList.remove("is-fan");
+    }
   }
 }
 
@@ -214,7 +223,68 @@ function toolArgPreview(block) {
 // Arc layout — multi-row, non-overlapping, apex = highest-freq
 // --------------------------------------------------------------------------
 
+const MOBILE_BREAKPOINT = 768;
+const isMobileViewport = () => window.innerWidth < MOBILE_BREAKPOINT;
+
 function computeLayout(musicians, viewport) {
+  if (viewport.w < MOBILE_BREAKPOINT) return computeFanLayout(musicians, viewport);
+  return computeDesktopArc(musicians, viewport);
+}
+
+// Mobile: fan-of-cards ("hand of playing cards"). All cards share a single
+// anchor point (like cards held between two fingers) and only differ in
+// rotation — rank-0 card vertical in front, others fan out behind it.
+// Swiping (either direction) moves the front card to the back of the deck.
+function computeFanLayout(musicians, viewport) {
+  const n = musicians.length;
+  if (!n) return;
+
+  const sorted = [...musicians].sort((a, b) => b.freq - a.freq);
+  const rot = App.deckOffset % n;
+  const deck = [];
+  for (let i = 0; i < n; i++) deck.push(sorted[(i + rot) % n]);
+
+  const w = viewport.w;
+  const h = viewport.h;
+  const cx = w / 2;
+  const cardW  = Math.min(260, Math.round(w * 0.70));
+  const anchorY = h - 130;           // just above the composer sheet
+
+  // Wider spread for small hands, compressed for large ones.
+  const maxDeg = Math.min(42, 6 * (n - 1));
+  const step   = n > 1 ? (2 * maxDeg) / (n - 1) : 0;
+  const mid    = (n - 1) / 2;
+
+  for (let k = 0; k < n; k++) {
+    const m = deck[k];
+    const slot = apexSlot(n, k);     // rank 0 → 0, rank 1 → +1, rank 2 → -1, …
+    const idx  = slot + mid;         // linear 0..n-1 left-to-right
+    const thetaDeg = -maxDeg + idx * step;
+    // Slight optical lift on the far-edge cards so they peek over the
+    // front card; purely cosmetic.
+    const liftY = Math.abs(slot) * 3;
+    m.pos = {
+      x: cx,
+      y: anchorY - liftY,
+      w: cardW,
+      r: thetaDeg,
+      z: 100 - k,                    // rank 0 sits on top of the fan
+      fan: true,
+    };
+  }
+}
+
+// Given n cards, return the slot index (centered around 0) for rank k.
+// rank 0 → centre slot, rank 1 → one-right, rank 2 → one-left, ...
+function apexSlot(n, k) {
+  if (n === 1) return 0;
+  const mid = Math.floor((n - 1) / 2);
+  // Reuse apexFirstIndices to get slot-from-left, then shift so centre=0.
+  const idx = apexFirstIndices(n)[k];
+  return idx - mid;
+}
+
+function computeDesktopArc(musicians, viewport) {
   const n = musicians.length;
   if (!n) return;
 
@@ -399,6 +469,7 @@ const App = {
     hasDraft: false,
   },
   _reorderTimer: null,
+  deckOffset: 0,                  // mobile: how many times the user swiped
 
   async init() {
     this.wireTopbar();
@@ -406,6 +477,7 @@ const App = {
     this.wireKeyboard();
     this.wireTweaks();
     this.wireOverlays();
+    this.wireFanSwipe();
     window.addEventListener("resize", () => this.relayout());
 
     await this.loadConfig();
@@ -465,6 +537,44 @@ const App = {
   reorderSoon() {
     clearTimeout(this._reorderTimer);
     this._reorderTimer = setTimeout(() => this.relayout(), 250);
+  },
+
+  // Mobile-only: swipe left/right on the stage rotates the deck — the top
+  // card goes to the back. Direction is ignored (user feedback: both should
+  // do the same thing). Taps on a card still open the focused view; we use
+  // a pointer-travel threshold to distinguish the two.
+  wireFanSwipe() {
+    const stage = $("#stage");
+    let startX = null, startY = null, swiped = false;
+    const THRESH = 40;
+    stage.addEventListener("pointerdown", (e) => {
+      if (!isMobileViewport()) return;
+      if (e.target.closest(".composer") || e.target.closest(".topbar")) return;
+      startX = e.clientX; startY = e.clientY; swiped = false;
+    });
+    stage.addEventListener("pointermove", (e) => {
+      if (startX === null) return;
+      const dx = e.clientX - startX, dy = e.clientY - startY;
+      if (!swiped && Math.abs(dx) > THRESH && Math.abs(dx) > Math.abs(dy)) {
+        swiped = true;
+        this.deckRotate();
+        startX = null;
+      }
+    });
+    stage.addEventListener("pointerup",   () => { startX = null; });
+    stage.addEventListener("pointercancel", () => { startX = null; });
+    // Swallow the click immediately following a successful swipe so it
+    // doesn't open a focused panel.
+    stage.addEventListener("click", (e) => {
+      if (swiped) { e.stopPropagation(); e.preventDefault(); swiped = false; }
+    }, true);
+  },
+
+  deckRotate() {
+    const n = this.musicians.size;
+    if (n < 2) return;
+    this.deckOffset = (this.deckOffset + 1) % n;
+    this.relayout();
   },
 
   // ---------- Topbar wiring ----------
