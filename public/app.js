@@ -487,17 +487,129 @@ const App = {
       this.composer.hasDraft = has;
       redrawThreads();
     };
+
+    // @mention picker — helps the user spell project names correctly so
+    // the conductor (or direct target) gets an unambiguous reference.
+    const mention = { open: false, anchor: -1, query: "", cursor: 0, matches: [] };
+    const mentionEl = $("#mention-menu");
+
+    const detectMention = () => {
+      const v = input.value;
+      const caret = input.selectionStart ?? v.length;
+      // find the last '@' before the caret such that there's no whitespace
+      // between it and the caret.
+      let i = caret - 1;
+      while (i >= 0 && !/\s/.test(v[i])) {
+        if (v[i] === "@") {
+          const prev = i === 0 ? "" : v[i - 1];
+          if (i === 0 || /\s/.test(prev) || /[.,;:!?]/.test(prev)) {
+            mention.anchor = i;
+            mention.query = v.slice(i + 1, caret);
+            return true;
+          }
+          break;
+        }
+        i--;
+      }
+      mention.anchor = -1;
+      return false;
+    };
+
+    const renderMentionMenu = () => {
+      const names = [...this.musicians.keys()];
+      const q = mention.query.toLowerCase();
+      mention.matches = names
+        .map(n => ({ n, score: n.toLowerCase().startsWith(q) ? 2 : (n.toLowerCase().includes(q) ? 1 : 0) }))
+        .filter(r => r.score > 0 || q === "")
+        .sort((a, b) => b.score - a.score || a.n.localeCompare(b.n))
+        .slice(0, 8);
+      if (!mention.matches.length) { closeMention(); return; }
+      if (mention.cursor >= mention.matches.length) mention.cursor = 0;
+      mentionEl.innerHTML = mention.matches.map((r, i) => {
+        const m = this.musicians.get(r.n);
+        const state = m ? STATE_LABELS[m.state].label : "";
+        const isConductor = r.n === this.composer.CONDUCTOR;
+        return `<button class="mm-item ${i === mention.cursor ? "is-sel" : ""} ${isConductor ? "is-conductor" : ""}" data-name="${esc(r.n)}">
+          <span class="mm-dot" style="background: ${m ? varByState(m.state) : "var(--fg-3)"};"></span>
+          <span class="mm-name">${esc(r.n)}</span>
+          <span class="mm-sub">${esc(state)}</span>
+        </button>`;
+      }).join("");
+      $$(".mm-item", mentionEl).forEach((el, i) => {
+        el.addEventListener("mouseenter", () => { mention.cursor = i; refreshSel(); });
+        el.addEventListener("mousedown", (e) => { e.preventDefault(); confirmMention(i); });
+      });
+      mentionEl.hidden = false;
+      mention.open = true;
+    };
+
+    const refreshSel = () => {
+      $$(".mm-item", mentionEl).forEach((el, i) => el.classList.toggle("is-sel", i === mention.cursor));
+    };
+
+    const closeMention = () => {
+      mention.open = false;
+      mention.anchor = -1;
+      mention.cursor = 0;
+      mentionEl.hidden = true;
+    };
+
+    const confirmMention = (idx) => {
+      if (!mention.open || mention.anchor < 0) return;
+      const pick = mention.matches[idx] ?? mention.matches[mention.cursor];
+      if (!pick) return;
+      const v = input.value;
+      const caret = input.selectionStart ?? v.length;
+      const before = v.slice(0, mention.anchor);
+      const after = v.slice(caret);
+      const needsSpace = !(after.startsWith(" ") || after.startsWith("\n") || after === "");
+      const insertion = `@${pick.n}${needsSpace ? " " : ""}`;
+      input.value = before + insertion + after;
+      const newCaret = (before + insertion).length;
+      input.setSelectionRange(newCaret, newCaret);
+      closeMention();
+      setDraft();
+    };
+
     input.addEventListener("input", () => {
       setDraft();
       input.style.height = "auto";
       input.style.height = Math.min(input.scrollHeight, 180) + "px";
+      if (detectMention()) renderMentionMenu();
+      else closeMention();
     });
     input.addEventListener("keydown", (e) => {
+      if (mention.open) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          mention.cursor = (mention.cursor + 1) % mention.matches.length;
+          refreshSel();
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          mention.cursor = (mention.cursor - 1 + mention.matches.length) % mention.matches.length;
+          refreshSel();
+          return;
+        }
+        if (e.key === "Enter" || e.key === "Tab") {
+          e.preventDefault();
+          confirmMention(mention.cursor);
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          closeMention();
+          return;
+        }
+      }
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         this.sendMessage();
       }
     });
+    input.addEventListener("blur", () => setTimeout(closeMention, 120));
+    input.addEventListener("click", () => { if (detectMention()) renderMentionMenu(); else closeMention(); });
     send.addEventListener("click", () => this.sendMessage());
 
     chip.addEventListener("click", (e) => {
