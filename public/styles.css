@@ -241,6 +241,10 @@ kbd {
 .musician:hover { z-index: 25; }
 .musician:hover .m-body { border-color: var(--state-color); }
 
+/* Playing-card corner tags — only surface on mobile fan mode.
+   Default everywhere: hidden. The mobile media query re-enables them. */
+.musician .m-corner { display: none; }
+
 /* Halo behind the card — colored by state */
 .m-halo {
   position: absolute;
@@ -1165,7 +1169,6 @@ kbd {
 
   /* Corner tags — playing-card style rank at BOTH top corners so the
      visible edge of a rotated card always shows state + name + unread. */
-  .musician .m-corner { display: none; }
   .musician.is-fan .m-corner {
     display: flex;
     align-items: center;
