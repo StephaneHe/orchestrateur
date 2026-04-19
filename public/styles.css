@@ -1163,6 +1163,24 @@ kbd {
   .musician.is-fan[data-hand="2"] { filter: brightness(0.64) saturate(0.7); }
   .musician.is-fan[data-hand="3"] { filter: brightness(0.5)  saturate(0.55); }
 
+  /* Taller cards on mobile — playing-card aspect ratio feels right with
+     more vertical room for the last-line preview. */
+  .musician.is-fan .m-body {
+    padding: 14px 16px 16px;
+    min-height: 230px;
+    display: flex;
+    flex-direction: column;
+  }
+  .musician.is-fan .m-name { font-size: 16px; }
+  .musician.is-fan .m-last-line {
+    -webkit-line-clamp: 7;
+    font-size: 13px;
+    line-height: 1.48;
+    min-height: 8em;
+    flex: 1;
+  }
+  .musician.is-fan .m-state-row { margin-top: auto; padding-top: 8px; }
+
   /* Composer — bottom sheet, full-width, compact hint */
   .composer {
     left: 0; right: 0; bottom: 0;
