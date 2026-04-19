@@ -149,6 +149,83 @@ function loadAllSessions() {
 }
 loadAllSessions();
 
+// ---------- Heal orphaned log tails ----------------------------------------
+//
+// If a `claude -p` child was killed mid-turn (server restart, crash,
+// Ctrl-C during a long turn), the JSONL log ends on stream_event/assistant
+// deltas without a final `result` event. The viewer's reducer faithfully
+// reflects that and pins the panel at `live`/`think` forever. On boot we
+// scan each log: if the last non-partial event is not a `result` AND the
+// file has been quiet for >60s, append a synthetic error-result so the
+// reducer can close the turn.
+
+const ORPHAN_STALE_MS = 60_000;
+
+function lastNonPartialType(filePath) {
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const stat = fs.fstatSync(fd);
+    const size = stat.size;
+    if (size === 0) return null;
+    const CHUNK = 64 * 1024;
+    let offset = Math.max(0, size - CHUNK);
+    let tail = '';
+    while (offset >= 0) {
+      const len = size - offset;
+      const buf = Buffer.alloc(Math.min(CHUNK, len));
+      fs.readSync(fd, buf, 0, buf.length, offset);
+      tail = buf.toString('utf8') + tail;
+      const lines = tail.split('\n').filter(s => s.trim());
+      // walk backwards looking for a non-stream_event, non-partial line
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i];
+        // heuristic: avoid parsing huge stream_event deltas
+        if (line.includes('"type":"stream_event"')) continue;
+        try {
+          const ev = JSON.parse(line);
+          if (ev && typeof ev.type === 'string') return ev.type;
+        } catch { /* partial line at the head; keep widening */ }
+      }
+      if (offset === 0) break;
+      offset = Math.max(0, offset - CHUNK);
+    }
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function healOrphanedLogs() {
+  let healed = 0;
+  for (const p of config.projects) {
+    const logPath = path.join(LOGS_DIR, `${p.name}.jsonl`);
+    let stat;
+    try { stat = fs.statSync(logPath); } catch { continue; }
+    if (stat.size === 0) continue;
+    const age = Date.now() - stat.mtimeMs;
+    if (age < ORPHAN_STALE_MS) continue;
+    let lastType;
+    try { lastType = lastNonPartialType(logPath); } catch { continue; }
+    if (!lastType || lastType === 'result') continue;
+    const synthetic = {
+      type: 'result',
+      subtype: 'error_interrupted',
+      is_error: true,
+      api_error_status: null,
+      duration_ms: 0,
+      duration_api_ms: 0,
+      num_turns: 0,
+      result: 'turn interrupted (orchestrator restarted or child crashed)',
+      synthetic: true,
+    };
+    fs.appendFileSync(logPath, JSON.stringify(synthetic) + '\n');
+    healed++;
+    console.log(`[heal] closed orphaned turn in ${p.name}.jsonl (last=${lastType})`);
+  }
+  if (healed > 0) console.log(`[heal] appended synthetic result to ${healed} log(s)`);
+}
+healOrphanedLogs();
+
 // Keep memory in sync when sidecars change on disk (dispatch.mjs writes them
 // out-of-band in a separate process).
 const sessionWatcher = chokidar.watch(path.join(LOGS_DIR, '*.session'), {
