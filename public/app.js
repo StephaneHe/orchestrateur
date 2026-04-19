@@ -537,7 +537,16 @@ const App = {
       }).join("");
       $$(".mm-item", mentionEl).forEach((el, i) => {
         el.addEventListener("mouseenter", () => { mention.cursor = i; refreshSel(); });
-        el.addEventListener("mousedown", (e) => { e.preventDefault(); confirmMention(i); });
+        el.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          confirmMention(i);
+        });
+        el.addEventListener("click", (e) => {
+          e.stopPropagation();
+          // Safety net in case the mousedown path didn't fire (touch, etc.)
+          if (!mentionEl.hidden) confirmMention(i);
+        });
       });
       mentionEl.hidden = false;
       mention.open = true;
@@ -682,8 +691,19 @@ const App = {
       </button>
     `).join("");
     $$(".tm-item", menu).forEach(el => {
-      el.addEventListener("click", () => {
+      // mousedown fires before the input loses focus; we close immediately
+      // and rely on click for the actual action — this closes the menu
+      // visually even if some event order quirk swallows the later click.
+      el.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         this.setTarget(el.dataset.name || null);
+        menu.hidden = true;
+        $("#target-chip").classList.remove("is-open");
+      });
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        // Safety net — mousedown should have already closed us.
         menu.hidden = true;
         $("#target-chip").classList.remove("is-open");
       });
