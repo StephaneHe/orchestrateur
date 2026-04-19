@@ -302,9 +302,9 @@ function computeFanLayout(musicians, viewport) {
     const baseY    = h - bottomPad - hi * handStepY;     // centre-card bottom
     const pivotY   = baseY + R;
 
-    // Angular spread — tight enough that edge cards stay mostly on screen
-    // even at the widest card size.
-    const maxDeg   = size === 1 ? 0 : Math.min(22, 5.5 * (size - 1));
+    // Angular spread — keep outer cards mildly tilted so their corner
+    // tags remain legible (steep rotation hid the state dots).
+    const maxDeg   = size === 1 ? 0 : Math.min(14, 3.5 * (size - 1));
     const step     = size > 1 ? (2 * maxDeg) / (size - 1) : 0;
     const mid      = (size - 1) / 2;
 
