@@ -262,7 +262,7 @@ function computeFanLayout(musicians, viewport) {
   const handCount = hands.length;
 
   const topPad    = 72;
-  const bottomPad = 150;                // composer + chip
+  const bottomPad = 200;                // composer + chip + breathing room
   const usableH   = h - topPad - bottomPad;
 
   // Hand baseline Y — where the CENTER card's bottom lives. Primary hand
@@ -278,7 +278,9 @@ function computeFanLayout(musicians, viewport) {
     const hand     = hands[hi];
     const size     = hand.length;
     const scale    = Math.max(0.82, 1 - hi * 0.10);
-    const cardW    = Math.round(Math.min(260, w * 0.70) * scale);
+    // Playing-card aspect ratio (~5:7) — narrower than before so the
+    // 230px-tall body reads like a real card rather than a landscape tile.
+    const cardW    = Math.round(Math.min(185, w * 0.50) * scale);
 
     // Fan geometry: pivot BELOW this hand's baseline by R. Card bottoms
     // trace an arc of radius R around the pivot.
