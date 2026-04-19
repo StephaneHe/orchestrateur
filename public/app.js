@@ -14,7 +14,9 @@ const CARD_MIN_W = 150;
 const CARD_MAX_W = 220;
 const CARD_H     = 120;
 const GAP_MIN    = 28;            // minimum horizontal gap between card centers
-const ROW_GAP    = 28;            // vertical gap between arc rows
+const ROW_GAP    = 30;            // min vertical breathing room between rows
+const ARC_AMP    = 15;            // how far a card's Y is perturbed by the arc shape
+const ROW_STEP   = CARD_H + ROW_GAP + 2 * ARC_AMP;  // guaranteed non-overlap
 const TOP_PAD    = 96;            // room for topbar
 const BOTTOM_PAD = 220;           // room for composer
 const SIDE_PAD   = 40;
@@ -213,67 +215,77 @@ function toolArgPreview(block) {
 // --------------------------------------------------------------------------
 
 function computeLayout(musicians, viewport) {
-  // 1. Sort musicians by freq desc — more active sits nearer the apex.
+  const n = musicians.length;
+  if (!n) return;
+
+  // Sort by frequency so the apex gets the most-active musician.
   const sorted = [...musicians].sort((a, b) => b.freq - a.freq);
 
-  // 2. Decide card width.
-  const usable = viewport.w - 2 * SIDE_PAD;
-  // How many fit in ONE row at max width?
-  let cardW = CARD_MAX_W;
-  let perRow = Math.max(1, Math.floor((usable + GAP_MIN) / (cardW + GAP_MIN)));
-  if (perRow >= sorted.length) {
-    perRow = sorted.length;
-  } else {
-    // Try to shrink cards so more fit, up to CARD_MIN_W.
-    const tryRows = Math.ceil(sorted.length / perRow);
-    // If shrinking to CARD_MIN_W fits everything in fewer rows, do it.
-    for (let w = CARD_MAX_W; w >= CARD_MIN_W; w -= 10) {
-      const pr = Math.max(1, Math.floor((usable + GAP_MIN) / (w + GAP_MIN)));
-      const rows = Math.ceil(sorted.length / pr);
-      if (rows < tryRows || (rows === tryRows && pr > perRow)) {
-        cardW = w;
-        perRow = pr;
-      }
-    }
+  // 1. Work out how many rows we can afford vertically, then pick the largest
+  //    card width that fits the full fleet within that budget.
+  const usableW = viewport.w - 2 * SIDE_PAD;
+  const usableH = viewport.h - TOP_PAD - BOTTOM_PAD;
+  const maxRows = Math.max(1, Math.floor((usableH - CARD_H) / ROW_STEP) + 1);
+
+  let cardW  = CARD_MAX_W;
+  let perRow = Math.max(1, Math.floor((usableW + GAP_MIN) / (cardW + GAP_MIN)));
+  let rows   = Math.ceil(n / perRow);
+
+  // Shrink cards if we'd otherwise use more rows than fit vertically.
+  while (rows > maxRows && cardW > CARD_MIN_W) {
+    cardW -= 10;
+    perRow = Math.max(1, Math.floor((usableW + GAP_MIN) / (cardW + GAP_MIN)));
+    rows   = Math.ceil(n / perRow);
+  }
+  perRow = Math.min(perRow, n);
+  rows   = Math.ceil(n / perRow);
+
+  // 2. Balance row counts so the last row isn't nearly empty (prevents a
+  //    lopsided look, e.g. 7 cards into [5, 2] becomes [4, 3]).
+  const cardsPerRow = [];
+  let left = n;
+  for (let r = 0; r < rows; r++) {
+    const c = Math.ceil(left / (rows - r));
+    cardsPerRow.push(c);
+    left -= c;
   }
 
-  const rows = Math.ceil(sorted.length / perRow);
-
-  // 3. Arc geometry: the innermost arc sits closer to the bottom (near the
-  //    conductor). Outer arcs step up in Y. Apex is the middle slot of each arc.
-  //    Center X fixed.
+  // 3. Lay out each row at a FIXED vertical baseline. The arc only perturbs
+  //    Y within ±ARC_AMP, which is strictly less than ROW_GAP, so cards
+  //    across rows can never share a Y band. Horizontally, odd rows nudge
+  //    by a quarter-step (subtle quinconce) when it still fits on screen.
   const cx = viewport.w / 2;
-  const baseBottom = viewport.h - BOTTOM_PAD;           // inner arc center-Y baseline
-  const outerTop   = TOP_PAD + CARD_H / 2;              // outermost arc cannot push past this
-  const availableV = Math.max(160, baseBottom - outerTop);
-  const ryPerArc   = availableV / Math.max(1, rows);    // vertical slot per row
-  const maxRy      = clamp(ryPerArc * 0.75, 80, 180);   // how tall each arc peaks
-  const rowStep    = ryPerArc * 0.55;                   // how much rows are vertically offset
+  const y0 = viewport.h - BOTTOM_PAD - CARD_H / 2;     // centre-Y of the BOTTOM row
 
-  // 4. Assign each musician to a row + slot in their row.
-  //    Row 0 (innermost) holds the N highest-freq. For each row, the slot
-  //    assignment is apex-first (center), alternating right/left outward.
-  let assigned = 0;
-  for (let row = 0; row < rows; row++) {
-    const countThisRow = Math.min(perRow, sorted.length - assigned);
-    const slotIndices  = apexFirstIndices(countThisRow);
+  let idx = 0;
+  for (let r = 0; r < rows; r++) {
+    const count     = cardsPerRow[r];
+    const slotOrder = apexFirstIndices(count);
 
-    // Horizontal layout of the row: N cards spread symmetrically across the arc.
-    const rowRx = Math.min((usable - cardW) / 2, viewport.w * 0.45);
-    const cyRow = baseBottom - row * rowStep;
-    const ryRow = Math.max(60, maxRy - row * 14);       // outer rows flatter
+    const colStep   = count === 1 ? 0 : (usableW - cardW) / (count - 1);
+    const bandW     = colStep * (count - 1);
+    const bandLeft  = cx - bandW / 2;
 
-    for (let k = 0; k < countThisRow; k++) {
-      const m = sorted[assigned + k];
-      const slot = slotIndices[k];                     // 0..countThisRow-1 from left to right is slot
-      const theta = countThisRow === 1
+    // Quinconce: shift odd rows by a quarter slot, clamped so we never push
+    // off-screen. The first row (index 0) stays aligned with the composer's
+    // axis for readability.
+    const wantedOffset = (r % 2 === 1 && colStep > 0) ? colStep / 4 : 0;
+    const maxOffset    = Math.max(0, (usableW - bandW) / 2 - 10);
+    const qOffset      = Math.max(-maxOffset, Math.min(maxOffset, wantedOffset));
+
+    const rowY = y0 - r * ROW_STEP;
+
+    for (let k = 0; k < count; k++) {
+      const m = sorted[idx + k];
+      const slot = slotOrder[k];
+      const theta = count === 1
         ? Math.PI / 2
-        : Math.PI - (slot * Math.PI) / (countThisRow - 1);
-      const x = cx + rowRx * Math.cos(theta);
-      const y = cyRow - ryRow * Math.sin(theta);
-      m.pos = { x, y, w: cardW, row };
+        : Math.PI - (slot * Math.PI) / (count - 1);
+      const x = bandLeft + slot * colStep + qOffset;
+      const y = rowY - ARC_AMP * Math.sin(theta);
+      m.pos = { x, y, w: cardW, row: r };
     }
-    assigned += countThisRow;
+    idx += count;
   }
 }
 
