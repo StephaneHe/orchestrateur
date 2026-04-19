@@ -1086,7 +1086,7 @@ function renderAssistant(raw, ts) {
   for (const b of raw.message?.content || []) {
     if (b?.type === "text") {
       const text = (b.text || "").trim();
-      if (text) parts.push(`<div class="ev"><span class="ev-ts">${ts}</span><span class="ev-text">${esc(text)}</span></div>`);
+      if (text) parts.push(`<div class="ev"><span class="ev-ts">${ts}</span><div class="ev-text md">${mdToHtml(text)}</div></div>`);
     } else if (b?.type === "thinking") {
       const t = (b.thinking || "").trim();
       if (t) parts.push(`<div class="ev"><span class="ev-ts">${ts}</span><span class="ev-think">◌ ${esc(t.slice(0, 300))}</span></div>`);
@@ -1116,6 +1116,142 @@ function renderResult(raw, ts) {
   const dur = raw.duration_ms ? `${(raw.duration_ms/1000).toFixed(1)}s` : "";
   return `<div class="ev"><span class="ev-ts">${ts}</span><span class="ev-text" style="color: var(--fg-3);">— tour terminé · ${dur} —</span></div>`;
 }
+// --------------------------------------------------------------------------
+// Minimal, safe Markdown → HTML converter. We escape HTML first, then only
+// inject tags we produce ourselves (no raw HTML from the model). Covers the
+// constructs Claude emits most often: headings, bold/italic, inline code,
+// fenced blocks, lists, blockquotes, paragraphs, links (rendered but not
+// clickable — href sanitised). Intentionally does NOT handle tables or
+// reference-style links (rare in Claude's prose).
+// --------------------------------------------------------------------------
+function mdToHtml(src) {
+  if (!src) return "";
+  // 1. Extract fenced code blocks into placeholders, then escape everything
+  //    else. This protects code-block contents from further regex passes.
+  const fences = [];
+  let s = String(src).replace(/```([a-zA-Z0-9+-]*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    const token = `\u0000F${fences.length}\u0000`;
+    fences.push({ lang: (lang || "").toLowerCase(), code });
+    return token;
+  });
+  s = esc(s);
+
+  // 2. Inline code — single backticks. Use a non-greedy match.
+  s = s.replace(/`([^`\n]+)`/g, (_, code) => `<code>${code}</code>`);
+
+  // 3. Bold / italic. Bold-underscore first, then bold-star, then italics.
+  s = s.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/__([^_\n]+)__/g, "<strong>$1</strong>");
+  s = s.replace(/(^|[\s(])\*([^*\n]+)\*(?=$|[\s).,;:!?])/g, "$1<em>$2</em>");
+  s = s.replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s).,;:!?])/g, "$1<em>$2</em>");
+
+  // 4. Links — [text](url). We only allow http(s) and relative; render
+  //    as plain <a> with target=_blank rel=noopener to keep the dashboard
+  //    stable if the user ever clicks.
+  s = s.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (m, text, url) => {
+    const safe = /^(https?:\/\/|\/|#)/.test(url) ? url : "#";
+    return `<a href="${safe}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+  });
+
+  // 5. Block-level pass line by line: headings, lists, blockquotes,
+  //    paragraphs, horizontal rules. Code-fence placeholders are kept
+  //    outside paragraphs.
+  const lines = s.split("\n");
+  const out = [];
+  let listType = null; // 'ul' | 'ol' | null
+  let para = [];
+  const flushPara = () => {
+    if (para.length) {
+      out.push(`<p>${para.join(" ")}</p>`);
+      para = [];
+    }
+  };
+  const closeList = () => {
+    if (listType) { out.push(`</${listType}>`); listType = null; }
+  };
+  for (let li = 0; li < lines.length; li++) {
+    const raw = lines[li];
+    const line = raw;
+    if (!line.trim()) { flushPara(); closeList(); continue; }
+
+    // Fenced code placeholder — emit as <pre><code> with language class.
+    const fenceMatch = line.match(/^\u0000F(\d+)\u0000$/);
+    if (fenceMatch) {
+      flushPara(); closeList();
+      const f = fences[+fenceMatch[1]];
+      const cls = f.lang ? ` class="lang-${esc(f.lang)}"` : "";
+      out.push(`<pre><code${cls}>${esc(f.code)}</code></pre>`);
+      continue;
+    }
+
+    // Heading #..######
+    const h = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (h) {
+      flushPara(); closeList();
+      out.push(`<h${h[1].length}>${h[2]}</h${h[1].length}>`);
+      continue;
+    }
+
+    // Horizontal rule
+    if (/^(---+|\*\*\*+|___+)\s*$/.test(line)) {
+      flushPara(); closeList();
+      out.push(`<hr>`);
+      continue;
+    }
+
+    // Blockquote
+    const bq = line.match(/^&gt;\s?(.*)$/);
+    if (bq) {
+      flushPara(); closeList();
+      out.push(`<blockquote>${bq[1] || ""}</blockquote>`);
+      continue;
+    }
+
+    // GFM table — header row + separator row + zero or more body rows.
+    if (/^\s*\|.*\|?\s*$/.test(line) && li + 1 < lines.length &&
+        /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/.test(lines[li + 1])) {
+      flushPara(); closeList();
+      const splitRow = (r) => r.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+      const header = splitRow(lines[li]);
+      let end = li + 1;
+      while (end + 1 < lines.length && /^\s*\|.*\|?\s*$/.test(lines[end + 1])) end++;
+      const bodyRows = [];
+      for (let k = li + 2; k <= end; k++) bodyRows.push(splitRow(lines[k]));
+      let html = `<table><thead><tr>${header.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>`;
+      for (const row of bodyRows) html += `<tr>${row.map(c => `<td>${c}</td>`).join("")}</tr>`;
+      html += `</tbody></table>`;
+      out.push(html);
+      li = end;
+      continue;
+    }
+
+    // Unordered list
+    const ul = line.match(/^\s*[-*+]\s+(.+)$/);
+    if (ul) {
+      flushPara();
+      if (listType !== "ul") { closeList(); out.push(`<ul>`); listType = "ul"; }
+      out.push(`<li>${ul[1]}</li>`);
+      continue;
+    }
+
+    // Ordered list
+    const ol = line.match(/^\s*\d+\.\s+(.+)$/);
+    if (ol) {
+      flushPara();
+      if (listType !== "ol") { closeList(); out.push(`<ol>`); listType = "ol"; }
+      out.push(`<li>${ol[1]}</li>`);
+      continue;
+    }
+
+    // Paragraph accumulation
+    closeList();
+    para.push(line.trim());
+  }
+  flushPara();
+  closeList();
+  return out.join("\n");
+}
+
 function fmtTs(iso) {
   if (!iso) return "";
   const d = new Date(iso);
