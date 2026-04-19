@@ -142,9 +142,16 @@ class Musician {
     el.className = "musician";
     el.dataset.name = this.name;
     el.dataset.state = this.state;
+    const corner = `
+      <span class="m-cdot"></span>
+      <span class="m-cname">${esc(this.name.slice(0, 4))}</span>
+      <span class="m-cbadge" hidden>0</span>
+    `;
     el.innerHTML = `
       <div class="m-halo"></div>
       <div class="m-body">
+        <div class="m-corner m-corner-l">${corner}</div>
+        <div class="m-corner m-corner-r">${corner}</div>
         <div class="m-tools">
           <button class="m-tool" data-act="session" title="Session Claude">⌬</button>
           <button class="m-tool danger" data-act="remove" title="Retirer de l'orchestre">✕</button>
@@ -190,12 +197,19 @@ class Musician {
     }
 
     const badge = $(".m-badge", this.el);
-    if (this.unreadCount > 0 && this.state === "unread") {
+    const showBadge = this.unreadCount > 0 && this.state === "unread";
+    if (showBadge) {
       badge.hidden = false;
       badge.textContent = String(this.unreadCount);
     } else {
       badge.hidden = true;
     }
+    // Mirror unread count onto the corner tags so edge cards (which only
+    // show their inner top corner) still surface the number.
+    $$(".m-cbadge", this.el).forEach(el => {
+      el.hidden = !showBadge;
+      el.textContent = showBadge ? String(this.unreadCount) : "";
+    });
 
     // Position
     this.el.style.setProperty("--x", this.pos.x + "px");

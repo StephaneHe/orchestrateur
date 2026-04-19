@@ -1163,6 +1163,42 @@ kbd {
   .musician.is-fan[data-hand="2"] { filter: brightness(0.64) saturate(0.7); }
   .musician.is-fan[data-hand="3"] { filter: brightness(0.5)  saturate(0.55); }
 
+  /* Corner tags — playing-card style rank at BOTH top corners so the
+     visible edge of a rotated card always shows state + name + unread. */
+  .musician .m-corner { display: none; }
+  .musician.is-fan .m-corner {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    position: absolute;
+    top: 6px;
+    padding: 3px 6px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.55);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    color: var(--fg-0);
+    pointer-events: none;
+    z-index: 2;
+  }
+  .musician.is-fan .m-corner-l { left: 6px; }
+  .musician.is-fan .m-corner-r { right: 6px; }
+  .musician.is-fan .m-cdot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--state-color);
+    box-shadow: 0 0 6px var(--state-color);
+  }
+  .musician.is-fan .m-cname { text-transform: uppercase; }
+  .musician.is-fan .m-cbadge {
+    min-width: 14px; padding: 0 4px; height: 14px;
+    display: grid; place-items: center;
+    border-radius: 7px;
+    background: var(--st-unread);
+    color: var(--bg-0);
+    font-weight: 700;
+    font-size: 9px;
+  }
   /* Taller cards on mobile — playing-card aspect ratio feels right with
      more vertical room for the last-line preview. */
   .musician.is-fan .m-body {
