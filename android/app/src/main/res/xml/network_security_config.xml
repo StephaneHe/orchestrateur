@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Orchestrator runs HTTP-only. Tailscale (WireGuard) is the confidentiality
+     layer in practice; the app is single-user and only talks to the server
+     its operator configures. Allow cleartext app-wide. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

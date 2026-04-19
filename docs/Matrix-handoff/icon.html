@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PHOSPHOR/03 — App Icon (Matrix)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  html, body { margin:0; background:#020604; min-height:100vh; color:#baffc8; font-family:"JetBrains Mono", monospace; }
+  body {
+    padding: 48px 40px;
+    background:
+      radial-gradient(circle at 30% 20%, #06120a 0%, #020604 60%),
+      #000;
+  }
+  body::before {
+    content: ""; position: fixed; inset: 0;
+    background-image:
+      repeating-linear-gradient(to bottom, transparent 0 2px, rgba(45,255,122,0.025) 2px 3px);
+    pointer-events: none; z-index: 0;
+  }
+  h1 {
+    font-family:"Chakra Petch", sans-serif;
+    font-size: 26px; font-weight: 700; letter-spacing: 0.08em;
+    margin: 0 0 4px;
+    color: #2dff7a;
+    text-shadow: 0 0 12px rgba(45,255,122,0.5);
+  }
+  .sub {
+    color: #5a8066; font-size: 11px; letter-spacing: 0;
+    margin-bottom: 32px;
+  }
+  .sub .grn { color: #2dff7a; }
+
+  .grid {
+    position: relative; z-index: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 32px;
+    max-width: 1200px;
+  }
+  .card {
+    border: 1px solid #0e2014;
+    padding: 24px;
+    background: rgba(2,8,5,0.7);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    position: relative;
+  }
+  .card .title {
+    font-family:"Chakra Petch", sans-serif;
+    font-size: 10px; letter-spacing: 0.3em; text-transform: uppercase;
+    color: #6a9c7a;
+    align-self: flex-start;
+  }
+  .card .title .n { color: #2dff7a; margin-right: 6px; text-shadow: 0 0 6px rgba(45,255,122,0.5); }
+  .card .meta {
+    font-size: 10px; color: #4a6e58; letter-spacing: 0;
+    text-align: center;
+    line-height: 1.5;
+  }
+  .card .meta .grn { color: #2dff7a; }
+  .card::before, .card::after {
+    content: ""; position: absolute; width: 10px; height: 10px;
+    border-color: #2dff7a;
+  }
+  .card::before { top: 0; left: 0; border-top: 1px solid #2dff7a; border-left: 1px solid #2dff7a; }
+  .card::after { bottom: 0; right: 0; border-bottom: 1px solid #2dff7a; border-right: 1px solid #2dff7a; }
+
+  .sizes { display: flex; align-items: flex-end; gap: 24px; flex-wrap: wrap; justify-content: center; }
+  .sizes .one { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .sizes .lbl {
+    font-size: 9px; color: #4a6e58; letter-spacing: 0.15em;
+    font-family:"Chakra Petch", sans-serif;
+  }
+
+  /* phone homescreen */
+  .phone {
+    width: 260px; height: 540px;
+    border-radius: 36px;
+    border: 6px solid rgba(60,90,72,0.5);
+    background:
+      radial-gradient(ellipse at 50% 20%, rgba(45,255,122,0.05) 0%, transparent 50%),
+      #020604;
+    overflow: hidden; position: relative;
+    box-sizing: border-box;
+    display: flex; flex-direction: column;
+  }
+  .phone::before {
+    content: ""; position: absolute; inset: 0;
+    background-image: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(45,255,122,0.02) 2px 3px);
+    pointer-events: none;
+  }
+  .phone .time {
+    text-align:center; padding: 12px;
+    font-family:"Chakra Petch", sans-serif;
+    font-size: 11px; letter-spacing: 0.25em; color:#baffc8;
+  }
+  .phone .clock-big {
+    text-align:center; padding: 16px 12px 8px;
+    font-family:"Chakra Petch", sans-serif;
+    font-size: 52px; font-weight: 700; color:#baffc8;
+    letter-spacing: 0.02em;
+    text-shadow: 0 0 20px rgba(45,255,122,0.3);
+  }
+  .phone .date-line {
+    text-align:center;
+    font-family:"JetBrains Mono", monospace;
+    font-size: 10px; color:#6a9c7a;
+    padding-bottom: 18px;
+    letter-spacing: 0;
+  }
+  .phone .date-line .grn { color: #2dff7a; }
+  .phone .apps {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px 6px;
+    padding: 8px 14px;
+    flex: 1;
+  }
+  .app { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .app-icon {
+    width: 48px; height: 48px; border-radius: 12px;
+    background: #0e2014; border: 1px solid #18301e;
+    display: grid; place-items: center;
+    font-family:"Chakra Petch", sans-serif;
+    font-size: 20px; font-weight: 700; color:#4a6e58;
+    position: relative;
+  }
+  .app-icon.phosphor { padding: 0; border: none; overflow: hidden; }
+  .app-icon.phosphor img { width: 100%; height: 100%; border-radius: 12px; display: block; }
+  .app-icon.phosphor .badge {
+    position: absolute; top: -4px; right: -4px;
+    min-width: 18px; height: 18px; padding: 0 5px;
+    background: #ff2d8b; color: #1b0210;
+    border-radius: 9px;
+    font-family:"Chakra Petch", sans-serif;
+    font-size: 11px; font-weight: 700;
+    display: grid; place-items: center;
+    box-shadow: 0 0 10px #ff2d8b;
+    border: 2px solid #020604;
+    z-index: 2;
+  }
+  .app .label {
+    font-family:"Chakra Petch", sans-serif;
+    font-size: 9px; letter-spacing: 0.15em;
+    color:#6a9c7a; text-transform: uppercase;
+  }
+  .app.phosphor .label { color: #2dff7a; text-shadow: 0 0 6px rgba(45,255,122,0.3); }
+  .phone .dock {
+    border-top: 1px solid #0e2014;
+    padding: 12px 14px 18px;
+    display: flex; justify-content: space-around;
+  }
+  .phone .dock .app-icon { width: 44px; height: 44px; }
+  .phone .nav { height: 20px; display: grid; place-items: center; }
+  .phone .nav div { width: 80px; height: 3px; border-radius: 2px; background: rgba(186,255,200,0.3); }
+
+  /* monochrome variants */
+  .variants { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+  .variants .v { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .v .lbl { font-family:"Chakra Petch", sans-serif; font-size: 9px; color: #4a6e58; letter-spacing: 0.2em; }
+  .mono {
+    width: 96px; height: 96px; border-radius: 21px;
+    background: #06120a; display: grid; place-items: center;
+    border: 1px solid #0e2014;
+    position: relative; overflow: hidden;
+  }
+  .mono svg { width: 56px; height: 56px; position: relative; z-index: 1; }
+  .mono::after {
+    content: ""; position: absolute; inset: 0;
+    background-image: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(255,255,255,0.03) 2px 3px);
+  }
+</style>
+</head>
+<body>
+
+<h1>PHOSPHOR/03 — APP ICON · MATRIX</h1>
+<div class="sub">Code-rain phosphor glyph on graphite. <span class="grn">Katakana cascade · CRT scanlines · terminal prompt as monogram.</span></div>
+
+<div class="grid">
+
+  <div class="card">
+    <div class="title"><span class="n">A</span>Primary — 512×512</div>
+    <img src="icon.svg" width="360" height="360" alt="Phosphor app icon"/>
+    <div class="meta">Android adaptive · 112px corner radius · <span class="grn">falling katakana + prompt cursor</span></div>
+  </div>
+
+  <div class="card">
+    <div class="title"><span class="n">B</span>Size ramp</div>
+    <div class="sizes" style="padding: 28px 0">
+      <div class="one"><img src="icon.svg" width="192" height="192"/><span class="lbl">192</span></div>
+      <div class="one"><img src="icon.svg" width="96" height="96"/><span class="lbl">96</span></div>
+      <div class="one"><img src="icon.svg" width="48" height="48"/><span class="lbl">48</span></div>
+      <div class="one"><img src="icon.svg" width="24" height="24"/><span class="lbl">24</span></div>
+    </div>
+    <div class="meta">Prompt chevron + phosphor block cursor survive to 48px.<br>Below 24 the rain fades out — chevron alone still reads.</div>
+  </div>
+
+  <div class="card">
+    <div class="title"><span class="n">C</span>Monochrome (themed)</div>
+    <div class="variants" style="padding: 28px 0">
+      <div class="v">
+        <div class="mono">
+          <svg viewBox="0 0 64 64" fill="none">
+            <path d="M 18 20 L 18 12 L 26 12" stroke="#2dff7a" stroke-width="1.5"/>
+            <path d="M 38 12 L 46 12 L 46 20" stroke="#2dff7a" stroke-width="1.5"/>
+            <path d="M 46 44 L 46 52 L 38 52" stroke="#2dff7a" stroke-width="1.5"/>
+            <path d="M 26 52 L 18 52 L 18 44" stroke="#2dff7a" stroke-width="1.5"/>
+            <path d="M 24 24 L 32 32 L 24 40" stroke="#2dff7a" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <rect x="36" y="22" width="4" height="20" fill="#2dff7a"/>
+          </svg>
+        </div>
+        <div class="lbl">MATRIX · DEFAULT</div>
+      </div>
+      <div class="v">
+        <div class="mono" style="background:#201006;">
+          <svg viewBox="0 0 64 64" fill="none">
+            <path d="M 18 20 L 18 12 L 26 12" stroke="#ffb347" stroke-width="1.5"/>
+            <path d="M 38 12 L 46 12 L 46 20" stroke="#ffb347" stroke-width="1.5"/>
+            <path d="M 46 44 L 46 52 L 38 52" stroke="#ffb347" stroke-width="1.5"/>
+            <path d="M 26 52 L 18 52 L 18 44" stroke="#ffb347" stroke-width="1.5"/>
+            <path d="M 24 24 L 32 32 L 24 40" stroke="#ffb347" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <rect x="36" y="22" width="4" height="20" fill="#ffb347"/>
+          </svg>
+        </div>
+        <div class="lbl">AMBER</div>
+      </div>
+      <div class="v">
+        <div class="mono" style="background:#0f1820;">
+          <svg viewBox="0 0 64 64" fill="none">
+            <path d="M 18 20 L 18 12 L 26 12" stroke="#5fd4ff" stroke-width="1.5"/>
+            <path d="M 38 12 L 46 12 L 46 20" stroke="#5fd4ff" stroke-width="1.5"/>
+            <path d="M 46 44 L 46 52 L 38 52" stroke="#5fd4ff" stroke-width="1.5"/>
+            <path d="M 26 52 L 18 52 L 18 44" stroke="#5fd4ff" stroke-width="1.5"/>
+            <path d="M 24 24 L 32 32 L 24 40" stroke="#5fd4ff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <rect x="36" y="22" width="4" height="20" fill="#ff9a3c"/>
+          </svg>
+        </div>
+        <div class="lbl">GHOST</div>
+      </div>
+    </div>
+    <div class="meta">Tint swaps with the in-app palette Tweak.<br>Default ships Matrix green.</div>
+  </div>
+
+  <div class="card" style="grid-column: 1 / 2">
+    <div class="title"><span class="n">D</span>On a launcher</div>
+    <div class="phone">
+      <div class="time">9:30 · WED 19·04</div>
+      <div class="clock-big">14:38</div>
+      <div class="date-line">FLEET · <span class="grn">4/6 LIVE</span> · 1 NEEDS INPUT</div>
+      <div class="apps">
+        <div class="app phosphor">
+          <div class="app-icon phosphor">
+            <img src="icon.svg"/>
+            <div class="badge">1</div>
+          </div>
+          <div class="label">PHOSPHOR</div>
+        </div>
+        <div class="app"><div class="app-icon">M</div><div class="label">Mail</div></div>
+        <div class="app"><div class="app-icon">▸</div><div class="label">Term</div></div>
+        <div class="app"><div class="app-icon">⟐</div><div class="label">Maps</div></div>
+        <div class="app"><div class="app-icon">♪</div><div class="label">Audio</div></div>
+        <div class="app"><div class="app-icon">✶</div><div class="label">Notes</div></div>
+        <div class="app"><div class="app-icon">◉</div><div class="label">Cam</div></div>
+        <div class="app"><div class="app-icon">⚙</div><div class="label">Sys</div></div>
+      </div>
+      <div class="dock">
+        <div class="app-icon">▤</div>
+        <div class="app-icon">✉</div>
+        <div class="app-icon phosphor"><img src="icon.svg"/></div>
+        <div class="app-icon">◎</div>
+      </div>
+      <div class="nav"><div></div></div>
+    </div>
+    <div class="meta">Magenta "1" badge = fleet NEEDS INPUT.<br>The launcher alerts you before the app is opened.</div>
+  </div>
+
+  <div class="card" style="grid-column: 2 / 4">
+    <div class="title"><span class="n">E</span>Reasoning</div>
+    <div style="font-size:11.5px;color:#8ab698;line-height:1.7;letter-spacing:0;align-self:stretch">
+      The Matrix direction trades the cold amber/graphite split for a <span style="color:#2dff7a">phosphor-green code rain</span>. Katakana glyphs (ﾊ ﾐ ﾋ ｳ ｼ ﾈ ﾂ ｦ…) fall down the left and right columns with a white-hot head and dim green tail — the Wachowskis' canonical treatment.<br><br>
+      The center glyph is doing double duty: read it as a <span style="color:#2dff7a">terminal prompt</span> (<code>&gt; █</code> — chevron, phosphor block cursor, trailing katakana <code>ｦ</code>) or as a stylized <span style="color:#2dff7a">φ</span> for <em>phosphor</em>. Corner brackets and the <code>/03</code> stamp survive the palette swap so the icon stays in the same family as the in-app chrome.<br><br>
+      A magenta <span style="color:#ff2d8b">•</span> in the top-left of the glyph is a live status LED — it pulses hot when an agent needs input. On a launcher, the green rain reads cyberpunk at any size; at a glance in a tray of 24 icons, the <span style="color:#2dff7a">phosphor head</span> is the only pure-white pixel around.<br><br>
+      <span style="color:#2dff7a">No robot face. No neural-net mesh. No gradient orb.</span> Just the terminal, falling.
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

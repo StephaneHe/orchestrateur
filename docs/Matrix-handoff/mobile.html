@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PHOSPHOR/03 — Mobile</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="mobile-styles.css">
+<style>
+  html, body { margin: 0; padding: 0; min-height: 100vh; background: #0a0b0c; }
+  body {
+    font-family: "Chakra Petch", system-ui, sans-serif;
+    color: #e6dcc8;
+    padding: 48px 32px 80px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 32px;
+  }
+  body::before {
+    content: "";
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(to right, rgba(255,255,255,0.012) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255,255,255,0.012) 1px, transparent 1px);
+    background-size: 24px 24px;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .page-head {
+    max-width: 1400px;
+    width: 100%;
+    position: relative;
+    z-index: 1;
+  }
+  .page-head .word {
+    display: flex; align-items: center; gap: 10px;
+    font-weight: 600; letter-spacing: 0.22em; font-size: 16px;
+  }
+  .page-head .word .mk {
+    width: 12px; height: 12px;
+    background: linear-gradient(135deg, #ffb347 50%, transparent 50%);
+    border: 1px solid #b47a2e;
+  }
+  .page-head .slash { color: #ffb347; }
+  .page-head h1 {
+    font-size: 32px; font-weight: 700;
+    letter-spacing: 0.04em; margin: 12px 0 6px;
+  }
+  .page-head .sub {
+    font-family: "JetBrains Mono", monospace;
+    color: #5f5c55; font-size: 12px;
+    letter-spacing: 0;
+  }
+  .page-head .sub .ok { color: #ffb347; }
+
+  .canvas {
+    display: flex;
+    gap: 40px;
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: 1400px;
+    position: relative;
+    z-index: 1;
+  }
+  .device-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+  }
+  .device-wrap .label {
+    font-family: "JetBrains Mono", monospace;
+    color: #5f5c55;
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+  }
+  .device-wrap .label .amber { color: #ffb347; }
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <div class="word">
+    <span class="mk"></span>
+    PHOSPHOR<span class="slash">/</span>03
+  </div>
+  <h1>MOBILE COMPANION</h1>
+  <div class="sub">
+    Glance surface for the fleet while away from the desk.
+    <span class="ok">Alert-first.</span> One agent deep, one finger fast.
+    Three screens shown live below.
+  </div>
+</div>
+
+<div class="canvas" id="canvas"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="android-frame.jsx"></script>
+<script type="text/babel" src="mobile-app.jsx"></script>
+
+</body>
+</html>

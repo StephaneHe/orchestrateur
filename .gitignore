@@ -1,0 +1,43 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Runtime logs (contain tokens, file content, config values — never commit)
+logs/*
+!logs/.gitkeep
+
+# Secret: the per-install token used to gate dashboard access
+.token
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+config.local.json
+
+# Claude Code per-user overrides
+.claude/settings.local.json
+.claude/.credentials.json
+.claude/scheduled_tasks.lock
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Build artifacts (defensive — none expected)
+dist/
+build/
+
+# Image attachments uploaded via the dashboard (purge manually or wait for a future cron)
+attachments/
+
+# APK build artifacts — rebuilt from sources in android/
+docs/*.apk
+*.apk

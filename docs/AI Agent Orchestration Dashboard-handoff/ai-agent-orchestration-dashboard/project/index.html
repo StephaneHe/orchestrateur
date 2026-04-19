@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PHOSPHOR/03 — AGENT ORCHESTRATION COCKPIT</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body data-palette="amber">
+
+<div id="app">
+
+  <!-- ============ HEADER ============================================ -->
+  <header class="header">
+    <div class="wordmark">
+      <span class="mark"></span>
+      PHOSPHOR<span style="color:var(--accent-primary)">/</span>03
+      <span class="sub">AGENT ORCHESTRATION COCKPIT</span>
+    </div>
+
+    <div class="header-center">
+      <div class="stat"><span>UPTIME</span><span class="val" id="stat-uptime">04:17:32</span></div>
+      <div class="stat"><span>TOKENS</span><span class="val" id="stat-tokens">1,482,309</span></div>
+      <div class="stat cost"><span>COST</span><span class="val" id="stat-cost">$9.62</span></div>
+      <div class="stat agents"><span>AGENTS</span><span class="val" id="stat-agents">4/6</span></div>
+    </div>
+
+    <div class="header-right">
+      <div class="kbd-hints">
+        <span><kbd>⌘K</kbd> search</span>
+        <span><kbd>⌘/</kbd> shortcuts</span>
+        <span><kbd>⌘⇧P</kbd> cmd</span>
+      </div>
+      <div class="conn alive" id="conn">
+        <span class="dot"></span><span class="lbl">WSS · LINK OK</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ============ STRIP ============================================ -->
+  <div class="strip">
+    <span class="tick" id="strip-clock">2026·04·19 · 14:38:12</span>
+    <span class="ruler"></span>
+    <span>SESSION</span><span class="sid">SID 7F3A-9C2E-BB01</span>
+    <span class="ruler"></span>
+    <span>MODEL</span><span class="sid">claude-sonnet-4.5-20250929</span>
+    <span class="ruler"></span>
+    <span>HOST</span><span class="sid">KOWLOON-PC · WIN64</span>
+  </div>
+
+  <!-- ============ DISCONNECT BANNER ================================ -->
+  <div class="banner-disc" id="banner-disc">
+    ⚠ WEBSOCKET LINK LOST · AGENTS STILL RUNNING REMOTELY
+    <button onclick="App.reconnect()">RECONNECT</button>
+  </div>
+
+  <!-- ============ MAIN ============================================== -->
+  <main class="main">
+
+    <!-- -------- TERMINAL -------------------------------------------- -->
+    <section class="terminal">
+      <div class="terminal-chrome">
+        <span class="title">CENTRAL / commander's console</span>
+        <span class="session-id">· pid 48291</span>
+        <span class="spacer"></span>
+        <span class="t-stats">
+          <span>CTX <span class="n">82k</span>/200k</span>
+          <span>TURNS <span class="n">147</span></span>
+          <span>TOOLS <span class="n">312</span></span>
+        </span>
+      </div>
+
+      <div class="term-body" id="term-body">
+        <span class="term-line dim">// phosphor/03 commander bound to unix socket \\.\pipe\claude-orchestrator</span>
+        <span class="term-line dim">// 4 sub-agents online · 2 slots free · fleet heartbeat OK</span>
+        <span class="term-line dim">// type /help for orchestrator commands, /spawn &lt;project&gt; to attach a new agent</span>
+        <span class="term-line">&nbsp;</span>
+
+        <span class="term-line"><span class="ts">14:33:08</span> <span class="lbl">▸ you</span> status across all fleet — which ones are still active?</span>
+        <span class="term-line">&nbsp;</span>
+        <span class="term-line assistant">Current fleet snapshot:</span>
+        <span class="term-line">&nbsp;</span>
+        <span class="term-line"><span class="amber">  ●</span> <span class="path">BKHV-01</span> · BookHaven             <span class="dim">— LIVE  · editing src/api/checkout.ts</span></span>
+        <span class="term-line"><span style="color:#ff2d8b">  ●</span> <span class="path">RMPD-02</span> · RemotePad             <span class="dim">— </span><span style="color:#ff2d8b">NEEDS_USER_INPUT</span><span class="dim"> · migration strategy</span></span>
+        <span class="term-line"><span class="amber">  ●</span> <span class="path">CRWG-03</span> · CryptoWing            <span class="dim">— LIVE  · running cargo test --release</span></span>
+        <span class="term-line"><span style="color:#ff5b3e">  ●</span> <span class="path">FLMN-04</span> · FlightMonitor         <span class="dim">— </span><span style="color:#ff5b3e">ERROR</span><span class="dim"> · ECONNREFUSED 127.0.0.1:8088</span></span>
+        <span class="term-line"><span style="color:#5f5c55">  ○</span> <span class="path">LDGR-05</span> · LedgerLoom            <span class="dim">— idle · last activity 37m ago</span></span>
+        <span class="term-line"><span class="ok">  ●</span> <span class="path">NOIR-06</span> · Noir                  <span class="dim">— DONE  · 12 files changed · awaiting review</span></span>
+        <span class="term-line">&nbsp;</span>
+        <span class="term-line dim">  → RMPD-02 is blocked. ERROR on FLMN-04 is the newer signal. Recommend triage FLMN first.</span>
+        <span class="term-line">&nbsp;</span>
+
+        <span class="term-line"><span class="ts">14:36:41</span> <span class="lbl">▸ you</span> look at FLMN-04 ECONNREFUSED. is the airtraffic stub container running?</span>
+        <span class="term-line">&nbsp;</span>
+        <span class="term-line assistant">Checking container state on host:</span>
+        <span class="term-line">&nbsp;</span>
+        <div class="term-box cyan">tool · Bash · docker ps --filter name=atc-stub --format "{{.Status}}"</div>
+        <span class="term-line">&nbsp;</span>
+        <span class="term-line"><span class="dim">&gt;</span> <span class="err">Exited (137) 4 minutes ago</span></span>
+        <span class="term-line">&nbsp;</span>
+        <span class="term-line assistant">Container was OOM-killed. Memory cap is 256MB — it needs more for the full flight table.</span>
+        <span class="term-line assistant">Proposed remediation:</span>
+        <span class="term-line">  1. <span class="cyan">docker-compose.yml</span> — raise <span class="cyan">mem_limit</span> to <span class="amber">1g</span></span>
+        <span class="term-line">  2. restart atc-stub</span>
+        <span class="term-line">  3. nudge FLMN-04 to retry</span>
+        <span class="term-line">&nbsp;</span>
+        <span class="term-line dim">// shall I proceed? [y]es · [n]o · [d]iff-first</span>
+        <span class="term-line">&nbsp;</span>
+
+        <span class="term-line"><span class="ts">14:37:22</span> <span class="lbl">▸ you</span> d</span>
+        <span class="term-line">&nbsp;</span>
+        <span class="term-line assistant">Diff:</span>
+        <pre style="color:var(--fg-1); font-size:12px; margin: 4px 0 10px 0;">  services:
+    atc-stub:
+      image: ghcr.io/phosphor/atc-stub:2026.04
+  -   mem_limit: 256m
+  +   mem_limit: 1g
+      ports: ["8088:8088"]</pre>
+        <span class="term-line dim">// awaiting confirmation…</span>
+      </div>
+
+      <div class="term-prompt">
+        <span class="lead">▸ <span class="path">C:\fleet</span> ⟫</span>
+        <div class="input-wrap">
+          <input id="term-input" type="text" autocomplete="off" spellcheck="false" autofocus placeholder="type a command, or /help">
+          <span class="caret"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- -------- PANEL STACK ---------------------------------------- -->
+    <section class="stack" id="stack">
+      <div class="stack-header">
+        <span class="title">FLEET · <span class="count" id="fleet-count">6</span></span>
+        <span class="spacer"></span>
+        <input class="search" id="fleet-search" placeholder="⌘K  search all panels">
+      </div>
+
+      <div id="panel-host"></div>
+    </section>
+
+  </main>
+
+  <!-- ============ FOOTER =========================================== -->
+  <footer class="footer">
+    <span>PHOSPHOR/03</span>
+    <span>BUILD 2026.04.19+a17c3</span>
+    <span>·</span>
+    <span>STREAM-JSONL v2</span>
+    <span>·</span>
+    <span>XTERM.JS 5.5 BOUND</span>
+    <span class="spacer"></span>
+    <span class="heartbeat" id="heartbeat">▮▯▮▯▮ 60 Hz · rtt 8ms</span>
+  </footer>
+
+</div>
+
+<div class="machine-sig">█ KOWLOON-PC · PHSPHR-03 · NOT FOR FLIGHT</div>
+
+<!-- ============ TWEAKS PANEL =================================== -->
+<div class="tweaks" id="tweaks">
+  <h3>TWEAKS</h3>
+
+  <div class="group">
+    <div class="group-label">Palette</div>
+    <div class="row" data-tweak="palette">
+      <button data-v="amber" class="on">AMBER</button>
+      <button data-v="matrix">MATRIX</button>
+      <button data-v="ghost">GHOST</button>
+      <button data-v="crimson">CRIMSON</button>
+    </div>
+  </div>
+
+  <div class="group">
+    <div class="group-label">Density</div>
+    <div class="row" data-tweak="density">
+      <button data-v="normal" class="on">NORMAL</button>
+      <button data-v="compact">COMPACT</button>
+    </div>
+  </div>
+
+  <div class="group">
+    <div class="group-label">Scanlines</div>
+    <div class="row" data-tweak="scanlines">
+      <button data-v="off" class="on">OFF</button>
+      <button data-v="faint">FAINT</button>
+    </div>
+  </div>
+
+  <div class="group">
+    <div class="group-label">Panels</div>
+    <div class="row" data-tweak="panels">
+      <button data-v="6" class="on">6</button>
+      <button data-v="3">3</button>
+      <button data-v="8">8</button>
+    </div>
+  </div>
+
+  <div class="group">
+    <div class="group-label">Demo</div>
+    <div class="row">
+      <button onclick="App.demoDisconnect()">TOGGLE DISCONNECT</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

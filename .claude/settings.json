@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep",
+      "Bash(npm install*)",
+      "Bash(npm ci*)",
+      "Bash(npm run *)",
+      "Bash(npm test*)",
+      "Bash(npm ls*)",
+      "Bash(npm outdated*)",
+      "Bash(node *)",
+      "Bash(node --version)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git branch*)",
+      "Bash(ls *)",
+      "Bash(tailscale ip*)",
+      "Bash(tailscale status*)",
+      "Bash(powershell -File ./start.ps1)",
+      "Bash(powershell -File .\\start.ps1)",
+      "WebFetch(domain:developer.mozilla.org)",
+      "WebFetch(domain:nodejs.org)",
+      "WebFetch(domain:expressjs.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:xtermjs.org)"
+    ],
+    "deny": [
+      "Bash(*ANTHROPIC_API_KEY=*)",
+      "Bash(*export ANTHROPIC_API_KEY*)",
+      "Bash(*--dangerously-skip-permissions*)",
+      "Bash(*--allow-dangerously-skip-permissions*)",
+      "Write(.token)",
+      "Write(logs/**)",
+      "Write(.env)",
+      "Write(.env.*)"
+    ]
+  },
+  "env": {
+    "NODE_ENV": "development"
+  }
+}

@@ -1,0 +1,179 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    
+    <linearGradient id="mx-deep" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#061008"></stop>
+      <stop offset="1" stop-color="#000000"></stop>
+    </linearGradient>
+    <linearGradient id="mx-green" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b3ffc8"></stop>
+      <stop offset="0.45" stop-color="#2dff7a"></stop>
+      <stop offset="1" stop-color="#00c247"></stop>
+    </linearGradient>
+    
+    <linearGradient id="mx-rain" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2dff7a" stop-opacity="0"></stop>
+      <stop offset="0.15" stop-color="#2dff7a" stop-opacity="0.1"></stop>
+      <stop offset="0.7" stop-color="#2dff7a" stop-opacity="0.55"></stop>
+      <stop offset="0.95" stop-color="#ffffff" stop-opacity="1"></stop>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="1"></stop>
+    </linearGradient>
+
+    
+    <pattern id="mx-scan" x="0" y="0" width="3" height="3" patternUnits="userSpaceOnUse">
+      <rect width="3" height="3" fill="transparent"></rect>
+      <rect y="1.5" width="3" height="0.8" fill="rgba(45,255,122,0.05)"></rect>
+    </pattern>
+
+    
+    <radialGradient id="mx-vig" cx="0.5" cy="0.5" r="0.72">
+      <stop offset="0" stop-color="rgba(45,255,122,0.18)"></stop>
+      <stop offset="0.5" stop-color="rgba(45,255,122,0.04)"></stop>
+      <stop offset="1" stop-color="rgba(0,0,0,0)"></stop>
+    </radialGradient>
+
+    <filter id="mx-glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="4" result="b"></feGaussianBlur>
+      <feMerge><feMergeNode in="b"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge>
+    </filter>
+    <filter id="mx-glow-soft" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="8" result="b"></feGaussianBlur>
+      <feMerge><feMergeNode in="b"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge>
+    </filter>
+
+    
+    <clipPath id="mx-clip">
+      <rect width="512" height="512" rx="112" ry="112"></rect>
+    </clipPath>
+
+    
+    
+  </defs>
+
+  
+  <rect width="512" height="512" rx="112" ry="112" fill="url(#mx-deep)"></rect>
+  <rect width="512" height="512" rx="112" ry="112" fill="url(#mx-vig)"></rect>
+
+  
+  <g clip-path="url(#mx-clip)" opacity="0.9">
+    
+    <g transform="translate(38 0)" class="gl" font-size="22" text-anchor="middle">
+      <rect x="-11" y="20" width="22" height="240" fill="url(#mx-rain)"></rect>
+      <text x="0" y="44" fill="#0aff5a" opacity="0.25">ﾊ</text>
+      <text x="0" y="70" fill="#0aff5a" opacity="0.35">ﾐ</text>
+      <text x="0" y="96" fill="#0aff5a" opacity="0.45">ﾋ</text>
+      <text x="0" y="122" fill="#0aff5a" opacity="0.55">ｰ</text>
+      <text x="0" y="148" fill="#0aff5a" opacity="0.7">ｳ</text>
+      <text x="0" y="174" fill="#2dff7a" opacity="0.85">ｼ</text>
+      <text x="0" y="200" fill="#7dffa8">0</text>
+      <text x="0" y="226" fill="#baffc8">ﾈ</text>
+      <text x="0" y="252" fill="#ffffff" filter="url(#mx-glow)">1</text>
+    </g>
+    
+    <g transform="translate(86 0)" class="gl" font-size="22" text-anchor="middle">
+      <text x="0" y="30" fill="#0aff5a" opacity="0.3">ｻ</text>
+      <text x="0" y="56" fill="#0aff5a" opacity="0.4">ﾄ</text>
+      <text x="0" y="82" fill="#0aff5a" opacity="0.5">ﾗ</text>
+      <text x="0" y="108" fill="#2dff7a" opacity="0.65">7</text>
+      <text x="0" y="134" fill="#2dff7a" opacity="0.8">ｹ</text>
+      <text x="0" y="160" fill="#baffc8">ﾂ</text>
+      <text x="0" y="186" fill="#ffffff" filter="url(#mx-glow)">ﾁ</text>
+    </g>
+    
+    <g transform="translate(434 0)" class="gl" font-size="22" text-anchor="middle">
+      <text x="0" y="60" fill="#0aff5a" opacity="0.25">9</text>
+      <text x="0" y="86" fill="#0aff5a" opacity="0.35">ｵ</text>
+      <text x="0" y="112" fill="#0aff5a" opacity="0.45">ﾜ</text>
+      <text x="0" y="138" fill="#0aff5a" opacity="0.55">ﾓ</text>
+      <text x="0" y="164" fill="#0aff5a" opacity="0.7">ﾋ</text>
+      <text x="0" y="190" fill="#2dff7a" opacity="0.85">ﾗ</text>
+      <text x="0" y="216" fill="#7dffa8">0</text>
+      <text x="0" y="242" fill="#baffc8">ｻ</text>
+      <text x="0" y="268" fill="#ffffff" filter="url(#mx-glow)">ﾈ</text>
+    </g>
+    
+    <g transform="translate(476 0)" class="gl" font-size="22" text-anchor="middle">
+      <text x="0" y="80" fill="#0aff5a" opacity="0.3">ｴ</text>
+      <text x="0" y="106" fill="#0aff5a" opacity="0.4">ｿ</text>
+      <text x="0" y="132" fill="#0aff5a" opacity="0.55">ﾑ</text>
+      <text x="0" y="158" fill="#2dff7a" opacity="0.75">3</text>
+      <text x="0" y="184" fill="#baffc8">ﾅ</text>
+      <text x="0" y="210" fill="#ffffff" filter="url(#mx-glow)">ﾃ</text>
+    </g>
+    
+    <g transform="translate(230 0)" class="gl" font-size="22" text-anchor="middle">
+      <text x="0" y="420" fill="#0aff5a" opacity="0.4">ﾄ</text>
+      <text x="0" y="446" fill="#2dff7a" opacity="0.8">ｼ</text>
+      <text x="0" y="472" fill="#ffffff" filter="url(#mx-glow)">ﾀ</text>
+    </g>
+    <g transform="translate(134 0)" class="gl" font-size="22" text-anchor="middle">
+      <text x="0" y="380" fill="#0aff5a" opacity="0.3">ﾖ</text>
+      <text x="0" y="406" fill="#0aff5a" opacity="0.5">ﾝ</text>
+      <text x="0" y="432" fill="#2dff7a" opacity="0.8">5</text>
+      <text x="0" y="458" fill="#ffffff" filter="url(#mx-glow)">ﾗ</text>
+    </g>
+    <g transform="translate(380 0)" class="gl" font-size="22" text-anchor="middle">
+      <text x="0" y="340" fill="#0aff5a" opacity="0.3">ﾎ</text>
+      <text x="0" y="366" fill="#0aff5a" opacity="0.5">ﾂ</text>
+      <text x="0" y="392" fill="#2dff7a" opacity="0.8">ﾏ</text>
+      <text x="0" y="418" fill="#ffffff" filter="url(#mx-glow)">8</text>
+    </g>
+  </g>
+
+  
+  <rect width="512" height="512" rx="112" ry="112" fill="url(#mx-scan)"></rect>
+
+  
+  <g transform="translate(256 256)">
+    
+    <ellipse cx="0" cy="0" rx="180" ry="110" fill="rgba(45,255,122,0.15)" filter="url(#mx-glow-soft)"></ellipse>
+
+    
+    
+    <g filter="url(#mx-glow)">
+      
+      <path d="M -130 -80 L -150 -80 L -150 80 L -130 80" fill="none" stroke="#2dff7a" stroke-width="5" stroke-linecap="square" stroke-linejoin="miter"></path>
+      
+      <path d="M 130 -80 L 150 -80 L 150 80 L 130 80" fill="none" stroke="#2dff7a" stroke-width="5" stroke-linecap="square" stroke-linejoin="miter"></path>
+
+      
+      <path d="M -90 -40 L -50 0 L -90 40" fill="none" stroke="url(#mx-green)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"></path>
+
+      
+      <rect x="-20" y="-44" width="18" height="88" fill="#ffffff"></rect>
+      <rect x="-20" y="-44" width="18" height="88" fill="#2dff7a" opacity="0.6"></rect>
+
+      
+      <text x="30" y="22" class="gl" font-size="72" font-weight="500" fill="#2dff7a" letter-spacing="-2">ｦ</text>
+    </g>
+
+    
+    <text x="0" y="108" text-anchor="middle" class="mono" font-size="14" fill="#2dff7a" opacity="0.75" letter-spacing="6">PHOSPHOR</text>
+
+    
+    <g transform="translate(112 -86)">
+      <rect x="-24" y="-14" width="48" height="28" fill="#061008" stroke="#2dff7a" stroke-width="1.5"></rect>
+      <text x="0" y="6" text-anchor="middle" class="ui" font-size="16" fill="#2dff7a" letter-spacing="1">/03</text>
+    </g>
+
+    
+    <g transform="translate(-128 -98)">
+      <circle r="5" fill="#ff2d8b" filter="url(#mx-glow)"></circle>
+    </g>
+  </g>
+
+  
+  <rect x="8" y="8" width="496" height="496" rx="104" ry="104" fill="none" stroke="rgba(45,255,122,0.18)" stroke-width="1"></rect>
+
+  
+  <g stroke="#2dff7a" stroke-width="3" fill="none" stroke-linecap="square" opacity="0.85" filter="url(#mx-glow)">
+    <path d="M 44 84 L 44 44 L 84 44"></path>
+    <path d="M 428 44 L 468 44 L 468 84"></path>
+    <path d="M 468 428 L 468 468 L 428 468"></path>
+    <path d="M 84 468 L 44 468 L 44 428"></path>
+  </g>
+
+  
+  <text x="32" y="492" class="mono" font-size="10" fill="rgba(45,255,122,0.45)" letter-spacing="1">BKHV·RMPD·CRWG·FLMN</text>
+  <text x="480" y="492" text-anchor="end" class="mono" font-size="10" fill="rgba(45,255,122,0.45)" letter-spacing="1">v2026.04</text>
+</svg>
