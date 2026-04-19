@@ -266,22 +266,26 @@ function computeFanLayout(musicians, viewport) {
   const usableH   = h - topPad - bottomPad;
 
   // Hand baseline Y — where the CENTER card's bottom lives. Primary hand
-  // sits near the composer; subsequent hands climb by handStepY.
-  const handStepY = handCount <= 1 ? 0 : Math.min(220, (usableH - 140) / (handCount - 1));
+  // sits near the composer; subsequent hands climb by handStepY so they
+  // spread out using as much of the viewport as possible.
+  const handStepY = handCount <= 1
+    ? 0
+    : Math.max(220, (usableH - 120) / (handCount - 1));
 
   for (let hi = 0; hi < handCount; hi++) {
     const hand     = hands[hi];
     const size     = hand.length;
-    const scale    = Math.max(0.8, 1 - hi * 0.12);
-    const cardW    = Math.round(Math.min(210, w * 0.56) * scale);
+    const scale    = Math.max(0.82, 1 - hi * 0.10);
+    const cardW    = Math.round(Math.min(260, w * 0.70) * scale);
 
     // Fan geometry: pivot sits BELOW this hand's baseline by R. Card
     // bottoms trace an arc of radius R around the pivot.
-    const R        = 320 * scale;
+    const R        = 380 * scale;
     const baseY    = h - bottomPad - hi * handStepY;     // centre-card bottom
     const pivotY   = baseY + R;
 
-    // Angular spread — tight enough that edge cards stay mostly on screen.
+    // Angular spread — tight enough that edge cards stay mostly on screen
+    // even at the widest card size.
     const maxDeg   = size === 1 ? 0 : Math.min(22, 5.5 * (size - 1));
     const step     = size > 1 ? (2 * maxDeg) / (size - 1) : 0;
     const mid      = (size - 1) / 2;
