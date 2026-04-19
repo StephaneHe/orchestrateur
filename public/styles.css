@@ -410,6 +410,12 @@ kbd {
 }
 .target-chip:hover { border-color: var(--tc-color); }
 .target-chip.is-open { border-color: var(--tc-color); }
+.target-chip.is-conductor {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, color-mix(in oklab, var(--accent) 12%, var(--card-bg)), var(--card-bg));
+  box-shadow: 0 0 16px color-mix(in oklab, var(--accent) 28%, transparent);
+}
+.target-chip.is-conductor .tc-label { color: var(--accent); font-weight: 600; letter-spacing: 0.3px; }
 .tc-dot {
   width: 7px; height: 7px; border-radius: 50%;
   background: var(--tc-color);
@@ -441,6 +447,12 @@ kbd {
   transition: background 0.15s;
 }
 .tm-item:hover, .tm-item.is-selected { background: var(--card-bg-hover); }
+.tm-item.is-conductor {
+  border: 1px solid color-mix(in oklab, var(--accent) 40%, transparent);
+  background: color-mix(in oklab, var(--accent) 8%, transparent);
+  margin-bottom: 4px;
+}
+.tm-item.is-conductor .tm-name { color: var(--accent); font-weight: 600; }
 .tm-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .tm-name { flex: 1; }
 .tm-sub  { color: var(--fg-2); font-size: 11px; font-family: var(--font-mono); }

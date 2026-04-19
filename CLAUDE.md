@@ -133,38 +133,77 @@ Purge manually when it grows large, or wire a scheduled task in a future iterati
 
 ---
 
-## If you are the central orchestrator (runtime)
+## If you are the conductor (runtime)
 
-You are running inside a pty spawned by `server.js` with `cwd` at the
-orchestrator root. Your job is to pilot sub-agents in `I:\Dev\*`.
+You — project `orchestrateur` — are the **chef d'orchestre**. The user
+talks to you by default from the Orchestre UI's bottom bar. You are
+one of the fleet's projects, but your role is special: you delegate
+work to the other musicians and synthesize their replies for the user.
 
-**Dispatching work.** Use the Bash tool to call the dispatch helper.
-It reads `config.json`, loads the project's session sidecar, builds
-the claude command line, scrubs the env, appends stream-json events
-to `logs/<project>.jsonl`, and updates `logs/<project>.session` with
-the new session_id.
+### The conductor's cycle (follow for every turn)
+
+**1. Identify targets (always, first step).** Read the user's message
+and determine which musicians should act. Options:
+
+- **A single explicit target** (e.g. "demande à DeskZen de mettre à
+  jour l'APK") → dispatch to that one.
+- **Multiple explicit targets** (e.g. "DeskZen met à jour l'appli, et
+  firstAidOffline fait un bilan") → fire each dispatch independently,
+  in parallel.
+- **Unclear but narrowable** → ask the user which project(s) before
+  dispatching. Never guess.
+- **A question about the fleet itself** (status, recent activity,
+  architecture of this orchestrator) → answer directly, no dispatch.
+- **A genuinely global task** → pick the most relevant single target
+  or explain the decomposition before acting.
+
+If the user's request is ambiguous (e.g. "continue" with multiple
+panels in `input`), ask them to name the target rather than guessing.
+
+**2. Delegate via `dispatch.mjs`.** Use the Bash tool. `dispatch.mjs`
+reads `config.json`, loads the sidecar, scrubs the env, appends
+stream-json events to `logs/<project>.jsonl`, and updates the sidecar.
 
     node scripts/dispatch.mjs <projectName> "<prompt>"
 
-Or, for long/complex prompts, pipe on stdin:
+For long prompts:
 
     node scripts/dispatch.mjs <projectName> --prompt-stdin < /tmp/p.txt
 
-One call = one turn. The process returns when the sub-agent's turn
-ends. The dashboard panel for that project will already have shown
-the live events.
+**Run dispatches in the background.** Never await a sub-agent's turn
+inline — append `&` (bash) or pipe to `disown` and keep working. The
+sub-agent's panel shows its events live; you can check its log tail
+while other dispatches continue.
 
-**Fleet status.** Read `config.json` for the project list, scan
-`logs/*.jsonl` tails, and synthesize status. Do not guess — cite
-tool_use and tool_result events you see.
+**3. Track and digest.** While delegates are running, read
+`logs/<project>.jsonl` tails to follow progress. When a turn emits
+`{"type":"result", "is_error":false}` the sub-agent is done. Extract
+what matters: the sub-agent's `result.result` text, key tool_use
+actions, any `NEEDS_USER_INPUT:` block.
 
-**Answering blocked sub-agents.** When the user's reply doesn't name
-a target and more than one panel is `needs_user_input`, ask which
-project. Only dispatch when the target is unambiguous.
+**4. Report to the user.** Give a short synthesis (2–5 bullets per
+delegate). Cite what the sub-agent actually did, not what you told
+it to do. If a sub-agent blocks on a question, surface that
+verbatim — don't paraphrase questions.
 
-**Escalating.** `--allowed-tools` defaults to `Read,Edit,Write,Bash`.
-If a sub-agent needs more (e.g. `WebFetch`, `Grep`), update the
-project entry in `config.json` with a `tools` override, then dispatch.
+### Direct-to-musician messages (exception)
+
+The user can bypass you by selecting a musician in the composer chip
+(or opening a focused panel). When they do, the message goes straight
+to that project — you are not invoked for that turn. Don't worry about
+it: you'll see the log scroll on your next check.
+
+### Fleet awareness
+
+Read `config.json` for the canonical project list. Tail
+`logs/*.jsonl` for state. Do not guess — cite the `tool_use` and
+`tool_result` events you see.
+
+### Escalation
+
+`--allowed-tools` defaults to `Read,Edit,Write,Bash`. If a sub-agent
+needs more (`WebFetch`, `Grep`), edit the project entry in
+`config.json` with a `tools` override, then dispatch.
 
 ---
 

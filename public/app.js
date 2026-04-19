@@ -394,7 +394,8 @@ const App = {
   focused: null,                  // currently focused musician (or null)
   stream: null,
   composer: {
-    target: null,                 // musician name OR null = "tout l'orchestre"
+    target: "orchestrateur",      // the conductor: default recipient — it delegates to the others
+    CONDUCTOR: "orchestrateur",   // name of the conductor project (special routing)
     hasDraft: false,
   },
   _reorderTimer: null,
@@ -513,41 +514,56 @@ const App = {
       }
     });
 
-    this.setTarget(null);
+    this.setTarget(this.composer.CONDUCTOR);
   },
 
   setTarget(name) {
+    // Empty / null falls back to the conductor — the user is never in
+    // "broadcast" mode; the conductor (orchestrateur) fans out itself.
+    if (!name) name = this.composer.CONDUCTOR;
     this.composer.target = name;
     const chip = $("#target-chip");
     const lbl  = $(".tc-label", chip);
-    const dot  = $(".tc-dot",   chip);
-    if (name) {
+    const isConductor = name === this.composer.CONDUCTOR;
+    if (isConductor) {
+      lbl.textContent = "au chef d'orchestre";
+      chip.classList.add("is-conductor");
+      chip.style.setProperty("--tc-color", "var(--accent)");
+    } else {
       lbl.textContent = `à ${name}`;
+      chip.classList.remove("is-conductor");
       const m = this.musicians.get(name);
       chip.style.setProperty("--tc-color", varByState(m?.state || "idle"));
-    } else {
-      lbl.textContent = "à tout l'orchestre";
-      chip.style.setProperty("--tc-color", "var(--fg-2)");
     }
-    $("#composer-input").placeholder = name
-      ? `Parle à ${name}…`
-      : "Parle à tout l'orchestre — ou @ pour choisir un musicien";
+    $("#composer-input").placeholder = isConductor
+      ? "Parle au chef d'orchestre — il déléguera aux musiciens"
+      : `Parle à ${name}… (contournement : d'habitude le chef délègue)`;
     redrawThreads();
   },
 
   updateTargetMenu() {
     const menu = $("#target-menu");
+    const CONDUCTOR = this.composer.CONDUCTOR;
+    const conductorM = this.musicians.get(CONDUCTOR);
     const rows = [
-      { name: null, label: "à tout l'orchestre", sub: "diffusion" },
-      ...[...this.musicians.values()].map(m => ({
-        name: m.name,
-        label: m.name,
-        sub: STATE_LABELS[m.state].label,
-        state: m.state,
-      })),
+      {
+        name: CONDUCTOR,
+        label: "au chef d'orchestre",
+        sub: "délègue aux musiciens (défaut)",
+        state: conductorM?.state || "idle",
+        conductor: true,
+      },
+      ...[...this.musicians.values()]
+        .filter(m => m.name !== CONDUCTOR)
+        .map(m => ({
+          name: m.name,
+          label: m.name,
+          sub: `direct · ${STATE_LABELS[m.state].label}`,
+          state: m.state,
+        })),
     ];
-    menu.innerHTML = rows.map((r, i) => `
-      <button class="tm-item ${r.name === this.composer.target ? "is-selected" : ""}" data-name="${esc(r.name || "")}">
+    menu.innerHTML = rows.map((r) => `
+      <button class="tm-item ${r.conductor ? "is-conductor" : ""} ${r.name === this.composer.target ? "is-selected" : ""}" data-name="${esc(r.name || "")}">
         <span class="tm-dot" style="background: ${r.state ? varByState(r.state) : "var(--fg-3)"};"></span>
         <span class="tm-name">${esc(r.label)}</span>
         <span class="tm-sub">${esc(r.sub)}</span>
@@ -566,11 +582,7 @@ const App = {
     const input = $("#composer-input");
     const msg = input.value.trim();
     if (!msg) return;
-    const target = this.composer.target;
-    if (!target) {
-      alert("Dispatching ‘à tout l'orchestre’ n'est pas encore implémenté — choisis un musicien dans le chip.");
-      return;
-    }
+    const target = this.composer.target || this.composer.CONDUCTOR;
     input.disabled = true;
     try {
       const resp = await fetch("/api/dispatch", {
