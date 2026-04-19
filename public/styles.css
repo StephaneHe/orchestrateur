@@ -1126,6 +1126,12 @@ kbd {
    Applied additively: layout switches, typography & colors stay.
    ============================================================ */
 @media (max-width: 767.98px) {
+  /* Stage owns all pointer gestures so horizontal swipes aren't stolen by
+     the browser's back-navigation gesture. Interactive children opt back in. */
+  body, html { overscroll-behavior: none; }
+  .stage { touch-action: none; }
+  .composer, .topbar, .overlay, .tweaks { touch-action: auto; }
+
   /* Topbar — shrink & strip to essentials */
   .topbar { padding: 10px 14px; }
   .brand { font-size: 14px; }
