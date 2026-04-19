@@ -1206,6 +1206,7 @@ kbd {
     font-weight: 700;
     font-size: 9px;
   }
+  .musician.is-fan .m-cbadge[hidden] { display: none; }
   /* Taller cards on mobile — playing-card aspect ratio feels right with
      more vertical room for the last-line preview. */
   .musician.is-fan .m-body {
