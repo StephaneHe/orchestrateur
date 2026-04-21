@@ -312,6 +312,16 @@ app.use(express.static(path.join(__dirname, 'public'), {
 // Project list for the viewer — names + effective tool/model only, never
 // absolute filesystem paths (defense in depth, even though it's already
 // single-user and token-gated).
+// Per-project last-read marker — ISO timestamp written by /api/mark-read,
+// read on every /api/config. Clients use it to suppress unread counting on
+// events that precede the marker (so a reload doesn't re-inflate unreads).
+function readMarker(projectName) {
+  try {
+    const v = fs.readFileSync(path.join(LOGS_DIR, `${projectName}.read`), 'utf8').trim();
+    return v || null;
+  } catch { return null; }
+}
+
 app.get('/api/config', (req, res) => {
   const defaults = config.defaults ?? {};
   res.json({
@@ -324,8 +334,26 @@ app.get('/api/config', (req, res) => {
       model: p.model ?? defaults.model ?? null,
       tools: p.tools ?? defaults.allowedTools ?? 'Read,Edit,Write,Bash',
       attachedSession: sessions.get(p.name) || null,
+      readAt: readMarker(p.name),
     })),
   });
+});
+
+// Persist a per-project "read up to now" marker. Idempotent; any client
+// can call it. Body: { project, timestamp? }. Timestamp defaults to now.
+app.post('/api/mark-read', express.json({ limit: '2kb' }), (req, res) => {
+  const name = typeof req.body?.project === 'string' ? req.body.project.trim() : '';
+  const proj = config.projects.find(p => p.name === name);
+  if (!proj) return res.status(404).json({ error: 'unknown project' });
+  const ts = typeof req.body?.timestamp === 'string' && req.body.timestamp
+    ? req.body.timestamp
+    : new Date().toISOString();
+  try {
+    fs.writeFileSync(path.join(LOGS_DIR, `${name}.read`), ts);
+    res.json({ ok: true, project: name, readAt: ts });
+  } catch (e) {
+    res.status(500).json({ error: `write failed: ${e.message}` });
+  }
 });
 
 app.get('/api/sessions', (req, res) => {

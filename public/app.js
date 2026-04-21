@@ -10,16 +10,17 @@
 // --------------------------------------------------------------------------
 
 const RING_MAX = 30;              // per-musician event buffer
-const CARD_MIN_W = 150;
-const CARD_MAX_W = 220;
-const CARD_H     = 120;
-const GAP_MIN    = 28;            // minimum horizontal gap between card centers
-const ROW_GAP    = 30;            // min vertical breathing room between rows
-const ARC_AMP    = 15;            // how far a card's Y is perturbed by the arc shape
+const CARD_MIN_W = 110;
+const CARD_MAX_W = 150;
+const CARD_H     = 76;
+const GAP_MIN    = 18;            // minimum horizontal gap between card centers
+const ROW_GAP    = 14;            // min vertical breathing room between rows
+const ARC_AMP    = 10;            // how far a card's Y is perturbed by the arc shape
 const ROW_STEP   = CARD_H + ROW_GAP + 2 * ARC_AMP;  // guaranteed non-overlap
 const TOP_PAD    = 96;            // room for topbar
-const BOTTOM_PAD = 220;           // room for composer
+const BOTTOM_PAD = 240;           // room for composer
 const SIDE_PAD   = 40;
+const STRIP_H    = 220;           // fan strip band height on desktop (below conductor view)
 
 const STATE_LABELS = {
   idle:   { label: "AU REPOS",              icon: "○" },
@@ -62,9 +63,21 @@ class Musician {
     this.lastLine = "";                  // cached preview for the arc card
     this.lastAssistantText = "";         // last assistant text (for NEEDS_USER_INPUT detection)
     this.unreadCount = 0;                // events since last focused-view open
+    // Last-read marker (ISO timestamp). Comes from the server at
+    // /api/config (logs/<name>.read) and is updated by markRead() via
+    // POST /api/mark-read so unread state survives reloads.
+    this.readAt = project.readAt || null;
     this.lastActivityMs = 0;
     this.turnCount = 0;
     this.freq = 0;                       // communication frequency score
+
+    // Token / cost accumulators — populated from each `result` event.
+    this.totalCostUsd     = 0;
+    this.totalInputTokens = 0;           // real input (excludes cache)
+    this.totalOutputTokens = 0;
+    this.totalCacheReadTokens = 0;
+    this.totalCacheCreateTokens = 0;
+    this.lastTurnUsage = null;           // { inTok, outTok, cacheRead, cacheCreate, cost, ctxUsed, ctxMax }
 
     // Ring buffer of RAW stream-json events (bounded) — each is a JSON obj.
     // The focused view renders up to RING_MAX recent entries.
@@ -86,11 +99,22 @@ class Musician {
     this.push(raw);
 
     const t = raw.type;
-    if (t === "system") {
+    if (t === "user_prompt") {
+      // The orchestrator's prompt, injected synthetically by dispatch.mjs.
+      this.turnStartMs = Date.parse(raw.timestamp) || Date.now();
+      this.setState(this.state === "idle" || this.state === "unread" ? "live" : this.state);
+      this.lastLine = String(raw.text || "").replace(/\s+/g, " ").trim().slice(0, 140);
+    } else if (t === "system") {
       if (raw.subtype === "init") {
         this.turnCount++;
+        this.turnStartMs = Date.parse(raw.timestamp) || Date.now();
         this.setState(this.state === "idle" || this.state === "unread" ? "live" : this.state);
       }
+    } else if (t === "stream_event") {
+      // Partial message deltas — just bump activity timestamp so the heartbeat
+      // moves. Rendering the deltas would require reassembling content blocks
+      // across events; keep it simple and treat them as liveness pings.
+      this.lastActivityMs = Date.now();
     } else if (t === "assistant") {
       const content = raw.message?.content || [];
       let hasTool = false, hasThink = false, gotText = null;
@@ -108,16 +132,45 @@ class Musician {
       // Tool result comes back — keep current state
     } else if (t === "result") {
       const isErr = !!raw.is_error || (typeof raw.subtype === "string" && raw.subtype.startsWith("error"));
+      // Harvest token/cost numbers from the terminal result event.
+      const u = raw.usage || {};
+      const inTok = Number(u.input_tokens || 0);
+      const outTok = Number(u.output_tokens || 0);
+      const cacheRead = Number(u.cache_read_input_tokens || 0);
+      const cacheCreate = Number(u.cache_creation_input_tokens || 0);
+      const cost = Number(raw.total_cost_usd || 0);
+      const mu = raw.modelUsage ? Object.values(raw.modelUsage)[0] : null;
+      const ctxMax = mu?.contextWindow || 0;
+      const ctxUsed = inTok + cacheRead + cacheCreate;
+      this.totalCostUsd         += cost;
+      this.totalInputTokens     += inTok;
+      this.totalOutputTokens    += outTok;
+      this.totalCacheReadTokens += cacheRead;
+      this.totalCacheCreateTokens += cacheCreate;
+      this.lastTurnUsage = { inTok, outTok, cacheRead, cacheCreate, cost, ctxUsed, ctxMax };
       const needs = /^NEEDS_USER_INPUT:\s*(.*)$/m.exec(this.lastAssistantText || "");
-      if (isErr) {
+      if (isErr && raw.synthetic) {
+        // Synthetic interrupts (orchestrator restart / child crash) — no question was asked.
+        this.lastLine = raw.subtype || "interrompu";
+        this.setState("idle");
+      } else if (isErr) {
         this.lastLine = raw.subtype || "échec du tour";
-        this.setState("input");              // treat errors as needing attention too
+        this.setState("input");              // real error — needs attention
       } else if (needs) {
         this.lastLine = needs[1].trim().slice(0, 140);
         this.setState("input");
       } else {
-        this.setState("unread");
-        this.unreadCount++;
+        // Only count this result as unread if it happened AFTER the last
+        // server-side read marker. Otherwise the reload-replay would re-
+        // inflate stale unreads forever.
+        const evTs = raw.timestamp ? Date.parse(raw.timestamp) : Date.now();
+        const readTs = this.readAt ? Date.parse(this.readAt) : 0;
+        if (!readTs || evTs > readTs) {
+          this.setState("unread");
+          this.unreadCount++;
+        } else {
+          this.setState("idle");
+        }
       }
     }
     // stream_event (partial) — ignored in MVP
@@ -134,6 +187,15 @@ class Musician {
   markRead() {
     this.unreadCount = 0;
     if (this.state === "unread") this.setState("idle");
+    const ts = new Date().toISOString();
+    this.readAt = ts;
+    // Fire-and-forget — persist on the server so reload / other clients
+    // share the same read state.
+    fetch("/api/mark-read", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project: this.name, timestamp: ts }),
+    }).catch(() => {});
   }
 
   buildCard() {
@@ -182,10 +244,18 @@ class Musician {
     if (!this.el) return;
     this.el.dataset.state = this.state;
     const label = STATE_LABELS[this.state];
+    // Staleness check: live/think but no event in >30s → something may be stuck.
+    const isInFlight = this.state === "live" || this.state === "think";
+    const silentMs = this.lastActivityMs ? (Date.now() - this.lastActivityMs) : 0;
+    const stale = isInFlight && silentMs > 30_000;
+    this.el.classList.toggle("is-stale", stale);
     $(".m-state-icon",  this.el).textContent = label.icon;
-    $(".m-state-label", this.el).textContent = this.unreadCount > 1 && this.state === "unread"
+    const baseLabel = this.unreadCount > 1 && this.state === "unread"
       ? `${this.unreadCount} ${label.label}`
       : label.label;
+    $(".m-state-label", this.el).textContent = stale
+      ? `${baseLabel} · silence ${formatElapsed(silentMs)}`
+      : baseLabel;
 
     const lastEl = $(".m-last-line", this.el);
     if (this.lastLine) {
@@ -275,30 +345,28 @@ function computeFanLayout(musicians, viewport) {
   for (let i = 0; i < n; i += CARDS_PER_HAND) hands.push(deck.slice(i, i + CARDS_PER_HAND));
   const handCount = hands.length;
 
-  const topPad    = 72;
-  const bottomPad = 200;                // composer + chip + breathing room
-  const usableH   = h - topPad - bottomPad;
+  // The conductor transcript owns the upper portion of the screen now —
+  // the fan lives in a compact strip just above the composer.
+  const bottomPad  = 160;               // composer + breathing room
+  const stripH     = 140;               // max vertical band the fan can occupy
 
   // Hand baseline Y — where the CENTER card's bottom lives. Primary hand
-  // sits near the composer; subsequent hands climb by handStepY. Cards are
-  // ~240px tall on mobile so handStepY must leave room for the top of the
-  // back hand's cards inside the viewport.
-  const cardH      = 240;
+  // sits near the composer; subsequent hands climb by handStepY.
+  const cardH      = 120;
   const handStepY  = handCount <= 1
     ? 0
-    : Math.min(cardH * 0.72, (usableH - cardH) / (handCount - 1));
+    : Math.min(cardH * 0.45, stripH / Math.max(1, handCount - 1));
 
   for (let hi = 0; hi < handCount; hi++) {
     const hand     = hands[hi];
     const size     = hand.length;
     const scale    = Math.max(0.82, 1 - hi * 0.10);
-    // Playing-card aspect ratio (~5:7) — narrower than before so the
-    // 230px-tall body reads like a real card rather than a landscape tile.
-    const cardW    = Math.round(Math.min(185, w * 0.50) * scale);
+    // Playing-card aspect ratio (~5:7).
+    const cardW    = Math.round(Math.min(98, w * 0.24) * scale);
 
     // Fan geometry: pivot BELOW this hand's baseline by R. Card bottoms
     // trace an arc of radius R around the pivot.
-    const R        = 380 * scale;
+    const R        = 220 * scale;
     const baseY    = h - bottomPad - hi * handStepY;     // centre-card bottom
     const pivotY   = baseY + R;
 
@@ -350,8 +418,10 @@ function computeDesktopArc(musicians, viewport) {
 
   // 1. Work out how many rows we can afford vertically, then pick the largest
   //    card width that fits the full fleet within that budget.
+  //    The arc is now a STRIP above the composer — not the whole stage —
+  //    because the conductor transcript owns the main visual space.
   const usableW = viewport.w - 2 * SIDE_PAD;
-  const usableH = viewport.h - TOP_PAD - BOTTOM_PAD;
+  const usableH = Math.min(STRIP_H, viewport.h - TOP_PAD - BOTTOM_PAD);
   const maxRows = Math.max(1, Math.floor((usableH - CARD_H) / ROW_STEP) + 1);
 
   let cardW  = CARD_MAX_W;
@@ -442,41 +512,57 @@ function apexFirstIndices(n) {
 
 function redrawThreads() {
   const svg = $("#threads");
+  svg.innerHTML = "";
+  // Threads only make sense on desktop — the mobile view has no fan.
+  if (isMobileViewport()) return;
+
   const composerCenter = {
     x: window.innerWidth / 2,
     y: window.innerHeight - 55, // roughly the top of the composer
   };
-  // Clear
-  svg.innerHTML = "";
-  // Active threads: every musician in live/think/input state
+  const CONDUCTOR = App.composer.CONDUCTOR;
+  const conductor = App.musicians.get(CONDUCTOR);
+  // Anchor for chef↔musicien threads — the conductor card's top. Falls back
+  // to the composer when the conductor card isn't laid out yet.
+  const conductorAnchor = (conductor && conductor.pos)
+    ? { x: conductor.pos.x, y: conductor.pos.y - CARD_H / 2 }
+    : composerCenter;
+
+  const addPath = (from, to, className, color) => {
+    const mid = {
+      x: (from.x + to.x) / 2,
+      y: (from.y + to.y) / 2 - 80,
+    };
+    const d = `M ${from.x} ${from.y} Q ${mid.x} ${mid.y} ${to.x} ${to.y}`;
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    path.setAttribute("class", className);
+    path.style.color = color;
+    path.style.stroke = "currentColor";
+    svg.appendChild(path);
+  };
+
+  // Chef ↔ musicien — drawn from the conductor card down/out to each active
+  // musician. This visually mirrors the fact that the conductor delegates
+  // work; the user's own line goes to the conductor, not the musicians.
   for (const m of App.musicians.values()) {
-    if (!m.el) continue;
+    if (!m.el || !m.pos) continue;
+    if (m.name === CONDUCTOR) continue;
     if (!["live", "think", "input"].includes(m.state)) continue;
-    const cx = m.pos.x;
-    const cy = m.pos.y;
-    const mid = { x: (composerCenter.x + cx) / 2, y: (composerCenter.y + cy) / 2 - 80 };
-    const d = `M ${composerCenter.x} ${composerCenter.y} Q ${mid.x} ${mid.y} ${cx} ${cy + CARD_H / 2}`;
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute("d", d);
-    path.setAttribute("class", "active");
-    path.style.color = varByState(m.state);
-    path.style.stroke = "currentColor";
-    svg.appendChild(path);
+    const to = { x: m.pos.x, y: m.pos.y + CARD_H / 2 };
+    addPath(conductorAnchor, to, "active", varByState(m.state));
   }
-  // Pending thread (when a target is selected and input is non-empty)
-  const target = App.composer.target;
-  if (target && App.composer.hasDraft && App.musicians.has(target)) {
-    const m = App.musicians.get(target);
-    const cx = m.pos.x;
-    const cy = m.pos.y;
-    const mid = { x: (composerCenter.x + cx) / 2, y: (composerCenter.y + cy) / 2 - 120 };
-    const d = `M ${composerCenter.x} ${composerCenter.y} Q ${mid.x} ${mid.y} ${cx} ${cy + CARD_H / 2}`;
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute("d", d);
-    path.setAttribute("class", "pending");
-    path.style.color = "var(--st-live)";
-    path.style.stroke = "currentColor";
-    svg.appendChild(path);
+
+  // Utilisateur ↔ chef d'orchestre. Active whenever the conductor is busy;
+  // pending (dashed, pulsing faster) whenever the user has a draft in flight.
+  if (conductor && conductor.pos) {
+    const to = { x: conductor.pos.x, y: conductor.pos.y + CARD_H / 2 };
+    if (["live", "think", "input"].includes(conductor.state)) {
+      addPath(composerCenter, to, "active", varByState(conductor.state));
+    }
+    if (App.composer.hasDraft) {
+      addPath(composerCenter, to, "pending", "var(--accent)");
+    }
   }
 }
 
@@ -505,7 +591,14 @@ class FleetStream {
       let raw; try { raw = JSON.parse(env.line); } catch { return; }
       m.transition(raw);
       m.updateCard();
-      if (App.focused === m) App.renderFocusedBody();
+      if (App.focused === m) { App.renderFocusedBody(); App.updateFocusedUsage(m); }
+      if (m.name === App.composer.CONDUCTOR) App.onConductorEvent(m, raw);
+      // Mobile tabs + session body need to re-render on every event so
+      // priority order and live streams stay in sync.
+      App.renderTabs();
+      if (isMobileViewport() && App.activeTab === m.name && m.name !== App.composer.CONDUCTOR) {
+        App.renderMainPane();
+      }
     };
     this.source.onerror = () => { /* browser auto-reconnects */ };
   }
@@ -521,12 +614,19 @@ const App = {
   focused: null,                  // currently focused musician (or null)
   stream: null,
   composer: {
-    target: "orchestrateur",      // the conductor: default recipient — it delegates to the others
+    target: "orchestrateur",      // the conductor — every typed message goes here
     CONDUCTOR: "orchestrateur",   // name of the conductor project (special routing)
     hasDraft: false,
   },
   _reorderTimer: null,
   deckOffset: 0,                  // mobile: how many times the user swiped
+  // Conductor transcript — user's messages + conductor's synthesised replies.
+  // Each entry: { role: "user"|"conductor", text, ts }.
+  chat: [],
+  // Mobile only: which project the user is currently viewing in the main
+  // pane. Defaults to the conductor. When != conductor, the body shows the
+  // project's event stream and the composer dispatches there.
+  activeTab: "orchestrateur",
 
   async init() {
     this.wireTopbar();
@@ -535,7 +635,7 @@ const App = {
     this.wireTweaks();
     this.wireOverlays();
     this.wireFanSwipe();
-    window.addEventListener("resize", () => this.relayout());
+    window.addEventListener("resize", () => { this.relayout(); this.renderChat(); });
 
     await this.loadConfig();
     this.stream = new FleetStream();
@@ -548,6 +648,18 @@ const App = {
 
     // Periodic thread refresh (handles idle timers)
     setInterval(() => redrawThreads(), 1000);
+
+    // 1s heartbeat ticker — updates the "in-flight" banner in the focused
+    // panel so the user sees elapsed time and a sign of life even when the
+    // sub-agent's stream is quiet between tool calls.
+    this.startHeartbeatTicker();
+
+    // 5s staleness ticker — refreshes each musician card so the
+    // "silence Xs" indicator updates without waiting for new events.
+    setInterval(() => {
+      for (const m of this.musicians.values()) m.updateCard();
+      this.renderTabs();
+    }, 5000);
   },
 
   async loadConfig() {
@@ -574,8 +686,8 @@ const App = {
       arc.appendChild(m.buildCard());
     }
     this.relayout();
-    this.updateTargetMenu();
     this.toggleEmptyHint();
+    this.renderChat();
   },
 
   toggleEmptyHint() {
@@ -645,8 +757,6 @@ const App = {
   wireComposer() {
     const input = $("#composer-input");
     const send = $("#composer-send");
-    const chip = $("#target-chip");
-    const menu = $("#target-menu");
 
     const setDraft = () => {
       const has = input.value.trim().length > 0;
@@ -787,101 +897,187 @@ const App = {
     input.addEventListener("blur", () => setTimeout(closeMention, 120));
     input.addEventListener("click", () => { if (detectMention()) renderMentionMenu(); else closeMention(); });
     send.addEventListener("click", () => this.sendMessage());
-
-    chip.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const isOpen = !menu.hidden;
-      menu.hidden = isOpen;
-      chip.classList.toggle("is-open", !isOpen);
-      if (!isOpen) this.updateTargetMenu();
-    });
-    document.addEventListener("click", (e) => {
-      if (!e.target.closest("#target-chip") && !e.target.closest("#target-menu")) {
-        menu.hidden = true;
-        chip.classList.remove("is-open");
-      }
-    });
-
-    this.setTarget(this.composer.CONDUCTOR);
   },
 
-  setTarget(name) {
-    // Empty / null falls back to the conductor — the user is never in
-    // "broadcast" mode; the conductor (orchestrateur) fans out itself.
-    if (!name) name = this.composer.CONDUCTOR;
-    this.composer.target = name;
-    const chip = $("#target-chip");
-    const lbl  = $(".tc-label", chip);
-    const isConductor = name === this.composer.CONDUCTOR;
-    if (isConductor) {
-      lbl.textContent = "au chef d'orchestre";
-      chip.classList.add("is-conductor");
-      chip.style.setProperty("--tc-color", "var(--accent)");
-    } else {
-      lbl.textContent = `à ${name}`;
-      chip.classList.remove("is-conductor");
-      const m = this.musicians.get(name);
-      chip.style.setProperty("--tc-color", varByState(m?.state || "idle"));
+  // ---------- Conductor transcript ----------
+  renderChat() {
+    // Always refresh the tab bar + main pane in tandem; both depend on
+    // activeTab + musician states.
+    this.renderTabs();
+    this.renderMainPane();
+  },
+
+  renderMainPane() {
+    const scroll = $("#cv-scroll");
+    if (!scroll) return;
+    const activeIsConductor = this.activeTab === this.composer.CONDUCTOR;
+    scroll.classList.toggle("cv-session", !activeIsConductor);
+
+    if (!activeIsConductor) {
+      const m = this.musicians.get(this.activeTab);
+      if (!m || !m.ring.length) {
+        scroll.innerHTML = `<div class="cv-empty">
+          <div class="cv-empty-title">${esc(this.activeTab)}</div>
+          <div class="cv-empty-sub">Aucun événement. Écris un message pour démarrer un tour direct.</div>
+        </div>`;
+        return;
+      }
+      scroll.innerHTML = m.ring.map(raw => renderFocusedEvent(raw)).join("");
+      requestAnimationFrame(() => { scroll.scrollTop = scroll.scrollHeight; });
+      return;
     }
-    $("#composer-input").placeholder = isConductor
-      ? "Parle au chef d'orchestre — il déléguera aux musiciens"
-      : `Parle à ${name}… (contournement : d'habitude le chef délègue)`;
+
+    if (!this.chat.length) {
+      scroll.innerHTML = `
+        <div class="cv-empty">
+          <div class="cv-empty-title">Salle de direction</div>
+          <div class="cv-empty-sub">Parle au chef. Il délègue aux musiciens et te rapporte la synthèse.</div>
+        </div>`;
+      return;
+    }
+    const conductor = this.musicians.get(this.composer.CONDUCTOR);
+    const isWaitingConductor = conductor &&
+      (conductor.state === "live" || conductor.state === "think") &&
+      this.chat.length > 0 &&
+      this.chat[this.chat.length - 1].role === "user";
+
+    scroll.innerHTML = this.chat.map(b => {
+      if (b.role === "user") {
+        return `<div class="cv-bubble is-user">
+          <div class="cv-byline">toi</div>
+          <div class="cv-body">${esc(b.text)}</div>
+        </div>`;
+      }
+      const usageChip = b.usage ? `<span class="cv-usage">${esc(fmtTurnUsage(b.usage))}</span>` : "";
+      return `<div class="cv-bubble is-conductor">
+          <div class="cv-byline">chef d'orchestre${usageChip}</div>
+          <div class="cv-body md">${mdToHtml(b.text || "")}</div>
+        </div>`;
+    }).join("") + (isWaitingConductor
+      ? `<div class="cv-thinking">le chef ${conductor.state === "think" ? "réfléchit" : "répond"}<span class="cv-dots"></span></div>`
+      : "");
+    requestAnimationFrame(() => { scroll.scrollTop = scroll.scrollHeight; });
+  },
+
+  // Priority order: 'input' (needs attention) > 'unread' > 'live' / 'think'
+  // (active) > 'idle'. Ties broken by recent-freq then alpha.
+  _tabPriority(m) {
+    const P = { input: 0, unread: 1, live: 2, think: 2, idle: 3 };
+    return (P[m.state] ?? 3);
+  },
+
+  renderTabs() {
+    const bar = $("#tab-bar");
+    if (!bar) return;
+    if (!isMobileViewport()) { bar.hidden = true; return; }
+    bar.hidden = false;
+
+    const CONDUCTOR = this.composer.CONDUCTOR;
+    const conductorM = this.musicians.get(CONDUCTOR);
+    const others = [...this.musicians.values()].filter(m => m.name !== CONDUCTOR);
+    others.sort((a, b) => {
+      const pa = this._tabPriority(a), pb = this._tabPriority(b);
+      if (pa !== pb) return pa - pb;
+      if (b.freq !== a.freq) return b.freq - a.freq;
+      return a.name.localeCompare(b.name);
+    });
+
+    const tabs = [conductorM ? {
+      name: CONDUCTOR, state: conductorM.state, unread: conductorM.unreadCount, conductor: true,
+    } : null].filter(Boolean).concat(
+      others.map(m => ({ name: m.name, state: m.state, unread: m.unreadCount }))
+    );
+
+    bar.innerHTML = tabs.map(t => {
+      const isActive = t.name === this.activeTab;
+      const showBadge = t.unread > 0 && t.state === "unread";
+      return `
+        <button class="tab ${t.conductor ? "is-conductor" : ""} ${isActive ? "is-active" : ""}"
+                data-tab="${esc(t.name)}" data-state="${t.state}"
+                style="--state-color: ${varByState(t.state)};">
+          <span class="tab-dot"></span>
+          <span class="tab-name">${esc(t.conductor ? "Chef" : t.name)}</span>
+          <span class="tab-badge" ${showBadge ? "" : "hidden"}>${t.unread || ""}</span>
+          ${!t.conductor && isActive ? `<span class="tab-close" data-act="close" title="Revenir au chef">×</span>` : ""}
+        </button>`;
+    }).join("");
+
+    $$(".tab", bar).forEach(el => {
+      el.addEventListener("click", (e) => {
+        if (e.target.closest("[data-act='close']")) {
+          this.setActiveTab(CONDUCTOR);
+          return;
+        }
+        this.setActiveTab(el.dataset.tab);
+      });
+    });
+  },
+
+  setActiveTab(name) {
+    this.activeTab = name || this.composer.CONDUCTOR;
+    // When the user opens a project session, mark their unread as read.
+    const m = this.musicians.get(this.activeTab);
+    if (m && this.activeTab !== this.composer.CONDUCTOR) m.markRead();
+    // Update composer placeholder to reflect the target.
+    const input = $("#composer-input");
+    if (input) {
+      input.placeholder = this.activeTab === this.composer.CONDUCTOR
+        ? "Parle au chef — tape @ pour citer un musicien"
+        : `Parle directement à ${this.activeTab}…`;
+    }
+    this.composer.target = this.activeTab;
+    this.renderChat();
     redrawThreads();
   },
 
-  updateTargetMenu() {
-    const menu = $("#target-menu");
-    const CONDUCTOR = this.composer.CONDUCTOR;
-    const conductorM = this.musicians.get(CONDUCTOR);
-    const rows = [
-      {
-        name: CONDUCTOR,
-        label: "au chef d'orchestre",
-        sub: "délègue aux musiciens (défaut)",
-        state: conductorM?.state || "idle",
-        conductor: true,
-      },
-      ...[...this.musicians.values()]
-        .filter(m => m.name !== CONDUCTOR)
-        .map(m => ({
-          name: m.name,
-          label: m.name,
-          sub: `direct · ${STATE_LABELS[m.state].label}`,
-          state: m.state,
-        })),
-    ];
-    menu.innerHTML = rows.map((r) => `
-      <button class="tm-item ${r.conductor ? "is-conductor" : ""} ${r.name === this.composer.target ? "is-selected" : ""}" data-name="${esc(r.name || "")}">
-        <span class="tm-dot" style="background: ${r.state ? varByState(r.state) : "var(--fg-3)"};"></span>
-        <span class="tm-name">${esc(r.label)}</span>
-        <span class="tm-sub">${esc(r.sub)}</span>
-      </button>
-    `).join("");
-    $$(".tm-item", menu).forEach(el => {
-      // mousedown fires before the input loses focus; we close immediately
-      // and rely on click for the actual action — this closes the menu
-      // visually even if some event order quirk swallows the later click.
-      el.addEventListener("mousedown", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.setTarget(el.dataset.name || null);
-        menu.hidden = true;
-        $("#target-chip").classList.remove("is-open");
-      });
-      el.addEventListener("click", (e) => {
-        e.stopPropagation();
-        // Safety net — mousedown should have already closed us.
-        menu.hidden = true;
-        $("#target-chip").classList.remove("is-open");
-      });
-    });
+  /**
+   * Called from Musician.transition() whenever the conductor project sees a
+   * new event. We harvest its final assistant text on `result` turns and
+   * append it as a conductor bubble.
+   */
+  onConductorEvent(musician, raw) {
+    if (raw?.type === "user_prompt") {
+      // Prompt sent to the conductor by any client (this tab, another tab,
+      // mobile web, Android app). Mirror it as a user bubble unless this
+      // same tab already pushed it locally in sendMessage().
+      const txt = String(raw.text || "").trim();
+      if (txt) {
+        const last = this.chat[this.chat.length - 1];
+        const isLocalEcho = last && last.role === "user" && last.text.trim() === txt;
+        if (!isLocalEcho) {
+          this.chat.push({ role: "user", text: txt, ts: Date.parse(raw.timestamp) || Date.now() });
+        }
+      }
+    } else if (raw?.type === "result") {
+      const txt = (musician.lastAssistantText || "").trim();
+      if (!txt) return this.renderChat();
+      const last = this.chat[this.chat.length - 1];
+      const usage = musician.lastTurnUsage;
+      if (last && last.role === "conductor" && last.text.trim() === txt) {
+        if (!last.usage && usage) last.usage = usage;
+        return this.renderChat();
+      }
+      this.chat.push({ role: "conductor", text: txt, ts: Date.now(), usage });
+    }
+    this.renderChat();
   },
 
   async sendMessage() {
     const input = $("#composer-input");
     const msg = input.value.trim();
     if (!msg) return;
-    const target = this.composer.target || this.composer.CONDUCTOR;
+    // Mobile: composer routes to the active tab (conductor by default).
+    // Desktop: always the conductor (fan stays visible; direct-to-musician
+    // is via the focused overlay).
+    const target = isMobileViewport() ? this.activeTab : this.composer.CONDUCTOR;
+    if (target === this.composer.CONDUCTOR) {
+      this.chat.push({ role: "user", text: msg, ts: Date.now() });
+    } else {
+      // Mobile direct-to-musician: show the sent message in the musician's ring immediately.
+      const m = this.musicians.get(target);
+      if (m) m.push({ type: "user_prompt", text: msg, timestamp: new Date().toISOString() });
+    }
+    this.renderChat();
     input.disabled = true;
     try {
       const resp = await fetch("/api/dispatch", {
@@ -987,9 +1183,27 @@ const App = {
     stateTag.textContent = STATE_LABELS[m.state].label;
     stateTag.style.setProperty("--state-color", varByState(m.state));
     this.updateFocusedSessionChip(m);
+    this.updateFocusedUsage(m);
     this.renderFocusedBody();
     ov.hidden = false;
     setTimeout(() => $(".pf-input", ov).focus(), 100);
+  },
+
+  updateFocusedUsage(m) {
+    const el = $(".pf-usage", $("#overlay-focused"));
+    if (!el) return;
+    if (!m.turnCount && !m.totalCostUsd) { el.hidden = true; el.textContent = ""; return; }
+    const inTot = m.totalInputTokens + m.totalCacheReadTokens + m.totalCacheCreateTokens;
+    const parts = [];
+    if (m.totalCostUsd) parts.push(fmtCost(m.totalCostUsd));
+    if (inTot)          parts.push(`↓${fmtTok(inTot)}`);
+    if (m.totalOutputTokens) parts.push(`↑${fmtTok(m.totalOutputTokens)}`);
+    if (m.lastTurnUsage?.ctxMax && m.lastTurnUsage.ctxUsed) {
+      const pct = Math.round((m.lastTurnUsage.ctxUsed / m.lastTurnUsage.ctxMax) * 100);
+      if (pct > 0) parts.push(`${pct}% ctx`);
+    }
+    el.textContent = parts.join(" · ");
+    el.hidden = parts.length === 0;
   },
 
   updateFocusedSessionChip(m) {
@@ -1013,14 +1227,67 @@ const App = {
     const body = $(".pf-body", $("#overlay-focused"));
     if (!m.ring.length) {
       body.innerHTML = `<div class="pf-empty">En attente d'événements. Envoie un message à <strong>${esc(m.name)}</strong> pour commencer.</div>`;
+      this.updateHeartbeat();
       return;
     }
     const parts = [];
     for (const raw of m.ring) {
       parts.push(renderFocusedEvent(raw));
     }
+    // In-flight heartbeat: shown while the turn hasn't emitted a `result` yet.
+    // Gives the user a visible proof-of-life with elapsed time + last activity.
+    parts.push(`<div class="ev-heartbeat" hidden><span class="hb-dot"></span><span class="hb-label"></span><span class="hb-elapsed"></span></div>`);
     body.innerHTML = parts.join("");
     body.scrollTop = body.scrollHeight;
+    this.updateHeartbeat();
+  },
+
+  /** Compute and paint the heartbeat banner for the currently-focused panel.
+   *  Called by renderFocusedBody and by the 1s ticker (startHeartbeatTicker). */
+  updateHeartbeat() {
+    const m = this.focused;
+    const ov = $("#overlay-focused");
+    if (!ov || ov.hidden) return;
+    const el = $(".ev-heartbeat", ov);
+    if (!el || !m) return;
+    const inFlight = (m.state === "live" || m.state === "think") &&
+      (m.ring.length === 0 || m.ring[m.ring.length - 1].type !== "result");
+    if (!inFlight) { el.hidden = true; return; }
+    el.hidden = false;
+    // Derive a short activity label from the last meaningful event.
+    let label = "démarrage…";
+    for (let i = m.ring.length - 1; i >= 0; i--) {
+      const r = m.ring[i];
+      if (r.type === "assistant") {
+        const blocks = r.message?.content || [];
+        const last = blocks[blocks.length - 1];
+        if (last?.type === "tool_use") {
+          label = `⚙ ${(last.name || "tool").toLowerCase()} — ${toolArgPreview(last)}`;
+        } else if (last?.type === "thinking") {
+          label = "◌ réflexion";
+        } else if (last?.type === "text") {
+          label = "… rédige";
+        }
+        break;
+      }
+      if (r.type === "user" && Array.isArray(r.message?.content) && r.message.content.some(b => b?.type === "tool_result")) {
+        label = "↳ tool result reçu";
+        break;
+      }
+      if (r.type === "system" && r.subtype === "init") { label = "session ouverte…"; break; }
+      if (r.type === "user_prompt") { label = "envoi au musicien…"; break; }
+    }
+    const startMs = m.turnStartMs || (m.ring[0] && Date.parse(m.ring[0].timestamp)) || Date.now();
+    const elapsed = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
+    const mm = Math.floor(elapsed / 60);
+    const ss = String(elapsed % 60).padStart(2, "0");
+    $(".hb-label", el).textContent = label;
+    $(".hb-elapsed", el).textContent = mm > 0 ? `${mm}m${ss}` : `${elapsed}s`;
+  },
+
+  startHeartbeatTicker() {
+    if (this._hbTimer) return;
+    this._hbTimer = setInterval(() => this.updateHeartbeat(), 1000);
   },
 
   async sendFocusedMessage() {
@@ -1041,6 +1308,9 @@ const App = {
         const data = await resp.json().catch(() => ({}));
         throw new Error(data.error || `HTTP ${resp.status}`);
       }
+      // Show the sent message immediately in the focused body before SSE arrives.
+      m.push({ type: "user_prompt", text: msg, timestamp: new Date().toISOString() });
+      this.renderFocusedBody();
       input.value = "";
       input.style.height = "auto";
       $(".pf-send", ov).disabled = true;
@@ -1130,7 +1400,6 @@ const App = {
       this.musicians.set(m.name, m);
       $("#arc").appendChild(m.buildCard());
       this.relayout();
-      this.updateTargetMenu();
       this.toggleEmptyHint();
       this.closeOverlay($("#overlay-add"));
     } catch (err) {
@@ -1167,7 +1436,6 @@ const App = {
       m.el?.remove();
       this.musicians.delete(m.name);
       this.relayout();
-      this.updateTargetMenu();
       this.toggleEmptyHint();
     } catch (err) {
       alert("Suppression échouée : " + (err.message || err));
@@ -1255,6 +1523,8 @@ const App = {
 function renderFocusedEvent(raw) {
   const ts = fmtTs(raw.timestamp);
   switch (raw.type) {
+    case "user_prompt":
+      return `<div class="ev ev-prompt"><span class="ev-ts">${ts}</span><span class="ev-prompt-badge">TOI</span><div class="ev-text md">${mdToHtml(raw.text || "")}</div></div>`;
     case "system":
       if (raw.subtype === "init") return `<div class="ev"><span class="ev-ts">${ts}</span><span class="ev-text">— nouveau tour (session ${esc((raw.session_id||"").slice(0,8))}) —</span></div>`;
       return "";
@@ -1299,9 +1569,21 @@ function renderUser(raw, ts) {
 function renderResult(raw, ts) {
   const isErr = !!raw.is_error || (typeof raw.subtype === "string" && raw.subtype.startsWith("error"));
   if (isErr) return `<div class="ev-err">FAIL · ${esc(raw.subtype || "erreur")}</div>`;
-  // NEEDS_USER_INPUT is surfaced via lastAssistantText; just show a tour-done marker
   const dur = raw.duration_ms ? `${(raw.duration_ms/1000).toFixed(1)}s` : "";
-  return `<div class="ev"><span class="ev-ts">${ts}</span><span class="ev-text" style="color: var(--fg-3);">— tour terminé · ${dur} —</span></div>`;
+  const u = raw.usage || {};
+  const mu = raw.modelUsage ? Object.values(raw.modelUsage)[0] : null;
+  const chip = fmtTurnUsage({
+    inTok: +u.input_tokens || 0,
+    outTok: +u.output_tokens || 0,
+    cacheRead: +u.cache_read_input_tokens || 0,
+    cacheCreate: +u.cache_creation_input_tokens || 0,
+    cost: +raw.total_cost_usd || 0,
+    ctxUsed: (+u.input_tokens || 0) + (+u.cache_read_input_tokens || 0) + (+u.cache_creation_input_tokens || 0),
+    ctxMax: mu?.contextWindow || 0,
+  });
+  const parts = ["— tour terminé", dur];
+  if (chip) parts.push(chip);
+  return `<div class="ev"><span class="ev-ts">${ts}</span><span class="ev-text" style="color: var(--fg-3);">${parts.filter(Boolean).join(" · ")} —</span></div>`;
 }
 // --------------------------------------------------------------------------
 // Minimal, safe Markdown → HTML converter. We escape HTML first, then only
@@ -1437,6 +1719,44 @@ function mdToHtml(src) {
   flushPara();
   closeList();
   return out.join("\n");
+}
+
+function formatElapsed(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rs = String(s % 60).padStart(2, "0");
+  if (m < 60) return `${m}m${rs}`;
+  const h = Math.floor(m / 60);
+  const rm = String(m % 60).padStart(2, "0");
+  return `${h}h${rm}`;
+}
+
+function fmtTok(n) {
+  if (!n) return "0";
+  if (n >= 1_000_000) return `${(n/1_000_000).toFixed(2)}M`;
+  if (n >= 1_000)     return `${(n/1_000).toFixed(n >= 10_000 ? 0 : 1)}k`;
+  return String(n);
+}
+function fmtCost(usd) {
+  if (!usd) return "$0";
+  if (usd < 0.01) return "<$0.01";
+  return `$${usd.toFixed(2)}`;
+}
+/** Per-turn token/cost chip used in "— tour terminé —" and the conductor bubble.
+ *  Format: ↓{input+cache} ↑{out} · $cost  (omits the $ if 0) */
+function fmtTurnUsage(u) {
+  if (!u) return "";
+  const inSum = (u.inTok || 0) + (u.cacheRead || 0) + (u.cacheCreate || 0);
+  const parts = [];
+  if (inSum)   parts.push(`↓${fmtTok(inSum)}`);
+  if (u.outTok) parts.push(`↑${fmtTok(u.outTok)}`);
+  if (u.cost)  parts.push(fmtCost(u.cost));
+  if (u.ctxMax) {
+    const pct = Math.round((u.ctxUsed / u.ctxMax) * 100);
+    if (pct > 0) parts.push(`${pct}% ctx`);
+  }
+  return parts.join(" · ");
 }
 
 function fmtTs(iso) {

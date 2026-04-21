@@ -335,6 +335,9 @@ kbd {
   text-transform: uppercase;
   color: var(--state-color);
 }
+.musician.is-stale .m-state-row { color: var(--st-input); }
+.musician.is-stale .m-state-icon { animation: none; }
+.musician.is-stale .m-halo { opacity: 0.35; }
 .m-state-icon {
   display: inline-block;
   font-style: normal;
@@ -398,7 +401,180 @@ kbd {
   z-index: 40;
 }
 
-.composer-chip-row { position: relative; display: flex; justify-content: center; }
+/* ============================================================
+   CONDUCTOR VIEW — primary transcript
+   Sits between the topbar and the compact fan-strip.
+   ============================================================ */
+.conductor-view {
+  position: absolute;
+  left: 50%;
+  top: 72px;
+  bottom: 380px;                          /* clear the fan strip + composer */
+  transform: translateX(-50%);
+  width: min(780px, 92vw);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+}
+.cv-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 18px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  mask-image: linear-gradient(180deg, transparent 0, #000 24px, #000 calc(100% - 40px), transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 24px, #000 calc(100% - 40px), transparent 100%);
+  scrollbar-width: thin;
+  scrollbar-color: var(--card-border) transparent;
+}
+.cv-scroll::-webkit-scrollbar { width: 6px; }
+.cv-scroll::-webkit-scrollbar-thumb { background: var(--card-border); border-radius: 3px; }
+
+.cv-empty {
+  margin: auto;
+  text-align: center;
+  color: var(--fg-2);
+  font-size: 14px;
+  max-width: 480px;
+  padding: 32px 16px;
+}
+.cv-empty-title {
+  font-family: var(--font-display);
+  font-size: 22px;
+  color: var(--fg-0);
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+.cv-empty-sub { font-size: 13px; color: var(--fg-2); line-height: 1.5; }
+
+/* Bubble — one per message in the transcript */
+.cv-bubble {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 88%;
+  animation: cv-pop 0.24s ease-out;
+}
+.cv-bubble.is-user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+.cv-bubble.is-conductor {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+.cv-byline {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+  padding: 0 8px;
+}
+.cv-bubble.is-conductor .cv-byline { color: var(--accent); }
+.cv-byline .cv-usage {
+  margin-left: 10px;
+  color: var(--fg-3);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: none;
+}
+
+.cv-body {
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--card-border);
+  background: var(--card-bg);
+  backdrop-filter: blur(12px);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--fg-0);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+  min-width: 0;
+  box-shadow: var(--card-shadow);
+}
+.cv-bubble.is-user .cv-body {
+  background: color-mix(in oklab, var(--fg-0) 10%, var(--card-bg));
+  border-color: color-mix(in oklab, var(--fg-0) 28%, transparent);
+}
+.cv-bubble.is-conductor .cv-body {
+  border-color: color-mix(in oklab, var(--accent) 40%, var(--card-border));
+  background: linear-gradient(180deg, color-mix(in oklab, var(--accent) 8%, var(--card-bg)), var(--card-bg));
+}
+
+/* Markdown inside conductor bubbles reuses the focused-panel styling. */
+.cv-body.md p { margin: 4px 0; }
+.cv-body.md p:first-child { margin-top: 0; }
+.cv-body.md p:last-child  { margin-bottom: 0; }
+.cv-body.md h1, .cv-body.md h2, .cv-body.md h3 {
+  font-family: var(--font-display);
+  letter-spacing: 0.04em;
+  margin: 10px 0 4px;
+  color: var(--accent);
+}
+.cv-body.md h1 { font-size: 17px; }
+.cv-body.md h2 { font-size: 15px; }
+.cv-body.md h3 { font-size: 13px; color: var(--fg-0); }
+.cv-body.md code {
+  background: rgba(255,255,255,0.06);
+  padding: 1px 4px; border-radius: 3px;
+  font-family: var(--font-mono); font-size: 12px;
+}
+.cv-body.md pre {
+  background: rgba(0,0,0,0.35);
+  padding: 8px 10px; border-radius: 6px;
+  overflow-x: auto;
+  max-width: 100%;
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.5;
+  margin: 6px 0;
+}
+.cv-body.md pre code { white-space: pre; overflow-wrap: normal; word-break: normal; }
+.cv-body.md ul, .cv-body.md ol { margin: 4px 0; padding-left: 22px; }
+.cv-body.md li { margin: 2px 0; }
+.cv-body.md table {
+  border-collapse: collapse;
+  margin: 6px 0;
+  font-size: 12px;
+}
+.cv-body.md th, .cv-body.md td {
+  border: 1px solid var(--card-border);
+  padding: 4px 8px;
+  text-align: left;
+}
+.cv-body.md a { color: var(--st-unread); }
+
+.cv-thinking {
+  align-self: flex-start;
+  padding: 8px 14px;
+  border-radius: 14px;
+  border: 1px dashed color-mix(in oklab, var(--accent) 30%, var(--card-border));
+  color: var(--fg-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  background: var(--card-bg);
+}
+.cv-thinking .cv-dots::after {
+  content: "…";
+  animation: cv-dots 1.3s steps(4, end) infinite;
+}
+@keyframes cv-pop {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes cv-dots {
+  0%,20%   { content: ""; }
+  40%      { content: "·"; }
+  60%      { content: "··"; }
+  80%,100% { content: "···"; }
+}
 
 .target-chip {
   display: inline-flex; align-items: center; gap: 8px;
@@ -662,9 +838,10 @@ kbd {
   background: var(--state-color);
   box-shadow: 0 0 14px var(--state-color);
 }
-.pf-title { flex: 1; min-width: 0; }
-.pf-name  { font-family: var(--font-display); font-size: 22px; font-weight: 600; color: var(--fg-0); }
-.pf-sub   { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--fg-2); margin-top: 3px; }
+.pf-title { flex: 1 1 auto; min-width: 0; overflow: hidden; }
+.pf-name  { font-family: var(--font-display); font-size: 22px; font-weight: 600; color: var(--fg-0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pf-sub   { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--fg-2); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pf-session-chip, .pf-usage, .pf-state-tag { flex-shrink: 0; }
 
 .pf-session-chip {
   display: inline-flex; align-items: center; gap: 6px;
@@ -697,6 +874,17 @@ kbd {
   color: var(--state-color);
   border-radius: 999px;
 }
+.pf-usage {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  padding: 3px 10px;
+  border: 1px solid var(--card-border);
+  color: var(--fg-2);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.pf-usage[hidden] { display: none; }
 .pf-close {
   width: 30px; height: 30px;
   display: grid; place-items: center;
@@ -795,6 +983,52 @@ kbd {
 .pf-body .ev-err   { color: var(--st-input); background: rgba(255,45,139,0.1); padding: 6px 10px; border-left: 2px solid var(--st-input); border-radius: 0 6px 6px 0; }
 .pf-body .ev-question { color: var(--st-input); font-weight: 500; padding: 8px 10px; border: 1px solid var(--st-input); border-radius: 6px; margin: 6px 0; background: rgba(255,45,139,0.06); }
 .pf-body .pf-empty { color: var(--fg-3); font-style: italic; padding: 40px 0; text-align: center; }
+
+.pf-body .ev-prompt {
+  border-left: 2px solid var(--accent);
+  padding: 6px 10px 6px 12px;
+  background: rgba(232, 161, 92, 0.06);
+  border-radius: 0 6px 6px 0;
+  margin: 6px 0;
+}
+.pf-body .ev-prompt-badge {
+  display: inline-block;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 1.6px;
+  font-weight: 600;
+  margin-right: 8px;
+}
+
+.pf-body .ev-heartbeat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--card-border);
+  color: var(--fg-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+.pf-body .ev-heartbeat[hidden] { display: none; }
+.pf-body .ev-heartbeat .hb-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--st-live);
+  box-shadow: 0 0 8px var(--st-live);
+  animation: hb-pulse 1.1s ease-in-out infinite;
+  flex-shrink: 0;
+}
+.pf-body .ev-heartbeat .hb-label { flex: 1; color: var(--fg-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-body .ev-heartbeat .hb-elapsed { color: var(--fg-2); font-variant-numeric: tabular-nums; }
+@keyframes hb-pulse {
+  0%, 100% { opacity: 0.45; transform: scale(0.85); }
+  50%      { opacity: 1;    transform: scale(1.15); }
+}
 
 .pf-compose {
   display: flex;
@@ -1134,7 +1368,147 @@ kbd {
      the browser's back-navigation gesture. Interactive children opt back in. */
   body, html { overscroll-behavior: none; }
   .stage { touch-action: none; }
-  .composer, .topbar, .overlay, .tweaks { touch-action: auto; }
+  .composer, .topbar, .overlay, .tweaks, .conductor-view { touch-action: auto; }
+
+  /* Conductor view — takes the whole screen above the composer. The fan
+     is replaced on mobile by a project tab bar at the top. */
+  .conductor-view {
+    top: 46px;
+    bottom: 98px;
+    width: 100vw;
+    left: 0;
+    transform: none;
+    display: flex;
+    flex-direction: column;
+  }
+  .cv-scroll { padding: 10px 12px 20px; gap: 10px; mask-image: none; -webkit-mask-image: none; }
+  .cv-body   { font-size: 13px; }
+  .cv-byline { font-size: 8px; }
+
+  /* Hide the fan entirely on mobile — its role is taken by the tab bar. */
+  #arc { display: none; }
+  .threads { display: none; }
+
+  /* Tab bar — one pill per musician, conductor pinned left. A soft right-
+     edge fade (applied on .conductor-view) hints that the row scrolls. */
+  .tab-bar {
+    position: relative;
+    display: flex;
+    flex-direction: row;
+    gap: 6px;
+    padding: 6px 36px 8px 10px;            /* extra right-pad under the fade */
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    border-bottom: 1px solid var(--card-border);
+    background: linear-gradient(180deg, var(--bg-0) 0%, color-mix(in oklab, var(--bg-0) 70%, transparent) 100%);
+    flex-shrink: 0;
+    /* Mask the right edge — feathers out the last 28px of the visible band
+       so the user sees there's more content when the row overflows. */
+    mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 28px), transparent 100%);
+    -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 28px), transparent 100%);
+  }
+  .tab-bar[hidden] { display: none; }
+  .tab-bar::-webkit-scrollbar { display: none; }
+  .tab-bar::after {
+    /* Tiny chevron hint that reinforces the fade. Sticks to the right edge
+       of the viewport, not the scroll content. */
+    content: "›";
+    position: sticky;
+    right: 6px;
+    top: 0;
+    padding: 6px 4px;
+    font-family: var(--font-mono);
+    font-size: 14px;
+    color: var(--fg-2);
+    pointer-events: none;
+    align-self: center;
+    margin-left: auto;
+  }
+
+  .tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    color: var(--fg-1);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+    transition: background 0.18s, border-color 0.18s, color 0.18s;
+    --state-color: var(--fg-3);
+  }
+  .tab.is-conductor {
+    border-color: color-mix(in oklab, var(--accent) 40%, var(--card-border));
+    background: color-mix(in oklab, var(--accent) 10%, var(--card-bg));
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .tab.is-active {
+    background: color-mix(in oklab, var(--state-color, var(--accent)) 22%, var(--card-bg));
+    border-color: var(--state-color, var(--accent));
+    color: var(--fg-0);
+  }
+  .tab.is-conductor.is-active {
+    background: color-mix(in oklab, var(--accent) 26%, var(--card-bg));
+    border-color: var(--accent);
+    color: var(--fg-0);
+  }
+  .tab-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--state-color, var(--fg-3));
+    box-shadow: 0 0 6px var(--state-color, transparent);
+    flex-shrink: 0;
+  }
+  .tab-name { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+  .tab-badge {
+    min-width: 16px; height: 16px;
+    padding: 0 5px;
+    display: inline-grid; place-items: center;
+    border-radius: 8px;
+    background: var(--state-color, var(--st-unread));
+    color: var(--bg-0);
+    font-weight: 700;
+    font-size: 9px;
+    letter-spacing: 0;
+  }
+  .tab-badge[hidden] { display: none; }
+  .tab-close {
+    margin-left: 2px;
+    width: 14px; height: 14px;
+    display: inline-grid; place-items: center;
+    border-radius: 50%;
+    background: transparent;
+    color: inherit;
+    font-size: 10px;
+    line-height: 1;
+    opacity: 0.7;
+  }
+  .tab-close:hover { opacity: 1; }
+
+  /* Project-session body — event stream (re-uses .pf-body rendering). */
+  .cv-session {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 14px 24px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--fg-1);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .cv-session .ev { word-break: break-word; }
+  .cv-session .ev-ts { color: var(--fg-3); margin-right: 6px; font-size: 10px; }
+  .cv-session .ev-text { color: var(--fg-0); white-space: pre-wrap; }
+  .cv-session .ev-text.md { display: block; font-family: var(--font-body); }
 
   /* Topbar — shrink & strip to essentials */
   .topbar { padding: 10px 14px; }
@@ -1210,23 +1584,29 @@ kbd {
     font-size: 9px;
   }
   .musician.is-fan .m-cbadge[hidden] { display: none; }
-  /* Taller cards on mobile — playing-card aspect ratio feels right with
-     more vertical room for the last-line preview. */
+  /* Compact cards — the fan is now a status strip, not the primary view.
+     Just dot + name + state badge. Tap opens the focused panel for detail. */
   .musician.is-fan .m-body {
-    padding: 14px 16px 16px;
-    min-height: 230px;
+    padding: 6px 8px;
+    min-height: 110px;
     display: flex;
     flex-direction: column;
   }
-  .musician.is-fan .m-name { font-size: 16px; }
+  .musician.is-fan .m-header { margin-bottom: 2px; gap: 5px; }
+  .musician.is-fan .m-name { font-size: 11px; letter-spacing: 0.02em; }
+  .musician.is-fan .m-dot  { width: 7px; height: 7px; }
+  .musician.is-fan .m-badge { min-width: 16px; height: 16px; font-size: 9px; }
   .musician.is-fan .m-last-line {
-    -webkit-line-clamp: 7;
-    font-size: 13px;
-    line-height: 1.48;
-    min-height: 8em;
-    flex: 1;
+    display: none;                           /* the fan is status-only */
   }
-  .musician.is-fan .m-state-row { margin-top: auto; padding-top: 8px; }
+  .musician.is-fan .m-state-row {
+    margin-top: auto;
+    font-size: 8px;
+    letter-spacing: 0.18em;
+  }
+  .musician.is-fan .m-corner { font-size: 9px; padding: 2px 4px; top: 3px; gap: 3px; }
+  .musician.is-fan .m-corner-l { left: 3px; }
+  .musician.is-fan .m-corner-r { right: 3px; }
 
   /* Composer — bottom sheet, full-width, compact hint */
   .composer {

@@ -199,6 +199,52 @@ Read `config.json` for the canonical project list. Tail
 `logs/*.jsonl` for state. Do not guess — cite the `tool_use` and
 `tool_result` events you see.
 
+### Fleet supervision (you own it)
+
+You are responsible for the health of every sub-agent you dispatched.
+Sub-agents hang: a `claude.exe` child can freeze mid-stream with
+nothing but `thinking_delta` partials, no `result` ever arrives, and
+the UI shows `EN COMMUNICATION` forever. **Notice this without being
+told.**
+
+**Cadence.** Check at every natural pause — before ending a reply
+while any musician is in `live` or `think`, and between your own long
+tool calls. If a user message arrives after a long silence, check
+first, then answer.
+
+    node scripts/fleet-status.mjs                   # human table
+    node scripts/fleet-status.mjs --json            # machine
+    node scripts/fleet-status.mjs --stalled         # exit 2 if any
+
+The report shows: `state`, last **non-partial** event kind
+(`tool_use:bash`, `text`, `thinking`, `result:ok/error`,
+`stream_event:thinking_delta`, …), silence since last progress, log
+file age, and whether the dispatch PID is still alive. A musician
+marked `STALLED` (state `live`/`think` + silence ≥ 60 s) or one whose
+PID is dead while state is still `live` needs a decision.
+
+**Acting on a stall.** Read the log tail first to understand where
+the turn died (`tail -c 4000 logs/<name>.jsonl | tr -d '\0'`). Then:
+
+- If the turn was nearly done (last event was a real `tool_use` or
+  `text` block), **redispatch a short continuation** — `dispatch.mjs`
+  will `--resume` the same session and Claude picks up where it left
+  off.
+- If it produced only `thinking_delta` partials for minutes (PID alive
+  but frozen) or the PID is already dead while state is still `live`,
+  **kill and clear**:
+
+        node scripts/kill-stalled.mjs <project>
+
+  That force-kills the process tree and appends a synthetic
+  `result` with `is_error:true` so the UI exits `live`. Then
+  dispatch fresh (or with a refined prompt).
+
+**Surface it proactively.** When `fleet-status.mjs --stalled` finds
+anything, mention it in your next reply even if the user didn't ask.
+Example: *"Heads-up — immo-share has been silent 2m14 mid-thinking,
+I'm killing and redispatching."* Don't wait to be asked.
+
 ### Escalation
 
 `--allowed-tools` defaults to `Read,Edit,Write,Bash`. If a sub-agent

@@ -73,6 +73,7 @@ fs.mkdirSync(LOGS, { recursive: true });
 
 const logPath     = path.join(LOGS, `${projectName}.jsonl`);
 const sessionPath = path.join(LOGS, `${projectName}.session`);
+const pidPath     = path.join(LOGS, `${projectName}.pid`);
 
 let sessionId = null;
 try { sessionId = fs.readFileSync(sessionPath, 'utf8').trim() || null; } catch {}
@@ -103,6 +104,14 @@ delete env.ANTHROPIC_API_KEY;   // subscription auth only
 const logStream = fs.createWriteStream(logPath, { flags: 'a' });
 logStream.write(`\n`); // ensure boundary from previous turn
 
+// Synthetic "user_prompt" event so the viewer can show what was asked before
+// any real stream-json event arrives (Claude's first init can take >1s).
+logStream.write(JSON.stringify({
+  type: 'user_prompt',
+  text: prompt,
+  timestamp: new Date().toISOString(),
+}) + '\n');
+
 const child = spawn('claude', args, {
   cwd: project.path,      // project CLAUDE.md and .claude/ load from here
   env,
@@ -110,6 +119,10 @@ const child = spawn('claude', args, {
   shell: false,
   windowsHide: true,
 });
+
+// Record the claude child PID so fleet-status.mjs can check if a stalled
+// turn's process is still alive. Removed on clean exit below.
+try { fs.writeFileSync(pidPath, String(child.pid)); } catch {}
 
 // ---------- event parsing → session sidecar ---------------------------------
 
@@ -150,6 +163,7 @@ child.on('error', (err) => {
 
 child.on('exit', (code, signal) => {
   logStream.end();
+  try { fs.unlinkSync(pidPath); } catch {}
   if (signal) {
     console.error(`[dispatch] sub-agent killed by ${signal}`);
     process.exit(128);

@@ -13,6 +13,10 @@ class OrchestreApp : Application() {
     override fun onCreate() {
         super.onCreate()
         tokenStore = TokenStore(this)
+        if (BuildConfig.DEBUG && tokenStore.token.isNullOrBlank()) {
+            tokenStore.serverUrl = "http://100.64.0.10:7777"
+            tokenStore.token = "***REMOVED-TOKEN***"
+        }
         api = Api(tokenStore)
     }
 }

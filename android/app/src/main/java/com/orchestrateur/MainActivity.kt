@@ -6,6 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.core.view.WindowCompat
 import androidx.fragment.app.FragmentActivity
 import com.orchestrateur.ui.fleet.FleetScreen
 import com.orchestrateur.ui.login.LoginScreen
@@ -15,6 +16,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         val app = application as OrchestreApp
 
         setContent {

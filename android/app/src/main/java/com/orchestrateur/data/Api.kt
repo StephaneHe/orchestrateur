@@ -62,6 +62,19 @@ class Api(private val store: TokenStore) {
         }
     }
 
+    suspend fun markRead(project: String) = withContext(Dispatchers.IO) {
+        val payload = buildJsonObject {
+            put("project", project)
+            put("timestamp", java.time.Instant.now().toString())
+        }
+        val body = Json.encodeToString(payload).toRequestBody("application/json".toMediaType())
+        runCatching {
+            http.newCall(
+                req("/api/mark-read").post(body).header("Content-Type", "application/json").build()
+            ).execute().use { /* fire-and-forget */ }
+        }
+    }
+
     /** URL for the aggregate SSE stream. Query-string token lets the browser
      *  flow match, even though we always also send the header. */
     fun fleetSseUrl(): String = "${baseUrl()}/api/sse/fleet?token=${token()}"

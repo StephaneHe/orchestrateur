@@ -13,6 +13,7 @@ data class ProjectConfig(
     val model: String? = null,
     val tools: String? = null,
     val attachedSession: String? = null,
+    val readAt: String? = null,
 )
 
 @Serializable
@@ -39,6 +40,13 @@ data class RawEvent(
     @SerialName("session_id") val sessionId: String? = null,
     val result: String? = null,
     @SerialName("duration_ms") val durationMs: Long? = null,
+    // Synthetic user_prompt injected by scripts/dispatch.mjs
+    val text: String? = null,
+    val timestamp: String? = null,
+    // Usage + cost — present on `result` events.
+    val usage: Usage? = null,
+    @SerialName("total_cost_usd") val totalCostUsd: Double? = null,
+    @SerialName("modelUsage") val modelUsage: Map<String, ModelUsage>? = null,
 ) {
     @Serializable
     data class Msg(val content: List<Block>? = null)
@@ -49,5 +57,21 @@ data class RawEvent(
         val text: String? = null,
         val thinking: String? = null,
         val name: String? = null,
+    )
+
+    @Serializable
+    data class Usage(
+        @SerialName("input_tokens") val inputTokens: Long? = null,
+        @SerialName("output_tokens") val outputTokens: Long? = null,
+        @SerialName("cache_read_input_tokens") val cacheReadInputTokens: Long? = null,
+        @SerialName("cache_creation_input_tokens") val cacheCreationInputTokens: Long? = null,
+    )
+
+    @Serializable
+    data class ModelUsage(
+        @SerialName("contextWindow") val contextWindow: Long? = null,
+        @SerialName("inputTokens") val inputTokens: Long? = null,
+        @SerialName("outputTokens") val outputTokens: Long? = null,
+        @SerialName("costUSD") val costUsd: Double? = null,
     )
 }
