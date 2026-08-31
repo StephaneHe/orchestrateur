@@ -17,6 +17,7 @@ logs/*
 .env.local
 .env.*.local
 config.local.json
+secrets/
 
 # Claude Code per-user overrides
 .claude/settings.local.json
@@ -30,6 +31,12 @@ config.local.json
 *.swo
 .DS_Store
 Thumbs.db
+
+# Local backups (e.g. dispatch.mjs.bak kept as a safety net during edits)
+*.bak
+
+# Scratch / throwaway (failover probes, temp JSON captures)
+.tmp/
 
 # Build artifacts (defensive — none expected)
 dist/
