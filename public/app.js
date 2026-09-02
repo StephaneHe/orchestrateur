@@ -9,10 +9,11 @@
 // Constants & small helpers
 // --------------------------------------------------------------------------
 
-const RING_MAX = 30;              // per-musician event buffer
+const RING_MAX   = 30;             // per-musician event buffer
+const CHAT_MAX   = 60;             // conductor chat messages kept in memory
 const CARD_MIN_W = 110;
 const CARD_MAX_W = 150;
-const CARD_H     = 76;
+const CARD_H     = 124;
 const GAP_MIN    = 18;            // minimum horizontal gap between card centers
 const ROW_GAP    = 14;            // min vertical breathing room between rows
 const ARC_AMP    = 10;            // how far a card's Y is perturbed by the arc shape
@@ -21,12 +22,19 @@ const TOP_PAD    = 96;            // room for topbar
 const BOTTOM_PAD = 240;           // room for composer
 const SIDE_PAD   = 40;
 const STRIP_H    = 220;           // fan strip band height on desktop (below conductor view)
+const CHEF_BAR_H = 160;           // height of the chef-bar (card + composer) — must match CSS
+// Desktop grid layout — left panel (chat) + right panel (fleet grid)
+const GRID_COLS       = 4;
+const GRID_TOP_PAD    = 88;       // below topbar
+const GRID_SIDE_PAD   = 24;
+const GRID_ROW_GAP    = 18;
 
 const STATE_LABELS = {
-  idle:   { label: "AU REPOS",              icon: "○" },
+  idle:   { label: "PRÊT",                  icon: "○" },
   live:   { label: "EN COMMUNICATION",      icon: "●" },
   think:  { label: "RÉFLEXION",             icon: "◌" },
-  input:  { label: "ATTEND TA RÉPONSE",     icon: "!" },
+  input:  { label: "EN ATTENTE",            icon: "?" },
+  error:  { label: "ERREUR",                icon: "✕" },
   unread: { label: "NOUVEAUX MESSAGES",     icon: "✉" },
 };
 
@@ -39,6 +47,11 @@ const $  = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+function stripReplyPrefixes(text) {
+  text = text.replace(/^> \[(?:chef|moi)\] [^\n]*\n\n/, "");
+  text = text.replace(/^Je réponds à ton message précédent :\n(?:> [^\n]*\n)+\n/, "");
+  return text;
+}
 const fmtRel = (ms) => {
   const d = Date.now() - ms;
   const s = Math.floor(d / 1000);
@@ -55,14 +68,18 @@ const fmtRel = (ms) => {
 class Musician {
   constructor(project) {
     this.name = project.name;
+    this.path = project.path || null;
     this.model = project.model;
     this.tools = project.tools;
     this.attachedSession = project.attachedSession || null;
 
-    this.state = "idle";                 // idle | live | think | input | unread
-    this.lastLine = "";                  // cached preview for the arc card
+    // Hydrate from the server-side snapshot so cards paint the right color
+    // on page load. SSE only streams NEW events, so without this every
+    // musician would start at `idle` after reload regardless of actual state.
+    this.state = project.currentState || "idle";
+    this.lastLine = project.lastLine || "";
     this.lastAssistantText = "";         // last assistant text (for NEEDS_USER_INPUT detection)
-    this.unreadCount = 0;                // events since last focused-view open
+    this.unreadCount = project.unreadCount || 0;
     // Last-read marker (ISO timestamp). Comes from the server at
     // /api/config (logs/<name>.read) and is updated by markRead() via
     // POST /api/mark-read so unread state survives reloads.
@@ -85,6 +102,12 @@ class Musician {
 
     this.el = null;                      // the DOM card, built lazily
     this.pos = { x: 0, y: 0, w: CARD_MAX_W, row: 0 };
+
+    this.pendingDenials = [];            // [{toolName,toolId}] — cleared on result/init
+    this._toolIdToName  = {};            // tool_use_id → name within current turn
+
+    this.parked   = project.parked   || false;
+    this.provider = project.provider || 'claude';
   }
 
   push(ev) {
@@ -92,6 +115,15 @@ class Musician {
     if (this.ring.length > RING_MAX) this.ring.shift();
     this.lastActivityMs = Date.now();
     this.freq = Math.min(100, this.freq * 0.98 + 1); // decays + adds
+  }
+
+  resetRing() {
+    this.ring = [];
+    this.state = "idle";
+    this.lastAssistantText = "";
+    this.unreadCount = 0;
+    this.lastLine = "";
+    this.lastTurnUsage = null;
   }
 
   transition(raw) {
@@ -103,9 +135,11 @@ class Musician {
       // The orchestrator's prompt, injected synthetically by dispatch.mjs.
       this.turnStartMs = Date.parse(raw.timestamp) || Date.now();
       this.setState(this.state === "idle" || this.state === "unread" ? "live" : this.state);
-      this.lastLine = String(raw.text || "").replace(/\s+/g, " ").trim().slice(0, 140);
+      this.lastLine = stripReplyPrefixes(String(raw.text || "")).replace(/\s+/g, " ").trim().slice(0, 140);
     } else if (t === "system") {
       if (raw.subtype === "init") {
+        this.pendingDenials = [];
+        this._toolIdToName  = {};
         this.turnCount++;
         this.turnStartMs = Date.parse(raw.timestamp) || Date.now();
         this.setState(this.state === "idle" || this.state === "unread" ? "live" : this.state);
@@ -121,7 +155,11 @@ class Musician {
       for (const b of content) {
         if (b?.type === "text")     gotText = b.text || "";
         if (b?.type === "thinking") hasThink = true;
-        if (b?.type === "tool_use") { hasTool = true; this.lastLine = `${(b.name || "TOOL").toLowerCase()} · ${toolArgPreview(b)}`; }
+        if (b?.type === "tool_use") {
+          hasTool = true;
+          this.lastLine = `${(b.name || "TOOL").toLowerCase()} · ${toolArgPreview(b)}`;
+          if (b.id && b.name) this._toolIdToName[b.id] = b.name;
+        }
       }
       if (gotText) {
         this.lastAssistantText = gotText;
@@ -129,8 +167,20 @@ class Musician {
       }
       this.setState(hasTool ? "live" : (hasThink ? "think" : "live"));
     } else if (t === "user") {
-      // Tool result comes back — keep current state
+      // Detect permission denials (tool_result with "requires approval")
+      for (const b of raw.message?.content || []) {
+        if (b?.type !== "tool_result") continue;
+        const c = typeof b.content === "string" ? b.content
+          : Array.isArray(b.content) ? b.content.map(x => x?.text ?? "").join("\n") : "";
+        if (!c.includes("requires approval")) continue;
+        const toolName = b.tool_use_id ? (this._toolIdToName[b.tool_use_id] || null) : null;
+        if (!this.pendingDenials.some(d => d.toolId === b.tool_use_id)) {
+          this.pendingDenials.push({ toolName, toolId: b.tool_use_id });
+        }
+      }
     } else if (t === "result") {
+      this.pendingDenials = [];
+      this._toolIdToName  = {};
       const isErr = !!raw.is_error || (typeof raw.subtype === "string" && raw.subtype.startsWith("error"));
       // Harvest token/cost numbers from the terminal result event.
       const u = raw.usage || {};
@@ -155,10 +205,10 @@ class Musician {
         this.setState("idle");
       } else if (isErr) {
         this.lastLine = raw.subtype || "échec du tour";
-        this.setState("input");              // real error — needs attention
+        this.setState("error");
       } else if (needs) {
         this.lastLine = needs[1].trim().slice(0, 140);
-        this.setState("input");
+        this.setState("input");             // musician explicitly asked a question
       } else {
         // Only count this result as unread if it happened AFTER the last
         // server-side read marker. Otherwise the reload-replay would re-
@@ -216,6 +266,7 @@ class Musician {
         <div class="m-corner m-corner-r">${corner}</div>
         <div class="m-tools">
           <button class="m-tool" data-act="session" title="Session Claude">⌬</button>
+          <button class="m-tool" data-act="park" title="Mettre de côté">⊟</button>
           <button class="m-tool danger" data-act="remove" title="Retirer de l'orchestre">✕</button>
         </div>
         <header class="m-header">
@@ -223,20 +274,24 @@ class Musician {
           <div class="m-name">${esc(this.name)}</div>
           <span class="m-badge" hidden>0</span>
         </header>
-        <div class="m-last-line m-last-empty">en attente…</div>
+        <div class="m-feed"></div>
         <div class="m-state-row">
+          <span class="m-activity" aria-hidden="true"></span>
           <span class="m-state-icon">○</span>
           <span class="m-state-label">AU REPOS</span>
         </div>
+        ${this.provider !== 'claude' ? `<span class="m-provider-tag">${esc(this.provider.toUpperCase())}</span>` : ''}
       </div>
     `;
     el.addEventListener("click", (e) => {
       const act = e.target.closest("[data-act]")?.dataset.act;
       if (act === "session") { e.stopPropagation(); App.openSession(this); return; }
+      if (act === "park")    { e.stopPropagation(); App.parkProject(this); return; }
       if (act === "remove")  { e.stopPropagation(); App.removeProject(this); return; }
       App.openFocused(this);
     });
     this.el = el;
+    if (this.parked) el.classList.add("is-parked");
     return el;
   }
 
@@ -249,22 +304,21 @@ class Musician {
     const silentMs = this.lastActivityMs ? (Date.now() - this.lastActivityMs) : 0;
     const stale = isInFlight && silentMs > 30_000;
     this.el.classList.toggle("is-stale", stale);
+    this.el.classList.toggle("has-denial", this.pendingDenials.length > 0);
     $(".m-state-icon",  this.el).textContent = label.icon;
     const baseLabel = this.unreadCount > 1 && this.state === "unread"
       ? `${this.unreadCount} ${label.label}`
       : label.label;
-    $(".m-state-label", this.el).textContent = stale
-      ? `${baseLabel} · silence ${formatElapsed(silentMs)}`
-      : baseLabel;
+    // Always surface elapsed time while a turn is in flight so the card
+     // shows motion even when events are sparse — otherwise the card can
+     // feel frozen while the model is thinking or a long tool runs.
+    let suffix = "";
+    if (stale) suffix = ` · silence ${formatElapsed(silentMs)}`;
+    else if (isInFlight && silentMs > 2000) suffix = ` · ${formatElapsed(silentMs)}`;
+    $(".m-state-label", this.el).textContent = baseLabel + suffix;
 
-    const lastEl = $(".m-last-line", this.el);
-    if (this.lastLine) {
-      lastEl.classList.remove("m-last-empty");
-      lastEl.textContent = this.lastLine;
-    } else {
-      lastEl.classList.add("m-last-empty");
-      lastEl.textContent = "en attente…";
-    }
+    const feedEl = $(".m-feed", this.el);
+    feedEl.innerHTML = buildFeedHtml(this.ring);
 
     const badge = $(".m-badge", this.el);
     const showBadge = this.unreadCount > 0 && this.state === "unread";
@@ -305,6 +359,43 @@ function toolArgPreview(block) {
     .toString().replace(/\s+/g, " ").slice(0, 80);
 }
 
+// Build the last N meaningful feed items from a musician's ring as HTML.
+function buildFeedHtml(ring, max = 3) {
+  const items = [];
+  const tmap = buildToolNameMap(ring);
+  for (let i = ring.length - 1; i >= 0 && items.length < max * 2; i--) {
+    const ev = ring[i];
+    if (ev.type === "user") {
+      for (const b of ev.message?.content || []) {
+        if (b?.type !== "tool_result") continue;
+        const c = typeof b.content === "string" ? b.content
+          : Array.isArray(b.content) ? b.content.map(x => x?.text ?? "").join("\n") : "";
+        if (!c.includes("requires approval")) continue;
+        const tn = b.tool_use_id ? (tmap[b.tool_use_id] || "outil") : "outil";
+        items.push({ cls: "mf-denied", text: `🚫 ${tn} bloqué` });
+        break;
+      }
+    } else if (ev.type === "assistant") {
+      const content = ev.message?.content || [];
+      for (const b of content) {
+        if (b?.type === "tool_use") {
+          items.push({ cls: "mf-tool", text: `⚙ ${(b.name || "tool").toLowerCase()} · ${toolArgPreview(b)}` });
+        } else if (b?.type === "text" && b.text?.trim()) {
+          items.push({ cls: "mf-text", text: b.text.replace(/\s+/g, " ").trim().slice(0, 100) });
+        }
+      }
+    } else if (ev.type === "user_prompt" && ev.text?.trim()) {
+      items.push({ cls: "mf-prompt", text: `→ ${stripReplyPrefixes(ev.text).replace(/\s+/g, " ").trim().slice(0, 80)}` });
+    } else if (ev.type === "result") {
+      const isErr = !!ev.is_error || (typeof ev.subtype === "string" && ev.subtype.startsWith("error"));
+      if (isErr) items.push({ cls: "mf-err", text: `✕ ${ev.subtype || "erreur"}` });
+    }
+  }
+  if (!items.length) return `<span class="mf-empty">en attente…</span>`;
+  return items.slice(0, max).reverse()
+    .map(it => `<div class="mf-row ${it.cls}">${esc(it.text)}</div>`).join("");
+}
+
 // --------------------------------------------------------------------------
 // Arc layout — multi-row, non-overlapping, apex = highest-freq
 // --------------------------------------------------------------------------
@@ -312,9 +403,47 @@ function toolArgPreview(block) {
 const MOBILE_BREAKPOINT = 768;
 const isMobileViewport = () => window.innerWidth < MOBILE_BREAKPOINT;
 
+function computeLeftPanelW(viewportW) {
+  return Math.max(420, Math.min(1000, Math.round(viewportW * 0.60)));
+}
+
 function computeLayout(musicians, viewport) {
   if (viewport.w < MOBILE_BREAKPOINT) return computeFanLayout(musicians, viewport);
-  return computeDesktopArc(musicians, viewport);
+  return computeGridLayout(musicians, viewport);
+}
+
+function computeGridLayout(musicians, viewport) {
+  const leftW = computeLeftPanelW(viewport.w);
+  // Expose left panel width to CSS so .conductor-view and .composer track it.
+  document.getElementById("stage").style.setProperty("--left-panel-w", leftW + "px");
+
+  const rightW  = viewport.w - leftW;
+  const availW  = rightW - 2 * GRID_SIDE_PAD;
+  const cardW   = CARD_MIN_W * 2;          // doubled card width
+  const GAP     = 20;                       // fixed gap — no overlap possible
+  // Fit as many columns as possible without overlap.
+  const cols    = Math.max(1, Math.floor((availW + GAP) / (cardW + GAP)));
+  const colStep = cardW + GAP;
+  // Coordinates are relative to #fleet-panel (left: leftW, top: 72px).
+  const FLEET_TOP = 72;
+  const startX  = GRID_SIDE_PAD + cardW / 2;
+  const startY  = (GRID_TOP_PAD - FLEET_TOP) + CARD_H / 2;
+  const rowStep = CARD_H + GRID_ROW_GAP;
+
+  // Sort most-active first (same convention as the arc).
+  const sorted = [...musicians].sort((a, b) => b.freq - a.freq);
+  sorted.forEach((m, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    m.pos = { x: startX + col * colStep, y: startY + row * rowStep, w: cardW, row };
+  });
+
+  // Stretch the arc so absolutely-positioned cards create scroll height.
+  const arc = document.getElementById("arc");
+  if (arc && sorted.length) {
+    const maxY = Math.max(...sorted.map(m => m.pos.y));
+    arc.style.height = (maxY + CARD_H / 2 + 180) + "px";
+  }
 }
 
 // Mobile: hand-of-playing-cards fan. Each "hand" holds up to CARDS_PER_HAND
@@ -516,25 +645,49 @@ function redrawThreads() {
   // Threads only make sense on desktop — the mobile view has no fan.
   if (isMobileViewport()) return;
 
-  const composerCenter = {
-    x: window.innerWidth / 2,
-    y: window.innerHeight - 55, // roughly the top of the composer
-  };
   const CONDUCTOR = App.composer.CONDUCTOR;
   const conductor = App.musicians.get(CONDUCTOR);
-  // Anchor for chef↔musicien threads — the conductor card's top. Falls back
-  // to the composer when the conductor card isn't laid out yet.
-  const conductorAnchor = (conductor && conductor.pos)
-    ? { x: conductor.pos.x, y: conductor.pos.y - CARD_H / 2 }
-    : composerCenter;
 
+  // Two anchors:
+  //   composerCenter → top of the composer on the LEFT panel
+  //   chefAnchor     → top-center of the chef card on the RIGHT panel
+  // User-to-chef thread runs left→right across the pane divider;
+  // chef-to-musician threads spread from the chef card out into the arc.
+  const composerEl = $("#composer");
+  const composerRect = composerEl ? composerEl.getBoundingClientRect() : null;
+  const composerCenter = composerRect
+    ? { x: composerRect.left + composerRect.width / 2, y: composerRect.top + 8 }
+    : { x: window.innerWidth / 4, y: window.innerHeight - 55 };
+
+  const chefEl = document.getElementById("chef-card");
+  const chefRect = chefEl && !chefEl.classList.contains("is-unconfigured")
+    ? chefEl.getBoundingClientRect()
+    : null;
+  const chefAnchor = chefRect
+    ? { x: chefRect.left + chefRect.width / 2, y: chefRect.top }
+    : null;
+
+  // Build the curved path with a vertical arc — higher mid-point for
+  // longer horizontal spans so the line doesn't look flat when user-to-
+  // chef crosses the viewport.
   const addPath = (from, to, className, color) => {
+    const dx = Math.abs(to.x - from.x);
+    const lift = Math.min(140, 60 + dx * 0.18);
     const mid = {
       x: (from.x + to.x) / 2,
-      y: (from.y + to.y) / 2 - 80,
+      y: (from.y + to.y) / 2 - lift,
     };
     const d = `M ${from.x} ${from.y} Q ${mid.x} ${mid.y} ${to.x} ${to.y}`;
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    const SVGNS = "http://www.w3.org/2000/svg";
+    // Soft glow companion — wide, translucent, NO filter. Replaces the removed
+    // drop-shadow; static, so it's painted once and never re-blurs the cards.
+    const glow = document.createElementNS(SVGNS, "path");
+    glow.setAttribute("d", d);
+    glow.setAttribute("class", "thread-glow " + className);
+    glow.style.color = color;
+    glow.style.stroke = "currentColor";
+    svg.appendChild(glow);
+    const path = document.createElementNS(SVGNS, "path");
     path.setAttribute("d", d);
     path.setAttribute("class", className);
     path.style.color = color;
@@ -542,34 +695,35 @@ function redrawThreads() {
     svg.appendChild(path);
   };
 
-  // Chef ↔ musicien — drawn from the conductor card down/out to each active
-  // musician. This visually mirrors the fact that the conductor delegates
-  // work; the user's own line goes to the conductor, not the musicians.
+  // User → Chef (left panel composer → chef card on the right).
+  if (conductor && chefAnchor) {
+    if (["live", "think", "input", "error"].includes(conductor.state)) {
+      addPath(composerCenter, chefAnchor, "active", varByState(conductor.state));
+    }
+    if (App.composer.hasDraft) {
+      addPath(composerCenter, chefAnchor, "pending", "var(--accent)");
+    }
+  }
+
+  // Chef → musicien — originate from the TOP of the chef card and curve up
+  // into each active musician's bottom edge. Fallback to the composer if
+  // the chef card isn't configured/visible.
+  const musicianAnchor = chefAnchor || composerCenter;
   for (const m of App.musicians.values()) {
     if (!m.el || !m.pos) continue;
     if (m.name === CONDUCTOR) continue;
-    if (!["live", "think", "input"].includes(m.state)) continue;
-    const to = { x: m.pos.x, y: m.pos.y + CARD_H / 2 };
-    addPath(conductorAnchor, to, "active", varByState(m.state));
-  }
-
-  // Utilisateur ↔ chef d'orchestre. Active whenever the conductor is busy;
-  // pending (dashed, pulsing faster) whenever the user has a draft in flight.
-  if (conductor && conductor.pos) {
-    const to = { x: conductor.pos.x, y: conductor.pos.y + CARD_H / 2 };
-    if (["live", "think", "input"].includes(conductor.state)) {
-      addPath(composerCenter, to, "active", varByState(conductor.state));
-    }
-    if (App.composer.hasDraft) {
-      addPath(composerCenter, to, "pending", "var(--accent)");
-    }
+    if (!["live", "think", "input", "error"].includes(m.state)) continue;
+    const rect = m.el.getBoundingClientRect();
+    if (!rect.width) continue;
+    const to = { x: rect.left + rect.width / 2, y: rect.bottom };
+    addPath(musicianAnchor, to, "active", varByState(m.state));
   }
 }
 
 function varByState(state) {
   return {
     idle: "var(--st-idle)", live: "var(--st-live)", think: "var(--st-think)",
-    input: "var(--st-input)", unread: "var(--st-unread)",
+    input: "var(--st-input)", error: "var(--st-error)", unread: "var(--st-unread)",
   }[state] || "var(--st-idle)";
 }
 
@@ -584,21 +738,47 @@ class FleetStream {
   }
   open() {
     this.source = new EventSource("/api/sse/fleet");
+    this.source.onopen = () => {
+      // SSE streams only new events (server starts at EOF). If the
+      // connection just dropped and reopened, we may have missed events
+      // during the gap. Re-pull the conductor chat history so bubbles
+      // aren't silently lost. Skip on the very first open (initial
+      // loadChatHistory already ran in App.init).
+      if (this._hasOpenedBefore) {
+        App.loadChatHistory().catch(() => {});
+      }
+      this._hasOpenedBefore = true;
+    };
     this.source.onmessage = (ev) => {
       let env; try { env = JSON.parse(ev.data); } catch { return; }
       const m = App.musicians.get(env.project);
       if (!m) return;
       let raw; try { raw = JSON.parse(env.line); } catch { return; }
+      const prevDenials = m.pendingDenials.length;
       m.transition(raw);
-      m.updateCard();
-      if (App.focused === m) { App.renderFocusedBody(); App.updateFocusedUsage(m); }
-      if (m.name === App.composer.CONDUCTOR) App.onConductorEvent(m, raw);
-      // Mobile tabs + session body need to re-render on every event so
-      // priority order and live streams stay in sync.
-      App.renderTabs();
-      if (isMobileViewport() && App.activeTab === m.name && m.name !== App.composer.CONDUCTOR) {
-        App.renderMainPane();
+      if (m.pendingDenials.length > prevDenials && App.focused !== m) {
+        const d = m.pendingDenials[m.pendingDenials.length - 1];
+        App.showPermDenialToast(m, d.toolName);
       }
+      if (App.focused === m && App.focusedDetail) {
+        // Append the live line to the drawer EXACTLY like /pupitre's onLive
+        // (token-level deltas + consolidated events) — no full rebuild. Stays
+        // immediate (that's the live view); its auto-scroll is throttled to
+        // 1×/frame inside pupitre-detail.js.
+        App.focusedDetail.onLive(raw);
+      }
+      // Conductor chat/reflection must observe every event, in order — but it's
+      // infrequent vs. token deltas, so keep it synchronous.
+      if (m.name === App.composer.CONDUCTOR) App.onConductorEvent(m, raw);
+      // Quick /api/pupitre re-poll when the event concerns whichever musician
+      // the telemetry is currently showing (desktop drawer OR mobile active
+      // tab) — same 400ms-debounced hint /pupitre uses for its own SSE.
+      if (m.name === App.pupitreTargetName()) App.schedulePupitreHint();
+      // Card feed, chef card, tab bar and the mobile pane are COALESCED to one
+      // repaint per animation frame (see markDirty): a burst of token deltas no
+      // longer triggers an innerHTML rebuild per line, and nothing repaints at
+      // all while the tab is hidden (rAF is suspended in background tabs).
+      App.markDirty(m);
     };
     this.source.onerror = () => { /* browser auto-reconnects */ };
   }
@@ -613,20 +793,91 @@ const App = {
   musicians: new Map(),           // name -> Musician
   focused: null,                  // currently focused musician (or null)
   stream: null,
+  // Live "pupitre" telemetry for the focused card — same /api/pupitre
+  // snapshot + same renderer (public/pupitre-row.js) as the /pupitre page,
+  // so the two never show different data for the same musician.
+  pupitreSnapshot: null,
+  pupitreRecvPerf: 0,
+  _pupitrePollTimer: null,
+  _pupitreHintTimer: null,
+  // The focused card renders EXACTLY like an opened /pupitre row: a shared
+  // PupitreDetail instance drives its event-stream body (.pf-d-body).
+  focusedDetail: null,
   composer: {
-    target: "orchestrateur",      // the conductor — every typed message goes here
-    CONDUCTOR: "orchestrateur",   // name of the conductor project (special routing)
+    target: "chef",               // the conductor — every typed message goes here
+    CONDUCTOR: "chef",            // name of the conductor project (special routing)
     hasDraft: false,
+    images: [],                   // pending attachments: {objectUrl, mediaType, blob, isVideo}
   },
+  // true  → "Chef d'orchestre" mode: conductor chat, orchestration of the fleet.
+  // false → "@orchestrateur" direct mode: raw event stream, task sent to the
+  //          orchestrateur project as if it were any other musician.
+  conductorMode: true,
   _reorderTimer: null,
   deckOffset: 0,                  // mobile: how many times the user swiped
   // Conductor transcript — user's messages + conductor's synthesised replies.
   // Each entry: { role: "user"|"conductor", text, ts }.
   chat: [],
+  // True only when a user_prompt or callback SSE event arrived this session
+  // and the chef hasn't yet sent a result. Drives the "le chef répond..."
+  // indicator. Intentionally NOT initialised from scanProjectState() so a
+  // crashed/stuck turn from a previous session doesn't show stale indicator.
+  _awaitingConductorResponse: false,
   // Mobile only: which project the user is currently viewing in the main
   // pane. Defaults to the conductor. When != conductor, the body shows the
   // project's event stream and the composer dispatches there.
-  activeTab: "orchestrateur",
+  activeTab: "chef",
+
+  /** Paint the fixed chef card (bottom-center of the right pane) from the
+   *  conductor musician's state. It is only a compact fleet summary: opening
+   *  it delegates to openFocused(), exactly like every musician card. */
+  syncChefCard(m) {
+    const card = document.getElementById("chef-card");
+    if (!card) return;
+    // m may be null/undefined when no conductor is configured or when the
+    // configured name doesn't match any project in the fleet.
+    if (!m) {
+      card.dataset.state = "unconfigured";
+      card.classList.add("is-unconfigured");
+      card.setAttribute("aria-disabled", "true");
+      const nameEl = card.querySelector(".chef-name");
+      if (nameEl) nameEl.textContent = "—";
+      const pathEl = card.querySelector(".chef-path");
+      if (pathEl) pathEl.textContent = "";
+      const feed = card.querySelector(".chef-feed");
+      if (feed) feed.innerHTML = "";
+      const labelEl = card.querySelector(".chef-state-label");
+      if (labelEl) labelEl.textContent = "NON CONFIGURÉ";
+      return;
+    }
+    card.classList.remove("is-unconfigured");
+    card.removeAttribute("aria-disabled");
+    card.dataset.state = m.state;
+    const nameEl = card.querySelector(".chef-name");
+    if (nameEl && nameEl.textContent !== m.name) nameEl.textContent = m.name;
+    const pathEl = card.querySelector(".chef-path");
+    if (pathEl) {
+      const p = m.path || "chemin inconnu";
+      if (pathEl.textContent !== p) pathEl.textContent = p;
+      pathEl.title = p;
+    }
+    const label = STATE_LABELS[m.state];
+    const isInFlight = m.state === "live" || m.state === "think";
+    const silentMs   = m.lastActivityMs ? (Date.now() - m.lastActivityMs) : 0;
+    const stale      = isInFlight && silentMs > 30_000;
+    card.classList.toggle("is-stale", stale);
+    const iconEl = card.querySelector(".chef-state-icon");
+    if (iconEl) iconEl.textContent = label.icon;
+    const labelEl = card.querySelector(".chef-state-label");
+    if (labelEl) {
+      let suffix = "";
+      if (stale) suffix = ` · silence ${formatElapsed(silentMs)}`;
+      else if (isInFlight && silentMs > 2000) suffix = ` · ${formatElapsed(silentMs)}`;
+      labelEl.textContent = label.label + suffix;
+    }
+    const feed = card.querySelector(".chef-feed");
+    if (feed) feed.innerHTML = buildFeedHtml(m.ring, 2);
+  },
 
   async init() {
     this.wireTopbar();
@@ -638,27 +889,58 @@ const App = {
     window.addEventListener("resize", () => { this.relayout(); this.renderChat(); });
 
     await this.loadConfig();
+    fetch("/api/version")
+      .then(r => r.ok ? r.json() : null)
+      .then(j => {
+        const el = document.getElementById("app-version");
+        if (el && j?.version) el.textContent = "v" + j.version;
+      })
+      .catch(() => {});
+    await this.loadChatHistory();
     this.stream = new FleetStream();
 
     // Periodic freq decay + layout re-sort to surface recently-active musicians.
     setInterval(() => {
+      if (document.hidden) return;   // no reordering work while the tab is hidden
       for (const m of this.musicians.values()) m.freq *= 0.98;
       this.reorderSoon();
     }, 5000);
 
-    // Periodic thread refresh (handles idle timers)
-    setInterval(() => redrawThreads(), 1000);
+    // Pause every looping CSS animation + skip background timers when the
+    // dashboard isn't visible (big GPU/DWM saving when another window is
+    // focused). rAF-driven flushes self-suspend; on resume we catch up once.
+    const applyVisibility = () => {
+      document.documentElement.classList.toggle("anim-paused", document.hidden);
+      if (!document.hidden) { this.redrawThreadsIfChanged(); this._flushDirty(); }
+    };
+    document.addEventListener("visibilitychange", applyVisibility);
+    applyVisibility();
+
+    // Periodic thread refresh (handles idle timers) — now a no-op unless the
+    // set of active threads actually changed, and skipped entirely when the
+    // tab is hidden. The old version rebuilt the whole viewport SVG every second.
+    setInterval(() => this.redrawThreadsIfChanged(), 1000);
 
     // 1s heartbeat ticker — updates the "in-flight" banner in the focused
     // panel so the user sees elapsed time and a sign of life even when the
     // sub-agent's stream is quiet between tool calls.
     this.startHeartbeatTicker();
 
-    // 5s staleness ticker — refreshes each musician card so the
-    // "silence Xs" indicator updates without waiting for new events.
+    // 5s staleness ticker — refreshes the "silence Xs" indicator without waiting
+    // for new events. Only in-flight / stale cards have a moving timer, so idle /
+    // done / unread cards are skipped (they'd rebuild identical HTML otherwise).
     setInterval(() => {
-      for (const m of this.musicians.values()) m.updateCard();
-      this.renderTabs();
+      if (document.hidden) return;
+      let touched = false;
+      for (const m of this.musicians.values()) {
+        const inFlight = m.state === "live" || m.state === "think";
+        const stale = m.el && m.el.classList.contains("is-stale");
+        if (!inFlight && !stale) continue;
+        if (m.name === this.composer.CONDUCTOR) this.syncChefCard(m);
+        else m.updateCard();
+        touched = true;
+      }
+      if (touched) this.renderTabs();
     }, 5000);
   },
 
@@ -667,6 +949,22 @@ const App = {
       const resp = await fetch("/api/config");
       if (!resp.ok) throw new Error(`config ${resp.status}`);
       const cfg = await resp.json();
+      // Honour the server-selected conductor. Default stays "chef" if the
+      // server didn't send one (older build).
+      if (cfg.conductor) {
+        this.composer.CONDUCTOR = cfg.conductor;
+        this.composer.target = cfg.conductor;
+        this.activeTab = cfg.conductor;
+      }
+      // Sync provider toggle to the server-persisted value.
+      if (cfg.defaults?.provider) {
+        const provSeg = document.querySelector('[data-tweak="provider"]');
+        if (provSeg) {
+          provSeg.querySelectorAll("button").forEach(b =>
+            b.classList.toggle("on", b.dataset.v === cfg.defaults.provider)
+          );
+        }
+      }
       this.renderFleet(cfg.projects || []);
     } catch (err) {
       console.error("[app] config fetch failed", err);
@@ -676,6 +974,22 @@ const App = {
     }
   },
 
+  async loadChatHistory() {
+    try {
+      const resp = await fetch("/api/conductor-chat?n=60");
+      if (!resp.ok) return;
+      const msgs = await resp.json();
+      this.chat = msgs.map(m => ({
+        role: m.source ? "callback" : m.role,
+        text: m.text,
+        ts: m.ts,
+        source: m.source || undefined,
+        ...(m.attachmentPaths?.length ? { images: m.attachmentPaths } : {}),
+      }));
+      this.renderChat();
+    } catch { /* non-fatal */ }
+  },
+
   renderFleet(projects) {
     const arc = $("#arc");
     arc.innerHTML = "";
@@ -683,29 +997,116 @@ const App = {
     for (const p of projects) {
       const m = new Musician(p);
       this.musicians.set(p.name, m);
-      arc.appendChild(m.buildCard());
+      if (p.name !== this.composer.CONDUCTOR) arc.appendChild(m.buildCard());
     }
+    // Paint the conductor card. If no project matches composer.CONDUCTOR,
+    // pass null so the card renders its "unconfigured" visual state.
+    const conductor = this.musicians.get(this.composer.CONDUCTOR);
+    this.syncChefCard(conductor || null);
     this.relayout();
     this.toggleEmptyHint();
     this.renderChat();
   },
 
   toggleEmptyHint() {
-    $("#empty-hint").hidden = this.musicians.size > 0;
+    const hasMusicians = [...this.musicians.keys()]
+      .some(name => name !== this.composer.CONDUCTOR);
+    $("#empty-hint").hidden = hasMusicians;
   },
 
   relayout() {
     const viewport = { w: window.innerWidth, h: window.innerHeight };
-    const list = [...this.musicians.values()];
-    if (!list.length) return redrawThreads();
+    const stage = document.getElementById("stage");
+    if (viewport.w >= MOBILE_BREAKPOINT) {
+      stage.style.setProperty("--left-panel-w", computeLeftPanelW(viewport.w) + "px");
+    }
+    // Exclude conductor and parked musicians from the arc layout.
+    const list = [...this.musicians.values()]
+      .filter(m => m.name !== this.composer.CONDUCTOR && !m.parked);
+    if (!list.length) { this.renderParkedShelf(); return redrawThreads(); }
     computeLayout(list, viewport);
     for (const m of list) m.updateCard();
-    redrawThreads();
+    // Cards slide to their new spots over a 0.7s CSS transition; re-anchor the
+    // threads for the duration of that slide, then stop (no permanent loop).
+    this.scheduleThreadSettle();
+    this.renderParkedShelf();
   },
 
   reorderSoon() {
     clearTimeout(this._reorderTimer);
     this._reorderTimer = setTimeout(() => this.relayout(), 250);
+  },
+
+  // ---------- Thread redraw: change-detected + bounded settle ----------
+  //
+  // A signature of everything that determines the set of threads (conductor
+  // state, draft flag, each active musician's state). Positions are handled
+  // separately by scheduleThreadSettle during the post-reorder slide.
+  _threadSignature() {
+    const c = this.musicians.get(this.composer.CONDUCTOR);
+    const active = [];
+    for (const m of this.musicians.values()) {
+      if (m.name === this.composer.CONDUCTOR) continue;
+      if (["live", "think", "input", "error"].includes(m.state)) active.push(m.name + ":" + m.state);
+    }
+    active.sort();
+    return `c:${c ? c.state : "-"}|d:${this.composer.hasDraft ? 1 : 0}|${active.join(",")}`;
+  },
+
+  // Called by the 1s interval: rebuild only when the thread set changed.
+  redrawThreadsIfChanged() {
+    if (document.hidden) return;
+    const sig = this._threadSignature();
+    if (sig === this._threadSig) return;
+    this._threadSig = sig;
+    redrawThreads();
+  },
+
+  // Re-anchor threads to the moving cards for ~ms (one rAF loop, self-stopping),
+  // so they track the slide after a reorder without a permanent redraw timer.
+  scheduleThreadSettle(ms = 800) {
+    redrawThreads();
+    this._threadSig = this._threadSignature();
+    this._threadSettleUntil = performance.now() + ms;
+    if (this._threadSettleRaf) return;
+    const step = () => {
+      if (document.hidden || performance.now() >= this._threadSettleUntil) {
+        this._threadSettleRaf = null;
+        this._threadSig = this._threadSignature();
+        return;
+      }
+      redrawThreads();
+      this._threadSettleRaf = requestAnimationFrame(step);
+    };
+    this._threadSettleRaf = requestAnimationFrame(step);
+  },
+
+  // ---------- Coalesced SSE render flush ----------
+  //
+  // Musicians touched by SSE events this frame; their cards + tab bar + mobile
+  // pane are repainted ONCE, on the next animation frame, instead of per event.
+  // Because it rides rAF, zero render work happens while the tab is hidden.
+  _dirty: null,
+  _flushScheduled: false,
+  markDirty(m) {
+    (this._dirty || (this._dirty = new Set())).add(m);
+    if (this._flushScheduled) return;
+    this._flushScheduled = true;
+    requestAnimationFrame(() => this._flushDirty());
+  },
+  _flushDirty() {
+    this._flushScheduled = false;
+    const dirty = this._dirty; this._dirty = null;
+    if (!dirty || !dirty.size) return;
+    const mobile = isMobileViewport();
+    let mobilePaneNeedsRender = false;
+    for (const m of dirty) {
+      m.updateCard();                                        // no-op if the card has no .el
+      if (m.name === this.composer.CONDUCTOR) this.syncChefCard(m);
+      if (mobile && this.activeTab === m.name && m.name !== this.composer.CONDUCTOR) mobilePaneNeedsRender = true;
+    }
+    this.renderTabs();
+    if (mobilePaneNeedsRender) this.renderMainPane();
   },
 
   // Mobile-only: swipe left/right on the stage rotates the deck — the top
@@ -759,7 +1160,7 @@ const App = {
     const send = $("#composer-send");
 
     const setDraft = () => {
-      const has = input.value.trim().length > 0;
+      const has = input.value.trim().length > 0 || this.composer.images.length > 0;
       send.disabled = !has;
       this.composer.hasDraft = has;
       redrawThreads();
@@ -848,13 +1249,18 @@ const App = {
       const caret = input.selectionStart ?? v.length;
       const before = v.slice(0, mention.anchor);
       const after = v.slice(caret);
-      const needsSpace = !(after.startsWith(" ") || after.startsWith("\n") || after === "");
+      const needsSpace = !after.startsWith(" ") && !after.startsWith("\n");
       const insertion = `@${pick.n}${needsSpace ? " " : ""}`;
       input.value = before + insertion + after;
       const newCaret = (before + insertion).length;
       input.setSelectionRange(newCaret, newCaret);
       closeMention();
       setDraft();
+      // NOTE: we used to auto-flip to "direct mode" (conductorMode=false)
+      // when the user confirmed @orchestrateur. That hid the chat
+      // transcript mid-type, which felt like a crash. The mention is now
+      // purely a text insertion — direct mode is reachable via a different
+      // entrypoint only.
     };
 
     input.addEventListener("input", () => {
@@ -897,6 +1303,112 @@ const App = {
     input.addEventListener("blur", () => setTimeout(closeMention, 120));
     input.addEventListener("click", () => { if (detectMention()) renderMentionMenu(); else closeMention(); });
     send.addEventListener("click", () => this.sendMessage());
+
+    // Paste — images and videos from clipboard; text proceeds normally.
+    input.addEventListener("paste", (e) => {
+      const items = Array.from(e.clipboardData?.items || []);
+      const mediaItems = items.filter(it => it.type.startsWith("image/") || it.type.startsWith("video/"));
+      if (!mediaItems.length) return;
+      e.preventDefault();
+      for (const item of mediaItems) {
+        const blob = item.getAsFile();
+        if (!blob) continue;
+        const objectUrl = URL.createObjectURL(blob);
+        this.composer.images.push({ objectUrl, mediaType: item.type, blob, isVideo: item.type.startsWith("video/") });
+      }
+      this.renderComposerImages();
+      setDraft();
+    });
+
+    // File picker — paperclip button triggers the hidden input.
+    const fileBtn   = $("#composer-attach");
+    const fileInput = $("#composer-file");
+    if (fileBtn && fileInput) {
+      fileBtn.addEventListener("click", () => fileInput.click());
+      fileInput.addEventListener("change", () => {
+        this._addAttachFiles(Array.from(fileInput.files || []));
+        fileInput.value = "";
+      });
+    }
+
+    // Drag-drop onto the composer box.
+    const box = $(".composer-box");
+    if (box) {
+      box.addEventListener("dragover", (e) => { e.preventDefault(); box.classList.add("drag-over"); });
+      box.addEventListener("dragleave", () => box.classList.remove("drag-over"));
+      box.addEventListener("drop", (e) => {
+        e.preventDefault();
+        box.classList.remove("drag-over");
+        this._addAttachFiles(Array.from(e.dataTransfer?.files || []));
+      });
+    }
+  },
+
+  _addAttachFiles(files) {
+    const ACCEPTED_IMAGE = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+    const ACCEPTED_VIDEO = new Set(["video/mp4", "video/webm", "video/quicktime"]);
+    const rejected = [];
+    for (const f of files) {
+      if (ACCEPTED_IMAGE.has(f.type)) {
+        const objectUrl = URL.createObjectURL(f);
+        this.composer.images.push({ objectUrl, mediaType: f.type, blob: f, isVideo: false });
+      } else if (ACCEPTED_VIDEO.has(f.type)) {
+        const objectUrl = URL.createObjectURL(f);
+        this.composer.images.push({ objectUrl, mediaType: f.type, blob: f, isVideo: true });
+      } else {
+        rejected.push(f.name);
+      }
+    }
+    if (rejected.length) {
+      this.showComposerError(`Type non supporté : ${rejected.join(", ")} — accepté : images (PNG/JPG/WEBP/GIF) et vidéos (MP4/WEBM/MOV).`);
+    }
+    if (files.length - rejected.length > 0) {
+      this.renderComposerImages();
+      const input = $("#composer-input");
+      const send  = $("#composer-send");
+      if (input && send) {
+        const has = input.value.trim().length > 0 || this.composer.images.length > 0;
+        send.disabled = !has;
+      }
+    }
+  },
+
+  showComposerError(msg) {
+    const el = $("#composer-error");
+    if (!el) return;
+    el.textContent = msg;
+    el.hidden = false;
+    clearTimeout(this._composerErrTimer);
+    this._composerErrTimer = setTimeout(() => { el.hidden = true; }, 6000);
+  },
+
+  renderComposerImages() {
+    const strip = $("#composer-image-strip");
+    if (!strip) return;
+    if (!this.composer.images.length) { strip.hidden = true; strip.innerHTML = ""; return; }
+    strip.hidden = false;
+    strip.innerHTML = this.composer.images.map((att, i) => {
+      const preview = att.isVideo
+        ? `<video src="${att.objectUrl}" class="cis-video-preview" muted preload="metadata" title="${att.blob?.name || "vidéo"}"></video>`
+        : `<img src="${att.objectUrl}" alt="image ${i + 1}">`;
+      return `<div class="cis-thumb${att.isVideo ? " cis-thumb--video" : ""}" data-idx="${i}">${preview}` +
+        `<button class="cis-del" data-idx="${i}" aria-label="Supprimer">✕</button>` +
+        `</div>`;
+    }).join("");
+    $$(".cis-del", strip).forEach(btn => {
+      btn.addEventListener("click", () => {
+        const idx = Number(btn.dataset.idx);
+        const removed = this.composer.images.splice(idx, 1)[0];
+        URL.revokeObjectURL(removed.objectUrl);
+        this.renderComposerImages();
+        // Re-evaluate send button (may disable if no text AND no images left).
+        const input = $("#composer-input");
+        const send  = $("#composer-send");
+        const has = input.value.trim().length > 0 || this.composer.images.length > 0;
+        send.disabled = !has;
+        this.composer.hasDraft = has;
+      });
+    });
   },
 
   // ---------- Conductor transcript ----------
@@ -910,7 +1422,7 @@ const App = {
   renderMainPane() {
     const scroll = $("#cv-scroll");
     if (!scroll) return;
-    const activeIsConductor = this.activeTab === this.composer.CONDUCTOR;
+    const activeIsConductor = this.activeTab === this.composer.CONDUCTOR && this.conductorMode;
     scroll.classList.toggle("cv-session", !activeIsConductor);
 
     if (!activeIsConductor) {
@@ -922,8 +1434,11 @@ const App = {
         </div>`;
         return;
       }
-      scroll.innerHTML = m.ring.map(raw => renderFocusedEvent(raw)).join("");
+      const toolNames = buildToolNameMap(m.ring);
+      scroll.innerHTML = m.ring.map(raw => renderFocusedEventMain(raw, m.name, toolNames)).join("");
       requestAnimationFrame(() => { scroll.scrollTop = scroll.scrollHeight; });
+      // Repaint the persistent mobile telemetry strip above the stream.
+      this.renderPupitreStrip();
       return;
     }
 
@@ -936,33 +1451,149 @@ const App = {
       return;
     }
     const conductor = this.musicians.get(this.composer.CONDUCTOR);
-    const isWaitingConductor = conductor &&
-      (conductor.state === "live" || conductor.state === "think") &&
-      this.chat.length > 0 &&
-      this.chat[this.chat.length - 1].role === "user";
+    // Show "le chef répond..." only when a user_prompt SSE arrived this session
+    // AND the chef hasn't yet sent a result. Avoids showing stale "live" state
+    // from a crashed/stuck turn logged in a previous server session.
+    const isWaitingConductor = this._awaitingConductorResponse;
 
-    scroll.innerHTML = this.chat.map(b => {
+    // Only auto-scroll when already at (or near) the bottom.
+    const wasAtBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
+
+    scroll.innerHTML = this.chat.map((b, idx) => {
+      const tsChip = b.ts ? `<span class="cv-ts">${esc(fmtChatTs(b.ts))}</span>` : "";
       if (b.role === "user") {
-        return `<div class="cv-bubble is-user">
-          <div class="cv-byline">toi</div>
-          <div class="cv-body">${esc(b.text)}</div>
+        const replyQuote = b.replyingTo
+          ? `<div class="cv-body-reply-quote">↩ ${esc(String(b.replyingTo).replace(/\s+/g, " ").slice(0, 140))}${b.replyingTo.length > 140 ? "…" : ""}</div>`
+          : "";
+        const imgThumbs = (b.images || []).map(url =>
+          `<img class="cv-attach-thumb" src="${url}" alt="image jointe" loading="lazy">`
+        );
+        const vidThumbs = (b.videos || []).map(url =>
+          `<video class="cv-attach-thumb cv-attach-thumb--video" src="${url}" muted preload="metadata"></video>`
+        );
+        const attachHtml = (imgThumbs.length || vidThumbs.length)
+          ? `<div class="cv-attach-strip">${imgThumbs.join("") + vidThumbs.join("")}</div>`
+          : "";
+        return `<div class="cv-bubble is-user" data-idx="${idx}">
+          <div class="cv-byline">
+            <button class="cv-edit-btn" data-edit-idx="${idx}" title="Modifier et renvoyer">✎ éditer</button>
+            toi${tsChip}
+          </div>
+          <div class="cv-body">${replyQuote}${esc(b.text)}${attachHtml}</div>
         </div>`;
+      }
+      if (b.role === "callback") {
+        return `<div class="cv-bubble is-callback">
+          <div class="cv-byline">${esc(b.source || "musicien")}${tsChip}</div>
+          <div class="cv-body md">${mdToHtml(b.text || "")}</div>
+        </div>`;
+      }
+      if (b.role === "reflection") {
+        const n = b.events.length;
+        const elapsed = formatElapsed((b.endTs || Date.now()) - b.startTs);
+        const statusTxt = b.closed ? `${n} étape${n > 1 ? "s" : ""} · ${elapsed}` : `en cours · ${n} étape${n > 1 ? "s" : ""} · ${elapsed}`;
+        const evHtml = b.events.map(ev => {
+          if (ev.kind === "tool") return `<div class="cv-refl-ev cv-refl-tool">⚙ <span class="cv-refl-tn">${esc(ev.name)}</span> <span class="cv-refl-arg">${esc(ev.preview || "")}</span></div>`;
+          if (ev.kind === "thinking") return `<div class="cv-refl-ev cv-refl-think">◌ ${esc(ev.text)}</div>`;
+          if (ev.kind === "text") return `<div class="cv-refl-ev cv-refl-text">${esc(ev.text)}</div>`;
+          if (ev.kind === "result") return `<div class="cv-refl-ev cv-refl-res">↳ ${esc(ev.text)}</div>`;
+          return "";
+        }).join("");
+        // By default keep open while in flight, collapsed once closed.
+        const openAttr = b.closed ? "" : " open";
+        return `<details class="cv-reflection${b.closed ? " is-closed" : " is-live"}"${openAttr}>
+          <summary class="cv-refl-summary">
+            <span class="cv-refl-label">Réflexion du chef</span>
+            <span class="cv-refl-meta">${esc(statusTxt)}</span>
+          </summary>
+          <div class="cv-refl-body">${evHtml || '<div class="cv-refl-empty">…</div>'}</div>
+        </details>`;
       }
       const usageChip = b.usage ? `<span class="cv-usage">${esc(fmtTurnUsage(b.usage))}</span>` : "";
       return `<div class="cv-bubble is-conductor">
-          <div class="cv-byline">chef d'orchestre${usageChip}</div>
+          <div class="cv-byline">chef d'orchestre${tsChip}${usageChip}
+            <button class="cv-reply-btn" data-reply-idx="${idx}" title="Répondre à ce message">↩ répondre</button>
+          </div>
           <div class="cv-body md">${mdToHtml(b.text || "")}</div>
         </div>`;
     }).join("") + (isWaitingConductor
       ? `<div class="cv-thinking">le chef ${conductor.state === "think" ? "réfléchit" : "répond"}<span class="cv-dots"></span></div>`
       : "");
-    requestAnimationFrame(() => { scroll.scrollTop = scroll.scrollHeight; });
+    // Wire "↩ répondre" buttons — clicking one sets the composer's replyingTo
+    // context so the next send includes a verbatim quote of that bubble.
+    $$(".cv-reply-btn", scroll).forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const idx = Number(btn.dataset.replyIdx);
+        const target = this.chat[idx];
+        if (!target) return;
+        this.startReply(target);
+      });
+    });
+    // Wire "✎ éditer" buttons and double-click on user bubbles.
+    $$(".cv-edit-btn", scroll).forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.startInlineEdit(scroll, Number(btn.dataset.editIdx));
+      });
+    });
+    $$(".cv-bubble.is-user", scroll).forEach(bubble => {
+      bubble.addEventListener("dblclick", (e) => {
+        if (e.target.closest("button")) return;
+        this.startInlineEdit(scroll, Number(bubble.dataset.idx));
+      });
+    });
+    if (wasAtBottom) requestAnimationFrame(() => { scroll.scrollTop = scroll.scrollHeight; });
+    this.renderReplyChip();
   },
 
-  // Priority order: 'input' (needs attention) > 'unread' > 'live' / 'think'
+  /** Attach a "replying to" context to the composer. Shows a chip above
+   *  the textarea; when the user sends, the payload includes a quoted
+   *  reference to the chef's message so Claude sees exactly what the
+   *  reply is about without the user having to repeat the target name. */
+  startReply(target) {
+    this.composer.replyingTo = {
+      text: String(target.text || "").trim(),
+      ts: target.ts || null,
+    };
+    this.renderReplyChip();
+    const input = $("#composer-input");
+    input?.focus();
+  },
+
+  cancelReply() {
+    this.composer.replyingTo = null;
+    this.renderReplyChip();
+  },
+
+  renderReplyChip() {
+    let chip = $("#composer-reply-chip");
+    const composer = $("#composer");
+    const r = this.composer.replyingTo;
+    if (!r) {
+      if (chip) chip.remove();
+      return;
+    }
+    if (!chip) {
+      chip = document.createElement("div");
+      chip.id = "composer-reply-chip";
+      chip.className = "composer-reply-chip";
+      composer.insertBefore(chip, composer.firstChild);
+    }
+    const snippet = r.text.replace(/\s+/g, " ").slice(0, 180);
+    chip.innerHTML = `
+      <span class="crc-icon">↩</span>
+      <span class="crc-label">En réponse au chef</span>
+      <span class="crc-quote">${esc(snippet)}${r.text.length > 180 ? "…" : ""}</span>
+      <button class="crc-close" aria-label="Annuler la réponse">✕</button>
+    `;
+    $(".crc-close", chip).addEventListener("click", () => this.cancelReply());
+  },
+
+  // Priority order: 'input'/'error' (needs attention) > 'unread' > 'live'/'think'
   // (active) > 'idle'. Ties broken by recent-freq then alpha.
   _tabPriority(m) {
-    const P = { input: 0, unread: 1, live: 2, think: 2, idle: 3 };
+    const P = { input: 0, error: 0, unread: 1, live: 2, think: 2, idle: 3 };
     return (P[m.state] ?? 3);
   },
 
@@ -983,7 +1614,8 @@ const App = {
     });
 
     const tabs = [conductorM ? {
-      name: CONDUCTOR, state: conductorM.state, unread: conductorM.unreadCount, conductor: true,
+      name: CONDUCTOR, state: conductorM.state, unread: conductorM.unreadCount,
+      conductor: true, directMode: !this.conductorMode,
     } : null].filter(Boolean).concat(
       others.map(m => ({ name: m.name, state: m.state, unread: m.unreadCount }))
     );
@@ -991,14 +1623,23 @@ const App = {
     bar.innerHTML = tabs.map(t => {
       const isActive = t.name === this.activeTab;
       const showBadge = t.unread > 0 && t.state === "unread";
+      const tabLabel = t.conductor
+        ? (t.directMode ? "@orchestrateur" : "Chef")
+        : t.name;
+      const tabClass = [
+        "tab",
+        t.conductor ? "is-conductor" : "",
+        t.directMode ? "is-direct" : "",
+        isActive ? "is-active" : "",
+      ].filter(Boolean).join(" ");
       return `
-        <button class="tab ${t.conductor ? "is-conductor" : ""} ${isActive ? "is-active" : ""}"
+        <button class="${tabClass}"
                 data-tab="${esc(t.name)}" data-state="${t.state}"
                 style="--state-color: ${varByState(t.state)};">
           <span class="tab-dot"></span>
-          <span class="tab-name">${esc(t.conductor ? "Chef" : t.name)}</span>
+          <span class="tab-name">${esc(tabLabel)}</span>
           <span class="tab-badge" ${showBadge ? "" : "hidden"}>${t.unread || ""}</span>
-          ${!t.conductor && isActive ? `<span class="tab-close" data-act="close" title="Revenir au chef">×</span>` : ""}
+          ${(t.directMode || (!t.conductor && isActive)) ? `<span class="tab-close" data-act="close" title="Revenir au chef">×</span>` : ""}
         </button>`;
     }).join("");
 
@@ -1013,21 +1654,32 @@ const App = {
     });
   },
 
-  setActiveTab(name) {
+  setActiveTab(name, { direct = false } = {}) {
     this.activeTab = name || this.composer.CONDUCTOR;
+    // Clicking the "Chef" tab always returns to conductor mode.
+    if (this.activeTab === this.composer.CONDUCTOR && !direct) this.conductorMode = true;
+    if (this.activeTab === this.composer.CONDUCTOR &&  direct) this.conductorMode = false;
     // When the user opens a project session, mark their unread as read.
     const m = this.musicians.get(this.activeTab);
-    if (m && this.activeTab !== this.composer.CONDUCTOR) m.markRead();
-    // Update composer placeholder to reflect the target.
-    const input = $("#composer-input");
-    if (input) {
-      input.placeholder = this.activeTab === this.composer.CONDUCTOR
-        ? "Parle au chef — tape @ pour citer un musicien"
-        : `Parle directement à ${this.activeTab}…`;
-    }
+    if (m) m.markRead();
+    this._syncComposerPlaceholder();
     this.composer.target = this.activeTab;
     this.renderChat();
+    // Live telemetry strip for the newly-active musician tab (mobile).
+    this.ensurePupitrePoll();
     redrawThreads();
+  },
+
+  _syncComposerPlaceholder() {
+    const input = $("#composer-input");
+    if (!input) return;
+    if (this.activeTab === this.composer.CONDUCTOR && this.conductorMode) {
+      input.placeholder = "Parle au chef — tape @ pour citer un musicien";
+    } else if (this.activeTab === this.composer.CONDUCTOR && !this.conductorMode) {
+      input.placeholder = "Tâche directe à @orchestrateur…";
+    } else {
+      input.placeholder = `Parle directement à ${this.activeTab}…`;
+    }
   },
 
   /**
@@ -1035,59 +1687,324 @@ const App = {
    * new event. We harvest its final assistant text on `result` turns and
    * append it as a conductor bubble.
    */
+  /** Ensure a pending "reflection" entry exists at the tail of the chat
+   *  array and return it. The reflection accumulates tool_use / thinking /
+   *  assistant-text events emitted by the conductor between the user's
+   *  prompt and its final `result` — surfacing why a dispatch took its
+   *  time. Closed (frozen) when the turn emits `result`. */
+  _ensureReflection() {
+    const last = this.chat[this.chat.length - 1];
+    if (last && last.role === "reflection" && !last.closed) return last;
+    const entry = { role: "reflection", events: [], startTs: Date.now(), endTs: null, closed: false };
+    this.chat.push(entry);
+    if (this.chat.length > CHAT_MAX) this.chat.splice(0, this.chat.length - CHAT_MAX);
+    return entry;
+  },
+
   onConductorEvent(musician, raw) {
-    if (raw?.type === "user_prompt") {
-      // Prompt sent to the conductor by any client (this tab, another tab,
-      // mobile web, Android app). Mirror it as a user bubble unless this
-      // same tab already pushed it locally in sendMessage().
+    if (raw?.type === "notification" && raw.subtype === "musician_done") {
       const txt = String(raw.text || "").trim();
+      const source = raw.source || null;
+      if (txt && source) {
+        this.chat.push({ role: "callback", text: txt, ts: Date.parse(raw.timestamp) || Date.now(), source });
+        if (this.chat.length > CHAT_MAX) this.chat.splice(0, this.chat.length - CHAT_MAX);
+        this.showCallbackToast(source, txt);
+        this.renderChat();
+      }
+      return;
+    }
+    if (raw?.type === "user_prompt") {
+      const txt = stripReplyPrefixes(String(raw.text || "")).trim();
       if (txt) {
+        const source = raw.source || null;
         const last = this.chat[this.chat.length - 1];
-        const isLocalEcho = last && last.role === "user" && last.text.trim() === txt;
+        const isLocalEcho = !source && last && last.role === "user" && (
+          last.text.trim() === txt ||
+          (last._fullPrompt != null && last._fullPrompt.trim() === txt)
+        );
         if (!isLocalEcho) {
-          this.chat.push({ role: "user", text: txt, ts: Date.parse(raw.timestamp) || Date.now() });
+          const role = source ? "callback" : "user";
+          const images = Array.isArray(raw.attachmentPaths) && raw.attachmentPaths.length
+            ? raw.attachmentPaths.map(p => '/attachments/' + String(p).replace(/\\/g, '/').split('/').pop())
+            : undefined;
+          this.chat.push({ role, text: txt, ts: Date.parse(raw.timestamp) || Date.now(), ...(source ? { source } : {}), ...(images ? { images } : {}) });
+          if (this.chat.length > CHAT_MAX) this.chat.splice(0, this.chat.length - CHAT_MAX);
+          if (source) this.showCallbackToast(source, txt);
+        }
+        // Mark as awaiting regardless of local-echo dedup — the chef IS now processing.
+        this._awaitingConductorResponse = true;
+      }
+    } else if (raw?.type === "assistant") {
+      // Mid-turn conductor activity. Feed the current reflection so the
+      // user can watch what the chef is doing before the final reply.
+      const blocks = raw.message?.content || [];
+      const refl = this._ensureReflection();
+      for (const b of blocks) {
+        if (b?.type === "tool_use") {
+          refl.events.push({
+            kind: "tool",
+            name: (b.name || "tool").toLowerCase(),
+            preview: toolArgPreview(b),
+            ts: Date.now(),
+          });
+        } else if (b?.type === "thinking") {
+          const t = (b.thinking || "").trim();
+          if (t) refl.events.push({ kind: "thinking", text: t.slice(0, 400), ts: Date.now() });
+        } else if (b?.type === "text") {
+          const t = (b.text || "").trim();
+          if (t) refl.events.push({ kind: "text", text: t, ts: Date.now() });
         }
       }
+    } else if (raw?.type === "user") {
+      // Claude CLI emits tool_result blocks under type:"user" — surface a
+      // condensed line so the user sees the tool's reply as well.
+      const blocks = raw.message?.content || [];
+      const refl = this._ensureReflection();
+      for (const b of blocks) {
+        if (b?.type !== "tool_result") continue;
+        const content = Array.isArray(b.content)
+          ? b.content.map(c => c?.text ?? "").join("\n")
+          : (b.content || "");
+        const preview = String(content).trim().split("\n").slice(0, 4).join("\n").slice(0, 400);
+        if (preview) refl.events.push({ kind: "result", text: preview, ts: Date.now() });
+      }
     } else if (raw?.type === "result") {
+      // Chef finished — clear the waiting flag regardless of success/error.
+      this._awaitingConductorResponse = false;
+      // Close the pending reflection (freeze its timestamps) and push the
+      // conductor's final synthesis.
+      const pending = this.chat[this.chat.length - 1];
+      if (pending && pending.role === "reflection" && !pending.closed) {
+        pending.closed = true;
+        pending.endTs = Date.now();
+      }
       const txt = (musician.lastAssistantText || "").trim();
       if (!txt) return this.renderChat();
       const last = this.chat[this.chat.length - 1];
       const usage = musician.lastTurnUsage;
       if (last && last.role === "conductor" && last.text.trim() === txt) {
         if (!last.usage && usage) last.usage = usage;
-        return this.renderChat();
+      } else {
+        this.chat.push({ role: "conductor", text: txt, ts: Date.now(), usage });
+        if (this.chat.length > CHAT_MAX) this.chat.splice(0, this.chat.length - CHAT_MAX);
       }
-      this.chat.push({ role: "conductor", text: txt, ts: Date.now(), usage });
+      musician.markRead();
     }
     this.renderChat();
+  },
+
+  showCallbackToast(source, text) {
+    const toast = document.createElement("div");
+    toast.className = "callback-toast";
+    toast.innerHTML =
+      `<span class="ct-source">${esc(source)}</span>` +
+      `<span class="ct-text">${esc(text.length > 110 ? text.slice(0, 110) + "…" : text)}</span>`;
+    toast.addEventListener("click", () => {
+      toast.classList.remove("callback-toast--show");
+      setTimeout(() => toast.remove(), 350);
+    });
+    document.body.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add("callback-toast--show"));
+    setTimeout(() => {
+      toast.classList.remove("callback-toast--show");
+      setTimeout(() => toast.remove(), 350);
+    }, 7000);
+  },
+
+  showPermDenialToast(m, toolName) {
+    const toast = document.createElement("div");
+    toast.className = "callback-toast perm-denial-toast";
+    const tLabel = toolName ? esc(toolName) : "outil inconnu";
+    toast.innerHTML =
+      `<span class="ct-source">🚫 ${esc(m.name)} — outil bloqué</span>` +
+      `<span class="ct-text"><code>${tLabel}</code> requiert une approbation.</span>` +
+      `<div class="ct-actions">` +
+      `<button class="ct-open-btn">Ouvrir le panneau →</button>` +
+      (toolName ? `<button class="ct-add-btn" data-project="${esc(m.name)}" data-tool="${esc(toolName)}">+ Autoriser ${tLabel}</button>` : "") +
+      `</div>`;
+    const dismiss = () => {
+      toast.classList.remove("callback-toast--show");
+      setTimeout(() => toast.remove(), 350);
+    };
+    toast.querySelector(".ct-open-btn")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      App.openFocused(m);
+      dismiss();
+    });
+    toast.querySelector(".ct-add-btn")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const btn = e.currentTarget;
+      const { project, tool } = btn.dataset;
+      btn.disabled = true; btn.textContent = "Ajout…";
+      fetch(`/api/project/${encodeURIComponent(project)}/add-tool`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tool }),
+      })
+        .then(r => r.json())
+        .then(d => { btn.textContent = d.ok ? `✓ autorisé` : "Erreur"; })
+        .catch(() => { btn.textContent = "Erreur réseau"; });
+    });
+    toast.addEventListener("click", dismiss);
+    document.body.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add("callback-toast--show"));
+    setTimeout(dismiss, 15000);
+  },
+
+  // Replace the bubble at idx with an inline textarea; submit dispatches
+  // the corrected text as a new turn without pushing a duplicate bubble.
+  startInlineEdit(scroll, idx) {
+    const bubble = scroll.querySelector(`.cv-bubble[data-idx="${idx}"]`);
+    if (!bubble || bubble.classList.contains("is-editing")) return;
+    const body = bubble.querySelector(".cv-body");
+    const originalText = this.chat[idx]?.text;
+    if (originalText == null) return;
+
+    bubble.classList.add("is-editing");
+    body.innerHTML = `<textarea class="cv-edit-ta" rows="1"></textarea>
+      <div class="cv-edit-actions">
+        <button class="cv-edit-cancel">✕ annuler</button>
+        <button class="cv-edit-send">↩ renvoyer</button>
+      </div>`;
+
+    const ta = body.querySelector(".cv-edit-ta");
+    ta.value = originalText;
+    // Auto-size to content.
+    const resize = () => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; };
+    ta.addEventListener("input", resize);
+    requestAnimationFrame(() => { resize(); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); });
+
+    const cancel = () => this.renderChat();
+    const send = async () => {
+      const newText = ta.value.trim();
+      if (!newText) return;
+      this.chat[idx].text = newText;
+      this.chat[idx].ts   = Date.now();
+      this.renderChat();
+      await this._dispatchEdit(newText);
+    };
+
+    body.querySelector(".cv-edit-cancel").addEventListener("click", cancel);
+    body.querySelector(".cv-edit-send").addEventListener("click", send);
+    ta.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+      if (e.key === "Escape") { e.preventDefault(); cancel(); }
+    });
+  },
+
+  async _dispatchEdit(text) {
+    try {
+      const resp = await fetch("/api/dispatch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project: this.composer.CONDUCTOR, prompt: text }),
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.error || `HTTP ${resp.status}`);
+      }
+    } catch (err) {
+      alert("Renvoi échoué : " + (err.message || err));
+    }
   },
 
   async sendMessage() {
     const input = $("#composer-input");
     const msg = input.value.trim();
-    if (!msg) return;
-    // Mobile: composer routes to the active tab (conductor by default).
-    // Desktop: always the conductor (fan stays visible; direct-to-musician
-    // is via the focused overlay).
+    const pendingImages = [...this.composer.images];
+    if (!msg && !pendingImages.length) return;
     const target = isMobileViewport() ? this.activeTab : this.composer.CONDUCTOR;
-    if (target === this.composer.CONDUCTOR) {
-      this.chat.push({ role: "user", text: msg, ts: Date.now() });
-    } else {
-      // Mobile direct-to-musician: show the sent message in the musician's ring immediately.
-      const m = this.musicians.get(target);
-      if (m) m.push({ type: "user_prompt", text: msg, timestamp: new Date().toISOString() });
+    const isConductorMsg = target === this.composer.CONDUCTOR && this.conductorMode;
+
+    // If the user is replying to a chef bubble, prepend a quoted reference
+    // to the prompt so the chef sees exactly which prior message this is
+    // about and can reuse the target it already identified (project name,
+    // session, etc.) without the user having to repeat it.
+    const reply = this.composer.replyingTo;
+    const pendingVideos = pendingImages.filter(i => i.isVideo);
+    const pendingImagesOnly = pendingImages.filter(i => !i.isVideo);
+    // Attachment-only messages need a minimal prompt (claude -p requires non-empty).
+    let prompt = msg || (pendingImages.length ? (pendingVideos.length && !pendingImagesOnly.length ? "Une vidéo est jointe." : "Décris cette image.") : "");
+    let displayText = msg;
+    if (reply && isConductorMsg) {
+      const quoted = reply.text.split("\n").map(l => `> ${l}`).join("\n");
+      prompt = `Je réponds à ton message précédent :\n${quoted}\n\n${prompt}`;
+      displayText = msg;
     }
+
+    // Snapshot attachments and clear the strip immediately — optimistic UX.
+    const imageObjectUrls = pendingImagesOnly.map(i => i.objectUrl);
+    const videoObjectUrls = pendingVideos.map(v => v.objectUrl);
+    this.composer.images = [];
+    this.renderComposerImages();
+
+    if (isConductorMsg) {
+      this.chat.push({
+        role: "user",
+        text: displayText,
+        images: imageObjectUrls.length ? imageObjectUrls : undefined,
+        videos: videoObjectUrls.length ? videoObjectUrls : undefined,
+        _fullPrompt: prompt !== displayText ? prompt : undefined,
+        ts: Date.now(),
+        replyingTo: reply ? reply.text : null,
+      });
+      if (this.chat.length > CHAT_MAX) this.chat.splice(0, this.chat.length - CHAT_MAX);
+    }
+    this.cancelReply();
     this.renderChat();
     input.disabled = true;
     try {
+      // Upload images and videos to /api/attach/image (accepts both MIME families).
+      const attachmentPaths = [];
+      for (const img of pendingImagesOnly) {
+        const up = await fetch("/api/attach/image", {
+          method: "POST",
+          headers: { "Content-Type": img.mediaType },
+          body: img.blob,
+        });
+        if (!up.ok) {
+          const d = await up.json().catch(() => ({}));
+          throw new Error(`Upload image échoué : ${d.error || `HTTP ${up.status}`}`);
+        }
+        const { path: p } = await up.json();
+        attachmentPaths.push(p);
+        // objectUrl NOT revoked — chat bubble <img> still references it.
+      }
+      const videoPaths = [];
+      for (const vid of pendingVideos) {
+        const up = await fetch("/api/attach/image", {
+          method: "POST",
+          headers: { "Content-Type": vid.mediaType },
+          body: vid.blob,
+        });
+        if (!up.ok) {
+          const d = await up.json().catch(() => ({}));
+          throw new Error(`Upload vidéo échoué : ${d.error || `HTTP ${up.status}`}`);
+        }
+        const { path: p } = await up.json();
+        videoPaths.push(p);
+        // objectUrl NOT revoked — chat bubble <video> still references it.
+      }
+
+      const payload = { project: target, prompt };
+      if (attachmentPaths.length) payload.attachmentPaths = attachmentPaths;
+      if (videoPaths.length) payload.videoPaths = videoPaths;
+
       const resp = await fetch("/api/dispatch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ project: target, prompt: msg }),
+        body: JSON.stringify(payload),
       });
-      if (!resp.ok) {
-        const data = await resp.json().catch(() => ({}));
-        throw new Error(data.error || `HTTP ${resp.status}`);
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+      // Server routed the message directly (queued or bypassed the conductor).
+      if (data.queued) {
+        this.chat.push({
+          role: "callback", source: "queue",
+          text: `⏸ ${data.project} est occupé — message en file (position ${data.queueLength}). Sera transmis automatiquement à la fin de son tour.`,
+          ts: Date.now(),
+        });
+        this.renderChat();
       }
       input.value = "";
       input.style.height = "auto";
@@ -1119,6 +2036,13 @@ const App = {
           const v = btn.dataset.v;
           if (key === "theme") document.body.dataset.theme = v;
           else if (key === "halo") document.documentElement.style.setProperty("--halo-intensity", v);
+          else if (key === "provider") {
+            fetch("/api/config/provider", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ provider: v }),
+            }).catch(() => {});
+          }
         });
       });
     });
@@ -1148,20 +2072,83 @@ const App = {
     });
     pfSend.addEventListener("click", () => this.sendFocusedMessage());
 
-    // session-chip in focused view
-    $(".pf-session-chip", $("#overlay-focused")).addEventListener("click", () => {
-      if (this.focused) this.openSession(this.focused);
+    // The conductor keeps its fixed fleet card, but opening it follows the
+    // exact same path as a musician card: shared /pupitre drawer + composer.
+    const chefCard = document.getElementById("chef-card");
+    const openChef = () => {
+      if (chefCard.classList.contains("is-unconfigured")) return;
+      const chef = this.musicians.get(this.composer.CONDUCTOR);
+      if (chef) this.openFocused(chef);
+    };
+    chefCard.addEventListener("click", openChef);
+    chefCard.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
+      openChef();
     });
+
+    // Drawer body scroll → pin-to-bottom indicator (same behaviour as /pupitre).
+    const pfDBody = $(".pf-d-body", $("#overlay-focused"));
+    if (pfDBody) {
+      pfDBody.addEventListener("scroll", () => {
+        if (!this.focusedDetail) return;
+        const atB = this.focusedDetail.atBottom();
+        this.focusedDetail.setPinned(atB);
+        const pin = $(".pf-d-pin", $("#overlay-focused"));
+        if (pin) {
+          pin.textContent = atB ? "⏬ suit le flux" : "défilement libre";
+          pin.className = atB ? "pf-d-pin pin-on" : "pf-d-pin";
+        }
+      });
+    }
 
     // add-project manual row
     $(".pa-manual-add", $("#overlay-add")).addEventListener("click", () => this.submitManualAdd());
+
+    // Delegated handler for "add tool" buttons rendered inside permission-denied events.
+    document.addEventListener("click", (e) => {
+      const btn = e.target.closest(".ev-perm-add-btn");
+      if (!btn) return;
+      const project = btn.dataset.project;
+      const tool    = btn.dataset.tool;
+      if (!project || !tool) return;
+      btn.disabled = true;
+      btn.textContent = "Ajout…";
+      fetch(`/api/project/${encodeURIComponent(project)}/add-tool`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tool }),
+      })
+        .then(r => r.json())
+        .then(d => {
+          btn.textContent = d.ok ? `✓ ${tool} ajouté` : `Erreur : ${d.error || "?"}`;
+        })
+        .catch(() => { btn.textContent = "Erreur réseau"; });
+    });
+
+    // Delegated handler for "unpark" buttons rendered inside the parked shelf.
+    document.addEventListener("click", (e) => {
+      const btn = e.target.closest(".psh-unpark");
+      if (btn) { e.stopPropagation(); this.unparkProject(btn.dataset.name); return; }
+      // Click on the strip row itself (not the button) opens the focused panel.
+      const strip = e.target.closest(".psh-strip");
+      if (strip && !e.target.closest("button")) {
+        const m = this.musicians.get(strip.dataset.name);
+        if (m) this.openFocused(m);
+      }
+    });
 
     // briefing — re-render live by itself, no special button
   },
 
   closeOverlay(ov) {
     ov.hidden = true;
-    if (ov.id === "overlay-focused") this.focused = null;
+    if (ov.id === "overlay-focused") {
+      this.focused = null;
+      this.focusedDetail = null;
+      // Keep polling if a mobile musician tab is still showing the strip.
+      this.ensurePupitrePoll();
+    }
   },
 
   closeAllOverlays() {
@@ -1170,6 +2157,11 @@ const App = {
   },
 
   // ---------- Focused musician view ----------
+  //
+  // The opened card is EXACTLY a /pupitre opened row: the shared drawer chrome
+  // (.d-head name + telemetry meta + close · .d-body event stream · .d-foot pin
+  // + count) driven by the SAME PupitreDetail renderer /pupitre uses, plus the
+  // composer below to talk to the musician. No pf-head / pf-main / pf-tech.
   openFocused(m) {
     this.focused = m;
     m.markRead();
@@ -1177,16 +2169,186 @@ const App = {
     const ov = $("#overlay-focused");
     const root = $(".panel-focused", ov);
     root.style.setProperty("--state-color", varByState(m.state));
-    $(".pf-name", ov).textContent = m.name;
-    $(".pf-sub",  ov).textContent = `modèle ${m.model || "—"} · outils ${m.tools || "—"}`;
-    const stateTag = $(".pf-state-tag", ov);
-    stateTag.textContent = STATE_LABELS[m.state].label;
-    stateTag.style.setProperty("--state-color", varByState(m.state));
-    this.updateFocusedSessionChip(m);
-    this.updateFocusedUsage(m);
-    this.renderFocusedBody();
+    $(".pf-d-name", ov).textContent = m.name;
+    const input = $(".pf-input", ov);
+    input.placeholder = m.name === this.composer.CONDUCTOR
+      ? "Parle au chef…"
+      : `Réponds à ${m.name}…`;
+
+    // Fresh event-stream renderer for this musician — identical to /pupitre's
+    // openDetail: reset → backfill history → live deltas append via SSE.
+    const dBody = $(".pf-d-body", ov);
+    const dCount = $(".pf-d-count", ov);
+    dBody.innerHTML = "";
+    this.focusedDetail = window.PupitreDetail.create(dBody, {
+      maxNodes: 600,
+      onCount: (n) => { dCount.textContent = n + " evts"; },
+    });
+    this.focusedDetail.setPinned(true);
+    const pin = $(".pf-d-pin", ov);
+    if (pin) { pin.textContent = "⏬ suit le flux"; pin.className = "pf-d-pin pin-on"; }
+
     ov.hidden = false;
-    setTimeout(() => $(".pf-input", ov).focus(), 100);
+    this.renderCardMeta();                 // d-meta telemetry (fills once poll lands)
+    setTimeout(() => input.focus(), 100);
+    this.backfillFocusedDetail(m.name);    // history (same endpoint /pupitre uses)
+    this.ensurePupitrePoll();              // live d-meta (state/silence/pid/model)
+  },
+
+  // Backfill the focused drawer with the musician's recent event history — the
+  // SAME /api/project/:name/events endpoint /pupitre's openDetail backfills
+  // from. Also refreshes the fleet-card ring so its mini-feed stays in sync.
+  backfillFocusedDetail(name) {
+    const det = this.focusedDetail;
+    const m = this.focused;
+    fetch(`/api/project/${encodeURIComponent(name)}/events?n=200`,
+          { headers: { Accept: "application/json" }, credentials: "same-origin" })
+      .then(r => r.ok ? r.json() : [])
+      .then(list => {
+        if (!this.focused || this.focused.name !== name || this.focusedDetail !== det) return;
+        det.reset();
+        for (const raw of list) det.addEvent(raw);
+        det.setPinned(true); det.stick();
+        if (m && Array.isArray(list) && list.length) {
+          m.ring = list.slice(-RING_MAX);
+          m.recomputeFromRing?.();
+          m.updateCard();
+        }
+      })
+      .catch(() => { /* non-fatal */ });
+  },
+
+  // Fill the drawer head's telemetry meta line — byte-for-byte the same compact
+  // string /pupitre's render() writes into its own d-meta, from the shared
+  // /api/pupitre snapshot + PupitreRow helpers.
+  renderCardMeta() {
+    const ov = $("#overlay-focused");
+    if (!ov || ov.hidden) return;
+    const el = $(".pf-d-meta", ov);
+    if (!el || !this.focused || !window.PupitreRow) return;
+    const snap = this.pupitreSnapshot;
+    const r = snap && snap.fleet.find(x => x.name === this.focused.name);
+    if (!r) { el.textContent = ""; return; }
+    const elapsed = performance.now() - this.pupitreRecvPerf;
+    const si = window.PupitreRow.stateInfo(r);
+    const fmt = window.PupitreRow.fmtAge;
+    el.textContent = si.label
+      + " · tour " + (r.turnElapsedMs != null ? fmt(r.turnElapsedMs + elapsed) : "—")
+      + " · silence " + fmt(r.silentMs + elapsed)
+      + " · pid " + (r.pid ? (r.pid + (r.pidAlive === false ? " ✗" : " ✓")) : "—")
+      + ((r.model || r.configModel) ? " · " + (r.model || r.configModel) : "");
+  },
+
+  // ---------- Pupitre-parity live strip (focused card) ----------
+  //
+  // Reuses /api/pupitre (the same snapshot endpoint /pupitre polls) and
+  // PupitreRow.rowHtml (the same renderer /pupitre uses) so the focused
+  // card's telemetry — state, current activity, turn/silence timers, stall,
+  // PID liveness, model/provider — can never diverge from a /pupitre row.
+  // Cadence mirrors /pupitre exactly: 2.5s authoritative poll + an SSE hint
+  // for a quick re-poll on new events, with the existing 1s heartbeat ticker
+  // (updateHeartbeat) driving the smooth between-poll counter interpolation.
+  startPupitrePoll() {
+    if (this._pupitrePollTimer) return;
+    this._pupitrePollTimer = setInterval(() => this.pollPupitre(), 2500);
+    this.pollPupitre();
+  },
+
+  stopPupitrePoll() {
+    if (this._pupitrePollTimer) { clearInterval(this._pupitrePollTimer); this._pupitrePollTimer = null; }
+    if (this._pupitreHintTimer) { clearTimeout(this._pupitreHintTimer); this._pupitreHintTimer = null; }
+  },
+
+  // Debounced quick re-poll triggered by a live SSE event for the focused
+  // musician — same 400ms debounce /pupitre uses for its own SSE hint.
+  schedulePupitreHint() {
+    if (this._pupitreHintTimer) return;
+    this._pupitreHintTimer = setTimeout(() => { this._pupitreHintTimer = null; this.pollPupitre(); }, 400);
+  },
+
+  async pollPupitre() {
+    try {
+      const resp = await fetch("/api/pupitre", { headers: { Accept: "application/json" } });
+      if (!resp.ok) return;
+      this.pupitreSnapshot = await resp.json();
+      this.pupitreRecvPerf = performance.now();
+      this.renderPupitreStrip();
+    } catch { /* non-fatal — strip just holds its last known state */ }
+  },
+
+  // Which musician's telemetry should the strip show right now?
+  //   desktop → the focused-overlay musician (this.focused)
+  //   mobile  → the active musician tab (never the conductor tab)
+  // Returns a name, or null when no single-musician view is open.
+  pupitreTargetName() {
+    if (this.focused) return this.focused.name;
+    if (isMobileViewport()
+        && this.activeTab
+        && this.activeTab !== this.composer.CONDUCTOR
+        && this.musicians.has(this.activeTab)) {
+      return this.activeTab;
+    }
+    return null;
+  },
+
+  // Build the shared /pupitre row markup for one musician from the last
+  // snapshot. Empty string when the snapshot lacks that musician.
+  _pupitreRowHtml(name) {
+    if (!this.pupitreSnapshot || !window.PupitreRow) return "";
+    const row = this.pupitreSnapshot.fleet.find(r => r.name === name);
+    if (!row) return "";
+    const elapsed = performance.now() - this.pupitreRecvPerf;
+    return window.PupitreRow.rowHtml(row, elapsed, { clickable: false });
+  },
+
+  // Start the /api/pupitre poll iff a single-musician view is open; stop it
+  // otherwise. Idempotent — safe to call on every open/close/tab switch.
+  ensurePupitrePoll() {
+    if (this.pupitreTargetName()) this.startPupitrePoll();
+    else this.stopPupitrePoll();
+    this.renderPupitreStrip();
+  },
+
+  // Paint BOTH possible strip containers from the cached snapshot. Cheap; runs
+  // on the 1s ticker and after every relevant event, so counters stay smooth.
+  renderPupitreStrip() {
+    const target = this.pupitreTargetName();
+
+    // Desktop focused-overlay: telemetry lives in the drawer head's meta line.
+    this.renderCardMeta();
+
+    // Mobile main-pane strip.
+    const mpEl = document.getElementById("mp-pupitre-strip");
+    if (mpEl) {
+      const showMobile = isMobileViewport() && target && !this.focused;
+      if (showMobile) {
+        const html = this._pupitreRowHtml(target);
+        mpEl.innerHTML = html || `<div class="pf-pupitre-loading">chargement…</div>`;
+        mpEl.hidden = false;
+      } else {
+        mpEl.hidden = true;
+        mpEl.innerHTML = "";
+      }
+    }
+  },
+
+  async hydrateMusicianRing(m) {
+    try {
+      const resp = await fetch(`/api/project/${encodeURIComponent(m.name)}/events?n=120`);
+      if (!resp.ok) return;
+      const events = await resp.json();
+      if (!Array.isArray(events) || !events.length) return;
+      // Replace the ring wholesale — the fetched list is authoritative and
+      // already includes anything we streamed so far (same log file).
+      m.ring = events;
+      // Recompute per-turn usage / tool counters from the fresh ring.
+      m.recomputeFromRing?.();
+      if (this.focused === m) {
+        this.renderFocusedBody();
+        this.updateFocusedUsage(m);
+      }
+      m.updateCard();
+    } catch { /* non-fatal */ }
   },
 
   updateFocusedUsage(m) {
@@ -1208,6 +2370,7 @@ const App = {
 
   updateFocusedSessionChip(m) {
     const chip = $(".pf-session-chip", $("#overlay-focused"));
+    if (!chip) return;   // the focused card no longer shows a session chip
     const label = $(".psc-label", chip);
     const id    = $(".psc-id",    chip);
     if (m.attachedSession) {
@@ -1221,24 +2384,52 @@ const App = {
     }
   },
 
+  // pf-main renders EXACTLY like a /pupitre opened row: the telemetry row
+  // (.pf-main-telem, filled by renderPupitreStrip) followed by the same event
+  // stream a /pupitre detail drawer shows (.pf-main-stream, built by the shared
+  // PupitreDetail renderer replaying the musician's ring). pf-tech and the
+  // composer are untouched. The old standalone #pf-pupitre-strip is gone —
+  // telemetry now lives once, at the top of pf-main.
+  // Legacy pf-main/pf-tech renderer — no longer used by the focused card (which
+  // now renders as a /pupitre drawer via focusedDetail). Kept as a guarded
+  // no-op so any stray caller can't throw; the .pf-body element no longer exists.
   renderFocusedBody() {
     const m = this.focused;
     if (!m) return;
     const body = $(".pf-body", $("#overlay-focused"));
-    if (!m.ring.length) {
-      body.innerHTML = `<div class="pf-empty">En attente d'événements. Envoie un message à <strong>${esc(m.name)}</strong> pour commencer.</div>`;
-      this.updateHeartbeat();
-      return;
-    }
-    const parts = [];
+    if (!body) return;
+
+    // pf-tech is built from the same ring by its own (unchanged) renderer.
+    const techParts = [];
     for (const raw of m.ring) {
-      parts.push(renderFocusedEvent(raw));
+      const tech = renderFocusedEventTech(raw);
+      if (tech) techParts.push(tech);
     }
-    // In-flight heartbeat: shown while the turn hasn't emitted a `result` yet.
-    // Gives the user a visible proof-of-life with elapsed time + last activity.
-    parts.push(`<div class="ev-heartbeat" hidden><span class="hb-dot"></span><span class="hb-label"></span><span class="hb-elapsed"></span></div>`);
-    body.innerHTML = parts.join("");
-    body.scrollTop = body.scrollHeight;
+
+    body.innerHTML =
+      `<div class="pf-main">` +
+        `<div class="pf-main-telem"></div>` +
+        `<div class="pf-main-stream"></div>` +
+        `<div class="ev-heartbeat" hidden><span class="hb-dot"></span><span class="hb-label"></span><span class="hb-elapsed"></span></div>` +
+      `</div>` +
+      `<div class="pf-tech"${techParts.length === 0 ? ' hidden' : ''}>${techParts.length ? '<div class="pf-tech-label">OUTILS</div>' + techParts.join("") : ''}</div>`;
+
+    const pfMain = $(".pf-main", body);
+    const stream = $(".pf-main-stream", body);
+    if (!m.ring.length) {
+      stream.innerHTML = `<div class="pf-empty">En attente d'événements. Envoie un message à <strong>${esc(m.name)}</strong> pour commencer.</div>`;
+    } else if (window.PupitreDetail) {
+      // Same renderer as /pupitre's drawer; scroll the pf-main container.
+      const det = window.PupitreDetail.create(stream, { scrollEl: pfMain, maxNodes: 600 });
+      for (const raw of m.ring) det.addEvent(raw);
+    }
+
+    // Fill the telemetry row at the top (same /api/pupitre data + PupitreRow).
+    this.renderPupitreStrip();
+
+    const pfTech = $(".pf-tech", body);
+    if (pfMain) pfMain.scrollTop = pfMain.scrollHeight;
+    if (pfTech) pfTech.scrollTop = pfTech.scrollHeight;
     this.updateHeartbeat();
   },
 
@@ -1287,7 +2478,15 @@ const App = {
 
   startHeartbeatTicker() {
     if (this._hbTimer) return;
-    this._hbTimer = setInterval(() => this.updateHeartbeat(), 1000);
+    this._hbTimer = setInterval(() => {
+      if (document.hidden) return;   // no counter repaint while the tab is hidden
+      this.updateHeartbeat();
+      // Smooth turn/silence counters between /api/pupitre polls on BOTH the
+      // desktop overlay strip and the mobile main-pane strip — same pattern
+      // as /pupitre's own setInterval(render, 1000). Runs regardless of the
+      // overlay being open (mobile has no overlay).
+      this.renderPupitreStrip();
+    }, 1000);
   },
 
   async sendFocusedMessage() {
@@ -1308,9 +2507,6 @@ const App = {
         const data = await resp.json().catch(() => ({}));
         throw new Error(data.error || `HTTP ${resp.status}`);
       }
-      // Show the sent message immediately in the focused body before SSE arrives.
-      m.push({ type: "user_prompt", text: msg, timestamp: new Date().toISOString() });
-      this.renderFocusedBody();
       input.value = "";
       input.style.height = "auto";
       $(".pf-send", ov).disabled = true;
@@ -1388,20 +2584,30 @@ const App = {
   },
 
   async submitAdd(entry) {
+    const isConductorBox = $(".pa-is-conductor", $("#overlay-add"));
+    const isConductor = !!isConductorBox?.checked;
     try {
       const resp = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(entry),
+        body: JSON.stringify({ ...entry, isConductor }),
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+      // If this project was promoted to conductor, the whole UI must rewire
+      // around the new CONDUCTOR — simplest/safest: full reload.
+      if (isConductor) {
+        this.closeOverlay($("#overlay-add"));
+        location.reload();
+        return;
+      }
       const m = new Musician(data.project);
       this.musicians.set(m.name, m);
       $("#arc").appendChild(m.buildCard());
       this.relayout();
       this.toggleEmptyHint();
       this.closeOverlay($("#overlay-add"));
+      if (isConductorBox) isConductorBox.checked = false;
     } catch (err) {
       alert("Ajout échoué : " + (err.message || err));
     }
@@ -1440,6 +2646,54 @@ const App = {
     } catch (err) {
       alert("Suppression échouée : " + (err.message || err));
     }
+  },
+
+  // ---------- Parked shelf ----------
+
+  renderParkedShelf() {
+    const shelf = document.getElementById("parked-shelf");
+    if (!shelf) return;
+    const parked = [...this.musicians.values()]
+      .filter(m => m.parked && m.name !== this.composer.CONDUCTOR);
+    shelf.hidden = parked.length === 0;
+    if (!parked.length) { shelf.innerHTML = ""; return; }
+    shelf.innerHTML =
+      `<div class="psh-header">EN ATTENTE <span class="psh-count">${parked.length}</span></div>` +
+      parked.map(m => {
+        const st = STATE_LABELS[m.state] || STATE_LABELS.idle;
+        const last = esc((m.lastLine || "—").slice(0, 90));
+        return `<div class="psh-strip" data-name="${esc(m.name)}" data-state="${esc(m.state)}">
+          <span class="psh-dot"></span>
+          <span class="psh-name">${esc(m.name)}</span>
+          <span class="psh-state">${esc(st.icon)}&thinsp;${esc(st.label)}</span>
+          <span class="psh-last">${last}</span>
+          <button class="psh-unpark" data-name="${esc(m.name)}" title="Remettre en avant">⊞</button>
+        </div>`;
+      }).join("");
+  },
+
+  parkProject(m) {
+    m.parked = true;
+    m.el?.classList.add("is-parked");
+    this.relayout();
+    fetch(`/api/project/${encodeURIComponent(m.name)}/park`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ parked: true }),
+    }).catch(() => {});
+  },
+
+  unparkProject(name) {
+    const m = this.musicians.get(name);
+    if (!m) return;
+    m.parked = false;
+    m.el?.classList.remove("is-parked");
+    this.relayout();
+    fetch(`/api/project/${encodeURIComponent(name)}/park`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ parked: false }),
+    }).catch(() => {});
   },
 
   // ---------- Session picker ----------
@@ -1520,25 +2774,70 @@ const App = {
 // Event renderers (inside focused musician view)
 // --------------------------------------------------------------------------
 
-function renderFocusedEvent(raw) {
+// Main zone: user-facing content — prompts, assistant prose, turn summaries.
+// Build a map of tool_use_id → tool_name from the assistant events in a ring.
+function buildToolNameMap(ring) {
+  const m = {};
+  for (const ev of ring) {
+    if (ev.type !== "assistant") continue;
+    for (const b of ev.message?.content || []) {
+      if (b?.type === "tool_use" && b.id && b.name) m[b.id] = b.name;
+    }
+  }
+  return m;
+}
+
+function renderFocusedEventMain(raw, projectName, toolNames) {
   const ts = fmtTs(raw.timestamp);
   switch (raw.type) {
-    case "user_prompt":
-      return `<div class="ev ev-prompt"><span class="ev-ts">${ts}</span><span class="ev-prompt-badge">TOI</span><div class="ev-text md">${mdToHtml(raw.text || "")}</div></div>`;
-    case "system":
-      if (raw.subtype === "init") return `<div class="ev"><span class="ev-ts">${ts}</span><span class="ev-text">— nouveau tour (session ${esc((raw.session_id||"").slice(0,8))}) —</span></div>`;
-      return "";
+    case "user_prompt": {
+      const badge = raw.source ? esc(raw.source) : "TOI";
+      const callbackCls = raw.source ? " ev-prompt-callback" : "";
+      return `<div class="ev ev-prompt${callbackCls}"><span class="ev-ts">${ts}</span><span class="ev-prompt-badge">${badge}</span><div class="ev-text md">${mdToHtml(raw.text || "")}</div></div>`;
+    }
     case "assistant":
-      return renderAssistant(raw, ts);
-    case "user":
-      return renderUser(raw, ts);
+      return renderAssistantMain(raw, ts);
     case "result":
       return renderResult(raw, ts);
+    case "user": {
+      // Surface blocked tool calls so they're visible without opening the tech pane.
+      // "This command requires approval" is returned by Claude Code when a tool
+      // isn't in the project's --allowed-tools list.
+      const denied = (raw.message?.content || []).find(b => {
+        if (b?.type !== "tool_result") return false;
+        const c = typeof b.content === "string" ? b.content
+          : Array.isArray(b.content) ? b.content.map(x => x?.text ?? "").join("\n")
+          : "";
+        return c.includes("requires approval");
+      });
+      if (!denied) return "";
+      const toolId = denied.tool_use_id;
+      const toolName = toolNames && toolId ? (toolNames[toolId] || null) : null;
+      const btn = toolName && projectName
+        ? `<br><button class="ev-perm-add-btn" data-project="${esc(projectName)}" data-tool="${esc(toolName)}">+ Ajouter ${esc(toolName)} aux outils</button>`
+        : "";
+      return `<div class="ev ev-perm-denied"><span class="ev-ts">${ts}</span>🚫 <strong>Outil bloqué</strong> — <code>${esc(toolName || "outil inconnu")}</code> non autorisé. Mets à jour <code>config.json</code> ou clique ci-dessous.${btn}</div>`;
+    }
     default:
       return "";
   }
 }
-function renderAssistant(raw, ts) {
+// Tech zone: tool calls and results — secondary, collapsible at bottom.
+function renderFocusedEventTech(raw) {
+  const ts = fmtTs(raw.timestamp);
+  switch (raw.type) {
+    case "system":
+      if (raw.subtype === "init") return `<div class="ev"><span class="ev-ts">${ts}</span><span class="ev-text">— nouveau tour (session ${esc((raw.session_id||"").slice(0,8))}) —</span></div>`;
+      return "";
+    case "assistant":
+      return renderAssistantTech(raw, ts);
+    case "user":
+      return renderUser(raw, ts);
+    default:
+      return "";
+  }
+}
+function renderAssistantMain(raw, ts) {
   const parts = [];
   for (const b of raw.message?.content || []) {
     if (b?.type === "text") {
@@ -1546,8 +2845,19 @@ function renderAssistant(raw, ts) {
       if (text) parts.push(`<div class="ev"><span class="ev-ts">${ts}</span><div class="ev-text md">${mdToHtml(text)}</div></div>`);
     } else if (b?.type === "thinking") {
       const t = (b.thinking || "").trim();
-      if (t) parts.push(`<div class="ev"><span class="ev-ts">${ts}</span><span class="ev-think">◌ ${esc(t.slice(0, 300))}</span></div>`);
+      if (t) parts.push(`<div class="ev"><span class="ev-ts">${ts}</span><div class="ev-think">◌ ${esc(t)}</div></div>`);
     } else if (b?.type === "tool_use") {
+      // Show tool-use prominently in the main zone so the user sees what Claude is doing.
+      const preview = toolArgPreview(b);
+      parts.push(`<div class="ev ev-tool-action"><span class="ev-ts">${ts}</span><span class="ev-tool-badge">⚙ ${esc((b.name||"outil").toLowerCase())}</span>${preview ? `<span class="ev-tool-preview">${esc(preview)}</span>` : ""}</div>`);
+    }
+  }
+  return parts.join("");
+}
+function renderAssistantTech(raw, ts) {
+  const parts = [];
+  for (const b of raw.message?.content || []) {
+    if (b?.type === "tool_use") {
       parts.push(`<div class="ev"><span class="ev-ts">${ts}</span><span class="ev-tool">▸ ${esc((b.name||"TOOL").toLowerCase())}</span> <span class="ev-text">${esc(toolArgPreview(b))}</span></div>`);
     }
   }
@@ -1583,7 +2893,7 @@ function renderResult(raw, ts) {
   });
   const parts = ["— tour terminé", dur];
   if (chip) parts.push(chip);
-  return `<div class="ev"><span class="ev-ts">${ts}</span><span class="ev-text" style="color: var(--fg-3);">${parts.filter(Boolean).join(" · ")} —</span></div>`;
+  return `<div class="ev"><span class="ev-ts">${ts}</span><span class="ev-text" style="color: var(--fg-1);">${parts.filter(Boolean).join(" · ")} —</span></div>`;
 }
 // --------------------------------------------------------------------------
 // Minimal, safe Markdown → HTML converter. We escape HTML first, then only
@@ -1764,6 +3074,17 @@ function fmtTs(iso) {
   const d = new Date(iso);
   if (isNaN(d)) return "";
   return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}:${String(d.getSeconds()).padStart(2,"0")}`;
+}
+
+function fmtChatTs(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (isNaN(d)) return "";
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  const hm = `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+  if (isToday) return hm;
+  return `${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")} ${hm}`;
 }
 
 // --------------------------------------------------------------------------

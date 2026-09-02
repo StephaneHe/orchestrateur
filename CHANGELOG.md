@@ -11,6 +11,23 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-02
+
+### Changed
+- (dashboard) **Perf : toutes les animations du dashboard rendues compositor-only** pour supprimer le plancher permanent « gpu-process Chrome 100 % + DWM 100 % au repos » (latence clavier de 3-6 s signalée). Diagnostic par un autre modèle, implémentation ici.
+  - **Fils lumineux SVG** (`public/styles.css` `.threads path`) : suppression de l'animation `stroke-dashoffset` (`@keyframes thread-flow`) **et** du `filter: drop-shadow` — tous deux forçaient un repaint d'un calque taille-viewport à chaque frame, qui re-floutait en cascade toutes les cartes `backdrop-filter` au-dessus. Fils désormais statiques (dashes) ; la lueur est conservée via un chemin compagnon large translucide sans filtre (`public/app.js` `addPath`).
+  - **Redraw des fils** (`public/app.js`) : l'intervalle 1 s qui reconstruisait tout le SVG (`svg.innerHTML=""` + `getBoundingClientRect`) est remplacé par un redraw **détecté par signature** (`redrawThreadsIfChanged`) ; ré-ancrage borné pendant le glissement post-réorganisation via une boucle rAF auto-stoppée (`scheduleThreadSettle`).
+  - **Halos** (`.m-halo`, `.chef-halo`) : le `blur` passe sur un `::before` statique ; les keyframes `halo-*` utilisent des valeurs d'opacité **littérales** (plus de `calc(...*var(--halo-intensity))`, qui sortait l'animation du compositor). `--halo-intensity` est appliqué statiquement sur l'élément wrapper (contrôle préservé).
+  - **Anneau d'attente** (`input`/`error`/`denial`) : l'ancien `@keyframes border-flash` animait `box-shadow` sur une carte `backdrop-filter` (repaint + re-blur/frame). Remplacé par un `.m-body::after` pré-rendu dont seule l'**opacité** est animée (`@keyframes ring-flash`), au-dessus du backdrop.
+  - **Rendu SSE batché** (`public/app.js`) : chaque ligne SSE (y compris les deltas token-level) ne déclenche plus un `updateCard`/`renderTabs` synchrone ; cartes, tab bar et pane mobile sont coalescés en un seul repaint par frame via `requestAnimationFrame` (`markDirty`/`_flushDirty`). L'auto-scroll du drawer (`public/pupitre-detail.js`) est throttlé à 1×/frame (lecture de `scrollHeight` = reflow synchrone auparavant par token).
+  - **Tickers de fond** : le ticker 5 s ne rafraîchit plus que les cartes in-flight/stale ; tickers 1 s / 5 s court-circuités quand l'onglet est caché.
+
+### Added
+- (dashboard) **Page Visibility** : quand l'onglet/dashboard est caché, toutes les animations en boucle sont mises en pause (`html.anim-paused`) et les timers/redraw de fond suspendus — coût GPU quasi nul quand l'utilisateur n'a pas le dashboard au premier plan.
+
+### Notes
+- Vérifié en Chrome headless isolé (profil dédié, CDP) sur le dashboard réel avec SSE en direct : page chargée (26 cartes, SVG fils présent), `.m-halo` sans `filter` et `.m-halo::before` avec `blur(18px)` (blur déplacé comme voulu), aucune animation `thread-flow`/`border-flash` active, **0 erreur/exception console** pendant 5 s de stream. La chute effective du GPU-process/DWM reste à confirmer par l'utilisateur dans SON Chrome (recharger le dashboard, puis Shift+Esc → colonne GPU de l'onglet « Orchestre »).
+
 ## [0.10.0] - 2026-08-31
 
 ### Changed

@@ -4,6 +4,13 @@ Suivi léger des tâches en cours / différées côté orchestrateur.
 
 ## Fait
 
+- [x] **Perf dashboard — animations compositor-only + pause onglet caché** (2026-09-02, v0.11.0).
+  Supprime le plancher « gpu-process/DWM 100 % au repos » (latence clavier 3-6 s). Fils SVG
+  statiques (drop-shadow + `stroke-dashoffset` retirés, redraw diffé), halos `blur` sur `::before`
+  statique + keyframes littérales, anneau d'attente `box-shadow`→`::after` opacity, SSE batché rAF
+  + auto-scroll throttlé, tickers dirty-flag, `html.anim-paused` via Page Visibility. Vérifié
+  Chrome headless (0 erreur console, blur déplacé) ; chute GPU réelle à confirmer par l'utilisateur.
+
 - [x] **Failover → cascade NVIDIA codage-first** (2026-08-31, v0.10.0). La patte
   failover de `scripts/dispatch.mjs` route vers NVIDIA (endpoint OpenAI-compatible)
   au lieu de codex/gpt-5.6-sol : `moonshotai/kimi-k3` → `deepseek-ai/deepseek-v4-pro-0813`
