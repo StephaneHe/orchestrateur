@@ -11,6 +11,19 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-04
+
+### Added
+- (server) **`/downloads` liste désormais toutes les apps Android du fleet** (`server.js`). `DOWNLOAD_APPS` passe de `[RemotePad, BookHaven]` à 11 apps : + DeskZen, vuBox (Android TV), firstAidOffline, frenchradio, immo-share (mobile), meetingScribe, photoLab, SncfOptimizer, sommeil. Chaque app a son `builds/<nom>/latest.apk` (servi par `/downloads/:app/apk`).
+- (server) **Étiquette de plateforme** sur chaque carte de téléchargement (`APP_PLATFORM` + badge `.app-plat`) : vuBox = `TV`, immo-share = `mobile`, les autres = `phone`.
+
+### Changed
+- (server) **`readAppVersion` généralisé** : remplace les deux `if` en dur par une table `APP_VERSION_SOURCES` (fichier source par app) + un matcher `versionName` unique tolérant Kotlin DSL (`versionName = "x"`) **et** Groovy (`versionName "x"`), insensible à la casse (une app écrit `VersionName`), avec lookahead négatif pour ne pas capter `versionNameSuffix`. Versions lues : RemotePad 1.2.0, BookHaven 1.5.0, DeskZen 1.2.0, vuBox 0.10.2, firstAidOffline 0.2.1, frenchradio 1.4.0, immo-share 0.2.1, meetingScribe 0.1.0, photoLab 0.1.1, SncfOptimizer 1.0, sommeil 0.1.0. Défaut `unknown` si illisible (ne bloque pas la carte).
+
+### Notes
+- Les APK (`builds/*/latest.apk`) sont **gitignorés** (`*.apk`) — non committés, comportement inchangé. Copiés depuis les sorties de build de chaque projet (préférence signé/release > debug). vuBox et frenchradio avaient déjà un `latest.apk` plus récent que la source → conservés. DeskZen : copie de `app-release-unsigned.apk` (le chef remplacera par une build signée).
+- **Restart du serveur 7777 requis** pour que le registre `DOWNLOAD_APPS` élargi soit pris en compte (chargé au boot) — à faire par le chef via `restart-orchestrateur.mjs`. Vérifié hors-ligne : `node --check` OK, extraction de version + présence des 11 `latest.apk` confirmées ; le rendu live se validera après restart.
+
 ## [0.11.0] - 2026-09-02
 
 ### Changed

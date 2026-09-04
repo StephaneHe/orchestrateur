@@ -4,6 +4,12 @@ Suivi léger des tâches en cours / différées côté orchestrateur.
 
 ## Fait
 
+- [x] **`/downloads` — toutes les apps Android du fleet** (2026-09-04, v0.12.0). `DOWNLOAD_APPS`
+  élargi à 11 apps (+ DeskZen, vuBox/TV, firstAidOffline, frenchradio, immo-share/mobile,
+  meetingScribe, photoLab, SncfOptimizer, sommeil), `builds/<nom>/latest.apk` peuplés (APK
+  gitignorés), `readAppVersion` généralisé (table + regex Kotlin/Groovy), badge plateforme.
+  **Restart 7777 requis (chef)** + rafraîchir `builds/DeskZen/latest.apk` avec la build signée.
+
 - [x] **Perf dashboard — animations compositor-only + pause onglet caché** (2026-09-02, v0.11.0).
   Supprime le plancher « gpu-process/DWM 100 % au repos » (latence clavier 3-6 s). Fils SVG
   statiques (drop-shadow + `stroke-dashoffset` retirés, redraw diffé), halos `blur` sur `::before`
