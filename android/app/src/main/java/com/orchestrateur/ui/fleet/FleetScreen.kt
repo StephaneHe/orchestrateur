@@ -1,9 +1,17 @@
 package com.orchestrateur.ui.fleet
 
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContract
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -17,23 +25,86 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import com.orchestrateur.BuildConfig
 import com.orchestrateur.data.Api
 import com.orchestrateur.data.Musician
 import com.orchestrateur.data.State as MState
 import com.orchestrateur.ui.theme.Palette
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+
+/** ACTION_GET_CONTENT contract that accepts multiple MIME types via EXTRA_MIME_TYPES. */
+private class GetContentMultiMime : ActivityResultContract<Array<String>, android.net.Uri?>() {
+    override fun createIntent(context: Context, input: Array<String>) =
+        Intent(Intent.ACTION_GET_CONTENT).apply {
+            type = "*/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, input)
+            addCategory(Intent.CATEGORY_OPENABLE)
+        }
+    override fun parseResult(resultCode: Int, intent: Intent?) =
+        if (resultCode == Activity.RESULT_OK) intent?.data else null
+}
 
 @Composable
 fun FleetScreen(api: Api) {
-    val vm = remember { FleetViewModel(api) }
+    val context = LocalContext.current
+    // Use viewModel() so the VM survives configuration changes (rotation,
+    // dark mode, language switch). With remember { } a config change
+    // recreated the VM while the old one's streamJob was still running →
+    // 2 SSE in parallel until the GC eventually got the old VM. Now the
+    // VM lives at Activity scope, single-flight stays single-flight.
+    val vm: FleetViewModel = androidx.lifecycle.viewmodel.compose.viewModel(
+        factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
+                FleetViewModel(api, context.applicationContext) as T
+        }
+    )
     val status by vm.status.collectAsState()
     val connected by vm.connected.collectAsState()
+    val scope = rememberCoroutineScope()
+
+    // Lifecycle-aware SSE: when the app goes to background (ON_STOP) we
+    // close the SSE connection cleanly so the server stops trying to push
+    // events into a socket the OS may suspend silently. Re-opens on
+    // ON_START. Without this, a backgrounded app left zombie SSE sockets
+    // that crashed the server when it tried to write to them.
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_START -> vm.resumeStream()
+                androidx.lifecycle.Lifecycle.Event.ON_STOP  -> vm.pauseStream()
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    val mediaLauncher = rememberLauncherForActivityResult(GetContentMultiMime()) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        scope.launch(Dispatchers.IO) {
+            try {
+                val mime = context.contentResolver.getType(uri) ?: "image/jpeg"
+                val isVideo = mime.startsWith("video/")
+                val thumb = if (isVideo) extractVideoThumb(context, uri) else null
+                vm.addAttachment(uri, mime, isVideo, thumb)
+            } catch (_: Exception) {}
+        }
+    }
 
     Column(
         Modifier
@@ -48,6 +119,13 @@ fun FleetScreen(api: Api) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("Orchestre", color = Palette.Fg0, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "v${BuildConfig.VERSION_NAME}",
+                color = Palette.Fg2,
+                fontSize = 9.sp,
+                fontFamily = FontFamily.Monospace,
+            )
             Spacer(Modifier.weight(1f))
             val totalCost = vm.musicians.sumOf { it.totalCostUsd }
             val totalOut = vm.musicians.sumOf { it.totalOutputTokens }
@@ -101,6 +179,8 @@ fun FleetScreen(api: Api) {
             )
         }
 
+        var replyTo by remember { mutableStateOf<ChatMsg?>(null) }
+
         Box(Modifier.weight(1f).fillMaxWidth()) {
             if (vm.musicians.isEmpty()) {
                 Text("Chargement…", color = Palette.Fg2, modifier = Modifier.align(Alignment.Center))
@@ -109,6 +189,8 @@ fun FleetScreen(api: Api) {
                     activeTab = vm.activeTab,
                     chat = vm.chat,
                     musicians = vm.musicians,
+                    onAddTool = vm::addTool,
+                    onReply = { msg -> replyTo = msg },
                 )
             }
         }
@@ -116,7 +198,12 @@ fun FleetScreen(api: Api) {
         Composer(
             activeTab = vm.activeTab,
             musicians = vm.musicians,
-            onSend = { prompt -> vm.dispatch(prompt) },
+            pendingImages = vm.pendingImages,
+            replyTo = replyTo,
+            onPickImage = { mediaLauncher.launch(arrayOf("image/*", "video/*")) },
+            onRemoveImage = vm::removeImage,
+            onClearReply = { replyTo = null },
+            onSend = { prompt, displayText -> vm.dispatch(prompt, displayText) },
         )
     }
 }
@@ -125,7 +212,12 @@ fun FleetScreen(api: Api) {
 private fun Composer(
     activeTab: String,
     musicians: SnapshotStateList<Musician>,
-    onSend: (String) -> Unit,
+    pendingImages: List<PendingAttachment>,
+    replyTo: ChatMsg?,
+    onPickImage: () -> Unit,
+    onRemoveImage: (Int) -> Unit,
+    onClearReply: () -> Unit,
+    onSend: (prompt: String, displayText: String) -> Unit,
 ) {
     var field by rememberSaveable(stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(""))
@@ -139,11 +231,13 @@ private fun Composer(
         detectMention(field.text, field.selection.start, musicians)
     }
 
+    val canSend = field.text.isNotBlank() || pendingImages.isNotEmpty() || replyTo != null
+
     fun commit(pick: Musician) {
         val m = mention ?: return
         val before = field.text.substring(0, m.anchor)
         val after = field.text.substring(field.selection.start)
-        val needsSpace = !(after.startsWith(" ") || after.startsWith("\n") || after.isEmpty())
+        val needsSpace = !after.startsWith(" ") && !after.startsWith("\n")
         val insertion = "@${pick.name}${if (needsSpace) " " else ""}"
         val newText = before + insertion + after
         val newCaret = (before + insertion).length
@@ -157,6 +251,20 @@ private fun Composer(
             .navigationBarsPadding()
             .imePadding(),
     ) {
+        if (replyTo != null) {
+            QuotePreview(
+                msg = replyTo,
+                onDismiss = onClearReply,
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 6.dp),
+            )
+        }
+        if (pendingImages.isNotEmpty()) {
+            ImageStrip(
+                images = pendingImages,
+                onRemove = onRemoveImage,
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 6.dp),
+            )
+        }
         if (mention != null && mention.matches.isNotEmpty()) {
             MentionMenu(
                 matches = mention.matches,
@@ -170,9 +278,16 @@ private fun Composer(
                 .padding(horizontal = 12.dp, vertical = 10.dp)
                 .clip(RoundedCornerShape(16.dp))
                 .background(Palette.CardBg)
-                .padding(horizontal = 12.dp, vertical = 4.dp),
+                .padding(horizontal = 4.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            TextButton(
+                onClick = onPickImage,
+                modifier = Modifier.size(40.dp),
+                contentPadding = PaddingValues(0.dp),
+            ) {
+                Text("📎", fontSize = 18.sp)
+            }
             BasicTextField(
                 value = field,
                 onValueChange = { field = it },
@@ -188,18 +303,137 @@ private fun Composer(
             )
             TextButton(
                 onClick = {
-                    val t = field.text
-                    if (t.isNotBlank()) {
-                        onSend(t)
+                    if (canSend) {
+                        val displayText = field.text
+                        val quoted = replyTo?.let { r ->
+                            val label = if (r.role == ChatMsg.Role.conductor) "chef" else "moi"
+                            "> [$label] ${r.text.replace("\n", " ").take(120)}\n\n"
+                        } ?: ""
+                        onSend(quoted + displayText, displayText)
                         field = TextFieldValue("")
+                        onClearReply()
                     }
                 },
-                enabled = field.text.isNotBlank(),
+                enabled = canSend,
             ) {
-                Text("▶", color = if (field.text.isNotBlank()) Palette.Accent else Palette.Fg3)
+                Text("▶", color = if (canSend) Palette.Accent else Palette.Fg3)
             }
         }
     }
+}
+
+@Composable
+private fun QuotePreview(
+    msg: ChatMsg,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val label = if (msg.role == ChatMsg.Role.conductor) "chef" else "moi"
+    Row(
+        modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(Palette.CardBg)
+            .border(1.dp, Palette.Accent.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .width(3.dp)
+                .height(32.dp)
+                .background(Palette.Accent, RoundedCornerShape(2.dp)),
+        )
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Text(label, color = Palette.Accent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                msg.text.replace("\n", " ").take(120),
+                color = Palette.Fg2,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Box(
+            Modifier
+                .size(20.dp)
+                .clip(CircleShape)
+                .clickable { onDismiss() },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("×", color = Palette.Fg2, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun ImageStrip(
+    images: List<PendingAttachment>,
+    onRemove: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        images.forEachIndexed { idx, att ->
+            Box(Modifier.size(64.dp)) {
+                // For videos, show the extracted first-frame bitmap; fall back to the URI
+                // (Coil can't decode video frames from URI without the video decoder artifact).
+                val imageModel: Any = if (att.isVideo && att.thumbBitmap != null)
+                    att.thumbBitmap.asImageBitmap()
+                else
+                    att.uri
+
+                AsyncImage(
+                    model = imageModel,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(8.dp)),
+                    contentScale = ContentScale.Crop,
+                )
+
+                // Video badge — play icon in bottom-left corner
+                if (att.isVideo) {
+                    Box(
+                        Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(3.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color.Black.copy(alpha = 0.60f))
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                    ) {
+                        Text("▶", color = Color.White, fontSize = 8.sp)
+                    }
+                }
+
+                // Remove button — top-right
+                Box(
+                    Modifier
+                        .size(18.dp)
+                        .align(Alignment.TopEnd)
+                        .clip(CircleShape)
+                        .background(Palette.Bg0.copy(alpha = 0.85f))
+                        .clickable { onRemove(idx) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("×", color = Palette.Fg0, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+private fun stateShort(s: MState): String = when (s) {
+    MState.idle -> "repos"
+    MState.live -> "actif"
+    MState.think -> "réfl."
+    MState.input -> "attend"
+    MState.error -> "erreur"
+    MState.unread -> "non lu"
 }
 
 private data class MentionCtx(val anchor: Int, val query: String, val matches: List<Musician>)
@@ -244,9 +478,11 @@ private fun MentionMenu(
     Column(
         modifier
             .fillMaxWidth()
+            .heightIn(max = 220.dp)         // cap height so keyboard doesn't cut the list
             .clip(RoundedCornerShape(10.dp))
             .background(Palette.CardBg)
             .border(1.dp, Palette.CardBorder, RoundedCornerShape(10.dp))
+            .verticalScroll(rememberScrollState())
             .padding(4.dp),
     ) {
         for (m in matches) {
@@ -272,16 +508,18 @@ private fun MentionMenu(
                     fontSize = 13.sp,
                     fontWeight = if (isConductor) FontWeight.SemiBold else FontWeight.Normal,
                     fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
                 Text(
-                    stateLabel(m.state),
+                    stateShort(m.state),
                     color = Palette.Fg2,
                     fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
                 )
             }
         }
     }
 }
-

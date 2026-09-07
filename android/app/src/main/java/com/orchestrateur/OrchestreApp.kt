@@ -2,21 +2,22 @@ package com.orchestrateur
 
 import android.app.Application
 import com.orchestrateur.data.Api
-import com.orchestrateur.data.TokenStore
+import com.orchestrateur.data.ServerStore
 
 class OrchestreApp : Application() {
-    lateinit var tokenStore: TokenStore
+    lateinit var serverStore: ServerStore
         private set
     lateinit var api: Api
         private set
 
     override fun onCreate() {
         super.onCreate()
-        tokenStore = TokenStore(this)
-        if (BuildConfig.DEBUG && tokenStore.token.isNullOrBlank()) {
-            tokenStore.serverUrl = "http://100.64.0.10:7777"
-            tokenStore.token = "***REMOVED-TOKEN***"
+        serverStore = ServerStore(this)
+        if (BuildConfig.DEBUG && serverStore.serverUrl.isNullOrBlank()) {
+            // Dev convenience only: preseed the server URL on first debug launch.
+            // No token anywhere — access is Tailscale-only.
+            serverStore.serverUrl = "http://myhost:7777"
         }
-        api = Api(tokenStore)
+        api = Api(serverStore)
     }
 }

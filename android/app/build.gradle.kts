@@ -12,8 +12,8 @@ android {
         applicationId = "com.orchestrateur"
         minSdk = 29
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 5
+        versionName = "0.4.0"
     }
 
     buildTypes {
@@ -45,6 +45,11 @@ android {
     }
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        resources.excludes += "/META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+        resources.excludes += "/META-INF/LICENSE.txt"
+        resources.excludes += "/META-INF/LICENSE"
+        resources.excludes += "/META-INF/NOTICE.txt"
+        resources.excludes += "/META-INF/NOTICE"
     }
 }
 
@@ -64,11 +69,11 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
 
-    // Biometric login
+    // Biometric app-open lock (UX only — no secret is stored)
     implementation("androidx.biometric:biometric:1.1.0")
 
-    // Encrypted storage for the token
-    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    // Image loading (thumbnails dans les bulles + strip composer)
+    implementation("io.coil-kt:coil-compose:2.7.0")
 
     // Network
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

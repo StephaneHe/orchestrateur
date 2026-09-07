@@ -23,5 +23,6 @@ object Palette {
     val StLive = Color(0xFF8EDE9E)
     val StThink = Color(0xFFB8A0FF)
     val StInput = Color(0xFFFF2D8B)
+    val StError = Color(0xFFE53535)
     val StUnread = Color(0xFF5FD4FF)
 }

@@ -24,7 +24,7 @@ class MainActivity : FragmentActivity() {
                 var unlocked by remember { mutableStateOf(false) }
                 if (!unlocked) {
                     LoginScreen(
-                        store = app.tokenStore,
+                        store = app.serverStore,
                         onUnlocked = { unlocked = true },
                     )
                 } else {

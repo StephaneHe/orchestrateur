@@ -4,6 +4,9 @@ Suivi léger des tâches en cours / différées côté orchestrateur.
 
 ## Fait
 
+- [x] **Refonte app Android + serveur — token retiré, SSH/Builds supprimés, cartes temps réel** (2026-09-07, v0.13.0 / android vc5 0.4.0).
+  Token gate serveur désactivé (`TOKEN_GATE_ENABLED=false`, **restart 7777 requis côté chef après checkpoint user**) ; auth token entièrement retirée de l'app ; SSH/SCP + onglet Builds supprimés (sshj/BC/eddsa/security-crypto + perm INSTALL). Cartes temps réel : `stream_event` hors ring + buffer live streaming, merge-on-Open, buffer SSE illimité, boot auto-réparant.
+
 - [x] **`/downloads` — toutes les apps Android du fleet** (2026-09-04, v0.12.0). `DOWNLOAD_APPS`
   élargi à 11 apps (+ DeskZen, vuBox/TV, firstAidOffline, frenchradio, immo-share/mobile,
   meetingScribe, photoLab, SncfOptimizer, sommeil), `builds/<nom>/latest.apk` peuplés (APK

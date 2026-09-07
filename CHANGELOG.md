@@ -11,6 +11,35 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-07
+
+Refonte app Android + serveur, direction corrigée (décision utilisateur) :
+suppression totale de l'auth par token (accès Tailscale uniquement) et de tout
+le sous-système SSH/SCP/Builds, plus correction de l'affichage temps réel des
+cartes. **Remplace/annule** l'entrée précédente non publiée qui déplaçait le
+token vers `local.properties` et ajoutait un TOFU SSH (approche abandonnée).
+
+### Removed
+- (server) **Token gate désactivé** (`server.js`, `TOKEN_GATE_ENABLED = false`) : les gardes HTTP, WS (`wsVerifyClient`) et pty-WS court-circuitent vers « accepté ». Le `.token` est toujours généré mais n'est plus requis. ⚠️ **Levée de garde-fou assumée** — le dashboard est ouvert sur le réseau Tailscale ; re-basculer le flag à `true` pour ré-armer la gate. **Restart 7777 requis (côté chef, après checkpoint utilisateur).**
+- (android) **Auth par token entièrement retirée** : plus aucun token dans l'app (littéral hardcodé supprimé, header `X-Orchestrator-Token`, `?token=`, champ token de l'écran de login, `TokenStore` → remplacé par `ServerStore` qui ne stocke que l'URL). Annule le besoin de rotation du `.token`.
+- (android) **Sous-système SSH/SCP + onglet Builds supprimés** : `ui/builds/` (`BuildsScreen`, `BuildsViewModel`), `data/SshKeyStore.kt`, l'onglet Builds de `TabBar`, la dépendance **sshj**, **BouncyCastle**, **eddsa**, **security-crypto**, la permission `REQUEST_INSTALL_PACKAGES`, le `FileProvider` du manifeste et `res/xml/file_paths.xml`. Zéro code mort, zéro import orphelin.
+
+### Fixed
+- (android) **Affichage temps réel des cartes** — cause racine : le serveur diffuse chaque ligne JSONL, y compris les `stream_event` (deltas token très fréquents) ; `Musician.ingest` les ajoutait au ring plafonné (30) qui éjectait les vrais events `assistant`/`tool`/`result` → cartes quasi vides. Désormais les `stream_event` ne rentrent plus dans le ring ; ils alimentent un buffer de **streaming live** (`liveText`/`liveActivity`) rendu en bas de la session projet ET dans le fil du chef (texte qui s'écrit token par token). `lastLine` reflète aussi l'activité courante (`⚙ outil`, `réflexion…`) même sans prose.
+- (android) **États du fleet effacés à chaque (re)connexion SSE** : `reset()` de tous les musiciens sur `Open` remplacé par une fusion depuis `/api/config` (`syncFromConfig`, préserve le ring).
+- (android) **Événements SSE perdus sous rafale** (`FleetStream`) : `buffer(Channel.UNLIMITED)`.
+- (android) **App bloquée sur « Chargement… »** si `/api/config` échoue au lancement : boot auto-réparant (démarre toujours le flux, se ré-hydrate à la 1re ouverture SSE).
+- (android) **Auto-scroll figé quand le ring est plein** : clé = compteur monotone `ingestSeq` (le chef et les sessions projet suivent le flux live).
+- (android) `Markdown` : `toIntOrNull() ?: 1` (plus de `NumberFormatException`). `Api.baseUrl()` : erreur explicite au lieu de `!!`. `ConductorChatEntry.text` nullable (une entrée sans texte ne vide plus l'historique).
+
+### Changed
+- (android) `versionName` 0.2.1 → **0.4.0**, `versionCode` 3 → **5**. Login simplifié : URL serveur uniquement (+ verrou biométrique d'ouverture conservé), plus aucun token.
+
+## [0.12.1] - 2026-09-05
+
+### Fixed
+- (server) **`ReferenceError: name is not defined` sur chaque dispatch avec un `.pid` périmé** (`server.js`). `_dispatchPidAliveCheck()` référençait `name` dans son `debugLog` de la porte « stale pid » sans le recevoir en paramètre : dès qu'un `logs/<projet>.pid` datait de plus de `STALE_PID_MS` (12 h), le check jetait au lieu de renvoyer `null` et le handler de dispatch échouait. Le nom du projet est maintenant passé explicitement par les deux appelants (`dispatchPidAlive` et `dispatchPidAliveAsync`).
+
 ## [0.12.0] - 2026-09-04
 
 ### Added

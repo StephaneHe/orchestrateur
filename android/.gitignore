@@ -9,3 +9,5 @@
 .cxx
 local.properties
 app/build
+build-fable.log
+build-output.log

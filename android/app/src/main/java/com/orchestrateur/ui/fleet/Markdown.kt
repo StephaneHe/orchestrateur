@@ -237,7 +237,7 @@ private fun parseBlocks(src: String): List<MdBlock> {
         val ol = Regex("^\\s*(\\d+)[.)]\\s+(.*)$").find(line)
         if (ol != null) {
             flushPara()
-            out += MdBlock.Ordered(ol.groupValues[1].toInt(), ol.groupValues[2])
+            out += MdBlock.Ordered(ol.groupValues[1].toIntOrNull() ?: 1, ol.groupValues[2])
             i++; continue
         }
 

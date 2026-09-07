@@ -189,6 +189,16 @@ function loadOrCreateToken() {
 }
 const TOKEN = loadOrCreateToken();
 
+// Token gate DISABLED 2026-09-07 per explicit user decision: the fleet is
+// reached only over Tailscale (WireGuard provides the confidentiality +
+// network-level access control), and the Android companion no longer carries a
+// token at all. Flip back to `true` to re-enable the gate if the server is ever
+// exposed on an untrusted network. When false, wsVerifyClient / the HTTP gate /
+// the pty-WS token check all short-circuit to "accept". The `.token` file is
+// still generated and the tokenized URLs still work — the token is simply not
+// required.
+const TOKEN_GATE_ENABLED = false;
+
 function tokensEqual(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
   const A = Buffer.from(a);
@@ -534,6 +544,7 @@ const httpServer = createHttpServer(app);
 // chain on upgrade requests, so we can't rely on the HTTP-side guards
 // alone — this is the only reliable pre-handshake gate.
 function wsVerifyClient(info) {
+  if (!TOKEN_GATE_ENABLED) return true;   // gate disabled — Tailscale-only access
   // Allowlist disabled 2026-05-13 — token check below is the sole gate.
   const urlQ = /[?&]token=([^&#]+)/.exec(info.req.url || '');
   const qtok = urlQ ? decodeURIComponent(urlQ[1]) : null;
@@ -1335,6 +1346,7 @@ app.get('/downloads/:project/doc/:id/raw', (req, res) => {
 // is stamped so subsequent subresource/SSE/WS requests authenticate without
 // the viewer having to append ?token=… to every URL.
 app.use((req, res, next) => {
+  if (!TOKEN_GATE_ENABLED) return next();   // gate disabled — Tailscale-only access
   const header = req.header('x-orchestrator-token');
   const query  = typeof req.query?.token === 'string' ? req.query.token : null;
   const cookie = parseCookieToken(req.headers.cookie);
@@ -2865,7 +2877,7 @@ function dispatchPidAlive(name) {
     mtimeMs = st.mtimeMs;
     pid = Number(fs.readFileSync(pidPath, 'utf8').trim());
   } catch { return null; }
-  return _dispatchPidAliveCheck(pidPath, pid, mtimeMs);
+  return _dispatchPidAliveCheck(name, pidPath, pid, mtimeMs);
 }
 
 // Patch 1.3: async hot-path version. Same semantics, fs.promises everywhere.
@@ -2878,10 +2890,10 @@ async function dispatchPidAliveAsync(name) {
     const raw = await fsp.readFile(pidPath, 'utf8');
     pid = Number(raw.trim());
   } catch { return null; }
-  return _dispatchPidAliveCheck(pidPath, pid, mtimeMs);
+  return _dispatchPidAliveCheck(name, pidPath, pid, mtimeMs);
 }
 
-function _dispatchPidAliveCheck(pidPath, pid, mtimeMs) {
+function _dispatchPidAliveCheck(name, pidPath, pid, mtimeMs) {
   if (!Number.isFinite(pid) || pid <= 0) return null;
 
   // Stale-file gate: if the .pid was written more than 12h ago, the
@@ -3558,12 +3570,14 @@ app.ws('/ws/pty', (ws, req) => {
     try { ws.close(1008, 'forbidden'); } catch {}
     return;
   }
-  const qtok = typeof req.query?.token === 'string' ? req.query.token : null;
-  const htok = req.header('x-orchestrator-token');
-  const ctok = parseCookieToken(req.headers?.cookie);
-  if (!tokensEqual(qtok, TOKEN) && !tokensEqual(htok, TOKEN) && !tokensEqual(ctok, TOKEN)) {
-    try { ws.close(1008, 'unauthorized'); } catch {}
-    return;
+  if (TOKEN_GATE_ENABLED) {
+    const qtok = typeof req.query?.token === 'string' ? req.query.token : null;
+    const htok = req.header('x-orchestrator-token');
+    const ctok = parseCookieToken(req.headers?.cookie);
+    if (!tokensEqual(qtok, TOKEN) && !tokensEqual(htok, TOKEN) && !tokensEqual(ctok, TOKEN)) {
+      try { ws.close(1008, 'unauthorized'); } catch {}
+      return;
+    }
   }
 
   wsClients.add(ws);

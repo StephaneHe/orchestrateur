@@ -22,6 +22,7 @@ fun stateColor(s: State): Color = when (s) {
     State.live -> Palette.StLive
     State.think -> Palette.StThink
     State.input -> Palette.StInput
+    State.error -> Palette.StError
     State.unread -> Palette.StUnread
 }
 
@@ -30,6 +31,7 @@ fun stateLabel(s: State): String = when (s) {
     State.live -> "EN COMMUNICATION"
     State.think -> "RÉFLEXION"
     State.input -> "ATTEND TA RÉPONSE"
+    State.error -> "ERREUR"
     State.unread -> "NOUVEAUX MESSAGES"
 }
 

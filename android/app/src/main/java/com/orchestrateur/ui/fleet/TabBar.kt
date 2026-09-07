@@ -24,10 +24,10 @@ import com.orchestrateur.data.Musician
 import com.orchestrateur.data.State as MState
 import com.orchestrateur.ui.theme.Palette
 
-private const val CONDUCTOR = "orchestrateur"
+private const val CONDUCTOR = "chef"
 
 private fun tabPriority(m: Musician): Int = when (m.state) {
-    MState.input -> 0
+    MState.input, MState.error -> 0
     MState.unread -> 1
     MState.live, MState.think -> 2
     MState.idle -> 3
@@ -42,8 +42,8 @@ fun TabBar(
     modifier: Modifier = Modifier,
 ) {
     val conductor = musicians.find { it.name == CONDUCTOR }
-    val others = remember(musicians, musicians.map { it.state }) {
-        musicians.filter { it.name != CONDUCTOR }
+    val others = remember(musicians, musicians.map { it.state }, musicians.map { it.parked }) {
+        musicians.filter { it.name != CONDUCTOR && !it.parked }
             .sortedWith(compareBy({ tabPriority(it) }, { it.name }))
     }
 

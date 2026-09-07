@@ -12,24 +12,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
-import com.orchestrateur.data.TokenStore
+import com.orchestrateur.data.ServerStore
 import com.orchestrateur.ui.theme.Palette
 
 sealed class LoginStep {
-    data object Configure : LoginStep()           // first run: enter URL + token
-    data object Unlock : LoginStep()              // stored token, biometric lock
+    data object Configure : LoginStep()           // first run: enter server URL
+    data object Unlock : LoginStep()              // biometric app-open lock
     data object Ready : LoginStep()               // unlocked → show fleet
 }
 
 @Composable
 fun LoginScreen(
-    store: TokenStore,
+    store: ServerStore,
     onUnlocked: () -> Unit,
 ) {
     val ctx = LocalContext.current
@@ -59,11 +58,10 @@ fun LoginScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ConfigurePanel(
-    store: TokenStore,
+    store: ServerStore,
     onConfigured: () -> Unit,
 ) {
-    var url by remember { mutableStateOf(store.serverUrl ?: "http://100.64.0.10:7777") }
-    var token by remember { mutableStateOf(store.token ?: "") }
+    var url by remember { mutableStateOf(store.serverUrl ?: "http://myhost:7777") }
     var error by remember { mutableStateOf<String?>(null) }
 
     Column(
@@ -76,7 +74,7 @@ private fun ConfigurePanel(
     ) {
         Text("Orchestre", color = Palette.Accent, fontSize = 28.sp)
         Spacer(Modifier.height(4.dp))
-        Text("salle de direction", color = Palette.Fg2, fontSize = 12.sp)
+        Text("salle de direction · accès Tailscale", color = Palette.Fg2, fontSize = 12.sp)
         Spacer(Modifier.height(32.dp))
 
         OutlinedTextField(
@@ -87,16 +85,6 @@ private fun ConfigurePanel(
             modifier = Modifier.fillMaxWidth(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
         )
-        Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
-            value = token,
-            onValueChange = { token = it; error = null },
-            label = { Text("Token (hex 64)", color = Palette.Fg2) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-        )
         error?.let {
             Spacer(Modifier.height(8.dp))
             Text(it, color = Palette.StInput, fontSize = 12.sp)
@@ -105,11 +93,8 @@ private fun ConfigurePanel(
         Button(
             onClick = {
                 val u = url.trim().trimEnd('/')
-                val t = token.trim()
                 if (!u.startsWith("http")) { error = "URL doit commencer par http(s)://" ; return@Button }
-                if (!t.matches(Regex("^[0-9a-f]{64}$"))) { error = "token invalide (64 hex)" ; return@Button }
                 store.serverUrl = u
-                store.token = t
                 onConfigured()
             },
             modifier = Modifier.fillMaxWidth(),

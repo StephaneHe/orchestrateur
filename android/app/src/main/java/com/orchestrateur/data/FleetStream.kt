@@ -1,7 +1,9 @@
 package com.orchestrateur.data
 
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import okhttp3.Request
 import okhttp3.Response
@@ -26,7 +28,6 @@ class FleetStream(private val api: Api) {
     fun connect(): Flow<Event> = callbackFlow {
         val request = Request.Builder()
             .url(api.fleetSseUrl())
-            .header("X-Orchestrator-Token", api.token())
             .header("Accept", "text/event-stream")
             .build()
 
@@ -56,5 +57,7 @@ class FleetStream(private val api: Api) {
 
         val source = factory.newEventSource(request, listener)
         awaitClose { source.cancel() }
-    }
+    }.buffer(Channel.UNLIMITED)   // fuse: never drop an event when the collector
+                                  // lags a burst of token deltas (trySend was
+                                  // silently failing on the default 64 buffer).
 }
