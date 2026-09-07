@@ -11,6 +11,16 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-09-07
+
+### Fixed
+- (dashboard) **Clignotement du dashboard pendant le streaming SSE.** Cause : `renderMainPane` (`public/app.js`) reconstruisait **tout** le transcript du chef (`#cv-scroll.innerHTML = this.chat.map(...)`) à **chaque** événement (via `onConductorEvent → renderChat`), et les mini-feeds des cartes (`updateCard` / `syncChefCard`, `feed.innerHTML = ...`) étaient réécrits à chaque flush → frame blanche + saut de scroll à chaque token/outil.
+  - `renderMainPane` réconcilie désormais les enfants **en place** (`reconcileChildren`, clé par index + signature de contenu) : seuls les nœuds réellement modifiés (la bulle « réflexion » en cours + le pill « le chef répond ») sont remplacés ; les autres bulles gardent leur identité DOM. Plus aucun `innerHTML` global du conteneur pendant un tour (un `_setPaneMode` ne vide qu'au changement de mode/onglet). Idem pour la vue session d'un musicien.
+  - Interactions du transcript (`↩ répondre`, `✎ éditer`, double-clic) passées en **délégation** (un seul listener sur `#cv-scroll`) au lieu d'un recâblage par nœud à chaque rebuild.
+  - Feeds de cartes (`updateCard`, `syncChefCard`) écrits via `setHtmlIfChanged` (skip si contenu identique) → plus de réécriture inutile au ticker/staleness.
+  - Auto-scroll conservé mais uniquement si l'utilisateur était déjà en bas (plus de yank).
+- Non-régression perf v0.11.0 vérifiée (animations compositor-only, aucune animation `thread-flow`/`border-flash` en boucle). Vérifié en Chrome headless isolé : 25 événements streamés d'affilée → nœud de première bulle préservé (identité DOM intacte, 0 rupture), réflexion live rendue, 0 erreur console.
+
 ## [0.13.0] - 2026-09-07
 
 Refonte app Android + serveur, direction corrigée (décision utilisateur) :

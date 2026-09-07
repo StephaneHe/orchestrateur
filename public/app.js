@@ -318,7 +318,7 @@ class Musician {
     $(".m-state-label", this.el).textContent = baseLabel + suffix;
 
     const feedEl = $(".m-feed", this.el);
-    feedEl.innerHTML = buildFeedHtml(this.ring);
+    setHtmlIfChanged(feedEl, buildFeedHtml(this.ring));
 
     const badge = $(".m-badge", this.el);
     const showBadge = this.unreadCount > 0 && this.state === "unread";
@@ -394,6 +394,58 @@ function buildFeedHtml(ring, max = 3) {
   if (!items.length) return `<span class="mf-empty">en attente…</span>`;
   return items.slice(0, max).reverse()
     .map(it => `<div class="mf-row ${it.cls}">${esc(it.text)}</div>`).join("");
+}
+
+// --------------------------------------------------------------------------
+// Flicker-free DOM helpers
+//
+// The flash during live streaming came from clearing + rebuilding whole
+// containers (`el.innerHTML = …`) on every SSE event — a blank frame plus a
+// scroll jump. These helpers write only when the content actually changed and
+// reconcile children in place (stable per-index nodes) instead of wiping the
+// parent, so unchanged bubbles are never re-mounted.
+// --------------------------------------------------------------------------
+
+/** Cheap string hash (djb2-ish) for change detection. */
+function hashStr(s) {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return h.toString(36);
+}
+
+/** Set innerHTML only if it differs from the last write (sig cached on the
+ *  element). Prevents needless clear+rebuild flashes on no-op refreshes. */
+function setHtmlIfChanged(el, html) {
+  if (!el) return;
+  const sig = hashStr(html);
+  if (el.dataset.sig === sig) return;
+  el.innerHTML = html;
+  el.dataset.sig = sig;
+}
+
+/** Reconcile a container's children against an array of HTML strings, keyed by
+ *  index. Only nodes whose HTML changed are replaced; the rest keep their
+ *  identity (no re-mount, no blank frame, scroll position preserved). Extra
+ *  trailing nodes are removed; new ones appended. */
+function reconcileChildren(container, htmlArray) {
+  // Drop empty entries (some event renderers return "") so index alignment
+  // between the desired list and the live DOM children stays exact.
+  htmlArray = htmlArray.filter(h => h && h.trim());
+  const children = container.children;
+  for (let i = 0; i < htmlArray.length; i++) {
+    const html = htmlArray[i];
+    const sig = hashStr(html);
+    const existing = children[i];
+    if (existing && existing.dataset.sig === sig) continue;   // unchanged → leave in place
+    const tpl = document.createElement("template");
+    tpl.innerHTML = html.trim();
+    const node = tpl.content.firstElementChild;
+    if (!node) continue;
+    node.dataset.sig = sig;
+    if (existing) container.replaceChild(node, existing);
+    else container.appendChild(node);
+  }
+  while (children.length > htmlArray.length) container.removeChild(container.lastElementChild);
 }
 
 // --------------------------------------------------------------------------
@@ -876,7 +928,7 @@ const App = {
       labelEl.textContent = label.label + suffix;
     }
     const feed = card.querySelector(".chef-feed");
-    if (feed) feed.innerHTML = buildFeedHtml(m.ring, 2);
+    if (feed) setHtmlIfChanged(feed, buildFeedHtml(m.ring, 2));
   },
 
   async init() {
@@ -1428,123 +1480,151 @@ const App = {
     if (!activeIsConductor) {
       const m = this.musicians.get(this.activeTab);
       if (!m || !m.ring.length) {
-        scroll.innerHTML = `<div class="cv-empty">
+        this._setPaneMode(scroll, "empty:" + this.activeTab);
+        reconcileChildren(scroll, [`<div class="cv-empty">
           <div class="cv-empty-title">${esc(this.activeTab)}</div>
           <div class="cv-empty-sub">Aucun événement. Écris un message pour démarrer un tour direct.</div>
-        </div>`;
+        </div>`]);
         return;
       }
+      // Reconcile the event stream in place — only new events append; existing
+      // rows keep their identity (no clear+rebuild flash, scroll preserved).
+      const changedMode = this._setPaneMode(scroll, "session:" + this.activeTab);
+      const wasAtBottom = changedMode || (scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80);
       const toolNames = buildToolNameMap(m.ring);
-      scroll.innerHTML = m.ring.map(raw => renderFocusedEventMain(raw, m.name, toolNames)).join("");
-      requestAnimationFrame(() => { scroll.scrollTop = scroll.scrollHeight; });
-      // Repaint the persistent mobile telemetry strip above the stream.
+      reconcileChildren(scroll, m.ring.map(raw => renderFocusedEventMain(raw, m.name, toolNames)));
+      if (wasAtBottom) requestAnimationFrame(() => { scroll.scrollTop = scroll.scrollHeight; });
       this.renderPupitreStrip();
       return;
     }
 
     if (!this.chat.length) {
-      scroll.innerHTML = `
-        <div class="cv-empty">
+      this._setPaneMode(scroll, "empty:conductor");
+      reconcileChildren(scroll, [`<div class="cv-empty">
           <div class="cv-empty-title">Salle de direction</div>
           <div class="cv-empty-sub">Parle au chef. Il délègue aux musiciens et te rapporte la synthèse.</div>
-        </div>`;
+        </div>`]);
       return;
     }
     const conductor = this.musicians.get(this.composer.CONDUCTOR);
     // Show "le chef répond..." only when a user_prompt SSE arrived this session
-    // AND the chef hasn't yet sent a result. Avoids showing stale "live" state
-    // from a crashed/stuck turn logged in a previous server session.
+    // AND the chef hasn't yet sent a result.
     const isWaitingConductor = this._awaitingConductorResponse;
 
-    // Only auto-scroll when already at (or near) the bottom.
-    const wasAtBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
+    const changedMode = this._setPaneMode(scroll, "conductor");
+    // Only auto-scroll when already at (or near) the bottom, or when we just
+    // switched into this pane.
+    const wasAtBottom = changedMode || (scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80);
 
-    scroll.innerHTML = this.chat.map((b, idx) => {
-      const tsChip = b.ts ? `<span class="cv-ts">${esc(fmtChatTs(b.ts))}</span>` : "";
-      if (b.role === "user") {
-        const replyQuote = b.replyingTo
-          ? `<div class="cv-body-reply-quote">↩ ${esc(String(b.replyingTo).replace(/\s+/g, " ").slice(0, 140))}${b.replyingTo.length > 140 ? "…" : ""}</div>`
-          : "";
-        const imgThumbs = (b.images || []).map(url =>
-          `<img class="cv-attach-thumb" src="${url}" alt="image jointe" loading="lazy">`
-        );
-        const vidThumbs = (b.videos || []).map(url =>
-          `<video class="cv-attach-thumb cv-attach-thumb--video" src="${url}" muted preload="metadata"></video>`
-        );
-        const attachHtml = (imgThumbs.length || vidThumbs.length)
-          ? `<div class="cv-attach-strip">${imgThumbs.join("") + vidThumbs.join("")}</div>`
-          : "";
-        return `<div class="cv-bubble is-user" data-idx="${idx}">
+    // Build the desired child HTML list and reconcile in place. During a live
+    // turn only the growing "reflection" bubble (and the waiting pill) change,
+    // so every other bubble keeps its DOM node — no whole-transcript rebuild,
+    // no blank frame.
+    const htmls = this.chat.map((b, idx) => this._conductorBubbleHtml(b, idx));
+    if (isWaitingConductor) {
+      htmls.push(`<div class="cv-thinking">le chef ${conductor && conductor.state === "think" ? "réfléchit" : "répond"}<span class="cv-dots"></span></div>`);
+    }
+    reconcileChildren(scroll, htmls);
+    this._wireCvDelegation(scroll);
+    if (wasAtBottom) requestAnimationFrame(() => { scroll.scrollTop = scroll.scrollHeight; });
+    this.renderReplyChip();
+  },
+
+  /** Clear the pane exactly once when its content MODE changes (tab switch,
+   *  empty↔list) so reconciliation never tries to morph conductor bubbles into
+   *  session events. Returns true when the mode changed. */
+  _setPaneMode(scroll, mode) {
+    if (scroll.dataset.mode === mode) return false;
+    scroll.dataset.mode = mode;
+    scroll.innerHTML = "";
+    return true;
+  },
+
+  /** HTML for one conductor-transcript entry. Pure string builder so the
+   *  reconciler can diff it; interactions are handled by delegation. */
+  _conductorBubbleHtml(b, idx) {
+    const tsChip = b.ts ? `<span class="cv-ts">${esc(fmtChatTs(b.ts))}</span>` : "";
+    if (b.role === "user") {
+      const replyQuote = b.replyingTo
+        ? `<div class="cv-body-reply-quote">↩ ${esc(String(b.replyingTo).replace(/\s+/g, " ").slice(0, 140))}${b.replyingTo.length > 140 ? "…" : ""}</div>`
+        : "";
+      const imgThumbs = (b.images || []).map(url =>
+        `<img class="cv-attach-thumb" src="${url}" alt="image jointe" loading="lazy">`
+      );
+      const vidThumbs = (b.videos || []).map(url =>
+        `<video class="cv-attach-thumb cv-attach-thumb--video" src="${url}" muted preload="metadata"></video>`
+      );
+      const attachHtml = (imgThumbs.length || vidThumbs.length)
+        ? `<div class="cv-attach-strip">${imgThumbs.join("") + vidThumbs.join("")}</div>`
+        : "";
+      return `<div class="cv-bubble is-user" data-idx="${idx}">
           <div class="cv-byline">
             <button class="cv-edit-btn" data-edit-idx="${idx}" title="Modifier et renvoyer">✎ éditer</button>
             toi${tsChip}
           </div>
           <div class="cv-body">${replyQuote}${esc(b.text)}${attachHtml}</div>
         </div>`;
-      }
-      if (b.role === "callback") {
-        return `<div class="cv-bubble is-callback">
+    }
+    if (b.role === "callback") {
+      return `<div class="cv-bubble is-callback">
           <div class="cv-byline">${esc(b.source || "musicien")}${tsChip}</div>
           <div class="cv-body md">${mdToHtml(b.text || "")}</div>
         </div>`;
-      }
-      if (b.role === "reflection") {
-        const n = b.events.length;
-        const elapsed = formatElapsed((b.endTs || Date.now()) - b.startTs);
-        const statusTxt = b.closed ? `${n} étape${n > 1 ? "s" : ""} · ${elapsed}` : `en cours · ${n} étape${n > 1 ? "s" : ""} · ${elapsed}`;
-        const evHtml = b.events.map(ev => {
-          if (ev.kind === "tool") return `<div class="cv-refl-ev cv-refl-tool">⚙ <span class="cv-refl-tn">${esc(ev.name)}</span> <span class="cv-refl-arg">${esc(ev.preview || "")}</span></div>`;
-          if (ev.kind === "thinking") return `<div class="cv-refl-ev cv-refl-think">◌ ${esc(ev.text)}</div>`;
-          if (ev.kind === "text") return `<div class="cv-refl-ev cv-refl-text">${esc(ev.text)}</div>`;
-          if (ev.kind === "result") return `<div class="cv-refl-ev cv-refl-res">↳ ${esc(ev.text)}</div>`;
-          return "";
-        }).join("");
-        // By default keep open while in flight, collapsed once closed.
-        const openAttr = b.closed ? "" : " open";
-        return `<details class="cv-reflection${b.closed ? " is-closed" : " is-live"}"${openAttr}>
+    }
+    if (b.role === "reflection") {
+      const n = b.events.length;
+      const elapsed = formatElapsed((b.endTs || Date.now()) - b.startTs);
+      const statusTxt = b.closed ? `${n} étape${n > 1 ? "s" : ""} · ${elapsed}` : `en cours · ${n} étape${n > 1 ? "s" : ""} · ${elapsed}`;
+      const evHtml = b.events.map(ev => {
+        if (ev.kind === "tool") return `<div class="cv-refl-ev cv-refl-tool">⚙ <span class="cv-refl-tn">${esc(ev.name)}</span> <span class="cv-refl-arg">${esc(ev.preview || "")}</span></div>`;
+        if (ev.kind === "thinking") return `<div class="cv-refl-ev cv-refl-think">◌ ${esc(ev.text)}</div>`;
+        if (ev.kind === "text") return `<div class="cv-refl-ev cv-refl-text">${esc(ev.text)}</div>`;
+        if (ev.kind === "result") return `<div class="cv-refl-ev cv-refl-res">↳ ${esc(ev.text)}</div>`;
+        return "";
+      }).join("");
+      const openAttr = b.closed ? "" : " open";
+      return `<details class="cv-reflection${b.closed ? " is-closed" : " is-live"}"${openAttr}>
           <summary class="cv-refl-summary">
             <span class="cv-refl-label">Réflexion du chef</span>
             <span class="cv-refl-meta">${esc(statusTxt)}</span>
           </summary>
           <div class="cv-refl-body">${evHtml || '<div class="cv-refl-empty">…</div>'}</div>
         </details>`;
-      }
-      const usageChip = b.usage ? `<span class="cv-usage">${esc(fmtTurnUsage(b.usage))}</span>` : "";
-      return `<div class="cv-bubble is-conductor">
+    }
+    const usageChip = b.usage ? `<span class="cv-usage">${esc(fmtTurnUsage(b.usage))}</span>` : "";
+    return `<div class="cv-bubble is-conductor">
           <div class="cv-byline">chef d'orchestre${tsChip}${usageChip}
             <button class="cv-reply-btn" data-reply-idx="${idx}" title="Répondre à ce message">↩ répondre</button>
           </div>
           <div class="cv-body md">${mdToHtml(b.text || "")}</div>
         </div>`;
-    }).join("") + (isWaitingConductor
-      ? `<div class="cv-thinking">le chef ${conductor.state === "think" ? "réfléchit" : "répond"}<span class="cv-dots"></span></div>`
-      : "");
-    // Wire "↩ répondre" buttons — clicking one sets the composer's replyingTo
-    // context so the next send includes a verbatim quote of that bubble.
-    $$(".cv-reply-btn", scroll).forEach(btn => {
-      btn.addEventListener("click", (e) => {
+  },
+
+  /** Attach the transcript's click/dblclick handlers ONCE via delegation, so
+   *  reconciled nodes need no per-render re-wiring (they used to be re-bound on
+   *  every full rebuild). */
+  _wireCvDelegation(scroll) {
+    if (scroll._cvWired) return;
+    scroll._cvWired = true;
+    scroll.addEventListener("click", (e) => {
+      const replyBtn = e.target.closest(".cv-reply-btn");
+      if (replyBtn) {
         e.stopPropagation();
-        const idx = Number(btn.dataset.replyIdx);
-        const target = this.chat[idx];
-        if (!target) return;
-        this.startReply(target);
-      });
-    });
-    // Wire "✎ éditer" buttons and double-click on user bubbles.
-    $$(".cv-edit-btn", scroll).forEach(btn => {
-      btn.addEventListener("click", (e) => {
+        const target = this.chat[Number(replyBtn.dataset.replyIdx)];
+        if (target) this.startReply(target);
+        return;
+      }
+      const editBtn = e.target.closest(".cv-edit-btn");
+      if (editBtn) {
         e.stopPropagation();
-        this.startInlineEdit(scroll, Number(btn.dataset.editIdx));
-      });
+        this.startInlineEdit(scroll, Number(editBtn.dataset.editIdx));
+      }
     });
-    $$(".cv-bubble.is-user", scroll).forEach(bubble => {
-      bubble.addEventListener("dblclick", (e) => {
-        if (e.target.closest("button")) return;
-        this.startInlineEdit(scroll, Number(bubble.dataset.idx));
-      });
+    scroll.addEventListener("dblclick", (e) => {
+      if (e.target.closest("button")) return;
+      const bubble = e.target.closest(".cv-bubble.is-user");
+      if (bubble) this.startInlineEdit(scroll, Number(bubble.dataset.idx));
     });
-    if (wasAtBottom) requestAnimationFrame(() => { scroll.scrollTop = scroll.scrollHeight; });
-    this.renderReplyChip();
   },
 
   /** Attach a "replying to" context to the composer. Shows a chip above
@@ -1861,6 +1941,10 @@ const App = {
     if (originalText == null) return;
 
     bubble.classList.add("is-editing");
+    // The reconciler skips nodes whose sig is unchanged; this edit mutates the
+    // node's DOM directly, so invalidate its sig or a later reconcile (e.g. on
+    // cancel) would leave the textarea in place instead of restoring the bubble.
+    bubble.dataset.sig = "editing";
     body.innerHTML = `<textarea class="cv-edit-ta" rows="1"></textarea>
       <div class="cv-edit-actions">
         <button class="cv-edit-cancel">✕ annuler</button>

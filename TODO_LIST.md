@@ -4,6 +4,11 @@ Suivi léger des tâches en cours / différées côté orchestrateur.
 
 ## Fait
 
+- [x] **Dashboard web — fin du clignotement pendant le streaming SSE** (2026-09-07, v0.13.1). `renderMainPane`
+  ne reconstruit plus tout le transcript à chaque event : réconciliation en place (`reconcileChildren`,
+  clé index+signature), interactions en délégation, feeds de cartes via `setHtmlIfChanged`. Vérifié headless
+  (identité DOM préservée sur 25 events, 0 erreur, perf 0.11.0 intacte). Client statique → hard-reload pour appliquer.
+
 - [x] **Refonte app Android + serveur — token retiré, SSH/Builds supprimés, cartes temps réel** (2026-09-07, v0.13.0 / android vc5 0.4.0).
   Token gate serveur désactivé (`TOKEN_GATE_ENABLED=false`, **restart 7777 requis côté chef après checkpoint user**) ; auth token entièrement retirée de l'app ; SSH/SCP + onglet Builds supprimés (sshj/BC/eddsa/security-crypto + perm INSTALL). Cartes temps réel : `stream_event` hors ring + buffer live streaming, merge-on-Open, buffer SSE illimité, boot auto-réparant.
 
