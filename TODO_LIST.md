@@ -4,6 +4,10 @@ Suivi léger des tâches en cours / différées côté orchestrateur.
 
 ## Fait
 
+- [x] **App Android — barre des musiciens triée par activité** (2026-09-07, android vc7 0.4.2).
+  `TabBar.kt` : `tabPriority` réordonné (live/think à gauche) + tri stable (`sortedBy`), re-tri live,
+  chef hors tri, parkés exclus, sélection préservée. Installé sur device.
+
 - [x] **App Android — ouverture de la page chef directement en bas** (2026-09-07, android vc6 0.4.1).
   `MainPane.kt` : `animateScrollToItem` → `scrollToItem` instantané au 1er affichage (flag one-shot
   `firstScrollDone`), puis animé pour le suivi live. Idem vue session musicien. Installé sur device.

@@ -26,10 +26,13 @@ import com.orchestrateur.ui.theme.Palette
 
 private const val CONDUCTOR = "chef"
 
+// Lower = further LEFT in the tab bar. Working musicians (live/think) sit
+// leftmost, then those needing attention (input/error) and unread results,
+// then idle ones on the right.
 private fun tabPriority(m: Musician): Int = when (m.state) {
-    MState.input, MState.error -> 0
-    MState.unread -> 1
-    MState.live, MState.think -> 2
+    MState.live, MState.think -> 0
+    MState.input, MState.error -> 1
+    MState.unread -> 2
     MState.idle -> 3
 }
 
@@ -42,9 +45,12 @@ fun TabBar(
     modifier: Modifier = Modifier,
 ) {
     val conductor = musicians.find { it.name == CONDUCTOR }
+    // Sort by activity priority only. sortedBy is STABLE, so musicians at equal
+    // priority keep their existing (config) order — no erratic reshuffling. The
+    // remember key includes each state, so the bar re-sorts live on state change.
     val others = remember(musicians, musicians.map { it.state }, musicians.map { it.parked }) {
         musicians.filter { it.name != CONDUCTOR && !it.parked }
-            .sortedWith(compareBy({ tabPriority(it) }, { it.name }))
+            .sortedBy { tabPriority(it) }
     }
 
     Box(modifier = modifier.fillMaxWidth().height(IntrinsicSize.Min)) {

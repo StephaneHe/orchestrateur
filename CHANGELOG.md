@@ -11,6 +11,11 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [android 0.4.2 / vc7] - 2026-09-07
+
+### Changed
+- (android) **Barre des noms de musiciens triée par activité** (`ui/fleet/TabBar.kt`) : les musiciens qui travaillent (`live`/`think`) apparaissent le plus à gauche, puis ceux en attente d'action / en erreur (`input`/`error`), puis les résultats non lus (`unread`), puis les inactifs (`idle`) à droite. `tabPriority` réordonné (live/think = 0) et tri rendu **stable** (`sortedBy` au lieu d'un tie-break par nom → à priorité égale l'ordre config est conservé, pas de réagencement erratique). Le re-tri est live (le `remember` a chaque état en clé). Le chef reste hors tri (à gauche), les parkés restent exclus, la sélection active suit le musicien. `versionName` 0.4.1 → **0.4.2**, `versionCode` 6 → **7**.
+
 ## [android 0.4.1 / vc6] - 2026-09-07
 
 ### Fixed
