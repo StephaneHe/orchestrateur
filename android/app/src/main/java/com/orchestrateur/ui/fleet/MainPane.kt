@@ -25,7 +25,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -35,6 +37,7 @@ import kotlinx.serialization.json.contentOrNull
 import com.orchestrateur.data.Musician
 import com.orchestrateur.data.RawEvent
 import com.orchestrateur.data.State as MState
+import com.orchestrateur.data.toolArgPreview
 import com.orchestrateur.ui.theme.Palette
 
 private const val CONDUCTOR = "chef"
@@ -387,41 +390,53 @@ private fun DenialBanner(
     }
 }
 
+/** A tool_use row: gear + tool name + its key argument (file / command / …). */
+@Composable
+private fun ToolUseChip(b: RawEvent.Block) {
+    val name = b.name ?: "tool"
+    val arg = b.toolArgPreview()
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(Palette.StLive.copy(alpha = 0.10f))
+            .border(1.dp, Palette.StLive.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text("⚙", fontSize = 13.sp, color = Palette.StLive)
+        Text(name, color = Palette.StLive, fontSize = 12.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium)
+        if (arg.isNotBlank()) Text(
+            arg,
+            color = Palette.Fg1, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
+            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+        )
+    }
+}
+
 @Composable
 private fun EventLine(raw: RawEvent) {
     when (raw.type) {
         "assistant" -> {
+            // Render EVERY block (an assistant turn can carry thinking + tool_use
+            // + text). Tool calls show their key argument (file/command/…) so the
+            // user actually sees what the musician is doing — not a bare "Edit".
             val content = raw.message?.content.orEmpty()
-            var text = ""
-            var toolName: String? = null
-            var thinking = false
-            for (b in content) when (b.type) {
-                "text"     -> if (!b.text.isNullOrBlank()) text = b.text
-                "thinking" -> thinking = true
-                "tool_use" -> toolName = b.name
-            }
-            when {
-                text.isNotBlank() -> Markdown(text, Palette.Fg0)
-                thinking -> Text("… réflexion", color = Palette.Fg2, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                toolName != null -> Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Palette.StLive.copy(alpha = 0.10f))
-                        .border(1.dp, Palette.StLive.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
-                        .padding(horizontal = 10.dp, vertical = 7.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Text("⚙", fontSize = 13.sp, color = Palette.StLive)
-                    Text(toolName, color = Palette.StLive, fontSize = 12.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                for (b in content) when (b.type) {
+                    "text" -> if (!b.text.isNullOrBlank()) Markdown(b.text, Palette.Fg0)
+                    "thinking" -> if (!b.thinking.isNullOrBlank()) Text(
+                        "◌ ${b.thinking.trim()}",
+                        color = Palette.Fg2, fontSize = 12.sp, fontStyle = FontStyle.Italic, lineHeight = 17.sp,
+                    )
+                    "tool_use" -> ToolUseChip(b)
                 }
-                else -> {}
             }
         }
         "result" -> {
             val baseLabel = if (raw.isError == true) "— tour en erreur" else "— tour terminé"
-            val dur = raw.durationMs?.let { " · ${"%.1f".format(it / 1000.0)}s" } ?: ""
+            val dur = raw.durationMs?.let { " · ${"%.1f".format(NUM, it / 1000.0)}s" } ?: ""
             val usage = formatResultUsage(raw)
             val label = (baseLabel + dur + (if (usage.isNotEmpty()) " · $usage" else "") + " —")
             Text(label, color = Palette.Fg3, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
@@ -503,16 +518,20 @@ private fun formatResultUsage(raw: RawEvent): String {
     return parts.joinToString(" · ")
 }
 
+// Locale.US throughout: the default (fr) locale renders "%.2f" with a COMMA,
+// so the fleet cost showed as "$6,78" and read like a broken build variable.
+private val NUM = java.util.Locale.US
+
 internal fun fmtTok(n: Long): String = when {
     n <= 0 -> "0"
-    n >= 1_000_000 -> "%.2fM".format(n / 1_000_000.0)
-    n >= 10_000    -> "%dk".format(n / 1000)
-    n >= 1_000     -> "%.1fk".format(n / 1000.0)
+    n >= 1_000_000 -> "%.2fM".format(NUM, n / 1_000_000.0)
+    n >= 10_000    -> "%dk".format(NUM, n / 1000)
+    n >= 1_000     -> "%.1fk".format(NUM, n / 1000.0)
     else -> n.toString()
 }
 
 internal fun fmtCost(usd: Double): String = when {
     usd <= 0 -> "$0"
     usd < 0.01 -> "<\$0.01"
-    else -> "$%.2f".format(usd)
+    else -> "$%.2f".format(NUM, usd)
 }

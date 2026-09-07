@@ -3,8 +3,25 @@ package com.orchestrateur.data
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 
 enum class State { idle, live, think, input, error, unread }
+
+/**
+ * The most useful single argument of a tool_use block — mirrors the web
+ * dashboard's toolArgPreview (public/app.js): file_path / path / command /
+ * pattern / url, else the first few keys. Empty string when no input.
+ * Lets the card show "Edit <file>" / "Bash <cmd>" instead of a bare tool name.
+ */
+fun RawEvent.Block.toolArgPreview(max: Int = 80): String {
+    val obj = input as? JsonObject ?: return ""
+    fun s(k: String): String? = (obj[k] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+    val v = s("file_path") ?: s("path") ?: s("command") ?: s("pattern") ?: s("url")
+        ?: obj.keys.take(3).joinToString(",").ifEmpty { null }
+    return (v ?: "").replace(Regex("\\s+"), " ").trim().take(max)
+}
 
 @Serializable
 data class ProjectConfig(
@@ -84,6 +101,8 @@ data class RawEvent(
         val text: String? = null,
         val thinking: String? = null,
         val name: String? = null,
+        // tool_use: the tool's arguments (file_path, command, pattern, …).
+        val input: JsonElement? = null,
         // tool_result: content is a string or array; stored as raw JSON for flexibility
         val content: JsonElement? = null,
         @SerialName("tool_use_id") val toolUseId: String? = null,

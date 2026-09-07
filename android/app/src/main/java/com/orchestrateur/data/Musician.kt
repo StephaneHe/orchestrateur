@@ -111,21 +111,26 @@ class Musician(
                 var hasTool = false
                 var hasThink = false
                 var gotText: String? = null
-                var toolName: String? = null
+                var toolLabel: String? = null
                 for (b in content) {
                     when (b.type) {
                         "text"     -> gotText = b.text ?: ""
                         "thinking" -> hasThink = true
-                        "tool_use" -> { hasTool = true; lastToolUseName = b.name; toolName = b.name }
+                        "tool_use" -> {
+                            hasTool = true; lastToolUseName = b.name
+                            val arg = b.toolArgPreview()
+                            toolLabel = (b.name ?: "outil") + (if (arg.isNotBlank()) " $arg" else "")
+                        }
                     }
                 }
                 // lastLine drives the card/tab preview — reflect the actual
-                // activity even when the turn produced no prose (tool/thinking).
+                // activity even when the turn produced no prose (tool with its
+                // target, or thinking).
                 if (!gotText.isNullOrBlank()) {
                     lastAssistantText = gotText
                     lastLine = gotText.replace(Regex("\\s+"), " ").trim().take(140)
                 } else if (hasTool) {
-                    lastLine = "⚙ ${toolName ?: "outil"}"
+                    lastLine = "⚙ ${toolLabel ?: "outil"}".take(140)
                 } else if (hasThink) {
                     lastLine = "réflexion…"
                 }

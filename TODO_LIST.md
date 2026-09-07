@@ -4,6 +4,10 @@ Suivi léger des tâches en cours / différées côté orchestrateur.
 
 ## Fait
 
+- [x] **App Android — carte/session musicien : tool_use avec cible, réflexion rendue, version corrigée** (2026-09-07, android vc8 0.4.3).
+  `Block.input` désérialisé + `toolArgPreview` → `⚙ Edit <fichier>` / `Bash <cmd>` (aligné web) ; `thinking` rendu ;
+  `fmtCost`/`fmtTok` en `Locale.US` (le « $6,78 » était le coût fleet, pas un artefact). Installé sur device.
+
 - [x] **App Android — barre des musiciens triée par activité** (2026-09-07, android vc7 0.4.2).
   `TabBar.kt` : `tabPriority` réordonné (live/think à gauche) + tri stable (`sortedBy`), re-tri live,
   chef hors tri, parkés exclus, sélection préservée. Installé sur device.

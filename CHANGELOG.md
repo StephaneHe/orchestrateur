@@ -11,6 +11,13 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [android 0.4.3 / vc8] - 2026-09-07
+
+### Fixed
+- (android) **Les appels d'outils dans la session d'un musicien n'affichaient que le nom nu** (« ⚙ Edit ») sans la cible. Cause : `RawEvent.Block` ne désérialisait pas le champ `input` du `tool_use`. Ajout de `Block.input` + helper `toolArgPreview()` (mirroir du web `public/app.js` : `file_path`/`path`/`command`/`pattern`/`url`), et nouveau `ToolUseChip` dans `MainPane.kt` → chaque outil s'affiche **`⚙ <outil>  <cible>`** (`Edit config.json`, `Bash npm test`, `Read …`). `Musician.lastLine` (aperçu carte/onglet) inclut aussi la cible.
+- (android) **Blocs « réflexion » vides** : `EventLine` affichait un « … réflexion » statique sans le contenu. Il rend désormais le texte du bloc `thinking` (italique dim), et itère **tous** les blocs d'un event `assistant` (thinking + tool_use + text) au lieu d'un seul.
+- (android) **Entête version « v0.4.2-debug$6,78 »** : le `$6,78` n'était pas une variable de build cassée mais le **coût total du fleet** formaté avec la virgule de la locale FR. `fmtCost`/`fmtTok` (et la durée) forcent désormais `Locale.US` → `$6.78` (aligné sur le web, plus d'ambiguïté). `versionName` 0.4.2 → **0.4.3**, `versionCode` 7 → **8**.
+
 ## [android 0.4.2 / vc7] - 2026-09-07
 
 ### Changed
