@@ -11,6 +11,13 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-09-07
+
+### Fixed
+- (dashboard) **Réponse du chef affichée en double** dans le fil quand l'utilisateur envoyait un message (la 2e occurrence disparaissait au refresh). Cause (`public/app.js`, `onConductorEvent` branche `result`) : la réponse finale du chef arrive comme un bloc `assistant` `text` consolidé qui était enregistré **à la fois** dans la bulle « réflexion » (comme événement `text`) **et** poussé comme bulle `conductor` → présent 2× dans le DOM (`answerCountInDOM = 2`). L'historique serveur ne contient pas de réflexion, d'où l'affichage correct au refresh. De plus la réflexion n'était pas toujours refermée : un callback de musicien poussé après elle la laissait `is-live` (ouverte, donc visible).
+  - Au `result`, on referme désormais la **dernière** réflexion ouverte en cherchant **en arrière** (elle n'est pas toujours en queue) et on **retire de ses événements le `text` égal à la réponse finale** → la réponse n'apparaît plus qu'une fois (la bulle `conductor`), alignée sur l'historique serveur.
+- Vérifié en Chrome headless isolé : réponse chef affichée → envoi utilisateur → **0 doublon** ; enchaînement de 2 tours avec un callback de musicien intercalé après la réflexion → chaque réponse une seule fois, aucune réflexion restée ouverte, 0 erreur console. Cohérent avec la réconciliation en place de v0.13.1 (pas de régression du clignotement).
+
 ## [0.13.1] - 2026-09-07
 
 ### Fixed

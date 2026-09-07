@@ -1851,14 +1851,21 @@ const App = {
     } else if (raw?.type === "result") {
       // Chef finished — clear the waiting flag regardless of success/error.
       this._awaitingConductorResponse = false;
-      // Close the pending reflection (freeze its timestamps) and push the
-      // conductor's final synthesis.
-      const pending = this.chat[this.chat.length - 1];
-      if (pending && pending.role === "reflection" && !pending.closed) {
-        pending.closed = true;
-        pending.endTs = Date.now();
-      }
       const txt = (musician.lastAssistantText || "").trim();
+      // Close the last still-open reflection (search BACKWARDS — a musician
+      // callback may have been pushed after it, so it isn't always the tail) and
+      // drop any reflection text event equal to the final answer. The chef's
+      // reply is a consolidated assistant `text` block, which was recorded both
+      // inside the reflection AND becomes the conductor bubble below → it showed
+      // TWICE. The server history has no reflection, which is why a refresh
+      // already looked correct; this makes the live view match it.
+      for (let i = this.chat.length - 1; i >= 0; i--) {
+        const e = this.chat[i];
+        if (e.role !== "reflection") continue;
+        if (!e.closed) { e.closed = true; e.endTs = Date.now(); }
+        if (txt) e.events = e.events.filter(ev => !(ev.kind === "text" && (ev.text || "").trim() === txt));
+        break;
+      }
       if (!txt) return this.renderChat();
       const last = this.chat[this.chat.length - 1];
       const usage = musician.lastTurnUsage;

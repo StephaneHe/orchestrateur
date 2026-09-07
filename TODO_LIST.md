@@ -4,6 +4,12 @@ Suivi léger des tâches en cours / différées côté orchestrateur.
 
 ## Fait
 
+- [x] **Dashboard web — réponse du chef affichée en double corrigée** (2026-09-07, v0.13.2). Cause :
+  la réponse finale était stockée à la fois dans la bulle « réflexion » (event `text`) et comme bulle
+  `conductor` (`onConductorEvent`/result). Fix : au `result`, fermeture en arrière de la dernière réflexion
+  ouverte + retrait de son event `text` égal à la réponse → affichage aligné sur l'historique serveur.
+  Vérifié headless (0 doublon, callback intercalé OK). Client statique → hard-reload.
+
 - [x] **Dashboard web — fin du clignotement pendant le streaming SSE** (2026-09-07, v0.13.1). `renderMainPane`
   ne reconstruit plus tout le transcript à chaque event : réconciliation en place (`reconcileChildren`,
   clé index+signature), interactions en délégation, feeds de cartes via `setHtmlIfChanged`. Vérifié headless
