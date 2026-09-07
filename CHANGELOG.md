@@ -11,6 +11,11 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [android 0.4.1 / vc6] - 2026-09-07
+
+### Fixed
+- (android) **La page du chef scrollait visiblement de haut en bas à l'ouverture** (`ui/fleet/MainPane.kt`). Le `LaunchedEffect` de scroll utilisait `animateScrollToItem` dès le premier affichage → animation visible. Désormais un flag one-shot (`firstScrollDone`) fait un `scrollToItem` **instantané** au premier positionnement (ouverture) puis repasse en `animateScrollToItem` pour le suivi live. Même correctif appliqué à la vue session d'un musicien (même LazyColumn). `versionName` 0.4.0 → **0.4.1**, `versionCode` 5 → **6**.
+
 ## [0.13.2] - 2026-09-07
 
 ### Fixed

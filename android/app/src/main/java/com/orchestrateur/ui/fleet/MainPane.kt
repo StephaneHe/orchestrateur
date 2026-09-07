@@ -77,11 +77,19 @@ private fun ConductorTranscript(
         (liveText.isNotBlank() || liveActivity.isNotBlank())
 
     val listState = rememberLazyListState()
+    // One-shot flag: the FIRST time we land at the bottom (page open) we jump
+    // instantly (scrollToItem) so the chef view opens already at the bottom —
+    // no visible top→bottom animation. Later updates animate as before so the
+    // view keeps following the stream smoothly.
+    var firstScrollDone by remember { mutableStateOf(false) }
     // Re-scroll as chat grows AND as the chef's answer streams in (ingestSeq
     // ticks on every token delta).
     LaunchedEffect(chat.size, conductor?.state, conductor?.ingestSeq) {
         val target = chat.size - 1 + (if (liveShown) 1 else 0)
-        if (target >= 0) listState.animateScrollToItem(target)
+        if (target >= 0) {
+            if (!firstScrollDone) { listState.scrollToItem(target); firstScrollDone = true }
+            else listState.animateScrollToItem(target)
+        }
     }
 
     val deniedTools = conductor?.pendingDenials?.toList() ?: emptyList()
@@ -285,10 +293,17 @@ private fun ProjectSession(
     val deniedTools = m.pendingDenials.toList()
 
     val listState = rememberLazyListState()
-    // Key on the monotone ingest counter, not ring.size — the ring is capped at
-    // 30, so once full its size stops changing and auto-scroll would freeze.
+    // First landing = instant jump to the bottom (no top→bottom animation on
+    // open); later updates animate. Key on the monotone ingest counter, not
+    // ring.size — the ring is capped at 30, so once full its size stops changing
+    // and auto-scroll would freeze.
+    var firstScrollDone by remember { mutableStateOf(false) }
     LaunchedEffect(m.ingestSeq) {
-        if (ringSnapshot.isNotEmpty()) listState.animateScrollToItem(ringSnapshot.size - 1)
+        if (ringSnapshot.isNotEmpty()) {
+            val target = ringSnapshot.size - 1
+            if (!firstScrollDone) { listState.scrollToItem(target); firstScrollDone = true }
+            else listState.animateScrollToItem(target)
+        }
     }
     Column(modifier.fillMaxSize()) {
         if (deniedTools.isNotEmpty()) {

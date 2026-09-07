@@ -4,6 +4,10 @@ Suivi léger des tâches en cours / différées côté orchestrateur.
 
 ## Fait
 
+- [x] **App Android — ouverture de la page chef directement en bas** (2026-09-07, android vc6 0.4.1).
+  `MainPane.kt` : `animateScrollToItem` → `scrollToItem` instantané au 1er affichage (flag one-shot
+  `firstScrollDone`), puis animé pour le suivi live. Idem vue session musicien. Installé sur device.
+
 - [x] **Dashboard web — réponse du chef affichée en double corrigée** (2026-09-07, v0.13.2). Cause :
   la réponse finale était stockée à la fois dans la bulle « réflexion » (event `text`) et comme bulle
   `conductor` (`onConductorEvent`/result). Fix : au `result`, fermeture en arrière de la dernière réflexion
