@@ -11,6 +11,12 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [android 0.4.4 / vc9] - 2026-09-07
+
+### Fixed
+- (android) **Gros trous vides entre les blocs de la session d'un musicien** (`ui/fleet/MainPane.kt`). Chaque événement du ring produisait un item de `LazyColumn` **même quand il ne rendait rien** (un `user`/tool_result sans refus après *chaque* appel d'outil, un `system` non-init, un `assistant` vide) — l'item vide consommait quand même l'espacement `spacedBy` → ~2-3 lignes blanches. Le ring est désormais **filtré par `isRenderable()`** (ne garde que les events réellement rendus, en phase avec le `when` d'`EventLine`), l'espacement passe de 8 → **6 dp**, et le texte des blocs est **trimé**. Plus de trous.
+- (android) **Entête version « v0.4.3-debug$1.85 »** : le `$1.85` (coût total du fleet) se collait à la version quand la barre débordait, donnant l'impression d'une variable de build cassée. Le total coût/tokens est **retiré de l'entête** (l'usage par tour reste affiché sur chaque ligne `result`) → entête propre `v0.4.4-debug` + statut. `versionName` 0.4.3 → **0.4.4**, `versionCode` 8 → **9**.
+
 ## [android 0.4.3 / vc8] - 2026-09-07
 
 ### Fixed

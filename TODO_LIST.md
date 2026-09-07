@@ -4,6 +4,10 @@ Suivi léger des tâches en cours / différées côté orchestrateur.
 
 ## Fait
 
+- [x] **App Android — trous vides supprimés dans la session musicien + entête version propre** (2026-09-07, android vc9 0.4.4).
+  `MainPane.kt` : ring filtré par `isRenderable()` (plus d'items vides des `user`/tool_result/`system`), spacing 8→6dp, texte trimé.
+  Coût fleet retiré de l'entête (collait à la version → « $1.85 » perçu comme artefact) ; usage par tour toujours sur les lignes result. Installé sur device.
+
 - [x] **App Android — carte/session musicien : tool_use avec cible, réflexion rendue, version corrigée** (2026-09-07, android vc8 0.4.3).
   `Block.input` désérialisé + `toolArgPreview` → `⚙ Edit <fichier>` / `Bash <cmd>` (aligné web) ; `thinking` rendu ;
   `fmtCost`/`fmtTok` en `Locale.US` (le « $6,78 » était le coût fleet, pas un artefact). Installé sur device.

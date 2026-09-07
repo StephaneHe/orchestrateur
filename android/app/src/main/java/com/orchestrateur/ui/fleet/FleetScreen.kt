@@ -127,23 +127,10 @@ fun FleetScreen(api: Api) {
                 fontFamily = FontFamily.Monospace,
             )
             Spacer(Modifier.weight(1f))
-            val totalCost = vm.musicians.sumOf { it.totalCostUsd }
-            val totalOut = vm.musicians.sumOf { it.totalOutputTokens }
-            if (totalCost > 0.0 || totalOut > 0L) {
-                Text(
-                    buildString {
-                        if (totalCost > 0.0) append(fmtCost(totalCost))
-                        if (totalOut > 0L) {
-                            if (isNotEmpty()) append(" · ")
-                            append("↑").append(fmtTok(totalOut))
-                        }
-                    },
-                    color = Palette.Fg2,
-                    fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace,
-                )
-                Spacer(Modifier.width(10.dp))
-            }
+            // Fleet cost/token totals were shown here but glued onto the version
+            // ("v0.4.3-debug$1.85") when the row overflowed, reading like a broken
+            // build string. Per-turn cost is already in each result line, so the
+            // header now stays a clean version + status.
             if (!connected) {
                 Text(
                     "↺",

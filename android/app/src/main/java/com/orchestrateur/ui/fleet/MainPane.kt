@@ -290,7 +290,11 @@ private fun ProjectSession(
 
     // Snapshot the ring once per composition pass — prevents IndexOutOfBoundsException
     // if the SnapshotStateList mutates while LazyColumn defers item lambdas.
-    val ringSnapshot = m.ring.toList()
+    // Filter to events that actually render SOMETHING: a tool_result `user` event
+    // (one after every tool call), a non-init `system` event, or an empty
+    // assistant turn otherwise produced a blank LazyColumn item that still ate
+    // the spacedBy gap → the big empty holes between blocks.
+    val ringSnapshot = m.ring.toList().filter { isRenderable(it) }
 
     // Use Musician.pendingDenials which is already maintained by ingest().
     val deniedTools = m.pendingDenials.toList()
@@ -320,7 +324,7 @@ private fun ProjectSession(
             state = listState,
             modifier = Modifier.weight(1f).fillMaxWidth(),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             items(ringSnapshot) { raw -> EventLine(raw) }
             // Live token-streamed line for the in-flight block (not yet in the ring).
@@ -390,6 +394,24 @@ private fun DenialBanner(
     }
 }
 
+/** True only when EventLine will draw something for this event — used to keep
+ *  blank items (and their spacing) out of the LazyColumn. Must stay in sync
+ *  with the EventLine `when`. */
+private fun isRenderable(raw: RawEvent): Boolean = when (raw.type) {
+    "assistant" -> raw.message?.content.orEmpty().any { b ->
+        (b.type == "text" && !b.text.isNullOrBlank()) ||
+        (b.type == "thinking" && !b.thinking.isNullOrBlank()) ||
+        b.type == "tool_use"
+    }
+    "result" -> true
+    "system" -> raw.subtype == "init"
+    "user" -> raw.message?.content.orEmpty().any { b ->
+        b.type == "tool_result" && Musician.PERM_RE.containsMatchIn(blockText(b))
+    }
+    "user_prompt" -> !raw.text.isNullOrBlank() || !raw.attachmentPaths.isNullOrEmpty()
+    else -> false
+}
+
 /** A tool_use row: gear + tool name + its key argument (file / command / …). */
 @Composable
 private fun ToolUseChip(b: RawEvent.Block) {
@@ -425,7 +447,7 @@ private fun EventLine(raw: RawEvent) {
             val content = raw.message?.content.orEmpty()
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 for (b in content) when (b.type) {
-                    "text" -> if (!b.text.isNullOrBlank()) Markdown(b.text, Palette.Fg0)
+                    "text" -> if (!b.text.isNullOrBlank()) Markdown(b.text.trim(), Palette.Fg0)
                     "thinking" -> if (!b.thinking.isNullOrBlank()) Text(
                         "◌ ${b.thinking.trim()}",
                         color = Palette.Fg2, fontSize = 12.sp, fontStyle = FontStyle.Italic, lineHeight = 17.sp,
