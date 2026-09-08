@@ -12,6 +12,15 @@
 const RING_MAX   = 30;             // per-musician event buffer
 const CHAT_MAX   = 60;             // conductor chat messages kept in memory
 const CARD_MIN_W = 110;
+
+// A musician turn completing makes the server (autoNotifyConductor) BOTH write a
+// `musician_done` notification AND dispatch that same "[musician] Tour terminé…"
+// text to the chef as a real turn — whose user_prompt carries NO source, so it
+// used to render as a *user* message (and duplicated the notification, and
+// replayed from the persisted queue). This matches that relayed callback so we
+// reclassify it as the musician's callback and dedup it.
+const CALLBACK_RELAY_RE = /^\[([^\]\n]{1,80})\]\s+Tour\s+termin/i;
+const chatKey = (t) => String(t || "").replace(/\s+/g, " ").trim();
 const CARD_MAX_W = 150;
 const CARD_H     = 124;
 const GAP_MIN    = 18;            // minimum horizontal gap between card centers
@@ -1031,13 +1040,32 @@ const App = {
       const resp = await fetch("/api/conductor-chat?n=60");
       if (!resp.ok) return;
       const msgs = await resp.json();
-      this.chat = msgs.map(m => ({
-        role: m.source ? "callback" : m.role,
-        text: m.text,
-        ts: m.ts,
-        source: m.source || undefined,
-        ...(m.attachmentPaths?.length ? { images: m.attachmentPaths } : {}),
-      }));
+      const seen = new Set();
+      const built = [];
+      for (const m of msgs) {
+        const e = {
+          role: m.source ? "callback" : m.role,
+          text: m.text,
+          ts: m.ts,
+          source: m.source || undefined,
+          ...(m.attachmentPaths?.length ? { images: m.attachmentPaths } : {}),
+        };
+        // A source-less "[musician] Tour terminé…" is a relayed callback, not a
+        // user message — reclassify so it's never shown as the user.
+        if (e.role === "user" && !e.source) {
+          const rm = CALLBACK_RELAY_RE.exec(e.text || "");
+          if (rm) { e.role = "callback"; e.source = rm[1].trim(); }
+        }
+        // Dedup callbacks (the notification + the relayed dispatch carry the
+        // same text; old callbacks can also reappear in the tail).
+        if (e.role === "callback") {
+          const k = chatKey(e.text);
+          if (seen.has(k)) continue;
+          seen.add(k);
+        }
+        built.push(e);
+      }
+      this.chat = built;
       this.renderChat();
     } catch { /* non-fatal */ }
   },
@@ -1781,11 +1809,23 @@ const App = {
     return entry;
   },
 
+  /** True if a callback bubble with this exact text is already in the chat.
+   *  Makes callback rendering idempotent: the musician_done notification and the
+   *  relayed chef dispatch carry the same text, and reconnect/queue replays can
+   *  repost an old one — all collapse to a single occurrence. */
+  _callbackDup(text) {
+    const k = chatKey(text);
+    if (!k) return false;
+    return this.chat.some(e => e.role === "callback" && chatKey(e.text) === k);
+  },
+
   onConductorEvent(musician, raw) {
     if (raw?.type === "notification" && raw.subtype === "musician_done") {
       const txt = String(raw.text || "").trim();
       const source = raw.source || null;
-      if (txt && source) {
+      // Dedup: skip if this callback is already shown (the relayed chef dispatch
+      // carries the same text, and reconnect/queue replays can repeat it).
+      if (txt && source && !this._callbackDup(txt)) {
         this.chat.push({ role: "callback", text: txt, ts: Date.parse(raw.timestamp) || Date.now(), source });
         if (this.chat.length > CHAT_MAX) this.chat.splice(0, this.chat.length - CHAT_MAX);
         this.showCallbackToast(source, txt);
@@ -1796,20 +1836,34 @@ const App = {
     if (raw?.type === "user_prompt") {
       const txt = stripReplyPrefixes(String(raw.text || "")).trim();
       if (txt) {
-        const source = raw.source || null;
+        let source = raw.source || null;
+        // A source-less "[musician] Tour terminé…" is a relayed musician
+        // callback, NOT a user message — attribute it to that musician.
+        if (!source) {
+          const rm = CALLBACK_RELAY_RE.exec(txt);
+          if (rm) source = rm[1].trim();
+        }
         const last = this.chat[this.chat.length - 1];
         const isLocalEcho = !source && last && last.role === "user" && (
           last.text.trim() === txt ||
           (last._fullPrompt != null && last._fullPrompt.trim() === txt)
         );
         if (!isLocalEcho) {
-          const role = source ? "callback" : "user";
           const images = Array.isArray(raw.attachmentPaths) && raw.attachmentPaths.length
             ? raw.attachmentPaths.map(p => '/attachments/' + String(p).replace(/\\/g, '/').split('/').pop())
             : undefined;
-          this.chat.push({ role, text: txt, ts: Date.parse(raw.timestamp) || Date.now(), ...(source ? { source } : {}), ...(images ? { images } : {}) });
-          if (this.chat.length > CHAT_MAX) this.chat.splice(0, this.chat.length - CHAT_MAX);
-          if (source) this.showCallbackToast(source, txt);
+          if (source) {
+            // Callback — render as the musician's event, and dedup so the
+            // notification + this relay don't show it twice.
+            if (!this._callbackDup(txt)) {
+              this.chat.push({ role: "callback", text: txt, ts: Date.parse(raw.timestamp) || Date.now(), source, ...(images ? { images } : {}) });
+              if (this.chat.length > CHAT_MAX) this.chat.splice(0, this.chat.length - CHAT_MAX);
+              this.showCallbackToast(source, txt);
+            }
+          } else {
+            this.chat.push({ role: "user", text: txt, ts: Date.parse(raw.timestamp) || Date.now(), ...(images ? { images } : {}) });
+            if (this.chat.length > CHAT_MAX) this.chat.splice(0, this.chat.length - CHAT_MAX);
+          }
         }
         // Mark as awaiting regardless of local-echo dedup — the chef IS now processing.
         this._awaitingConductorResponse = true;

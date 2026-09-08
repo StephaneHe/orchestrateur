@@ -11,6 +11,15 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-09-08
+
+### Fixed
+- (dashboard) **Callbacks des musiciens affichés comme messages utilisateur, en double, et rejoués** (`public/app.js`). Cause : quand un musicien finit un tour, `autoNotifyConductor` (serveur) écrit un event `notification`/`musician_done` (bulle callback) **puis** dispatche le même texte « [musicien] Tour terminé… » au chef comme un vrai tour — dont le `user_prompt` n'a **pas** de `source`, donc le client le rendait comme un message **utilisateur** ; la file de dispatch persistée pouvait aussi rejouer d'anciens callbacks. Correctifs côté client (idempotent, aligné sur l'historique serveur) :
+  1. Un `user_prompt` sans source qui matche `^[musicien] Tour terminé…` est **reclassé en callback** du musicien concerné — jamais rendu comme message utilisateur (`onConductorEvent` + `loadChatHistory`).
+  2. **Dédup par contenu** (`_callbackDup`) : la notification `musician_done` et le dispatch relayé portent le même texte → une **seule** bulle callback ; `loadChatHistory` déduplique aussi les callbacks de l'historique serveur.
+  3. **Plus de re-post d'anciens callbacks** : un callback déjà présent (même texte) est ignoré au live (SSE/queue replay) comme au reconnect/refresh (rebuild dédupliqué depuis le serveur).
+- Non-régression : chat chef↔utilisateur normal (le vrai message utilisateur reste une bulle user unique), réponse du chef non dupliquée (fix antérieur), réconciliation en place, temps réel/cartes. Vérifié en Chrome headless isolé : 1 message user + (notification + relay + replay du même callback) → 1 seule bulle callback attribuée au musicien, 0 bulle user parasite. **Client statique → hard-reload requis.**
+
 ## [0.14.0] - 2026-09-08
 
 ### Added

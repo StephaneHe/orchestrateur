@@ -4,6 +4,12 @@ Suivi léger des tâches en cours / différées côté orchestrateur.
 
 ## Fait
 
+- [x] **Dashboard — callbacks musiciens déguisés en messages user, dupliqués, rejoués** (2026-09-08, web v0.14.1).
+  Cause : `autoNotifyConductor` (serveur) écrit un `musician_done` PUIS dispatche le même « [musicien] Tour terminé… »
+  au chef (user_prompt sans source → rendu comme user). Fix client (`app.js`) : reclassement relay→callback,
+  dédup par contenu (`_callbackDup`) dans `onConductorEvent` + `loadChatHistory`, plus de re-post d'anciens.
+  Vérifié headless. Client statique → hard-reload. (Note racine serveur : le dispatch relay devrait porter `--source`.)
+
 - [x] **Liens cliquables dans le chat (web + Android)** (2026-09-08, web v0.14.0 / android vc10 0.4.5).
   Web `mdToHtml` : autolink URL nues http(s):// + liens markdown → `<a target=_blank>` (guards anti double-link/code).
   Android `Markdown.kt` : annotation URL + `LinkableText` (ClickableText + LocalUriHandler) → ouvre le navigateur.
