@@ -11,6 +11,15 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-08
+
+### Added
+- (dashboard) **Liens cliquables dans le chat** (`public/app.js`, `mdToHtml`) : autolink des **URL nues** `http(s)://…` (scheme requis — pas de `host:port` type `myhost:7777`) en `<a target="_blank" rel="noopener noreferrer">`, en plus des liens markdown `[texte](url)` déjà gérés. Les spans `<a>`/`<code>` existants et les blocs de code sont protégés par placeholders → pas de double-link ni de lien dans du code. Ponctuation finale (`.,;:!?)]`) laissée hors du lien. Client statique → **hard-reload requis**.
+- (android) **Liens réellement cliquables** (`ui/fleet/Markdown.kt`) : `renderInline` porte désormais une annotation `URL` sur les liens markdown **et** les URL nues `http(s)://…` ; un nouveau `LinkableText` (via `ClickableText` + `LocalUriHandler`, l'API `LinkAnnotation.Url` n'existant qu'en Compose 1.7 > BOM 2024.08/1.6.8 du projet) ouvre l'URL dans le navigateur au tap. Style visuel (accent + souligné) conservé, rendu markdown (gras/italique/code/listes/titres/tableaux/citations) inchangé. `versionName` 0.4.4 → **0.4.5**, `versionCode` 9 → **10**.
+
+### Notes
+- Vérifié en Chrome headless isolé : URL nues → `<a>`, liens markdown non double-linkés, `myhost:7777`/`8:00` non linkés, URL dans code inline/fence non linkées, gras/italique/code intacts. Android : compile propre (assembleDebug BUILD SUCCESSFUL) ; **non installé sur device ce tour (téléphone déconnecté)** — APK fourni pour copy-build.
+
 ## [android 0.4.4 / vc9] - 2026-09-07
 
 ### Fixed

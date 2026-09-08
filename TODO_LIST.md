@@ -4,6 +4,11 @@ Suivi léger des tâches en cours / différées côté orchestrateur.
 
 ## Fait
 
+- [x] **Liens cliquables dans le chat (web + Android)** (2026-09-08, web v0.14.0 / android vc10 0.4.5).
+  Web `mdToHtml` : autolink URL nues http(s):// + liens markdown → `<a target=_blank>` (guards anti double-link/code).
+  Android `Markdown.kt` : annotation URL + `LinkableText` (ClickableText + LocalUriHandler) → ouvre le navigateur.
+  Vérifié headless (web). Android compile OK ; **non installé (device déconnecté)** → APK à copier par le chef. Web = hard-reload.
+
 - [x] **App Android — trous vides supprimés dans la session musicien + entête version propre** (2026-09-07, android vc9 0.4.4).
   `MainPane.kt` : ring filtré par `isRenderable()` (plus d'items vides des `user`/tool_result/`system`), spacing 8→6dp, texte trimé.
   Coût fleet retiré de l'entête (collait à la version → « $1.85 » perçu comme artefact) ; usage par tour toujours sur les lignes result. Installé sur device.

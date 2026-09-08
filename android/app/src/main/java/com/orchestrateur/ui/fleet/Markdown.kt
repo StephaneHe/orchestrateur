@@ -6,40 +6,46 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.orchestrateur.ui.theme.Palette
+
+private const val URL_TAG = "URL"
 
 @Composable
 fun Markdown(src: String, baseColor: Color = Palette.Fg0) {
     val blocks = parseBlocks(src)
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         for (b in blocks) when (b) {
-            is MdBlock.H1 -> Text(renderInline(b.text, Palette.Accent), color = Palette.Accent, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-            is MdBlock.H2 -> Text(renderInline(b.text, Palette.Accent), color = Palette.Accent, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            is MdBlock.H3 -> Text(renderInline(b.text, baseColor),     color = baseColor,       fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-            is MdBlock.Para -> Text(renderInline(b.text, baseColor), color = baseColor, fontSize = 13.sp, lineHeight = 19.sp)
+            is MdBlock.H1 -> LinkableText(renderInline(b.text, Palette.Accent), color = Palette.Accent, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+            is MdBlock.H2 -> LinkableText(renderInline(b.text, Palette.Accent), color = Palette.Accent, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            is MdBlock.H3 -> LinkableText(renderInline(b.text, baseColor),     color = baseColor,       fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            is MdBlock.Para -> LinkableText(renderInline(b.text, baseColor), color = baseColor, fontSize = 13.sp, lineHeight = 19.sp)
             is MdBlock.Bullet -> Row(verticalAlignment = Alignment.Top) {
                 Text("• ", color = baseColor, fontSize = 13.sp)
-                Text(renderInline(b.text, baseColor), color = baseColor, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.weight(1f))
+                LinkableText(renderInline(b.text, baseColor), color = baseColor, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.weight(1f))
             }
             is MdBlock.Ordered -> Row(verticalAlignment = Alignment.Top) {
                 Text("${b.n}. ", color = baseColor, fontSize = 13.sp)
-                Text(renderInline(b.text, baseColor), color = baseColor, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.weight(1f))
+                LinkableText(renderInline(b.text, baseColor), color = baseColor, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.weight(1f))
             }
             is MdBlock.Quote -> Row(
                 Modifier
@@ -55,7 +61,7 @@ fun Markdown(src: String, baseColor: Color = Palette.Fg0) {
                         .background(Palette.Accent.copy(alpha = 0.55f)),
                 )
                 Spacer(Modifier.width(8.dp))
-                Text(
+                LinkableText(
                     renderInline(b.text, baseColor),
                     color = baseColor,
                     fontSize = 13.sp,
@@ -106,7 +112,7 @@ private fun MdTable(t: MdBlock.Table, base: Color) {
         Row(Modifier.fillMaxWidth().background(Color.White.copy(alpha = 0.05f))) {
             for ((idx, h) in t.header.withIndex()) {
                 Box(Modifier.weight(1f).padding(horizontal = 8.dp, vertical = 6.dp)) {
-                    Text(
+                    LinkableText(
                         renderInline(h, Palette.Accent),
                         color = Palette.Accent,
                         fontSize = 12.sp,
@@ -123,7 +129,7 @@ private fun MdTable(t: MdBlock.Table, base: Color) {
                 for (c in 0 until cols) {
                     val cell = row.getOrNull(c) ?: ""
                     Box(Modifier.weight(1f).padding(horizontal = 8.dp, vertical = 6.dp)) {
-                        Text(renderInline(cell, base), color = base, fontSize = 12.sp, lineHeight = 17.sp)
+                        LinkableText(renderInline(cell, base), color = base, fontSize = 12.sp, lineHeight = 17.sp)
                     }
                     if (c < cols - 1) VDivider()
                 }
@@ -135,6 +141,47 @@ private fun MdTable(t: MdBlock.Table, base: Color) {
 @Composable
 private fun VDivider() {
     Box(Modifier.width(1.dp).fillMaxHeight().background(Palette.CardBorder))
+}
+
+/**
+ * Renders an inline AnnotatedString. If it carries URL annotations (from
+ * renderInline — markdown links AND bare http(s):// URLs), taps on them open the
+ * browser via LocalUriHandler; otherwise it's a plain Text. ClickableText is
+ * used because the project's Compose (BOM 2024.08 / UI 1.6.8) predates the
+ * LinkAnnotation.Url API.
+ */
+@Composable
+private fun LinkableText(
+    text: AnnotatedString,
+    color: Color,
+    fontSize: TextUnit,
+    modifier: Modifier = Modifier,
+    fontWeight: FontWeight? = null,
+    fontStyle: FontStyle? = null,
+    lineHeight: TextUnit = TextUnit.Unspecified,
+) {
+    val style = TextStyle(
+        color = color,
+        fontSize = fontSize,
+        fontWeight = fontWeight,
+        fontStyle = fontStyle,
+        lineHeight = lineHeight,
+    )
+    if (text.getStringAnnotations(URL_TAG, 0, text.length).isEmpty()) {
+        Text(text, modifier = modifier, style = style)
+        return
+    }
+    val uriHandler = LocalUriHandler.current
+    ClickableText(
+        text = text,
+        modifier = modifier,
+        style = style,
+        onClick = { offset ->
+            text.getStringAnnotations(URL_TAG, offset, offset).firstOrNull()?.let {
+                runCatching { uriHandler.openUri(it.item) }
+            }
+        },
+    )
 }
 
 private sealed class MdBlock {
@@ -302,18 +349,41 @@ private fun renderInline(src: String, base: Color): AnnotatedString = buildAnnot
             }
         }
 
-        // Link [text](url) — render the text styled as a link (not clickable yet)
+        // Link [text](url) — clickable (URL carried as a string annotation,
+        // opened by LinkableText via LocalUriHandler).
         if (c == '[') {
             val close = src.indexOf(']', i + 1)
             if (close > i && close + 1 < n && src[close + 1] == '(') {
                 val paren = src.indexOf(')', close + 2)
                 if (paren > close + 1) {
                     val label = src.substring(i + 1, close)
+                    val url = src.substring(close + 2, paren).trim()
+                    pushStringAnnotation(URL_TAG, url)
                     withStyle(SpanStyle(color = Palette.Accent, textDecoration = TextDecoration.Underline)) {
                         append(renderInline(label, Palette.Accent))
                     }
+                    pop()
                     i = paren + 1; continue
                 }
+            }
+        }
+
+        // Bare URL autolink — scheme required (http/https), clickable. We do NOT
+        // autolink host:port without a scheme ("myhost:7777") to avoid false
+        // positives.
+        if (c == 'h' && (src.startsWith("http://", i) || src.startsWith("https://", i))) {
+            var end = i
+            while (end < n && !src[end].isWhitespace() && src[end] != '<') end++
+            // Trailing sentence punctuation isn't part of the URL.
+            while (end > i && src[end - 1] in ".,;:!?)]") end--
+            if (end > i) {
+                val url = src.substring(i, end)
+                pushStringAnnotation(URL_TAG, url)
+                withStyle(SpanStyle(color = Palette.Accent, textDecoration = TextDecoration.Underline)) {
+                    append(url)
+                }
+                pop()
+                i = end; continue
             }
         }
 

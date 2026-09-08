@@ -3023,6 +3023,25 @@ function mdToHtml(src) {
     return `<a href="${safe}" target="_blank" rel="noopener noreferrer">${text}</a>`;
   });
 
+  // 4b. Autolink BARE http(s) URLs the chef writes in plain text. Guard the
+  //     spans we must not touch — the <a>…</a> just produced above and any
+  //     <code>…</code> (inline code) — with placeholders so we never double-link
+  //     or linkify inside code, then restore them. Scheme is required (we do NOT
+  //     autolink host:port like "myhost:7777" — too many false positives).
+  const linkGuards = [];
+  const guard = (html) => { const t = `@@LNK${linkGuards.length}@@`; linkGuards.push(html); return t; };
+  s = s.replace(/<a\b[^>]*>[\s\S]*?<\/a>/g, guard);
+  s = s.replace(/<code>[\s\S]*?<\/code>/g, guard);
+  s = s.replace(/https?:\/\/[^\s<]+/g, (url) => {
+    // Keep trailing punctuation (.,;:!?)]) out of the link.
+    const mt = url.match(/^([\s\S]*?)([.,;:!?)\]]*)$/);
+    const link = mt[1], trail = mt[2] || "";
+    if (!link) return url;
+    const safe = link.replace(/"/g, "%22");
+    return `<a href="${safe}" target="_blank" rel="noopener noreferrer">${link}</a>${trail}`;
+  });
+  s = s.replace(/@@LNK(\d+)@@/g, (_, i) => linkGuards[+i]);
+
   // 5. Block-level pass line by line: headings, lists, blockquotes,
   //    paragraphs, horizontal rules. Code-fence placeholders are kept
   //    outside paragraphs.
