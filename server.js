@@ -711,14 +711,17 @@ function downloadsPageHtml(entries) {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Fleet Downloads — Orchestrateur</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600&display=swap" rel="stylesheet">
+  <!-- NO external stylesheet. A render-blocking <link> to fonts.googleapis.com
+       left this page BLANK on the Android-TV (MiBox) browser: the TV reaches
+       myhost:7777 on the LAN but has no/blocked internet, so the font request
+       hangs and the old WebView blocks first paint indefinitely. The page is now
+       fully self-contained and renders offline with system fonts. -->
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       background: #0f0f0f;
       color: #e0e0e0;
-      font-family: 'Chakra Petch', 'Segoe UI', system-ui, sans-serif;
+      font-family: 'Chakra Petch', 'Segoe UI', Roboto, system-ui, sans-serif;
       min-height: 100vh;
       display: flex;
       flex-direction: column;
@@ -733,10 +736,11 @@ function downloadsPageHtml(entries) {
       text-transform: uppercase;
       margin-bottom: 40px;
     }
+    /* Spacing uses margins, not flexbox gap — flex gap needs Chromium 84+, and
+       the Android-TV WebView is older (it would ignore gap and cram the cards). */
     .cards {
       display: flex;
       flex-direction: column;
-      gap: 24px;
       width: 100%;
       max-width: 480px;
     }
@@ -747,18 +751,19 @@ function downloadsPageHtml(entries) {
       padding: 24px;
       display: flex;
       flex-direction: column;
-      gap: 20px;
+      margin-bottom: 24px;
     }
+    .card > * + * { margin-top: 16px; }
     .app-header {
       display: flex;
       align-items: center;
-      gap: 16px;
     }
     .app-icon {
       width: 36px;
       height: 36px;
       color: #7c5cff;
       flex-shrink: 0;
+      margin-right: 16px;
     }
     .app-name {
       font-size: 22px;

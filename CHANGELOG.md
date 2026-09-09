@@ -11,6 +11,12 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-09-09
+
+### Fixed
+- (server) **`/downloads` page blanche sur le navigateur Android TV (MiBox)** (`server.js`, `downloadsPageHtml`). La page (HTML server-rendered, sans JS) tirait ses polices d'un `<link>` **render-blocking** vers `fonts.googleapis.com`. La TV atteint `myhost:7777` sur le LAN mais n'a pas/plus d'accès internet, donc la requête police **pend** et le vieux WebView **bloque le premier paint indéfiniment → page blanche, sans erreur**. La page est désormais **entièrement autonome** : plus aucun `<link>`/ressource externe, polices en **fallback système** (`'Chakra Petch','Segoe UI',Roboto,system-ui,sans-serif`). Bonus compat vieux moteur : l'espacement passe de **flex `gap`** (Chromium 84+) à des **marges** (universelles) pour ne pas cramer les cartes. Contenu essentiel (liste des apps + liens `.apk`) inchangé et fonctionnel.
+- Vérifié : rendu de la page (isolé) **sans aucune URL externe / sans `<script>`**, et affichage en **Chrome headless simulant la MiBox** (user-agent Android TV Chrome/77 + réseau **offline**) → 3 cartes visibles, badges, lien `/downloads/vuBox/apk` présent, body non vide (plus de page blanche). Rendu desktop inchangé. **Changement server.js → restart du serveur 7777 requis (par le chef) pour déployer.**
+
 ## [0.14.1] - 2026-09-08
 
 ### Fixed

@@ -4,6 +4,11 @@ Suivi léger des tâches en cours / différées côté orchestrateur.
 
 ## Fait
 
+- [x] **`/downloads` page blanche sur Android TV (MiBox)** (2026-09-09, v0.14.2). Cause : `<link>` render-blocking
+  vers fonts.googleapis.com → sur TV sans internet le vieux WebView bloque le paint → blanc. Fix (`server.js`
+  `downloadsPageHtml`) : page autonome, polices système, plus de ressource externe ; espacement flex-gap → marges
+  (compat Chromium <84). Vérifié headless (UA MiBox + offline → cartes visibles). **Restart serveur requis (chef).**
+
 - [x] **Dashboard — callbacks musiciens déguisés en messages user, dupliqués, rejoués** (2026-09-08, web v0.14.1).
   Cause : `autoNotifyConductor` (serveur) écrit un `musician_done` PUIS dispatche le même « [musicien] Tour terminé… »
   au chef (user_prompt sans source → rendu comme user). Fix client (`app.js`) : reclassement relay→callback,
