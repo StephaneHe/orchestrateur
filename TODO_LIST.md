@@ -4,6 +4,12 @@ Suivi léger des tâches en cours / différées côté orchestrateur.
 
 ## Fait
 
+- [x] **Fix RACINE callbacks musiciens : plus de faux tour utilisateur au chef** (2026-09-09, v0.14.3, server.js).
+  `autoNotifyConductor` ne re-dispatche PLUS le callback « [musicien] Tour terminé… » au chef comme user_prompt.
+  Une complétion = event musicien (notification `musician_done` + `result` dans logs/<projet>.jsonl que le chef lit).
+  Plus de réponse forcée du chef ni d'attribution à l'utilisateur. Vrai chat chef↔user + NEEDS_CHEF intacts.
+  **Restart serveur 7777 requis (chef).** (v0.14.1 client = défense en profondeur, conservé.)
+
 - [x] **`/downloads` page blanche sur Android TV (MiBox)** (2026-09-09, v0.14.2). Cause : `<link>` render-blocking
   vers fonts.googleapis.com → sur TV sans internet le vieux WebView bloque le paint → blanc. Fix (`server.js`
   `downloadsPageHtml`) : page autonome, polices système, plus de ressource externe ; espacement flex-gap → marges

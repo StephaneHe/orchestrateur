@@ -11,6 +11,13 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.14.3] - 2026-09-09
+
+### Fixed
+- (server) **Fix RACINE : un callback de fin de tour d'un musicien ne réinvoque plus le chef comme un faux tour utilisateur** (`server.js`, `autoNotifyConductor`). La fonction écrivait la notification `musician_done` PUIS **dispatchait le texte « [musicien] Tour terminé… » au chef comme un vrai tour** (un `user_prompt` sans `source`) — d'où : rendu comme message « de l'utilisateur » dans le dashboard, chef **forcé de répondre « pour rien »** à chaque complétion, et rejeu d'anciens callbacks depuis la file persistée au restart. Le re-dispatch est **supprimé** : une complétion n'est plus qu'un **événement du musicien** — la notification `musician_done` (visible par l'humain, rendue comme callback du musicien dans le dashboard) + le `result` du musicien déjà présent dans `logs/<projet>.jsonl`, que le chef lit à son rythme pour faire un retour à l'utilisateur. Plus de faux tour utilisateur, plus de réponse forcée, plus d'attribution à l'utilisateur.
+- Le fix client v0.14.1 (reclassement/dédup d'affichage) reste en place comme défense en profondeur ; avec ce fix serveur il n'y a même plus de `user_prompt` relayé à reclasser.
+- **Non-régression** : le vrai chat chef↔utilisateur est intact (les messages réels via le composer / `/api/dispatch` restent des tours utilisateur normaux → réponse du chef) ; le relais NEEDS_CHEF (question explicite musicien→chef) est inchangé ; l'affichage temps réel, le SSE, les cartes et les toasts de fin de tour restent. `logs/queue/` vide → aucun rejeu résiduel. **Changement server.js → restart du serveur 7777 requis (par le chef) pour déployer.**
+
 ## [0.14.2] - 2026-09-09
 
 ### Fixed

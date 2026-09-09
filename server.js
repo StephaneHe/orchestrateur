@@ -2639,44 +2639,16 @@ function autoNotifyConductor(musicianName, summary) {
   }
   fireDesktopNotification(musicianName, text);
 
-  // 2. Trigger a real headless chef turn so the AI chef can synthesize and
-  //    respond to the user. If the chef is already busy we queue the dispatch
-  //    (same dispatchQueue used for musician → musician routing); it will fire
-  //    automatically when the chef's current turn completes.
-  //
-  //    Phantom-state guard (2026-05-14): musicianAutoStates can be stuck at
-  //    live/think if a chef dispatch died without emitting a clean `result`
-  //    (process killed, crash, reboot mid-turn). In that case queueing here
-  //    deadlocks — drainQueue only fires on a `result` event that will never
-  //    come. So we cross-check the in-memory state against reality: if the
-  //    state says busy but no chef .pid is alive, the state is phantom and
-  //    we dispatch directly instead of queueing.
-  const chefState = musicianAutoStates.get(cName)?.state ?? 'idle';
-  const chefBusy  = chefState === 'live' || chefState === 'think';
-  const livePid   = chefBusy ? dispatchPidAlive(cName) : null;
-  if (chefBusy && livePid) {
-    // Genuinely busy — queue, will drain on chef's next `result`.
-    const q = dispatchQueue.get(cName) ?? [];
-    q.push({ prompt: text, attachmentPaths: [], videoPaths: [] });
-    dispatchQueue.set(cName, q);
-    persistQueue(cName);
-    console.log(`[notify-bg] chef busy (${chefState}, pid=${livePid}) — queued notification for ${musicianName} (pos=${q.length})`);
-  } else if (chefBusy && !livePid) {
-    // Phantom state: in-memory says busy but no chef process alive. Queueing
-    // here would deadlock (drainQueue only fires on a `result` that never
-    // comes). Push to keep FIFO order, then kick drainQueue directly — that
-    // dispatches the head item; its completion re-triggers drainQueue for
-    // the rest of the backlog.
-    const q = dispatchQueue.get(cName) ?? [];
-    q.push({ prompt: text, attachmentPaths: [], videoPaths: [] });
-    dispatchQueue.set(cName, q);
-    persistQueue(cName);
-    console.log(`[notify-bg] chef phantom state (${chefState}, no live pid) — kicking drainQueue (depth ${q.length})`);
-    drainQueue(cName);
-  } else {
-    console.log(`[notify-bg] dispatching notification to chef for ${musicianName}`);
-    spawnDirectDispatch(cName, text);
-  }
+  // ROOT FIX (2026-09-09): a musician callback is NO LONGER re-dispatched to the
+  // chef as a turn. It previously spawned/queued a headless chef turn whose
+  // prompt was the callback text — a source-less `user_prompt` that the dashboard
+  // rendered as a *user* message and that forced the chef to "reply for nothing"
+  // to every musician completion (old ones also replayed from the persisted
+  // queue on restart). A completion is just a musician EVENT: the `musician_done`
+  // notification written above (for the human, shown as a musician callback in
+  // the dashboard) plus the musician's own `result` already in
+  // logs/<project>.jsonl, which the chef reads on its own schedule to synthesize
+  // a report to the user. No fake user turn, no forced chef response.
 }
 
 app.post('/api/notify', express.json({ limit: '2kb' }), (req, res) => {
