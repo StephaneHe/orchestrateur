@@ -177,9 +177,34 @@ private fun ConductorTranscript(
     }
 }
 
+/** The chef's mid-turn steps, kept persistently (thinking / tool / intermediate
+ *  text / tool result) — rendered as compact left-aligned lines, not bubbles. */
+@Composable
+private fun ActivityLine(msg: ChatMsg) {
+    when (msg.kind) {
+        "tool" -> Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(Palette.StLive.copy(alpha = 0.10f))
+                .border(1.dp, Palette.StLive.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
+                .padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text("⚙", fontSize = 13.sp, color = Palette.StLive)
+            Text(msg.text, color = Palette.Fg1, fontSize = 12.sp, fontFamily = FontFamily.Monospace, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        "thinking" -> Text("◌ ${msg.text}", color = Palette.Fg2, fontSize = 12.sp, fontStyle = FontStyle.Italic, lineHeight = 17.sp)
+        "result" -> Text("↳ ${msg.text}", color = Palette.Fg2, fontSize = 12.sp, fontFamily = FontFamily.Monospace, lineHeight = 16.sp, maxLines = 4, overflow = TextOverflow.Ellipsis)
+        else -> Markdown(msg.text, Palette.Fg1)   // intermediate chef narration
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChatBubble(msg: ChatMsg, onReply: (ChatMsg) -> Unit = {}) {
+    if (msg.role == ChatMsg.Role.activity) { ActivityLine(msg); return }
     var showMenu by remember { mutableStateOf(false) }
     val isUser = msg.role == ChatMsg.Role.user
     val isCallback = msg.role == ChatMsg.Role.callback

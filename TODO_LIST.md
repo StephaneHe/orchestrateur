@@ -4,6 +4,12 @@ Suivi léger des tâches en cours / différées côté orchestrateur.
 
 ## Fait
 
+- [x] **App Android : vignette sélectionnée toujours visible + panneau chef conserve tout le tour** (2026-09-11, android vc11 0.4.6).
+  Bug1 `TabBar.kt` : la vignette active est épinglée à gauche (tabPriority -1 pour activeTab) → plus de disparition/inaccessibilité.
+  Bug2 `FleetViewModel.kt`/`MainPane.kt` : le contenu mi-tour du chef (thinking/tool/texte/result) est accumulé en entrées
+  persistantes (`Role.activity`) au lieu du buffer transitoire liveText → rien n'est effacé, tour scrollable ; synthèse finale = bulle conductor.
+  Compile OK. **Non installé (device déconnecté)** → APK à copier par le chef.
+
 - [x] **Fix RACINE callbacks musiciens : plus de faux tour utilisateur au chef** (2026-09-09, v0.14.3, server.js).
   `autoNotifyConductor` ne re-dispatche PLUS le callback « [musicien] Tour terminé… » au chef comme user_prompt.
   Une complétion = event musicien (notification `musician_done` + `result` dans logs/<projet>.jsonl que le chef lit).

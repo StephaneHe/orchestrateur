@@ -11,6 +11,15 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [android 0.4.6 / vc11] - 2026-09-11
+
+### Fixed
+- (android) **Une vignette sélectionnée mais idle disparaissait de la barre et devenait inaccessible** (`ui/fleet/TabBar.kt`). Sélectionner une vignette la marque lue → elle passe `idle` (priorité 3) et le tri « travailleurs à gauche » la renvoyait tout à droite, hors écran ; en sélectionnant une autre, on ne pouvait plus y revenir. La vignette **active est désormais épinglée à gauche** (`tabPriority` renvoie -1 pour `activeTab`, clé `remember` incluant `activeTab`) → la sélection reste toujours visible et re-sélectionnable. Le tri des autres (live/think à gauche, idle à droite) est conservé.
+- (android) **Le panneau du chef effaçait sa réflexion/texte au lieu de tout garder** (`ui/fleet/FleetViewModel.kt`, `MainPane.kt`). Le contenu mi-tour du chef (thinking/texte) ne vivait que dans le buffer transitoire `liveText` (réinitialisé à chaque bloc, vidé à la consolidation) ; seul le `result` final persistait. Désormais chaque bloc consolidé du chef (thinking, tool_use, texte intermédiaire, résultat d'outil) est **accumulé comme entrée persistante** (`ChatMsg.Role.activity`, rendue en lignes compactes distinctes) dans l'ordre, **rien n'est effacé** ; le tour reste lisible et scrollable. La synthèse finale reste la bulle `conductor` (dédup du texte final pour éviter le doublon). `versionName` 0.4.5 → **0.4.6**, `versionCode` 10 → **11**.
+
+### Notes
+- Non-régression : cartes musicien (tool_use détaillés/pas de trous — vc9), liens cliquables (vc10, `LinkableText`), scroll d'ouverture en bas, tri « travailleurs à gauche », header version propre, streaming live — préservés. Compile OK (assembleDebug BUILD SUCCESSFUL). **Non installé sur device ce tour (téléphone déconnecté)** — APK fourni pour copy-build.
+
 ## [0.14.3] - 2026-09-09
 
 ### Fixed

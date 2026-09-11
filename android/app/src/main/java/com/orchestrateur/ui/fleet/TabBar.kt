@@ -26,14 +26,17 @@ import com.orchestrateur.ui.theme.Palette
 
 private const val CONDUCTOR = "chef"
 
-// Lower = further LEFT in the tab bar. Working musicians (live/think) sit
-// leftmost, then those needing attention (input/error) and unread results,
-// then idle ones on the right.
-private fun tabPriority(m: Musician): Int = when (m.state) {
-    MState.live, MState.think -> 0
-    MState.input, MState.error -> 1
-    MState.unread -> 2
-    MState.idle -> 3
+// Lower = further LEFT in the tab bar. The SELECTED musician is pinned leftmost
+// so it always stays visible and reachable (even when idle — otherwise selecting
+// it demotes it to the far right off-screen and it looks gone). Then working
+// musicians (live/think), those needing attention (input/error), unread results,
+// and idle ones on the right.
+private fun tabPriority(m: Musician, activeTab: String): Int = when {
+    m.name == activeTab -> -1
+    m.state == MState.live || m.state == MState.think -> 0
+    m.state == MState.input || m.state == MState.error -> 1
+    m.state == MState.unread -> 2
+    else -> 3
 }
 
 @Composable
@@ -48,9 +51,9 @@ fun TabBar(
     // Sort by activity priority only. sortedBy is STABLE, so musicians at equal
     // priority keep their existing (config) order — no erratic reshuffling. The
     // remember key includes each state, so the bar re-sorts live on state change.
-    val others = remember(musicians, musicians.map { it.state }, musicians.map { it.parked }) {
+    val others = remember(musicians, musicians.map { it.state }, musicians.map { it.parked }, activeTab) {
         musicians.filter { it.name != CONDUCTOR && !it.parked }
-            .sortedBy { tabPriority(it) }
+            .sortedBy { tabPriority(it, activeTab) }
     }
 
     Box(modifier = modifier.fillMaxWidth().height(IntrinsicSize.Min)) {

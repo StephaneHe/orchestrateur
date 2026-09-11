@@ -16,12 +16,14 @@ import com.orchestrateur.data.FleetStream
 import com.orchestrateur.data.Musician
 import com.orchestrateur.data.RawEvent
 import com.orchestrateur.data.State
+import com.orchestrateur.data.toolArgPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 private const val TAG = "FleetViewModel"
+private const val CHAT_MAX = 200   // conductor chat entries kept (incl. chef activity steps)
 
 data class PendingAttachment(
     val uri: Uri,
@@ -38,8 +40,12 @@ data class ChatMsg(
     val imageUris: List<Uri> = emptyList(),
     val videoUris: List<Uri> = emptyList(),
     val source: String? = null,
+    // For role=activity: which kind of chef mid-turn block this is.
+    val kind: String? = null,   // "thinking" | "tool" | "text" | "result"
 ) {
-    enum class Role { user, conductor, callback }
+    // activity = the chef's mid-turn steps (thinking / tool_use / intermediate
+    // text), kept persistently so nothing is erased when the next block arrives.
+    enum class Role { user, conductor, callback, activity }
 }
 
 class FleetViewModel(
@@ -248,9 +254,44 @@ class FleetViewModel(
                     }
                 }
             }
+            "assistant" -> {
+                // Accumulate the chef's mid-turn steps as PERSISTENT entries so
+                // nothing is erased when the next block arrives (thinking → tool
+                // → text → …). The live-streaming bubble shows the in-flight
+                // block; once consolidated it lands here for good.
+                for (b in raw.message?.content.orEmpty()) {
+                    when (b.type) {
+                        "thinking" -> b.thinking?.trim()?.takeIf { it.isNotEmpty() }
+                            ?.let { chat.add(ChatMsg(ChatMsg.Role.activity, it, kind = "thinking")) }
+                        "tool_use" -> {
+                            val arg = b.toolArgPreview()
+                            val label = (b.name ?: "outil") + (if (arg.isNotBlank()) " $arg" else "")
+                            chat.add(ChatMsg(ChatMsg.Role.activity, label, kind = "tool"))
+                        }
+                        "text" -> b.text?.trim()?.takeIf { it.isNotEmpty() }
+                            ?.let { chat.add(ChatMsg(ChatMsg.Role.activity, it, kind = "text")) }
+                    }
+                }
+                while (chat.size > CHAT_MAX) chat.removeAt(0)
+            }
+            "user" -> {
+                // Tool results the chef received mid-turn — keep a condensed line.
+                for (b in raw.message?.content.orEmpty()) {
+                    if (b.type != "tool_result") continue
+                    val preview = Musician.blockText(b).trim().lines().take(4).joinToString("\n").take(400)
+                    if (preview.isNotEmpty()) chat.add(ChatMsg(ChatMsg.Role.activity, preview, kind = "result"))
+                }
+                while (chat.size > CHAT_MAX) chat.removeAt(0)
+            }
             "result" -> {
                 val txt = m.lastAssistantText.trim()
                 if (txt.isEmpty()) return
+                // The final synthesis also arrived as an assistant `text` activity —
+                // drop that trailing activity so it shows once, as the conductor bubble.
+                val tail = chat.lastOrNull()
+                if (tail != null && tail.role == ChatMsg.Role.activity && tail.kind == "text" && tail.text.trim() == txt) {
+                    chat.removeAt(chat.size - 1)
+                }
                 val last = chat.lastOrNull()
                 if (last != null && last.role == ChatMsg.Role.conductor && last.text.trim() == txt) return
                 chat.add(ChatMsg(ChatMsg.Role.conductor, txt))
