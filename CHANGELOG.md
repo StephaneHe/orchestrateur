@@ -11,6 +11,11 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.14.4] - 2026-09-11
+
+### Added
+- (server) **L'app compagnon `orchestrateur` est désormais listée sur `/downloads`** (`server.js`). Ajout de `'orchestrateur'` en tête de `DOWNLOAD_APPS` + source de version `APP_VERSION_SOURCES.orchestrateur` = `android/app/build.gradle.kts` (lue automatiquement → v0.4.6, plateforme `phone` par défaut). L'APK `builds/orchestrateur/latest.apk` (déjà présent, vc11/0.4.6) devient téléchargeable via `/downloads/orchestrateur/apk`. **Changement server.js → restart du serveur 7777 requis (par le chef) pour que la carte apparaisse.**
+
 ## [android 0.4.6 / vc11] - 2026-09-11
 
 ### Fixed

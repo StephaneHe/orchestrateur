@@ -578,6 +578,7 @@ expressWs(app, httpServer, { wsOptions: { verifyClient: wsVerifyClient } });
 // cards); the rest were added from the chef's APK survey. Version source and
 // form-factor for each are declared in APP_VERSION_SOURCES / APP_PLATFORM below.
 const DOWNLOAD_APPS = [
+  'orchestrateur',
   'RemotePad', 'BookHaven',
   'DeskZen', 'vuBox', 'firstAidOffline', 'frenchradio',
   'immo-share', 'meetingScribe', 'photoLab', 'SncfOptimizer', 'sommeil',
@@ -650,6 +651,7 @@ function buildDownloadEntries() {
 // (RemotePad's __version__). vuBox is the Android-TV module. Paths are literals
 // here (never from the request), so there is no traversal surface.
 const APP_VERSION_SOURCES = {
+  orchestrateur:   { file: 'I:\\orchestrateur\\android\\app\\build.gradle.kts' },
   RemotePad:       { file: 'I:\\Dev\\RemotePad\\server\\__init__.py', re: /__version__\s*=\s*["']([^"']+)["']/ },
   BookHaven:       { file: 'I:\\Dev\\BookHaven\\android\\app\\build.gradle.kts' },
   DeskZen:         { file: 'I:\\Dev\\DeskZen\\app\\build.gradle.kts' },

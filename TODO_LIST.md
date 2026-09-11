@@ -4,6 +4,10 @@ Suivi léger des tâches en cours / différées côté orchestrateur.
 
 ## Fait
 
+- [x] **`/downloads` liste l'app orchestrateur** (2026-09-11, v0.14.4). `'orchestrateur'` ajouté à `DOWNLOAD_APPS` +
+  `APP_VERSION_SOURCES` (version lue depuis `android/app/build.gradle.kts` = 0.4.6). APK déjà dans `builds/orchestrateur/latest.apk`.
+  **Restart serveur 7777 requis (chef)** pour que la carte + le lien `/downloads/orchestrateur/apk` apparaissent.
+
 - [x] **App Android : vignette sélectionnée toujours visible + panneau chef conserve tout le tour** (2026-09-11, android vc11 0.4.6).
   Bug1 `TabBar.kt` : la vignette active est épinglée à gauche (tabPriority -1 pour activeTab) → plus de disparition/inaccessibilité.
   Bug2 `FleetViewModel.kt`/`MainPane.kt` : le contenu mi-tour du chef (thinking/tool/texte/result) est accumulé en entrées
