@@ -812,6 +812,9 @@ class FleetStream {
     };
     this.source.onmessage = (ev) => {
       let env; try { env = JSON.parse(ev.data); } catch { return; }
+      // Hot config reload: a musician was added/removed in config.json server-side.
+      // Re-fetch the list and reconcile without dropping live musician state.
+      if (env.type === "fleet_config_changed") { App.refreshFleet(); return; }
       const m = App.musicians.get(env.project);
       if (!m) return;
       let raw; try { raw = JSON.parse(env.line); } catch { return; }
@@ -1033,6 +1036,45 @@ const App = {
       $(".empty-title", $("#empty-hint")).textContent = "Erreur de chargement";
       $(".empty-sub",   $("#empty-hint")).textContent = err.message;
     }
+  },
+
+  /** Reconcile the fleet against /api/config WITHOUT rebuilding everything —
+   *  add new musicians, remove gone ones, and leave existing ones (and their
+   *  live state) untouched. Called on the SSE `fleet_config_changed` signal so
+   *  config.json edits appear/disappear without a page reload. */
+  async refreshFleet() {
+    let cfg;
+    try {
+      const resp = await fetch("/api/config");
+      if (!resp.ok) return;
+      cfg = await resp.json();
+    } catch { return; }
+    const projects = cfg.projects || [];
+    const wanted = new Set(projects.map(p => p.name));
+    const arc = $("#arc");
+    let changed = false;
+    // Add newcomers.
+    for (const p of projects) {
+      if (this.musicians.has(p.name)) continue;
+      const m = new Musician(p);
+      this.musicians.set(m.name, m);
+      if (p.name !== this.composer.CONDUCTOR && arc) arc.appendChild(m.buildCard());
+      changed = true;
+    }
+    // Remove departed ones (keep the conductor even if absent — it's special).
+    for (const name of [...this.musicians.keys()]) {
+      if (wanted.has(name) || name === this.composer.CONDUCTOR) continue;
+      const m = this.musicians.get(name);
+      try { m.el?.remove(); } catch {}
+      this.musicians.delete(name);
+      if (this.activeTab === name) this.setActiveTab(this.composer.CONDUCTOR);
+      changed = true;
+    }
+    if (!changed) return;
+    this.syncChefCard(this.musicians.get(this.composer.CONDUCTOR) || null);
+    this.relayout();
+    this.toggleEmptyHint();
+    this.renderTabs();
   },
 
   async loadChatHistory() {

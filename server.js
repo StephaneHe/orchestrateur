@@ -2094,6 +2094,9 @@ function reduceMusician(name, ev) {
 
 /** name → { offset, partial, watcher, subscribers: Set<res> } */
 const fleetStreams = new Map();
+// Every live /api/sse/fleet response, so config hot-reload can subscribe them
+// to newly-added project streams and push a "config changed" signal.
+const fleetSseClients = new Set();
 
 function fleetEnsureProject(name) {
   if (fleetStreams.has(name)) return fleetStreams.get(name);
@@ -2230,22 +2233,97 @@ function fleetEnsureProject(name) {
 // and shared across all SSE clients.
 for (const p of config.projects) fleetEnsureProject(p.name);
 
-// Single global config poll — picks up new projects, drops removed ones.
-// Was previously per-SSE-client which meant N×configPoll instances.
-setInterval(() => {
-  const want = new Set(config.projects.map(p => p.name));
+// ── Hot config reload ───────────────────────────────────────────────────────
+// Adding/removing a musician in config.json is now picked up WITHOUT restarting
+// the server: the file is watched (chokidar, so the atomic temp+rename of
+// atomicWriteJson is handled) AND polled every 3s as a fallback. On a real
+// change we re-read it (robust to a half-written / invalid JSON — the last good
+// list is kept and we retry), reconcile the in-memory project list + per-project
+// streams, subscribe already-connected dashboards to any new stream, and push a
+// `fleet_config_changed` signal so they re-fetch /api/config. dispatch.mjs
+// already reads config.json fresh per dispatch, so it is unaffected.
+let lastConfigRaw = null;
+try { lastConfigRaw = fs.readFileSync(CONFIG_PATH, 'utf8'); } catch {}
+
+function broadcastFleetConfigChanged() {
+  const payload = `data: ${JSON.stringify({ type: 'fleet_config_changed' })}\n\n`;
+  for (const res of [...fleetSseClients]) {
+    if (res.writableEnded || res.destroyed) { fleetSseClients.delete(res); continue; }
+    try { res.write(payload); } catch { fleetSseClients.delete(res); }
+  }
+}
+
+function reloadConfigFromDisk() {
+  let raw;
+  try { raw = fs.readFileSync(CONFIG_PATH, 'utf8'); }
+  catch (e) { console.error(`[config-reload] read failed — keeping current list (${e.message})`); return; }
+  if (raw === lastConfigRaw) return;                 // unchanged — nothing to do
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.projects)) throw new Error('projects is not an array');
+    if (parsed.projects.some(p => !p || typeof p.name !== 'string' || !p.name)) throw new Error('a project entry has no name');
+  } catch (e) {
+    // Half-written or broken JSON: do NOT crash and do NOT clobber the list.
+    // lastConfigRaw stays as-is so the next stable write is retried.
+    console.error(`[config-reload] invalid config.json — keeping current list (${e.message})`);
+    return;
+  }
+  lastConfigRaw = raw;
+
+  const before = new Set(config.projects.map(p => p.name));
+  const after  = new Set(parsed.projects.map(p => p.name));
+  const added   = [...after].filter(n => !before.has(n));
+  const removed = [...before].filter(n => !after.has(n));
+  const conductorChanged = typeof parsed.conductor === 'string' && parsed.conductor !== config.conductor;
+
+  // Refresh the in-memory config IN PLACE (config is a shared const object;
+  // routes and handlers hold it by reference). Also keep PROJECT_NAMES in sync.
+  config.projects.length = 0;
+  for (const p of parsed.projects) config.projects.push(p);
+  if (typeof parsed.conductor === 'string') config.conductor = parsed.conductor;
+  PROJECT_NAMES.clear();
+  for (const p of config.projects) PROJECT_NAMES.add(p.name);
+
+  // Reconcile per-project streams: ensure one per current project, drop the rest.
+  for (const p of config.projects) fleetEnsureProject(p.name);
   for (const name of [...fleetStreams.keys()]) {
-    if (!want.has(name)) {
+    if (!after.has(name)) {
       const s = fleetStreams.get(name);
       try { s.watcher.close().catch(() => {}); } catch {}
-      // Tell every subscriber the project was removed — no, we just stop
-      // emitting and the project list comes from /api/config.
       fleetStreams.delete(name);
       debugLog(`fleet watcher detach ${name} (removed from config)`);
     }
   }
-  for (const name of want) if (!fleetStreams.has(name)) fleetEnsureProject(name);
-}, 3000).unref();
+  // Subscribe already-connected dashboards to the newly-added project streams
+  // (they only auto-subscribe at connect time).
+  for (const name of added) {
+    const s = fleetStreams.get(name);
+    if (s) for (const res of fleetSseClients) s.subscribers.add(res);
+  }
+  // Free per-project in-memory state for removed projects.
+  for (const name of removed) { musicianAutoStates.delete(name); dispatchQueue.delete(name); }
+
+  if (added.length || removed.length || conductorChanged) {
+    console.log(`[config-reload] hot: +[${added.join(', ')}] -[${removed.join(', ')}]${conductorChanged ? ` conductor=${config.conductor}` : ''}`);
+    broadcastFleetConfigChanged();
+  }
+}
+
+// Fast path: react within ~300ms of a config.json write.
+let _cfgReloadTimer = null;
+const scheduleConfigReload = () => { clearTimeout(_cfgReloadTimer); _cfgReloadTimer = setTimeout(reloadConfigFromDisk, 150); };
+const configWatcher = chokidar.watch(CONFIG_PATH, {
+  ignoreInitial: true,
+  awaitWriteFinish: { stabilityThreshold: 250, pollInterval: 50 },
+});
+configWatcher.on('add', scheduleConfigReload);
+configWatcher.on('change', scheduleConfigReload);
+configWatcher.on('unlink', () => console.error('[config-reload] config.json disappeared — keeping current list'));
+configWatcher.on('error', (e) => console.error(`[config-reload] watch error: ${e.message}`));
+// Fallback poll (reliable even if fs events are missed on some filesystems).
+setInterval(reloadConfigFromDisk, 3000).unref();
 
 app.get('/api/sse/fleet', (req, res) => {
   res.writeHead(200, {
@@ -2266,9 +2344,11 @@ app.get('/api/sse/fleet', (req, res) => {
   for (const name of config.projects.map(p => p.name)) {
     fleetEnsureProject(name).subscribers.add(res);
   }
+  fleetSseClients.add(res);   // so hot config-reload can reach this dashboard
 
   const cleanup = () => {
     for (const s of fleetStreams.values()) s.subscribers.delete(res);
+    fleetSseClients.delete(res);
     try { if (!res.destroyed) res.destroy(); } catch {}
   };
   res.on('close', () => {

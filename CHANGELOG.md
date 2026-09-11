@@ -11,6 +11,15 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-11
+
+### Added
+- (server + dashboard) **Ajout/retrait d'un musicien pris À CHAUD, sans redémarrer le serveur 7777.** Le serveur ne rechargeait la liste des projets de `config.json` qu'au démarrage ; désormais `config.json` est **surveillé** (chokidar, gère le temp+rename de `atomicWriteJson`) **et re-lu en fallback toutes les 3 s**. À un vrai changement, la liste en mémoire (`config.projects`, `PROJECT_NAMES`) est **réconciliée en place**, les flux par-projet (`fleetEnsureProject`) créés/fermés, les **dashboards déjà connectés abonnés aux nouveaux flux**, et un signal SSE `fleet_config_changed` est **poussé** ; le client web (`public/app.js`, `refreshFleet`) re-fetch `/api/config` et **réconcilie la liste des musiciens sans rebuild** (ajout/retrait, états live préservés). `dispatch.mjs` lisait déjà `config.json` frais à chaque dispatch — inchangé.
+- Robustesse : un `config.json` temporairement invalide (écriture en cours / JSON cassé / entrée sans `name`) est **ignoré** — la dernière liste valide est conservée, le serveur ne crashe pas, retry au prochain écrit stable. `parked:true` reste géré comme avant.
+
+### Notes
+- Vérifié : logique de reload isolée (ajout → détecté, retrait+conductor → détecté, JSON invalide/entrée sans nom → liste précédente conservée, inchangé → no-op) ; réconciliation client en Chrome headless (musicien fictif retiré au reconcile, musicien réel ré-ajouté, 0 erreur console). `Jarvis-Career` est déjà dans `config.json` → listé dès le déploiement. **Changement server.js → un dernier restart du serveur 7777 (par le chef) pour DÉPLOYER le hot-reload ; ensuite les ajouts/retraits de musiciens sont pris à chaud sans restart.**
+
 ## [0.14.4] - 2026-09-11
 
 ### Added

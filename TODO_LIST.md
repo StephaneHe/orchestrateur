@@ -4,6 +4,12 @@ Suivi léger des tâches en cours / différées côté orchestrateur.
 
 ## Fait
 
+- [x] **Hot-reload des musiciens (ajout/retrait sans restart)** (2026-09-11, v0.15.0). `config.json` surveillé (chokidar)
+  + poll 3s fallback → `reloadConfigFromDisk` réconcilie `config.projects`/streams en place, abonne les dashboards connectés
+  aux nouveaux flux, pousse un signal SSE `fleet_config_changed` ; client (`refreshFleet`) réconcilie la liste sans rebuild.
+  JSON invalide = liste précédente conservée (pas de crash). Vérifié (logique isolée + reconcile headless).
+  **Un dernier restart 7777 (chef) pour déployer**, ensuite hot.
+
 - [x] **`/downloads` liste l'app orchestrateur** (2026-09-11, v0.14.4). `'orchestrateur'` ajouté à `DOWNLOAD_APPS` +
   `APP_VERSION_SOURCES` (version lue depuis `android/app/build.gradle.kts` = 0.4.6). APK déjà dans `builds/orchestrateur/latest.apk`.
   **Restart serveur 7777 requis (chef)** pour que la carte + le lien `/downloads/orchestrateur/apk` apparaissent.
