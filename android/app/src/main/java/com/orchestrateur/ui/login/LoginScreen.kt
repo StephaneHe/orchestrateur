@@ -1,5 +1,6 @@
 package com.orchestrateur.ui.login
 
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
@@ -40,16 +41,25 @@ fun LoginScreen(
             step = LoginStep.Unlock
         }
         LoginStep.Unlock -> {
+            var statusMsg by remember { mutableStateOf<String?>(null) }
+            // One shared entry point: used by both the auto-trigger and the button,
+            // so success routing and feedback are identical either way.
+            val runAuth: () -> Unit = {
+                statusMsg = null
+                triggerBiometric(
+                    activity,
+                    onSuccess = { step = LoginStep.Ready; onUnlocked() },
+                    onFail = { m -> statusMsg = m },
+                    onError = { m -> statusMsg = m.ifBlank { null } },
+                )
+            }
             UnlockPanel(
-                onAuthSuccess = { step = LoginStep.Ready; onUnlocked() },
+                statusMessage = statusMsg,
+                onUnlockClick = runAuth,
                 onReconfigure = { store.clear(); step = LoginStep.Configure },
             )
             // Trigger BiometricPrompt immediately on entering this step.
-            LaunchedEffect(Unit) {
-                triggerBiometric(activity) { ok ->
-                    if (ok) { step = LoginStep.Ready; onUnlocked() }
-                }
-            }
+            LaunchedEffect(Unit) { runAuth() }
         }
         LoginStep.Ready -> Box(Modifier.fillMaxSize())  // handled by parent
     }
@@ -104,11 +114,10 @@ private fun ConfigurePanel(
 
 @Composable
 private fun UnlockPanel(
-    onAuthSuccess: () -> Unit,
+    statusMessage: String?,
+    onUnlockClick: () -> Unit,
     onReconfigure: () -> Unit,
 ) {
-    val ctx = LocalContext.current
-    val activity = ctx as FragmentActivity
     BackHandler { /* swallow back so the app doesn't exit mid-unlock */ }
     Column(
         Modifier
@@ -127,9 +136,18 @@ private fun UnlockPanel(
             textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(24.dp))
-        Button(onClick = {
-            triggerBiometric(activity) { ok -> if (ok) onAuthSuccess() }
-        }) { Text("Déverrouiller") }
+        Button(onClick = onUnlockClick) { Text("Déverrouiller") }
+        // Feedback on a failed / not-recognized fingerprint or a sensor error,
+        // so the user never faces a silent "nothing happens".
+        statusMessage?.let {
+            Spacer(Modifier.height(16.dp))
+            Text(
+                it,
+                color = Palette.StInput,
+                fontSize = 13.sp,
+                textAlign = TextAlign.Center,
+            )
+        }
         Spacer(Modifier.height(12.dp))
         TextButton(onClick = onReconfigure) {
             Text("Reconfigurer", color = Palette.Fg2)
@@ -137,13 +155,45 @@ private fun UnlockPanel(
     }
 }
 
-private fun triggerBiometric(activity: FragmentActivity, onResult: (Boolean) -> Unit) {
+private const val BIO_TAG = "OrchBiometric"
+
+/**
+ * Launch the system BiometricPrompt.
+ *
+ * Config is deliberately BIOMETRIC_STRONG + an explicit negative button — the
+ * canonical, most reliable combo. The previous code requested
+ * BIOMETRIC_STRONG | DEVICE_CREDENTIAL: mixing DEVICE_CREDENTIAL with a negative
+ * button is illegal, and on some OEM sensors (this device: MTK/sunwave) the combo
+ * made the prompt scan yet never deliver a result when a finger was placed. We
+ * also surface every callback (success / fail / error) both to logcat and, via the
+ * caller, to the UI so a placed finger can never silently do nothing.
+ *
+ * @param onSuccess  finger recognized → caller unlocks and navigates.
+ * @param onFail     finger read but NOT recognized (prompt stays open) → show a hint.
+ * @param onError    terminal error or user cancel; empty string ⇒ user canceled (no nag).
+ */
+private fun triggerBiometric(
+    activity: FragmentActivity,
+    onSuccess: () -> Unit,
+    onFail: (String) -> Unit,
+    onError: (String) -> Unit,
+) {
     val bm = BiometricManager.from(activity)
-    val authenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG or
-        BiometricManager.Authenticators.DEVICE_CREDENTIAL
-    if (bm.canAuthenticate(authenticators) != BiometricManager.BIOMETRIC_SUCCESS) {
-        // Fallback: accept without biometric if device can't auth at all.
-        onResult(true)
+    val authenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG
+    val can = bm.canAuthenticate(authenticators)
+    Log.i(BIO_TAG, "canAuthenticate(BIOMETRIC_STRONG) = $can")
+    if (can != BiometricManager.BIOMETRIC_SUCCESS) {
+        // No usable strong biometric. Do NOT silently bypass the lock — say why.
+        val msg = when (can) {
+            BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED ->
+                "Aucune empreinte enrôlée sur l'appareil (Réglages → Sécurité)."
+            BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE ->
+                "Pas de capteur biométrique sur cet appareil."
+            BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE ->
+                "Capteur biométrique momentanément indisponible."
+            else -> "Biométrie indisponible (code $can)."
+        }
+        onError(msg)
         return
     }
     val prompt = BiometricPrompt(
@@ -151,10 +201,20 @@ private fun triggerBiometric(activity: FragmentActivity, onResult: (Boolean) -> 
         ContextCompat.getMainExecutor(activity),
         object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                onResult(true)
+                Log.i(BIO_TAG, "onAuthenticationSucceeded type=${result.authenticationType}")
+                onSuccess()
+            }
+            override fun onAuthenticationFailed() {
+                // Fired when a finger is read but not matched; prompt stays open.
+                Log.w(BIO_TAG, "onAuthenticationFailed (finger not recognized)")
+                onFail("Empreinte non reconnue, réessayez.")
             }
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                onResult(false)
+                Log.w(BIO_TAG, "onAuthenticationError code=$errorCode msg=$errString")
+                val userCanceled = errorCode == BiometricPrompt.ERROR_USER_CANCELED ||
+                    errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON ||
+                    errorCode == BiometricPrompt.ERROR_CANCELED
+                onError(if (userCanceled) "" else "Erreur biométrie ($errorCode) : $errString")
             }
         }
     )
@@ -163,6 +223,8 @@ private fun triggerBiometric(activity: FragmentActivity, onResult: (Boolean) -> 
             .setTitle("Orchestre")
             .setSubtitle("Authentifie-toi pour accéder au dashboard")
             .setAllowedAuthenticators(authenticators)
+            .setNegativeButtonText("Annuler")
+            .setConfirmationRequired(false)
             .build()
     )
 }

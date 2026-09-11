@@ -11,6 +11,19 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [android 0.4.7 / vc12] - 2026-09-11
+
+### Fixed
+- (android) **Biométrie : « doigt posé → rien ne se passe » corrigé** (`ui/login/LoginScreen.kt`). L'invite BiometricPrompt s'affichait et le capteur scannait, mais poser le doigt ne faisait rien et **aucun message** n'apparaissait. Cause : `triggerBiometric` demandait `BIOMETRIC_STRONG | DEVICE_CREDENTIAL` **sans** bouton négatif — combo non fiable (mélanger `DEVICE_CREDENTIAL` avec un negative button est illégal ; sur le capteur OEM MTK/sunwave de ce device le prompt scannait sans jamais router le résultat) — et **seul `onAuthenticationError` était géré** : ni `onAuthenticationSucceeded` fiable, ni `onAuthenticationFailed`, ni feedback UI. Fix : config canonique fiable **`BIOMETRIC_STRONG` + `setNegativeButtonText("Annuler")` + `setConfirmationRequired(false)`** ; succès routé vers `onSuccess → step=Ready → onUnlocked()`.
+
+### Added
+- (android) **Feedback clair sur l'écran de déverrouillage** : empreinte lue mais non reconnue (`onAuthenticationFailed`) → « Empreinte non reconnue, réessayez. » ; erreur capteur/config (`onAuthenticationError` hors annulation volontaire) → message avec code ; annulation utilisateur → écran propre, pas de nag. Fini le « rien ne se passe » silencieux.
+- (android) **Breadcrumbs logcat** (tag `OrchBiometric`) sur `canAuthenticate` + les trois callbacks (succeeded / failed / error+code) → un retest par l'utilisateur (vrai doigt) révèlera exactement ce qui se produit.
+
+### Notes
+- Non-régression : les fixes vc11 (vignette sélectionnée visible, chef conserve son tour) et l'entrée dans le fleet sont intacts. Le contournement silencieux quand aucune empreinte n'est enrôlée est **retiré** — l'utilisateur voit désormais un message explicite au lieu d'entrer sans auth.
+- Vérifié live sur `V30T…12908` (Android 12) : prompt affiché (`mCurrentFocus=BiometricPrompt`), HAL armé, breadcrumb `canAuthenticate(BIOMETRIC_STRONG)=0` (SUCCESS), annulation → `onAuthenticationError code=10` loggé + écran propre. **Le succès réel (doigt physique → entrée) n'est pas injectable via adb → à RETESTER par l'utilisateur** ; le logcat `OrchBiometric` montrera `onAuthenticationSucceeded` (→ entre) ou `onAuthenticationFailed` (→ finger non matché, message affiché).
+
 ## [0.15.0] - 2026-09-11
 
 ### Added
