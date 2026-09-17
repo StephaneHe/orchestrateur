@@ -11,6 +11,19 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-17
+
+### Added
+- (server / dispatch) **Kill-switch failover via sentinelle `logs/no-failover`** (`scripts/dispatch.mjs`). Quand le fichier `logs/no-failover` existe, le dispatch ne bascule **JAMAIS** vers un autre modèle (ni NVIDIA, ni codex) sur limite de session Claude : il **écrit quand même** la date de reset dans `logs/claude-limited.until`, loggue un event `system/limited-no-failover`, puis **s'arrête proprement** (`endLogAndExit(1)`). Garde placée aux deux points d'entrée du failover (fin de tour `lifecycleEnd` + démarrage), **avant** `runNvidiaFailover()`. But : garantir « Opus 4.8 uniquement, jamais de bascule » pour un run autonome de nuit. Réversible : supprimer la sentinelle réactive le failover. Branche `provider === 'codex'` intacte. Vérifié `node --check` (0 erreur).
+
+## [0.15.1] - 2026-09-16
+
+### Fixed
+- (server) **Plus de serveur zombie après un `EADDRINUSE`.** Au logon, la tâche planifiée et le watchdog lançaient chacun un serveur ; le perdant recevait `EADDRINUSE`, mais `express-ws` ré-émettait l'erreur sur le `WebSocketServer` sans listener → `uncaughtException` simplement loggée → process vivant (heartbeats) mais **non lié au port 7777**, qui gardait `logs/server.out` ouvert. Fix : listener `error` sur le WSS ; dans `httpServer.on('error')`, si un orchestrateur sain répond déjà sur `/healthz` → l'instance sort (exit 0) au lieu de le tuer, sinon 3 tentatives puis exit 1 ; filet de sécurité : tout process non lié au port depuis 90 s se termine.
+- (server) **Le watchdog tuait un serveur simplement lent** (`scripts/server-watchdog.mjs`). Les échecs de probe sont désormais classés : **DOWN** (connexion refusée / port non lié) → restart après ~20 s ; **SLOW** (timeout alors que le port est lié) → restart seulement après ~3 min de gel continu. Timeout de probe 4 s → 8 s.
+- (server) **Le watchdog relançait pendant le démarrage** : période de grâce de 90 s après son lancement (la tâche serveur n'a pas encore bindé le port au logon).
+- (server) **Les relances échouaient en boucle (`cmd start exited 1`, 59 fois)** (`scripts/restart-orchestrateur.mjs`) : si `logs/server.out` est verrouillé (`EBUSY`), la sortie bascule sur `logs/server-<horodatage>.out` ; pas de lancement si un serveur répond déjà.
+
 ## [android 0.4.7 / vc12] - 2026-09-11
 
 ### Fixed

@@ -195,6 +195,9 @@ const provider = project.provider || config.defaults?.provider     || 'claude';
 const LOGS = path.join(ROOT, 'logs');
 fs.mkdirSync(LOGS, { recursive: true });
 
+// Kill-switch failover : si logs/no-failover existe, aucune bascule de modèle.
+const NO_FAILOVER = fs.existsSync(path.join(LOGS, 'no-failover'));
+
 const logPath     = path.join(LOGS, `${projectName}.jsonl`);
 const sessionPath = path.join(LOGS, `${projectName}.session`);
 const pidPath     = path.join(LOGS, `${projectName}.pid`);
@@ -1315,6 +1318,12 @@ function runClaude() {
     // it (callback instruction included) — that is why we keep it around.
     if (doFailover) {
       const until = writeClaudeLimitFlag(limitResetAt);
+      if (NO_FAILOVER) {
+        console.error(`[NO-FAILOVER] Claude limited until ${until.toISOString()} — model switch DISABLED (logs/no-failover). Turn stops; resume on Claude after reset.`);
+        try { logStream.write(JSON.stringify({ type:'system', subtype:'limited-no-failover', reason:'claude_session_limit', limited_until: until.toISOString(), timestamp:new Date().toISOString() }) + '\n'); } catch {}
+        endLogAndExit(1);
+        return;
+      }
       console.error(`[FAILOVER] Claude limited until ${until.toISOString()}, routing ${projectName} -> NVIDIA cascade`);
       if (!limitResetAt) {
         console.error(`[FAILOVER] reset time not parseable from the limit message — assuming +60 min (conservative fallback)`);
@@ -1388,7 +1397,11 @@ if (provider === 'codex') {
   runCodex(false);
 } else {
   const limitedUntil = readClaudeLimitFlag();
-  if (limitedUntil) {
+  if (limitedUntil && NO_FAILOVER) {
+    console.error(`[NO-FAILOVER] Claude limited until ${limitedUntil.toISOString()} — skipping dispatch (no model switch).`);
+    try { logStream.write(JSON.stringify({ type:'system', subtype:'limited-no-failover', reason:'claude_session_limit_active', limited_until: limitedUntil.toISOString(), timestamp:new Date().toISOString() }) + '\n'); } catch {}
+    endLogAndExit(1);
+  } else if (limitedUntil) {
     console.error(`[FAILOVER] Claude limited until ${limitedUntil.toISOString()}, routing ${projectName} -> NVIDIA cascade`);
     try {
       logStream.write(JSON.stringify({

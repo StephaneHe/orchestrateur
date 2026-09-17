@@ -4,6 +4,13 @@ Suivi léger des tâches en cours / différées côté orchestrateur.
 
 ## Fait
 
+- [x] **Kill-switch failover (sentinelle `logs/no-failover`)** (2026-09-17, v0.16.0, `scripts/dispatch.mjs`).
+  Si `logs/no-failover` existe, aucune bascule de modèle sur limite Claude : la date de reset est quand même
+  écrite dans `logs/claude-limited.until`, event `system/limited-no-failover` loggué, puis arrêt propre
+  (`endLogAndExit(1)`). Garde aux 2 points d'entrée (fin de tour + démarrage), avant `runNvidiaFailover()`.
+  Branche codex intacte. Réversible (retirer la sentinelle réactive). But : run de nuit « Opus 4.8 uniquement ».
+  `node --check` OK. Sentinelle créée (datée 2026-09-17). Pas de restart 7777 (dispatch.mjs relu à chaque appel).
+
 - [x] **Hot-reload des musiciens (ajout/retrait sans restart)** (2026-09-11, v0.15.0). `config.json` surveillé (chokidar)
   + poll 3s fallback → `reloadConfigFromDisk` réconcilie `config.projects`/streams en place, abonne les dashboards connectés
   aux nouveaux flux, pousse un signal SSE `fleet_config_changed` ; client (`refreshFleet`) réconcilie la liste sans rebuild.
