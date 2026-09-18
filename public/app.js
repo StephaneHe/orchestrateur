@@ -807,6 +807,9 @@ class FleetStream {
       // loadChatHistory already ran in App.init).
       if (this._hasOpenedBefore) {
         App.loadChatHistory().catch(() => {});
+        // A result may have been missed during the SSE gap — reconcile the
+        // "le chef répond…" indicator against the chef's real producer liveness.
+        App._conductorLivenessCheck().catch(() => {});
       }
       this._hasOpenedBefore = true;
     };
@@ -887,6 +890,9 @@ const App = {
   // indicator. Intentionally NOT initialised from scanProjectState() so a
   // crashed/stuck turn from a previous session doesn't show stale indicator.
   _awaitingConductorResponse: false,
+  // Wall-clock ms when the waiting flag was last armed. Used by the PID-liveness
+  // safety net (P0-b) to only disarm a flag that has been stuck a while.
+  _awaitingSince: 0,
   // Mobile only: which project the user is currently viewing in the main
   // pane. Defaults to the conductor. When != conductor, the body shows the
   // project's event stream and the composer dispatches there.
@@ -994,6 +1000,9 @@ const App = {
     // for new events. Only in-flight / stale cards have a moving timer, so idle /
     // done / unread cards are skipped (they'd rebuild identical HTML otherwise).
     setInterval(() => {
+      // Runs regardless of tab visibility: a stuck "le chef répond…" should
+      // clear even in the background. Self-guarded + only fetches when armed.
+      this._conductorLivenessCheck();
       if (document.hidden) return;
       let touched = false;
       for (const m of this.musicians.values()) {
@@ -1851,6 +1860,27 @@ const App = {
     return entry;
   },
 
+  /** Arm the "le chef répond…" indicator and stamp when — only on PROOF of a
+   *  real chef turn (a source-less user_prompt, or a system/init). Callbacks
+   *  and @shortcuts carry a source and must NOT arm it. */
+  _armConductorWait() {
+    this._awaitingConductorResponse = true;
+    this._awaitingSince = Date.now();
+  },
+
+  /** Disarm the indicator and close any still-open reflection bubble. Used by
+   *  the result handler and by the PID-liveness safety net (P0-b). */
+  _disarmConductorWait() {
+    this._awaitingConductorResponse = false;
+    this._awaitingSince = 0;
+    for (let i = this.chat.length - 1; i >= 0; i--) {
+      const e = this.chat[i];
+      if (e.role !== "reflection") continue;
+      if (!e.closed) { e.closed = true; e.endTs = Date.now(); }
+      break;
+    }
+  },
+
   /** True if a callback bubble with this exact text is already in the chat.
    *  Makes callback rendering idempotent: the musician_done notification and the
    *  relayed chef dispatch carry the same text, and reconnect/queue replays can
@@ -1885,8 +1915,12 @@ const App = {
           const rm = CALLBACK_RELAY_RE.exec(txt);
           if (rm) source = rm[1].trim();
         }
+        // A "@musician" shortcut carries source="shortcut→X": it is the USER's
+        // own message mirrored into the chef log for context — NOT a musician
+        // callback (F5) and NOT a chef turn.
+        const isShortcut = typeof source === "string" && source.startsWith("shortcut→");
         const last = this.chat[this.chat.length - 1];
-        const isLocalEcho = !source && last && last.role === "user" && (
+        const isLocalEcho = (!source || isShortcut) && last && last.role === "user" && (
           last.text.trim() === txt ||
           (last._fullPrompt != null && last._fullPrompt.trim() === txt)
         );
@@ -1894,7 +1928,7 @@ const App = {
           const images = Array.isArray(raw.attachmentPaths) && raw.attachmentPaths.length
             ? raw.attachmentPaths.map(p => '/attachments/' + String(p).replace(/\\/g, '/').split('/').pop())
             : undefined;
-          if (source) {
+          if (source && !isShortcut) {
             // Callback — render as the musician's event, and dedup so the
             // notification + this relay don't show it twice.
             if (!this._callbackDup(txt)) {
@@ -1903,12 +1937,15 @@ const App = {
               this.showCallbackToast(source, txt);
             }
           } else {
+            // Real user message (or an @shortcut echo) — render as the user.
             this.chat.push({ role: "user", text: txt, ts: Date.parse(raw.timestamp) || Date.now(), ...(images ? { images } : {}) });
             if (this.chat.length > CHAT_MAX) this.chat.splice(0, this.chat.length - CHAT_MAX);
           }
         }
-        // Mark as awaiting regardless of local-echo dedup — the chef IS now processing.
-        this._awaitingConductorResponse = true;
+        // Arm "le chef répond…" ONLY on a real chef turn: a source-less
+        // user_prompt. Callbacks and @shortcuts carry a source and never start a
+        // chef turn; a real dispatch launched with --source arms via system/init.
+        if (!source) this._armConductorWait();
       }
     } else if (raw?.type === "assistant") {
       // Mid-turn conductor activity. Feed the current reflection so the
@@ -1944,9 +1981,15 @@ const App = {
         const preview = String(content).trim().split("\n").slice(0, 4).join("\n").slice(0, 400);
         if (preview) refl.events.push({ kind: "result", text: preview, ts: Date.now() });
       }
+    } else if (raw?.type === "system" && raw.subtype === "init") {
+      // A real chef turn is starting. claude -p emits system/init even when the
+      // dispatch was launched with --source (whose user_prompt carries a source
+      // and therefore did NOT arm above) — so this is the reliable arm point.
+      this._armConductorWait();
     } else if (raw?.type === "result") {
       // Chef finished — clear the waiting flag regardless of success/error.
       this._awaitingConductorResponse = false;
+      this._awaitingSince = 0;
       const txt = (musician.lastAssistantText || "").trim();
       // Close the last still-open reflection (search BACKWARDS — a musician
       // callback may have been pushed after it, so it isn't always the tail) and
@@ -2461,6 +2504,32 @@ const App = {
       this.pupitreRecvPerf = performance.now();
       this.renderPupitreStrip();
     } catch { /* non-fatal — strip just holds its last known state */ }
+  },
+
+  // P0-b safety net: if "le chef répond…" has been armed for a while but the
+  // chef has no live producer process, no `result` will ever arrive (missed
+  // over an SSE gap, dispatch killed/crashed, spawn failed, no-failover exit) —
+  // so drop the stale indicator. Fetches an authoritative /api/pupitre row for
+  // the chef; the ordinary 2.5s pupitre poll does NOT run on the conductor pane,
+  // which is exactly where this symptom shows. Fail-safe: only disarms on
+  // POSITIVE evidence (pidAlive !== true); a live PID keeps waiting even if the
+  // tool is silent, and a transient null just waits for the next tick.
+  async _conductorLivenessCheck() {
+    if (!this._awaitingConductorResponse) return;
+    if (Date.now() - this._awaitingSince < 20000) return;
+    let row;
+    try {
+      const resp = await fetch("/api/pupitre", { headers: { Accept: "application/json" } });
+      if (!resp.ok) return;
+      const snap = await resp.json();
+      if (!snap || !Array.isArray(snap.fleet)) return;
+      row = snap.fleet.find(r => r.name === this.composer.CONDUCTOR);
+    } catch { return; /* transient — retry next tick */ }
+    if (!row || row.pidAlive === true) return;
+    // Re-check after the await: a result may have landed meanwhile.
+    if (!this._awaitingConductorResponse || Date.now() - this._awaitingSince < 20000) return;
+    this._disarmConductorWait();
+    this.renderChat();
   },
 
   // Which musician's telemetry should the strip show right now?

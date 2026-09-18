@@ -1321,6 +1321,10 @@ function runClaude() {
       if (NO_FAILOVER) {
         console.error(`[NO-FAILOVER] Claude limited until ${until.toISOString()} — model switch DISABLED (logs/no-failover). Turn stops; resume on Claude after reset.`);
         try { logStream.write(JSON.stringify({ type:'system', subtype:'limited-no-failover', reason:'claude_session_limit', limited_until: until.toISOString(), timestamp:new Date().toISOString() }) + '\n'); } catch {}
+        // Close the turn so the dashboard doesn't stay pinned on "le chef
+        // répond…". `is_error && synthetic` is already understood as → idle by
+        // every reducer; this does NOT fabricate a successful answer.
+        try { logStream.write(JSON.stringify({ type:'result', is_error:true, synthetic:true, subtype:'error_limited', result:`Claude limité jusqu'à ${until.toISOString()}`, ...(sessionId ? { session_id: sessionId } : {}), timestamp:new Date().toISOString() }) + '\n'); } catch {}
         endLogAndExit(1);
         return;
       }
@@ -1400,6 +1404,9 @@ if (provider === 'codex') {
   if (limitedUntil && NO_FAILOVER) {
     console.error(`[NO-FAILOVER] Claude limited until ${limitedUntil.toISOString()} — skipping dispatch (no model switch).`);
     try { logStream.write(JSON.stringify({ type:'system', subtype:'limited-no-failover', reason:'claude_session_limit_active', limited_until: limitedUntil.toISOString(), timestamp:new Date().toISOString() }) + '\n'); } catch {}
+    // Close the turn (see lifecycleEnd guard above) so a prompt received during
+    // a limited window doesn't leave the chef pinned on "le chef répond…".
+    try { logStream.write(JSON.stringify({ type:'result', is_error:true, synthetic:true, subtype:'error_limited', result:`Claude limité jusqu'à ${limitedUntil.toISOString()}`, ...(sessionId ? { session_id: sessionId } : {}), timestamp:new Date().toISOString() }) + '\n'); } catch {}
     endLogAndExit(1);
   } else if (limitedUntil) {
     console.error(`[FAILOVER] Claude limited until ${limitedUntil.toISOString()}, routing ${projectName} -> NVIDIA cascade`);

@@ -11,6 +11,19 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-09-18
+
+### Fixed
+- (dashboard + dispatch) **Fix chef figé « LE CHEF RÉPOND… » persistant (P0, d'après `docs/chef-stuck-analysis-validated.md`).** Trois changements minimaux, sans redémarrage serveur :
+  - **P0-a — drapeau conditionné à un vrai tour** (`public/app.js`) : `_awaitingConductorResponse` n'est plus armé que par un `user_prompt` **sans `source`** (vrai message utilisateur) ou par un event `system/init` (tout tour `claude -p`, y compris un dispatch lancé avec `--source`). Un callback musicien et un raccourci `@musicien` (qui portent un `source`) **n'arment plus** l'indicateur. `result` continue de le désarmer. Corrige aussi F5 : le message `@shortcut` s'affiche désormais comme bulle **utilisateur** (avec dédup d'echo local), plus comme fausse bulle « callback ».
+  - **P0-b — filet de sécurité par liveness du PID** (`public/app.js`) : timestamp d'armement mémorisé ; un ticker toujours actif (5 s) + la réouverture SSE appellent `_conductorLivenessCheck`, qui, si le drapeau est armé depuis > 20 s et que la ligne chef de `/api/pupitre` a `pidAlive !== true`, **désarme** et ferme la réflexion ouverte. Sens de la panne sûr : un PID vivant (même outil long silencieux) garde l'attente. Couvre `result` manqué sur coupure SSE, dispatch tué/planté, échec de spawn, sortie no-failover.
+  - **P0-c — clôture du tour en no-failover** (`scripts/dispatch.mjs`) : aux deux sorties `NO_FAILOVER` (fin de tour + démarrage), un `result` synthétique `{is_error:true, synthetic:true, subtype:'error_limited'}` est écrit **avant** `endLogAndExit(1)`, sinon chaque prompt reçu pendant une fenêtre limitée laissait un tour ouvert (chef figé). La convention `is_error && synthetic → idle` est déjà comprise par les reducers ; aucune réponse réussie n'est fabriquée.
+
+### Notes
+- Périmètre strict P0 : **aucun** changement P1/P2 (reducers serveur, route `/sse/logs`, bornage watcher, `healOrphanedLogs`, conversion `/api/notify`, turnId/superviseur). Chemin du callback AUTO inchangé. App Android non touchée.
+- Vérifié headless : handlers client rejoués dans le vrai `app.js` (callback → pas de pastille ; `@shortcut` → pas de pastille, rendu utilisateur ; `user_prompt` sans source → pastille ; `system/init` → pastille ; `result` → effacée ; filet PID : mort+>20 s → désarmé, vivant → gardé, <20 s → gardé ; 0 erreur console). `node --check` OK sur `app.js` et `dispatch.mjs`. Réplique isolée des sorties no-failover → log terminé par un `result` lu comme idle.
+- **`public/app.js` est statique → un hard-reload du dashboard suffit ; `dispatch.mjs` est relu à chaque appel. AUCUN redémarrage du serveur 7777 requis.**
+
 ## [0.16.0] - 2026-09-17
 
 ### Added

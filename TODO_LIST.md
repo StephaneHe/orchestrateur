@@ -4,6 +4,13 @@ Suivi léger des tâches en cours / différées côté orchestrateur.
 
 ## Fait
 
+- [x] **Fix chef figé « LE CHEF RÉPOND… » (P0)** (2026-09-18, v0.16.1, `public/app.js` + `scripts/dispatch.mjs`).
+  P0-a : `_awaitingConductorResponse` armé seulement sur `user_prompt` sans `source` OU `system/init` (callback/@shortcut n'arment plus ; F5 : @shortcut rendu en bulle utilisateur). P0-b : filet liveness PID
+  (`_conductorLivenessCheck`, ticker 5 s + reopen SSE) désarme si armé >20 s et chef `pidAlive!==true`. P0-c :
+  `result` synthétique `error_limited` avant les 2 sorties no-failover de `dispatch.mjs`. Périmètre P0 strict
+  (pas de P1/P2). Vérifié headless + `node --check`. **Aucun restart serveur — hard-reload du dashboard requis.**
+  Suite possible (non demandée) : P1 dans `docs/chef-stuck-analysis-validated.md` (reducers, route morte /sse/logs, bornage watcher, heal).
+
 - [x] **Kill-switch failover (sentinelle `logs/no-failover`)** (2026-09-17, v0.16.0, `scripts/dispatch.mjs`).
   Si `logs/no-failover` existe, aucune bascule de modèle sur limite Claude : la date de reset est quand même
   écrite dans `logs/claude-limited.until`, event `system/limited-no-failover` loggué, puis arrêt propre
