@@ -292,6 +292,7 @@ class Musician {
           <span class="m-state-icon">○</span>
           <span class="m-state-label">AU REPOS</span>
         </div>
+        <div class="m-telem" hidden></div>
         ${this.provider !== 'claude' ? `<span class="m-provider-tag">${esc(this.provider.toUpperCase())}</span>` : ''}
       </div>
     `;
@@ -467,6 +468,24 @@ function reconcileChildren(container, htmlArray) {
 const MOBILE_BREAKPOINT = 768;
 const isMobileViewport = () => window.innerWidth < MOBILE_BREAKPOINT;
 
+// Attention ordering for the fleet layout — mirrors PupitreRow.rank so cards and
+// /pupitre rows agree: a silent error must never sit below a chatty agent.
+// Lower rank = more attention = placed first. Ties broken by name for a STABLE
+// order (no reshuffle on every token, unlike the old frequency sort).
+function attentionRank(m) {
+  const inFlight = m.state === "live" || m.state === "think";
+  const silentMs = m.lastActivityMs ? (Date.now() - m.lastActivityMs) : 0;
+  if (inFlight && silentMs > 30_000) return 0;   // sans progrès observé
+  if (m.state === "error")  return 1;
+  if (m.state === "input")  return 2;
+  if (inFlight)             return 3;
+  if (m.state === "unread") return 4;
+  return 5;                                       // idle
+}
+function byAttentionThenName(a, b) {
+  return attentionRank(a) - attentionRank(b) || a.name.localeCompare(b.name);
+}
+
 function computeLeftPanelW(viewportW) {
   return Math.max(420, Math.min(1000, Math.round(viewportW * 0.60)));
 }
@@ -494,8 +513,8 @@ function computeGridLayout(musicians, viewport) {
   const startY  = (GRID_TOP_PAD - FLEET_TOP) + CARD_H / 2;
   const rowStep = CARD_H + GRID_ROW_GAP;
 
-  // Sort most-active first (same convention as the arc).
-  const sorted = [...musicians].sort((a, b) => b.freq - a.freq);
+  // Sort by attention (errors/questions/stuck first), then name — stable.
+  const sorted = [...musicians].sort(byAttentionThenName);
   sorted.forEach((m, i) => {
     const col = i % cols;
     const row = Math.floor(i / cols);
@@ -524,7 +543,7 @@ function computeFanLayout(musicians, viewport) {
   const n = musicians.length;
   if (!n) return;
 
-  const sorted = [...musicians].sort((a, b) => b.freq - a.freq);
+  const sorted = [...musicians].sort(byAttentionThenName);
   const rot = App.deckOffset % n;
   const deck = [];
   for (let i = 0; i < n; i++) deck.push(sorted[(i + rot) % n]);
@@ -606,8 +625,8 @@ function computeDesktopArc(musicians, viewport) {
   const n = musicians.length;
   if (!n) return;
 
-  // Sort by frequency so the apex gets the most-active musician.
-  const sorted = [...musicians].sort((a, b) => b.freq - a.freq);
+  // Sort by attention so the apex gets whoever needs it most (stable).
+  const sorted = [...musicians].sort(byAttentionThenName);
 
   // 1. Work out how many rows we can afford vertically, then pick the largest
   //    card width that fits the full fleet within that budget.
@@ -1003,6 +1022,13 @@ const App = {
     // panel so the user sees elapsed time and a sign of life even when the
     // sub-agent's stream is quiet between tool calls.
     this.startHeartbeatTicker();
+
+    // Fleet-wide authoritative telemetry poll (Lot 2): refresh /api/pupitre
+    // every 5s while the tab is visible, so every card shows PID liveness + turn
+    // duration, not only the focused one. Visible-only keeps load bounded until
+    // the Lot 3 server-side cache lands.
+    setInterval(() => { if (!document.hidden) this.pollPupitre(); }, 5000);
+    if (!document.hidden) this.pollPupitre();
 
     // 5s staleness ticker — refreshes the "silence Xs" indicator without waiting
     // for new events. Only in-flight / stale cards have a moving timer, so idle /
@@ -2514,6 +2540,7 @@ const App = {
       this._pollFailing = false;
       this.setConnState();
       this.renderPupitreStrip();
+      this.applyPupitreToCards();
     } catch {
       // Non-fatal — strip holds its last snapshot, but flag it as stale so the
       // UI stops implying the data is fresh (A5).
@@ -2570,6 +2597,29 @@ const App = {
     if (!this._awaitingConductorResponse || Date.now() - this._awaitingSince < 20000) return;
     this._disarmConductorWait();
     this.renderChat();
+  },
+
+  // Second card line from the authoritative /api/pupitre snapshot: PID liveness
+  // and turn duration — signals the event-only reducer cannot derive. Values are
+  // as-of the last poll (refreshed every 5s); no per-frame ticker.
+  applyPupitreToCards() {
+    const snap = this.pupitreSnapshot;
+    if (!snap || !Array.isArray(snap.fleet)) return;
+    for (const r of snap.fleet) {
+      const m = this.musicians.get(r.name);
+      if (!m || !m.el) continue;
+      const telem = $(".m-telem", m.el);
+      if (!telem) continue;
+      const parts = [];
+      if (r.pid) parts.push(r.pidAlive === false ? "PID ✗" : (r.pidAlive ? "PID ✓" : "PID ?"));
+      if (r.turnElapsedMs != null) parts.push("tour " + formatElapsed(r.turnElapsedMs));
+      const mp = r.model || r.configModel;
+      if (mp) parts.push(String(mp).replace(/^claude-/, ""));
+      if (parts.length) { setHtmlIfChanged(telem, esc(parts.join(" · "))); telem.hidden = false; }
+      else telem.hidden = true;
+      // Authoritative dead-producer flag — a stronger stall signal than silence.
+      m.el.classList.toggle("pid-dead", r.deadInFlight === true);
+    }
   },
 
   // Which musician's telemetry should the strip show right now?

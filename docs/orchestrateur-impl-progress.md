@@ -11,10 +11,11 @@ Cible version : 0.17.0. **Serveur 7777 NON redémarré par moi — le chef redé
 - [x] Indicateur connexion / fraîcheur (`app.js` setConnState + SSE onopen/onerror + pollPupitre ; pill #conn-status dans index.html + styles.css)
 - Vérif headless OK (cdp-lot1) : dead_wins, labels FR, codex_added=1, claude_no_double, conn ok/lost ; 0 erreur console.
 
-## Lot 2 — cartes lisibles (client seul) — À FAIRE
-- [ ] Tri par attention (rank) puis nom, stable ; suppression tri par freq
-- [ ] 2e ligne de carte depuis /api/pupitre (activité, durée, silence, PID ✗)
-- [ ] Poll /api/pupitre 5 s, onglet visible seulement
+## Lot 2 — cartes lisibles (client seul) — FAIT (commit)
+- [x] Tri par attention (`attentionRank`/`byAttentionThenName`) puis nom, stable ; 3 sorts de layout ex-`freq` remplacés
+- [x] 2e ligne de carte depuis /api/pupitre (`applyPupitreToCards` → `.m-telem` : PID ✓/✗, tour, model ; classe `pid-dead`)
+- [x] Poll /api/pupitre 5 s, onglet visible seulement (setInterval dans init, gardé sur `document.hidden`)
+- Vérif headless (cdp-lot2) : ordre Delta(stalled),Beta(error),Gamma(live),Alpha(unread),Zeta(idle) ; telem « PID ✗ · tour 1m05 · opus-4-8 » ; pid-dead ; 0 erreur.
 
 ## Lot 3 — serveur (le chef redémarre) — À FAIRE
 - [ ] Commit séparé du diff boot EADDRINUSE en attente (B3)

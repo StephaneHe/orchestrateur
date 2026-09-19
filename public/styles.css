@@ -405,6 +405,19 @@ a.pill { text-decoration: none; }   /* #btn-pupitre is an <a> styled as a pill *
   text-transform: uppercase;
   color: var(--state-color);
 }
+/* Second card line: authoritative PID/turn telemetry from /api/pupitre. */
+.m-telem {
+  margin-top: 3px;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.12em;
+  color: var(--fg-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.musician.pid-dead { --state-color: var(--st-error); }
+.musician.pid-dead .m-telem { color: var(--st-error); }
 .musician.is-stale .m-state-row { color: var(--st-input); }
 .musician.is-stale .m-state-icon { animation: none; }
 .musician.is-stale .m-halo::before { animation-play-state: paused; opacity: 0.35; }
