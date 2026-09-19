@@ -108,6 +108,9 @@ crashLog(`==== boot pid=${process.pid} node=${process.version} platform=${proces
 process.on('uncaughtException', (err, origin) => {
   crashLog(`UNCAUGHT EXCEPTION (origin=${origin}): ${err && err.stack || err}`);
   try { fs.appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] UNCAUGHT ${err && err.stack || err}\n`); } catch {}
+  // A failed bind leaves the process alive but useless — never survive it.
+  // Scoped to the dashboard port so an SFTP bind failure doesn't take it down.
+  if (err && err.syscall === 'listen' && err.port === PORT && !httpServer.listening) process.exit(1);
 });
 process.on('unhandledRejection', (reason, promise) => {
   const r = reason instanceof Error ? (reason.stack || reason.message) : String(reason);
@@ -554,7 +557,13 @@ function wsVerifyClient(info) {
   return false;
 }
 
-expressWs(app, httpServer, { wsOptions: { verifyClient: wsVerifyClient } });
+const _expressWsInstance = expressWs(app, httpServer, { wsOptions: { verifyClient: wsVerifyClient } });
+// ws re-emits the http server's 'error' on the WebSocketServer; with no
+// listener there it throws, which turned a boot-time EADDRINUSE into an
+// uncaughtException that bypassed httpServer.on('error') and left a
+// zombie process (alive, heartbeating, not listening — 2026-09-16).
+// The real handling lives in httpServer.on('error') below.
+_expressWsInstance.getWss().on('error', () => {});
 
 // [1] Interface allowlist — DISABLED 2026-05-13 per user decision: home LAN
 // is trusted, token gate alone is sufficient. The middleware is kept here
@@ -3818,18 +3827,50 @@ function killPortHolder(port) {
   return false;
 }
 
-httpServer.on('error', (err) => {
-  if (err.code === 'EADDRINUSE' && _listenAttempts < 3) {
-    _listenAttempts++;
-    console.error(`[eaddrinuse] port ${PORT} already in use (attempt ${_listenAttempts})`);
-    const killed = killPortHolder(PORT);
-    const delay = killed ? 1500 : 4000;
-    console.log(`[eaddrinuse] retrying in ${delay}ms…`);
-    setTimeout(() => httpServer.listen(PORT, '0.0.0.0', onListening), delay);
-  } else {
-    crashLog(`HTTP SERVER ERROR: ${err && err.stack || err}`);
+async function orchestratorAlreadyServing() {
+  try {
+    const r = await fetch(`http://127.0.0.1:${PORT}/healthz?token=${TOKEN}`, { signal: AbortSignal.timeout(5000) });
+    return r.ok;
+  } catch { return false; }
+}
+
+httpServer.on('error', async (err) => {
+  if (err.code === 'EADDRINUSE' && !httpServer.listening) {
+    // Scheduled task and watchdog can launch simultaneously at logon. If the
+    // holder is a working orchestrator, step aside instead of killing it.
+    if (await orchestratorAlreadyServing()) {
+      crashLog(`EADDRINUSE: a healthy orchestrator already serves :${PORT} — this instance exits`);
+      process.exit(0);
+    }
+    if (_listenAttempts < 3) {
+      _listenAttempts++;
+      console.error(`[eaddrinuse] port ${PORT} already in use (attempt ${_listenAttempts})`);
+      const killed = killPortHolder(PORT);
+      const delay = killed ? 1500 : 4000;
+      console.log(`[eaddrinuse] retrying in ${delay}ms…`);
+      setTimeout(() => httpServer.listen(PORT, '0.0.0.0', onListening), delay);
+      return;
+    }
+    crashLog(`EADDRINUSE: could not bind :${PORT} after ${_listenAttempts} attempts — exiting`);
+    process.exit(1);
   }
+  crashLog(`HTTP SERVER ERROR: ${err && err.stack || err}`);
+  if (!httpServer.listening) process.exit(1);
 });
+
+// Last line of defence against zombies: a process that is not bound to the
+// port is useless AND harmful (it holds logs/server.out open, which made the
+// watchdog's relaunch fail 59 times). Exit so a supervisor can start clean.
+const NOT_LISTENING_EXIT_MS = 90_000;
+let _notListeningSince = Date.now();
+setInterval(() => {
+  if (httpServer.listening) { _notListeningSince = 0; return; }
+  if (!_notListeningSince) _notListeningSince = Date.now();
+  if (Date.now() - _notListeningSince >= NOT_LISTENING_EXIT_MS) {
+    crashLog(`not listening on :${PORT} for ${Math.round((Date.now() - _notListeningSince) / 1000)}s — exiting`);
+    process.exit(1);
+  }
+}, 15_000).unref();
 httpServer.on('clientError', (err, socket) => {
   crashLog(`HTTP clientError: ${err.code || err.message}`);
   try { socket.destroy(); } catch {}
