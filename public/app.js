@@ -145,8 +145,12 @@ class Musician {
     const t = raw.type;
     if (t === "user_prompt") {
       // The orchestrator's prompt, injected synthetically by dispatch.mjs.
-      this.turnStartMs = Date.parse(raw.timestamp) || Date.now();
-      this.setState(this.state === "idle" || this.state === "unread" ? "live" : this.state);
+      // A SOURCED prompt (callback / @shortcut / notify) is not a turn start —
+      // only a source-less prompt is (a --source dispatch also emits system/init).
+      if (!raw.source) {
+        this.turnStartMs = Date.parse(raw.timestamp) || Date.now();
+        this.setState(this.state === "idle" || this.state === "unread" ? "live" : this.state);
+      }
       this.lastLine = stripReplyPrefixes(String(raw.text || "")).replace(/\s+/g, " ").trim().slice(0, 140);
     } else if (t === "system") {
       if (raw.subtype === "init") {

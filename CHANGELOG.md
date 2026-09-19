@@ -11,6 +11,28 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-09-19
+
+### Added
+- (dashboard) **Refonte affichage des musiciens — P0 (Lots 1 & 2, client seul, hard-reload).** D'après `docs/orchestrateur-redesign-validated.md`.
+  - Rendu exact : « PID MORT » prioritaire sur « SANS PROGRÈS » ; libellés d'état **français orientés action** (EN COURS / RÉPONSE REQUISE / TERMINÉ · non lu…) — **libellés d'affichage seulement, les clés d'état restent verrouillées** ; le briefing « à vérifier » compte aussi erreurs et tours bloqués ; le détail live affiche l'`assistant` consolidé quand aucun bloc de streaming n'a été rendu (récupère le contenu Codex / après un trou SSE).
+  - Cartes lisibles : **tri par attention** (bloqué/erreur/question/en cours/non lu/prêt) puis nom, **stable** (fin du réordonnancement par fréquence) ; **2ᵉ ligne de carte** depuis `/api/pupitre` (PID ✓/✗, durée du tour, modèle observé) ; producteur mort surligné.
+  - **Pastille de connexion / fraîcheur** dans la barre : SSE coupé → « hors ligne », `/api/pupitre` muet → « données anciennes », sinon « en ligne ». Poll `/api/pupitre` à 5 s, onglet visible seulement.
+
+### Changed / Fixed
+- (server) **P0 Lot 3 — nécessite un redémarrage du serveur 7777 (fait par le chef).**
+  - **File `@` non consommée à vide pendant une fenêtre limitée** : le pump ne draine plus la file sur un `result` **synthétique** (`ev.synthetic`) — sinon la garde no-failover enchaînait tous les éléments en produisant des synthétiques, sans aucun travail (régression introduite par le `result` synthétique de v0.16.1).
+  - **`/api/pupitre`** : cache par log (clé `mtime`+`size`, TTL 2,5 s) et **projets `parked` non scannés** → supprime la relecture synchrone de 29 logs (dont 13 parkés) à chaque requête × clients ; champs additifs `queueDepth`, `noFailover`, `limitedUntil`.
+  - **Reducers** : un `user_prompt` **sourcé** (callback / `@shortcut` / `/api/notify`) ne démarre plus un tour (`scanProjectState`, `reduceMusician`, `deriveState`, et le reducer de carte client) — seul un prompt sans source ou un `system/init` le fait (un dispatch `--source` émet un init).
+  - **Route morte `/sse/logs/:project` supprimée** (aucun consommateur ; lisait depuis l'offset 0 et allouait le fichier entier — lecture synchrone de 300+ Mo pouvant faire tuer le serveur par le watchdog).
+  - **Watcher de notifications borné** : lecture par blocs de 4 MiB avec continuation `setImmediate` (plus d'allocation illimitée sur un gros append), sans manquer d'événement.
+  - **`healOrphanedLogs`** : `lastNonPartialType` ignore désormais `notification` et `user_prompt` sourcé → plus de faux `result` synthétique ajouté au boot après un simple callback.
+- (server) Durcissement du boot (2026-09-16) committé séparément : une erreur de bind sur le port sort proprement au lieu de laisser un process zombie (voir commit dédié).
+
+### Notes
+- Périmètre strict P0 (Lots 1–3). Pas de P1/P2/P3 ni « sur-ingérie écartée ». Le fix « chef figé » v0.16.1 est préservé.
+- Vérifié : headless (rendu exact, tri, télémétrie carte, pastille connexion) ; `deriveState` (callback/@shortcut → pas de tour, init → tour) ; `node --check` sur `server.js`, `scripts/fleet-status-core.mjs`, `public/app.js`. **Client = hard-reload ; serveur = 1 redémarrage 7777 par le chef.**
+
 ## [0.16.1] - 2026-09-18
 
 ### Fixed

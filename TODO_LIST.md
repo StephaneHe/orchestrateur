@@ -4,6 +4,14 @@ Suivi léger des tâches en cours / différées côté orchestrateur.
 
 ## Fait
 
+- [x] **Refonte affichage musiciens + serveur — P0 (Lots 1/2/3)** (2026-09-19, v0.17.0). Spec : `docs/orchestrateur-redesign-validated.md`.
+  Lot 1 (client) : PID mort > sans progrès, libellés FR (clés d'état inchangées), briefing compte erreurs+bloqués, détail live rend
+  l'assistant consolidé sans deltas, pastille connexion/fraîcheur. Lot 2 (client) : tri par attention stable, 2ᵉ ligne de carte
+  (/api/pupitre : PID/tour/model), poll 5 s visible. Lot 3 (serveur, **restart 7777 par le chef**) : pas de drain de file sur result
+  synthétique (B1), /api/pupitre cache mtime+size + skip parked + champs queueDepth/noFailover/limitedUntil, reducers ignorent
+  user_prompt sourcé, route morte /sse/logs supprimée, watcher borné (blocs 4 MiB), heal ignore notification/callback.
+  Vérifié headless + node --check + deriveState. Progression : `docs/orchestrateur-impl-progress.md`. Reste (non fait) : P1/P2/P3 du rapport.
+
 - [x] **Fix chef figé « LE CHEF RÉPOND… » (P0)** (2026-09-18, v0.16.1, `public/app.js` + `scripts/dispatch.mjs`).
   P0-a : `_awaitingConductorResponse` armé seulement sur `user_prompt` sans `source` OU `system/init` (callback/@shortcut n'arment plus ; F5 : @shortcut rendu en bulle utilisateur). P0-b : filet liveness PID
   (`_conductorLivenessCheck`, ticker 5 s + reopen SSE) désarme si armé >20 s et chef `pidAlive!==true`. P0-c :

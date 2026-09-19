@@ -17,11 +17,14 @@ Cible version : 0.17.0. **Serveur 7777 NON redémarré par moi — le chef redé
 - [x] Poll /api/pupitre 5 s, onglet visible seulement (setInterval dans init, gardé sur `document.hidden`)
 - Vérif headless (cdp-lot2) : ordre Delta(stalled),Beta(error),Gamma(live),Alpha(unread),Zeta(idle) ; telem « PID ✗ · tour 1m05 · opus-4-8 » ; pid-dead ; 0 erreur.
 
-## Lot 3 — serveur (le chef redémarre) — À FAIRE
-- [ ] Commit séparé du diff boot EADDRINUSE en attente (B3)
-- [ ] Pas de drain de file sur result synthetic (B1)
-- [ ] /api/pupitre : cache mtime+size, skip parked, champs queueDepth/noFailover/limitedUntil
-- [ ] P1 chef-stuck : reducers ignorent user_prompt sourcé, suppr /sse/logs, watcher borné, heal ignore notification/user_prompt sourcé
+## Lot 3 — serveur (le chef redémarre) — FAIT (commits) — **RESTART 7777 REQUIS**
+- [x] Commit séparé du diff boot EADDRINUSE en attente (B3) → commit 95c6bbd (server.js seul)
+- [x] Pas de drain de file sur result synthetic (B1) → condition `!ev.synthetic` dans le pump watcher
+- [x] /api/pupitre : cache (mtime+size, TTL 2,5 s) + skip parked + champs `queueDepth`/`noFailover`/`limitedUntil`
+- [x] P1 chef-stuck : reducers ignorent `user_prompt` sourcé (scanProjectState + reduceMusician + deriveState + client Musician.transition) ; route morte `/sse/logs/:project` supprimée ; watcher borné (blocs 4 MiB + setImmediate) ; `lastNonPartialType` ignore `notification` et `user_prompt` sourcé
+- Vérif : `node --check` server.js + fleet-status-core.mjs + app.js OK ; deriveState testé (callback/@shortcut → pas live ; init → live) ; 0 appelant de /sse/logs. Serveur NON redémarré (le chef le fait).
 
 ## Notes
-- (à remplir au fil de l'eau)
+- Le cache /api/pupitre a un TTL de 2,5 s (< poll client 5 s) : le fichier inchangé est réutilisé entre clients/poll rapprochés, mais un log statique est re-scanné au poll suivant pour rafraîchir silence/PID.
+- Parked : non scannés (entrée minimale `{name, state:'idle'}`) → économise 13 lectures/poll ; leurs lignes /pupitre montrent « — » (parkés dé-emphasés de toute façon).
+- Client Musician.transition (app.js) modifié aussi (user_prompt sourcé) : c'est du CLIENT → hard-reload, pas restart. Groupé ici par cohérence du fix.

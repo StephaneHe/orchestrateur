@@ -427,14 +427,21 @@ function lastNonPartialType(filePath) {
       fs.readSync(fd, buf, 0, buf.length, offset);
       tail = buf.toString('utf8') + tail;
       const lines = tail.split('\n').filter(s => s.trim());
-      // walk backwards looking for a non-stream_event, non-partial line
+      // walk backwards looking for the last real TURN event, skipping partials
+      // and coordination lines. A callback/notification written after a
+      // completed turn is not a dangling turn — if we returned its type, heal
+      // would append a bogus synthetic result over a log that already ended
+      // cleanly on a real `result`.
       for (let i = lines.length - 1; i >= 0; i--) {
         const line = lines[i];
         // heuristic: avoid parsing huge stream_event deltas
         if (line.includes('"type":"stream_event"')) continue;
         try {
           const ev = JSON.parse(line);
-          if (ev && typeof ev.type === 'string') return ev.type;
+          if (!ev || typeof ev.type !== 'string') continue;
+          if (ev.type === 'notification') continue;                 // coordination, not a turn
+          if (ev.type === 'user_prompt' && ev.source) continue;     // callback / @shortcut / notify
+          return ev.type;
         } catch { /* partial line at the head; keep widening */ }
       }
       if (offset === 0) break;
@@ -1455,7 +1462,10 @@ function scanProjectState(name) {
     if (!ln) continue;
     let ev; try { ev = JSON.parse(ln); } catch { continue; }
     const t = ev?.type;
-    if (t === 'user_prompt' || (t === 'system' && ev.subtype === 'init')) {
+    // A SOURCED user_prompt (musician callback, @shortcut, /api/notify) is not a
+    // turn start — only a source-less prompt or a system/init is. A real dispatch
+    // launched with --source still emits system/init, so it's covered.
+    if ((t === 'user_prompt' && !ev.source) || (t === 'system' && ev.subtype === 'init')) {
       if (state === 'idle' || state === 'unread') state = 'live';
     } else if (t === 'assistant') {
       const blocks = ev.message?.content || [];
@@ -1525,20 +1535,62 @@ app.get('/api/config', (req, res) => {
 // Real-time snapshot of every musician INCLUDING the conductor (chef), derived
 // from the same shared core as the CLI supervisor. Powers /pupitre. Parked
 // projects are included but flagged so the page can de-emphasise them.
+// Short-TTL cache keyed by the log's (mtime,size): /api/pupitre used to rescan
+// every project synchronously on EVERY request (29 × up to 256 KiB on a USB
+// disk, ×clients). We reuse a member snapshot when its log is byte-identical AND
+// the cache entry is recent — bounding both the per-poll reads and the ×clients
+// fan-out. The age cap (below the client's 5 s poll) keeps time-derived fields
+// (silence, PID liveness) fresh: a static log still rescans on the next poll.
+const pupitreCache = new Map();   // name → { key, at, snap }
+const PUPITRE_CACHE_MS = 2500;
+function scanFleetMemberCached(name) {
+  const logPath = path.join(LOGS_DIR, `${name}.jsonl`);
+  let key = '0:0';
+  try { const st = fs.statSync(logPath); key = st.mtimeMs + ':' + st.size; } catch {}
+  const hit = pupitreCache.get(name);
+  if (hit && hit.key === key && (Date.now() - hit.at) < PUPITRE_CACHE_MS) return hit.snap;
+  const snap = scanFleetMember(name);
+  pupitreCache.set(name, { key, at: Date.now(), snap });
+  return snap;
+}
+
+// Fleet-global provider availability, read cheaply per request.
+function readNoFailover() { return fs.existsSync(path.join(LOGS_DIR, 'no-failover')); }
+function readLimitedUntil() {
+  try {
+    const raw = fs.readFileSync(path.join(LOGS_DIR, 'claude-limited.until'), 'utf8').trim();
+    if (!raw) return null;
+    const t = Date.parse(raw);
+    if (Number.isFinite(t) && t <= Date.now()) return null;   // expired
+    return raw;
+  } catch { return null; }
+}
+
 app.get('/api/pupitre', (req, res) => {
   const conductor = config.conductor || 'chef';
   const fleet = config.projects.map(p => {
-    const snap = scanFleetMember(p.name);   // state, silence, stall, pid, model…
+    const parked = p.parked ?? false;
+    // Skip scanning parked projects: their log need not be read every poll (B2).
+    const snap = parked
+      ? { name: p.name, state: 'idle' }
+      : scanFleetMemberCached(p.name);   // state, silence, stall, pid, model…
     return {
       ...snap,
       isConductor: p.name === conductor,
-      parked: p.parked ?? false,
+      parked,
+      queueDepth: dispatchQueue.get(p.name)?.length ?? 0,
       // Configured provider/model as a fallback when the log has none yet.
       configModel: p.model ?? config.defaults?.model ?? null,
       configProvider: p.provider ?? config.defaults?.provider ?? 'claude',
     };
   });
-  res.json({ now: Date.now(), conductor, fleet });
+  res.json({
+    now: Date.now(),
+    conductor,
+    noFailover: readNoFailover(),
+    limitedUntil: readLimitedUntil(),
+    fleet,
+  });
 });
 
 // Self-contained live desk page. Reuses the EXISTING SSE stream
@@ -2055,7 +2107,8 @@ function reduceMusician(name, ev) {
   const t = ev?.type;
   // stream_event lines are very frequent token-level deltas — skip.
   if (t === 'stream_event') return { prevState: state, newState: state, lastLine };
-  if (t === 'user_prompt' || (t === 'system' && ev.subtype === 'init')) {
+  // Sourced user_prompt (callback / @shortcut / notify) is not a turn start.
+  if ((t === 'user_prompt' && !ev.source) || (t === 'system' && ev.subtype === 'init')) {
     if (state === 'idle' || state === 'unread') state = 'live';
   } else if (t === 'assistant') {
     const blocks = ev.message?.content || [];
@@ -3503,75 +3556,11 @@ app.get('/healthz', (req, res) => {
   });
 });
 
-// ---------- SSE: tail per-project stream-json -------------------------------
-
-app.get('/sse/logs/:project', (req, res) => {
-  const name = req.params.project;
-  if (!PROJECT_NAMES.has(name)) {
-    res.status(404).type('text/plain').end('Unknown project');
-    return;
-  }
-
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache, no-transform',
-    'Connection': 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
-  res.write(': open\n\n');
-
-  const logPath = path.join(LOGS_DIR, `${name}.jsonl`);
-  let offset = 0;
-  let partialLine = '';
-
-  function pump() {
-    let stat;
-    try { stat = fs.statSync(logPath); }
-    catch { return; /* file not created yet */ }
-
-    // Log was truncated / rotated externally — rewind. Brief says we don't
-    // rotate, but be defensive.
-    if (stat.size < offset) { offset = 0; partialLine = ''; }
-
-    if (stat.size > offset) {
-      const buf = Buffer.alloc(stat.size - offset);
-      const fd = fs.openSync(logPath, 'r');
-      try { fs.readSync(fd, buf, 0, buf.length, offset); }
-      finally { fs.closeSync(fd); }
-      offset = stat.size;
-
-      partialLine += buf.toString('utf8');
-      const lines = partialLine.split('\n');
-      partialLine = lines.pop() ?? '';
-      for (const line of lines) {
-        if (!line) continue;
-        // Escape newlines inside the JSON (rare, but possible when a tool
-        // result is a multi-line string inside a JSON string).
-        if (res.writableEnded || res.destroyed) return;
-        try { res.write(`data: ${line}\n\n`); }
-        catch (e) {
-          debugLog(`sse pump-write (single-project) failed: ${e.code || e.message}`);
-          try { res.destroy(); } catch {}
-          return;
-        }
-      }
-    }
-  }
-  pump();
-
-  const watcher = chokidar.watch(logPath, logWatchOpts({ awaitWriteFinish: false }));
-  watcher.on('add', pump);
-  watcher.on('change', pump);
-
-  // Periodic heartbeat so intermediaries don't close the connection.
-  const hb = setInterval(() => { try { res.write(': ping\n\n'); } catch {} }, 15000);
-
-  req.on('close', () => {
-    clearInterval(hb);
-    watcher.close().catch(() => {});
-    try { res.end(); } catch {}
-  });
-});
+// NOTE: the old per-project SSE route `GET /sse/logs/:project` was removed
+// (2026-09-19). It had no consumers (the dashboard uses the aggregate
+// /api/sse/fleet) yet read from offset 0 and Buffer.alloc'd the whole file on
+// first connect — a synchronous 300+ MB read on the chef log that could stall
+// the event loop long enough for the watchdog to kill a "slow" server.
 
 // ---------- WebSocket: central pty bridge -----------------------------------
 
@@ -3702,17 +3691,25 @@ function startBackgroundNotifyWatchers() {
     try { initialOffset = fs.statSync(logPath).size; } catch {}
     const fileState = { offset: initialOffset, partial: '' };
 
+    // Read at most this many bytes per tick. A single append can be hundreds of
+    // MB (an agent that base64'd a big binary into a tool_result); allocating the
+    // whole growth at once doubles it into the UTF-16 heap and can OOM the
+    // process. Read in bounded blocks and re-schedule until drained, so every
+    // event is still processed (unlike the SSE pump, which fast-forwards).
+    const WATCH_READ_MAX = 4 * 1024 * 1024;
     const pump = () => {
       let stat;
       try { stat = fs.statSync(logPath); } catch { return; }
       if (stat.size < fileState.offset) { fileState.offset = 0; fileState.partial = ''; }
       if (stat.size <= fileState.offset) return;
-      const buf = Buffer.alloc(stat.size - fileState.offset);
+      const want = Math.min(stat.size - fileState.offset, WATCH_READ_MAX);
+      const buf = Buffer.alloc(want);
       const fd = fs.openSync(logPath, 'r');
-      try { fs.readSync(fd, buf, 0, buf.length, fileState.offset); }
+      try { fs.readSync(fd, buf, 0, want, fileState.offset); }
       finally { fs.closeSync(fd); }
-      fileState.offset = stat.size;
+      fileState.offset += want;
       fileState.partial += buf.toString('utf8');
+      const moreToDrain = stat.size > fileState.offset;
       const lines = fileState.partial.split('\n');
       fileState.partial = lines.pop() ?? '';
       for (const line of lines) {
@@ -3728,13 +3725,20 @@ function startBackgroundNotifyWatchers() {
           }
           // Drain the per-musician queue on any turn completion (unread/idle/error).
           // Uses setImmediate inside drainQueue so it never blocks this pump iteration.
-          if (ev.type === 'result' &&
+          // NOT on a SYNTHETIC result (B1): the no-failover guard writes an
+          // `error_limited` synthetic when Claude is limited — draining then would
+          // launch the next queued item, which hits the same limit, synthesises
+          // another result, and burns the whole queue with zero work done.
+          if (ev.type === 'result' && !ev.synthetic &&
               (newState === 'unread' || newState === 'idle' || newState === 'error') &&
               (prevState === 'live' || prevState === 'think')) {
             drainQueue(name);
           }
         } catch { /* malformed line — skip */ }
       }
+      // A big append was only partially read this tick — keep draining without
+      // blocking the loop, so no result/notification is missed.
+      if (moreToDrain) setImmediate(pump);
     };
 
     const watcher = chokidar.watch(logPath, logWatchOpts());
