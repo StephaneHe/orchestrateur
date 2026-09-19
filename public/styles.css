@@ -199,6 +199,19 @@ a.pill { text-decoration: none; }   /* #btn-pupitre is an <a> styled as a pill *
   background: var(--st-think);
   box-shadow: 0 0 8px var(--st-think);
 }
+/* Connection / freshness pill (topbar). Colour derives from the state class. */
+#conn-status { gap: 7px; cursor: default; }
+#conn-status .conn-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--fg-2); transition: background .2s, box-shadow .2s;
+}
+#conn-status.conn-ok    { border-color: color-mix(in srgb, var(--st-live) 55%, transparent); }
+#conn-status.conn-ok    .conn-dot { background: var(--st-live);  box-shadow: 0 0 8px var(--st-live); }
+#conn-status.conn-stale { border-color: color-mix(in srgb, var(--st-input) 60%, transparent); color: var(--st-input); }
+#conn-status.conn-stale .conn-dot { background: var(--st-input); box-shadow: 0 0 8px var(--st-input); }
+#conn-status.conn-lost  { border-color: color-mix(in srgb, var(--st-error) 60%, transparent); color: var(--st-error); }
+#conn-status.conn-lost  .conn-dot { background: var(--st-error); box-shadow: 0 0 8px var(--st-error); animation: conn-blink 1s steps(2) infinite; }
+@keyframes conn-blink { 50% { opacity: .3; } }
 .pill-icon {
   width: 34px; height: 34px;
   display: grid; place-items: center;

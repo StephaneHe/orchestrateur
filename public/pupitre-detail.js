@@ -183,27 +183,38 @@
       if (t === 'notification') { mkEvent('e-sys', raw.source || 'notification', raw.text || '', true, ts); return; }
     }
 
-    // Live line: text/thinking/tool args arrive as stream_event deltas AND again
-    // in the consolidated 'assistant' event — render the deltas (that is the
-    // whole point of a live view) and drop the duplicate assistant event.
+    // Live line: for Claude, text/thinking/tool args arrive as stream_event
+    // deltas AND again in the consolidated 'assistant' event — render the deltas
+    // (the whole point of a live view) and drop the duplicate assistant. BUT the
+    // Codex adapter (and Claude after an SSE gap) can emit an 'assistant' with NO
+    // preceding deltas: dropping it unconditionally lost that content. So we only
+    // drop the assistant when at least one streaming block was actually rendered
+    // for the current message; otherwise we render the consolidated event.
+    var streamedThisMsg = false;
     function onLive(raw) {
       if (raw.type === 'stream_event') {
         var ev = raw.event || {}, k = ev.type;
         var ts = tsOf(raw);   // stream_event itself has no timestamp; carries the last real one forward
         if (k === 'content_block_start') {
           var b = ev.content_block || {};
-          if (b.type === 'thinking') startBlock(ev.index, 'thinking', '', ts);
-          else if (b.type === 'text') startBlock(ev.index, 'text', '', ts);
-          else if (b.type === 'tool_use') startBlock(ev.index, 'tool', '⚙ ' + (b.name || '?') + '  ', ts);
+          if (b.type === 'thinking') { startBlock(ev.index, 'thinking', '', ts); streamedThisMsg = true; }
+          else if (b.type === 'text') { startBlock(ev.index, 'text', '', ts); streamedThisMsg = true; }
+          else if (b.type === 'tool_use') { startBlock(ev.index, 'tool', '⚙ ' + (b.name || '?') + '  ', ts); streamedThisMsg = true; }
         } else if (k === 'content_block_delta') {
           var d = ev.delta || {};
           var txt = d.text || d.thinking || d.partial_json || '';
-          if (txt) pushDelta(ev.index, txt);
+          if (txt) { pushDelta(ev.index, txt); streamedThisMsg = true; }
         } else if (k === 'content_block_stop') { endBlock(ev.index); }
         else if (k === 'message_stop') { endAllBlocks(); }
         return;
       }
-      if (raw.type === 'assistant') return;
+      if (raw.type === 'assistant') {
+        // Only a duplicate if its blocks were already streamed live.
+        if (!streamedThisMsg) addEvent(raw);
+        streamedThisMsg = false;   // one assistant closes one message
+        return;
+      }
+      if (raw.type === 'result') streamedThisMsg = false;   // turn boundary
       addEvent(raw);
     }
 

@@ -38,13 +38,16 @@ const GRID_TOP_PAD    = 88;       // below topbar
 const GRID_SIDE_PAD   = 24;
 const GRID_ROW_GAP    = 18;
 
+// Display labels only — the state *keys* (idle|live|think|input|error|unread)
+// are the locked vocabulary shared by 5 reducers + the Android app and must
+// never change. These are action-oriented French strings for the human.
 const STATE_LABELS = {
   idle:   { label: "PRÊT",                  icon: "○" },
-  live:   { label: "EN COMMUNICATION",      icon: "●" },
+  live:   { label: "EN COURS",              icon: "●" },
   think:  { label: "RÉFLEXION",             icon: "◌" },
-  input:  { label: "EN ATTENTE",            icon: "?" },
-  error:  { label: "ERREUR",                icon: "✕" },
-  unread: { label: "NOUVEAUX MESSAGES",     icon: "✉" },
+  input:  { label: "RÉPONSE REQUISE",       icon: "?" },
+  error:  { label: "ÉCHEC",                 icon: "✕" },
+  unread: { label: "TERMINÉ · non lu",      icon: "✉" },
 };
 
 // Claude Code's interactive UI draws lots of noise via box-drawing + cursor
@@ -800,6 +803,7 @@ class FleetStream {
   open() {
     this.source = new EventSource("/api/sse/fleet");
     this.source.onopen = () => {
+      App.setConnState(true);
       // SSE streams only new events (server starts at EOF). If the
       // connection just dropped and reopened, we may have missed events
       // during the gap. Re-pull the conductor chat history so bubbles
@@ -847,7 +851,11 @@ class FleetStream {
       // all while the tab is hidden (rAF is suspended in background tabs).
       App.markDirty(m);
     };
-    this.source.onerror = () => { /* browser auto-reconnects */ };
+    this.source.onerror = () => {
+      // EventSource auto-reconnects, but the gap must be visible: stale cards
+      // that stop updating should not look live. onopen flips this back.
+      App.setConnState(false);
+    };
   }
   close() { this.source?.close(); this.source = null; }
 }
@@ -2499,11 +2507,43 @@ const App = {
   async pollPupitre() {
     try {
       const resp = await fetch("/api/pupitre", { headers: { Accept: "application/json" } });
-      if (!resp.ok) return;
+      if (!resp.ok) { this._pollFailing = true; this.setConnState(); return; }
       this.pupitreSnapshot = await resp.json();
       this.pupitreRecvPerf = performance.now();
+      this._pollOkAt = Date.now();
+      this._pollFailing = false;
+      this.setConnState();
       this.renderPupitreStrip();
-    } catch { /* non-fatal — strip just holds its last known state */ }
+    } catch {
+      // Non-fatal — strip holds its last snapshot, but flag it as stale so the
+      // UI stops implying the data is fresh (A5).
+      this._pollFailing = true;
+      this.setConnState();
+    }
+  },
+
+  // Drive the topbar connection pill. Priority: SSE down (live feed lost) >
+  // pupitre poll failing (telemetry stale) > ok. Called on SSE open/error and
+  // on every poll outcome; `up` updates the cached SSE flag when provided.
+  setConnState(up) {
+    if (up !== undefined) this._sseUp = up;
+    const el = document.getElementById("conn-status");
+    if (!el) return;
+    const dot = el.querySelector(".conn-dot");
+    const txt = el.querySelector(".conn-text");
+    let cls, label, title;
+    if (this._sseUp === false) {
+      cls = "conn-lost"; label = "hors ligne"; title = "Flux temps réel perdu — reconnexion automatique en cours";
+    } else if (this._pollFailing) {
+      cls = "conn-stale"; label = "données anciennes"; title = "La télémétrie /api/pupitre ne répond pas — dernières valeurs connues affichées";
+    } else {
+      cls = "conn-ok"; label = "en ligne"; title = "Flux temps réel connecté";
+    }
+    el.classList.remove("conn-ok", "conn-lost", "conn-stale");
+    el.classList.add(cls);
+    if (txt) txt.textContent = label;
+    el.title = title;
+    if (dot) { /* colour is CSS-driven via the class */ }
   },
 
   // P0-b safety net: if "le chef répond…" has been armed for a while but the
@@ -2780,7 +2820,15 @@ const App = {
     const body = $(".pb-body", ov);
     const musicians = [...this.musicians.values()];
     $(".pb-count", ov).textContent = musicians.length;
-    const attn = musicians.filter(m => m.state === "input" || m.state === "unread").length;
+    // "À vérifier" = questions, results not yet read, failures, AND silently
+    // stuck turns — an error must never be hidden behind a "new messages" count.
+    const needsAttn = (m) => {
+      if (m.state === "input" || m.state === "unread" || m.state === "error") return true;
+      const inFlight = m.state === "live" || m.state === "think";
+      const silentMs = m.lastActivityMs ? (Date.now() - m.lastActivityMs) : 0;
+      return inFlight && silentMs > 30_000;   // sans progrès observé
+    };
+    const attn = musicians.filter(needsAttn).length;
     $(".pb-attn", ov).textContent = attn;
 
     body.innerHTML = musicians.map(m => `

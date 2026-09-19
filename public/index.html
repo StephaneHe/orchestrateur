@@ -7,8 +7,16 @@
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230a0908'/%3E%3Cpath d='M6 22 Q16 4 26 22' fill='none' stroke='%23e8a15c' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='26' r='2.5' fill='%23e8a15c'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="./fonts/fonts.css">
 <link rel="stylesheet" href="./styles.css">
+<link rel="stylesheet" href="./pupitre-row.css">
+<link rel="stylesheet" href="./pupitre-detail.css">
 </head>
 <body data-theme="cinematic">
+
+<div id="app-version" aria-hidden="true"
+     style="position:fixed; right:8px; bottom:6px; z-index:50;
+            font-family:'JetBrains Mono', ui-monospace, monospace;
+            font-size:10px; color:#888; opacity:0.55; pointer-events:none;">
+</div>
 
 <div id="stage" class="stage">
 
@@ -19,10 +27,15 @@
       <span class="brand-sub">SALLE DE DIRECTION</span>
     </div>
     <div class="topbar-actions">
+      <span id="conn-status" class="pill conn-ok" title="État du flux temps réel">
+        <span class="conn-dot"></span><span class="conn-text">connexion…</span>
+      </span>
       <button id="btn-add"      class="pill">+ PROJET</button>
       <button id="btn-briefing" class="pill pill-accent">
         <span class="pill-dot"></span>Briefing
       </button>
+      <a id="btn-pupitre" class="pill" href="/pupitre"
+         title="Suivi temps réel de chaque musicien (chef inclus)">Pupitre</a>
       <button id="btn-tweaks"   class="pill-icon" title="Paramètres visuels">⚙</button>
     </div>
   </header>
@@ -30,36 +43,75 @@
   <!-- Luminous thread layer (SVG full-screen) ---------------------- -->
   <svg id="threads" class="threads" xmlns="http://www.w3.org/2000/svg"></svg>
 
-  <!-- Conductor transcript — primary view -------------------------- -->
+  <!-- Conductor transcript — primary view, left panel --------------- -->
   <div id="conductor-view" class="conductor-view">
     <!-- Mobile-only project tab bar (pill per musician) ------------- -->
     <div id="tab-bar" class="tab-bar" hidden></div>
+    <!-- Mobile-only live telemetry strip for the active musician tab —
+         same /api/pupitre data + renderer as one /pupitre row. Persistent
+         (outside #cv-scroll so the event stream re-render never wipes it). -->
+    <div id="mp-pupitre-strip" class="mp-pupitre-strip" hidden></div>
     <div id="cv-scroll" class="cv-scroll">
       <div class="cv-empty">
         <div class="cv-empty-title">Salle de direction</div>
         <div class="cv-empty-sub">Parle au chef. Il délègue aux musiciens et te rapporte la synthèse.</div>
       </div>
     </div>
+    <!-- Composer — bas du panneau gauche, on parle au chef ici -------->
+    <div id="composer" class="composer">
+      <div id="mention-menu" class="mention-menu" hidden></div>
+      <div id="composer-image-strip" class="composer-image-strip" hidden></div>
+      <div id="composer-error" class="composer-error" hidden></div>
+      <input type="file" id="composer-file" accept="image/*,video/*" multiple style="display:none">
+      <div class="composer-box">
+        <button id="composer-attach" class="composer-attach" type="button" title="Joindre image ou vidéo">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M13.5 8.5 7.8 14.2a4 4 0 0 1-5.6-5.6l7-7a2.5 2.5 0 0 1 3.5 3.5L6.2 11.6a1 1 0 0 1-1.4-1.4L10.5 4.5"/>
+          </svg>
+        </button>
+        <textarea id="composer-input"
+                  placeholder="Parle au chef — tape @ pour citer un musicien"
+                  rows="1"></textarea>
+        <button id="composer-send" class="composer-send" disabled>
+          <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+            <path d="M1 8 L14 1.5 L11 8 L14 14.5 Z"/>
+          </svg>
+        </button>
+      </div>
+      <div class="composer-hint">
+        <kbd>↵</kbd> envoyer · <kbd>⇧ ↵</kbd> nouvelle ligne · <kbd>Esc</kbd> fermer
+      </div>
+    </div>
   </div>
 
-  <!-- The arc is populated by app.js ------------------------------- -->
-  <div id="arc" class="arc"></div>
+  <!-- Fleet panel — right pane, scrollable, populated by app.js ---- -->
+  <div id="fleet-panel" class="fleet-panel">
+    <div id="arc" class="arc"></div>
+    <div id="parked-shelf" class="parked-shelf" hidden></div>
+  </div>
 
-  <!-- Conductor composer ------------------------------------------- -->
-  <div id="composer" class="composer">
-    <div id="mention-menu" class="mention-menu" hidden></div>
-    <div class="composer-box">
-      <textarea id="composer-input"
-                placeholder="Parle au chef — tape @ pour citer un musicien"
-                rows="1"></textarea>
-      <button id="composer-send" class="composer-send" disabled>
-        <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-          <path d="M1 8 L14 1.5 L11 8 L14 14.5 Z"/>
-        </svg>
-      </button>
+  <!-- Conductor card — bas-centre du panneau droit. Comme toute carte -->
+  <!-- musicien, elle ouvre le drawer /pupitre partagé au clic.        -->
+  <div id="chef-card" class="chef-card" data-state="idle" role="button"
+       tabindex="0" aria-label="Ouvrir le pupitre du chef">
+    <div class="chef-halo"></div>
+    <div class="chef-inner">
+      <span class="chef-dot"></span>
+      <div class="chef-identity">
+        <div class="chef-name">chef</div>
+        <div class="chef-sub"><span class="badge badge-chef">CHEF</span></div>
+        <div class="chef-path" title="Répertoire du Claude Code du chef"></div>
+      </div>
+      <div class="chef-feed"></div>
+      <div class="chef-state-row">
+        <span class="chef-activity" aria-hidden="true"></span>
+        <span class="chef-state-icon">○</span>
+        <span class="chef-state-label">AU REPOS</span>
+      </div>
     </div>
-    <div class="composer-hint">
-      <kbd>↵</kbd> envoyer · <kbd>⇧ ↵</kbd> nouvelle ligne · <kbd>Esc</kbd> fermer
+    <div class="chef-unconfigured-hint">
+      <div class="chef-uc-title">Aucun chef configuré</div>
+      <div class="chef-uc-sub">Clique <kbd>+ PROJET</kbd> et coche "Chef d'orchestre"</div>
     </div>
   </div>
 
@@ -75,21 +127,21 @@
 <div id="overlay-focused" class="overlay" hidden>
   <div class="overlay-scrim"></div>
   <div class="panel-focused" role="dialog" aria-modal="true">
-    <header class="pf-head">
-      <span class="pf-dot"></span>
-      <div class="pf-title">
-        <div class="pf-name"></div>
-        <div class="pf-sub"></div>
-      </div>
-      <button class="pf-session-chip" title="Attacher / détacher une session Claude">
-        <span class="psc-label">SID</span>
-        <span class="psc-id">—</span>
-      </button>
-      <span class="pf-usage" title="Tokens et coût cumulés pour ce musicien"></span>
-      <span class="pf-state-tag"></span>
-      <button class="pf-close" aria-label="Fermer">✕</button>
-    </header>
-    <div class="pf-body"></div>
+    <!-- IDENTICAL to a /pupitre opened row: d-head (name + telemetry meta +
+         close) · d-body (shared event stream) · d-foot (pin + count). The
+         composer below stays to talk to the musician. -->
+    <div class="d-head">
+      <span class="d-name pf-d-name">-</span>
+      <span class="d-meta pf-d-meta"></span>
+      <span class="spacer"></span>
+      <button class="d-close pf-close" aria-label="Fermer" title="Fermer (Échap)">&times;</button>
+    </div>
+    <div class="d-body pf-d-body"></div>
+    <div class="d-foot">
+      <span class="pf-d-pin pin-on">⏬ suit le flux</span>
+      <span class="spacer"></span>
+      <span class="pf-d-count">0 evts</span>
+    </div>
     <footer class="pf-compose">
       <textarea class="pf-input"
                 placeholder="Réponds à ce musicien…"
@@ -139,6 +191,15 @@
       </div>
       <div class="pa-manual-err" hidden></div>
     </section>
+    <section class="pa-section pa-conductor-section">
+      <label class="pa-conductor-row">
+        <input type="checkbox" class="pa-is-conductor">
+        <span class="pa-is-conductor-lbl">
+          <span class="pa-ic-main">Chef d'orchestre</span>
+          <span class="pa-ic-sub">Ce projet pilotera les autres musiciens. Remplace le chef actuel.</span>
+        </span>
+      </label>
+    </section>
   </div>
 </div>
 
@@ -184,8 +245,17 @@
       <button data-v="1.4">INTENSE</button>
     </div>
   </div>
+  <div class="tweaks-row">
+    <div class="tweaks-lbl">Fournisseur IA</div>
+    <div class="tweaks-seg" data-tweak="provider">
+      <button data-v="claude" class="on">CLAUDE</button>
+      <button data-v="codex">CODEX</button>
+    </div>
+  </div>
 </div>
 
+<script src="./pupitre-row.js"></script>
+<script src="./pupitre-detail.js"></script>
 <script src="./app.js"></script>
 </body>
 </html>
