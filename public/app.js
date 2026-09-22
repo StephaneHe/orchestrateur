@@ -20,6 +20,9 @@ const CARD_MIN_W = 110;
 // replayed from the persisted queue). This matches that relayed callback so we
 // reclassify it as the musician's callback and dedup it.
 const CALLBACK_RELAY_RE = /^\[([^\]\n]{1,80})\]\s+Tour\s+termin/i;
+// A musician that ends its turn on NEEDS_CHEF_INPUT has FINISHED but is waiting
+// on a chef decision — not the same thing as "terminé".
+const NEEDS_CHEF_INPUT_RE = /NEEDS_CHEF_INPUT:/i;
 const chatKey = (t) => String(t || "").replace(/\s+/g, " ").trim();
 const CARD_MAX_W = 150;
 const CARD_H     = 124;
@@ -97,6 +100,7 @@ class Musician {
     // POST /api/mark-read so unread state survives reloads.
     this.readAt = project.readAt || null;
     this.lastActivityMs = 0;
+    this.awaitingChef = false;           // finished, but blocked on a chef decision
     this.turnCount = 0;
     this.freq = 0;                       // communication frequency score
 
@@ -215,9 +219,17 @@ class Musician {
       this.totalCacheCreateTokens += cacheCreate;
       this.lastTurnUsage = { inTok, outTok, cacheRead, cacheCreate, cost, ctxUsed, ctxMax };
       const needs = /^NEEDS_USER_INPUT:\s*(.*)$/m.exec(this.lastAssistantText || "");
+      // NEEDS_CHEF_INPUT = the turn is over but the musician is blocked on a chef
+      // decision. State stays `unread` (locked vocabulary); this ADDITIVE flag is
+      // what stops the card from claiming "terminé".
+      this.awaitingChef = !needs && (
+        NEEDS_CHEF_INPUT_RE.test(this.lastAssistantText || "") ||
+        (typeof raw.result === "string" && NEEDS_CHEF_INPUT_RE.test(raw.result))
+      );
       if (isErr && raw.synthetic) {
         // Synthetic interrupts (orchestrator restart / child crash) — no question was asked.
         this.lastLine = raw.subtype || "interrompu";
+        this.awaitingChef = false;
         this.setState("idle");
       } else if (isErr) {
         this.lastLine = raw.subtype || "échec du tour";
@@ -323,9 +335,12 @@ class Musician {
     this.el.classList.toggle("is-stale", stale);
     this.el.classList.toggle("has-denial", this.pendingDenials.length > 0);
     $(".m-state-icon",  this.el).textContent = label.icon;
-    const baseLabel = this.unreadCount > 1 && this.state === "unread"
-      ? `${this.unreadCount} ${label.label}`
-      : label.label;
+    // A musician blocked on a chef decision must not read as "TERMINÉ".
+    const baseLabel = (this.awaitingChef && this.state === "unread")
+      ? "ATTEND LE CHEF"
+      : (this.unreadCount > 1 && this.state === "unread"
+          ? `${this.unreadCount} ${label.label}`
+          : label.label);
     // Always surface elapsed time while a turn is in flight so the card
      // shows motion even when events are sparse — otherwise the card can
      // feel frozen while the model is thinking or a long tool runs.
@@ -468,6 +483,26 @@ function reconcileChildren(container, htmlArray) {
 // --------------------------------------------------------------------------
 // Arc layout — multi-row, non-overlapping, apex = highest-freq
 // --------------------------------------------------------------------------
+
+// Outcome glyph shared by result cards and the chef's "prend en compte" header.
+// done ✓ · failed ✕ · ask_chef ⇄ (finished but blocked on a chef decision).
+function outcomeIcon(outcome) {
+  if (outcome === "failed") return "✕";
+  if (outcome === "ask_chef") return "⇄";
+  if (outcome === "question") return "?";
+  return "✓";
+}
+
+// "prend en compte : A ✓ · B ✕" — the link between the results already received
+// and the chef turn that follows. Purely presentational: NO chef turn is ever
+// triggered by a callback (that regression was removed in v0.14.3).
+function takingHtml(b) {
+  if (!b || !Array.isArray(b.taking) || !b.taking.length) return "";
+  const list = b.taking
+    .map(t => `${esc(t.source || "?")} ${outcomeIcon(t.outcome)}`)
+    .join(" · ");
+  return `<div class="cv-taking">prend en compte : ${list}</div>`;
+}
 
 const MOBILE_BREAKPOINT = 768;
 const isMobileViewport = () => window.innerWidth < MOBILE_BREAKPOINT;
@@ -924,6 +959,15 @@ const App = {
   // Wall-clock ms when the waiting flag was last armed. Used by the PID-liveness
   // safety net (P0-b) to only disarm a flag that has been stuck a while.
   _awaitingSince: 0,
+  // Results basket (0.18.0): musician results that landed WHILE a chef turn was
+  // running. They are held here and flushed after the chef's reply so a callback
+  // can never split a turn. Nothing here ever triggers a chef turn.
+  _pendingResults: [],
+  // Results received since the last chef turn started → rendered as the next
+  // turn's "prend en compte : …" header.
+  _resultsSinceChefTurn: [],
+  _currentTurnTaking: [],
+  _turnHadReflection: false,
   // Mobile only: which project the user is currently viewing in the main
   // pane. Defaults to the conductor. When != conductor, the body shows the
   // project's event stream and the composer dispatches there.
@@ -1131,6 +1175,28 @@ const App = {
       const msgs = await resp.json();
       const seen = new Set();
       const built = [];
+      // Mirror the LIVE ordering rule so a reload shows the same thread: a
+      // result that landed between a user prompt and the chef's reply was held
+      // during that turn, so replay it after the reply — and group runs of
+      // results into one basket. `held` = inside a turn, `pending` = the basket.
+      let inTurn = false;
+      let pending = [];
+      let sinceChefTurn = [];
+      let currentTaking = [];
+      const flush = (ts) => {
+        if (!pending.length) return;
+        const tail = built[built.length - 1];
+        // Merge into a trailing basket (same rule as live) so consecutive
+        // results never show as two separate boxes.
+        if (tail && tail.role === "results") tail.items.push(...pending);
+        else built.push({ role: "results", items: pending, ts: ts || Date.now() });
+        pending = [];
+      };
+      const fileItem = (it) => {
+        sinceChefTurn.push({ source: it.source, outcome: it.outcome });
+        pending.push(it);
+        if (!inTurn) flush(it.ts);   // outside a turn → its own basket, in place
+      };
       for (const m of msgs) {
         const e = {
           role: m.source ? "callback" : m.role,
@@ -1145,15 +1211,39 @@ const App = {
           const rm = CALLBACK_RELAY_RE.exec(e.text || "");
           if (rm) { e.role = "callback"; e.source = rm[1].trim(); }
         }
-        // Dedup callbacks (the notification + the relayed dispatch carry the
-        // same text; old callbacks can also reappear in the tail).
         if (e.role === "callback") {
+          // Dedup (the notification + the relayed dispatch carry the same text;
+          // old callbacks can also reappear in the tail).
           const k = chatKey(e.text);
           if (seen.has(k)) continue;
           seen.add(k);
+          const item = this._makeResultItem(m, e.text, e.source || "musicien");
+          if (item.outcome === "question") {
+            built.push({ role: "question", source: item.source, text: item.summary || e.text, ts: e.ts });
+          } else {
+            fileItem(item);
+          }
+          continue;
+        }
+        if (e.role === "user") {
+          flush(e.ts);           // anything still held belongs before the prompt
+          inTurn = true;         // a turn opens
+          // What came back since the PREVIOUS turn is what this one answers about.
+          currentTaking = sinceChefTurn; sinceChefTurn = [];
+          built.push(e);
+          continue;
+        }
+        if (e.role === "conductor") {
+          if (currentTaking.length) { e.taking = currentTaking; currentTaking = []; }
+          if (m.question) e.question = true;
+          built.push(e);
+          inTurn = false;        // turn closed → release the held results
+          flush(e.ts);
+          continue;
         }
         built.push(e);
       }
+      flush();
       this.chat = built;
       this.renderChat();
     } catch { /* non-fatal */ }
@@ -1683,9 +1773,57 @@ const App = {
         </div>`;
     }
     if (b.role === "callback") {
+      // Legacy shape (pre-0.18 logs / plain /api/notify): no outcome fields.
       return `<div class="cv-bubble is-callback">
           <div class="cv-byline">${esc(b.source || "musicien")}${tsChip}</div>
           <div class="cv-body md">${mdToHtml(b.text || "")}</div>
+        </div>`;
+    }
+    // A musician REPORTS — it does not converse. Results are rendered as a
+    // basket of cards (state-coloured), never as dialogue bubbles, and the
+    // basket is placed AFTER the chef's reply so it can't split a turn.
+    if (b.role === "results") {
+      const n = b.items.length;
+      const cards = b.items.map(it => {
+        const meta = [
+          Number.isFinite(it.durationMs) ? formatElapsed(it.durationMs) : "",
+          Number.isFinite(it.costUsd) ? `$${it.costUsd.toFixed(2)}` : "",
+        ].filter(Boolean).join(" · ");
+        const badge = it.awaitingChef ? `<span class="rc-badge">attend le chef</span>` : "";
+        return `<div class="cv-result-card" data-outcome="${esc(it.outcome || "done")}">
+            <div class="rc-head">
+              <span class="rc-name">${esc(it.source || "musicien")}</span>
+              <span class="rc-mark">${outcomeIcon(it.outcome)}</span>
+              ${meta ? `<span class="rc-meta">${esc(meta)}</span>` : ""}
+              ${badge}
+              <button class="rc-open" data-open-musician="${esc(it.source || "")}">voir</button>
+            </div>
+            <div class="rc-summary md">${mdToHtml(it.summary || it.text || "")}</div>
+          </div>`;
+      }).join("");
+      const names = b.items
+        .map(it => `${esc(it.source || "?")} ${outcomeIcon(it.outcome)}`)
+        .join(" · ");
+      // Progressive disclosure: a lone result opens (level 1); several collapse
+      // to ONE line (level 0) so a burst never floods the thread.
+      const openAttr = n === 1 ? " open" : "";
+      return `<details class="cv-results"${openAttr}>
+          <summary class="cv-results-summary">
+            <span class="cv-results-label">Résultat${n > 1 ? "s" : ""} reçu${n > 1 ? "s" : ""}</span>
+            <span class="cv-results-count">${n}</span>
+            <span class="cv-results-names">${names}</span>
+          </summary>
+          <div class="cv-results-body">${cards}</div>
+        </details>`;
+    }
+    // A musician asking the USER jumps the basket: it needs an answer now.
+    if (b.role === "question") {
+      return `<div class="cv-bubble is-question">
+          <div class="cv-byline">${esc(b.source || "musicien")} te demande${tsChip}</div>
+          <div class="cv-body md">${mdToHtml(b.text || "")}</div>
+          <div class="cv-q-actions">
+            <button class="cv-q-reply" data-answer-musician="${esc(b.source || "")}">↩ répondre à ${esc(b.source || "")}</button>
+          </div>
         </div>`;
     }
     if (b.role === "reflection") {
@@ -1700,19 +1838,26 @@ const App = {
         return "";
       }).join("");
       const openAttr = b.closed ? "" : " open";
-      return `<details class="cv-reflection${b.closed ? " is-closed" : " is-live"}"${openAttr}>
+      const details = `<details class="cv-reflection${b.closed ? " is-closed" : " is-live"}"${openAttr}>
           <summary class="cv-refl-summary">
             <span class="cv-refl-label">Réflexion du chef</span>
             <span class="cv-refl-meta">${esc(statusTxt)}</span>
           </summary>
           <div class="cv-refl-body">${evHtml || '<div class="cv-refl-empty">…</div>'}</div>
         </details>`;
+      // reconcileChildren keeps only the FIRST root element per entry, so when a
+      // "prend en compte" header exists it must be wrapped together with the
+      // details in a single root.
+      return takingHtml(b) ? `<div class="cv-chefgroup">${takingHtml(b)}${details}</div>` : details;
     }
     const usageChip = b.usage ? `<span class="cv-usage">${esc(fmtTurnUsage(b.usage))}</span>` : "";
-    return `<div class="cv-bubble is-conductor">
-          <div class="cv-byline">chef d'orchestre${tsChip}${usageChip}
+    const qCls = b.question ? " is-chef-question" : "";
+    const qTag = b.question ? `<span class="cv-qtag">question</span>` : "";
+    return `<div class="cv-bubble is-conductor${qCls}">
+          <div class="cv-byline">chef d'orchestre${tsChip}${qTag}${usageChip}
             <button class="cv-reply-btn" data-reply-idx="${idx}" title="Répondre à ce message">↩ répondre</button>
           </div>
+          ${takingHtml(b)}
           <div class="cv-body md">${mdToHtml(b.text || "")}</div>
         </div>`;
   },
@@ -1735,6 +1880,28 @@ const App = {
       if (editBtn) {
         e.stopPropagation();
         this.startInlineEdit(scroll, Number(editBtn.dataset.editIdx));
+        return;
+      }
+      // Result card → open that musician's panel (level 2 detail).
+      const openBtn = e.target.closest("[data-open-musician]");
+      if (openBtn) {
+        e.stopPropagation();
+        const m = this.musicians.get(openBtn.dataset.openMusician);
+        if (m) this.openFocused(m);
+        return;
+      }
+      // Musician question → prefill the composer with the @route to that
+      // musician, reusing the existing @shortcut path (no new routing).
+      const ansBtn = e.target.closest("[data-answer-musician]");
+      if (ansBtn) {
+        e.stopPropagation();
+        const name = ansBtn.dataset.answerMusician;
+        const input = $("#composer-input");
+        if (input && name) {
+          if (!input.value.trim().startsWith("@" + name)) input.value = `@${name} `;
+          input.focus();
+          input.setSelectionRange(input.value.length, input.value.length);
+        }
       }
     });
     scroll.addEventListener("dblclick", (e) => {
@@ -1892,7 +2059,11 @@ const App = {
   _ensureReflection() {
     const last = this.chat[this.chat.length - 1];
     if (last && last.role === "reflection" && !last.closed) return last;
-    const entry = { role: "reflection", events: [], startTs: Date.now(), endTs: null, closed: false };
+    const entry = {
+      role: "reflection", events: [], startTs: Date.now(), endTs: null, closed: false,
+      ...(this._currentTurnTaking.length ? { taking: this._currentTurnTaking.slice() } : {}),
+    };
+    this._turnHadReflection = true;
     this.chat.push(entry);
     if (this.chat.length > CHAT_MAX) this.chat.splice(0, this.chat.length - CHAT_MAX);
     return entry;
@@ -1917,6 +2088,10 @@ const App = {
       if (!e.closed) { e.closed = true; e.endTs = Date.now(); }
       break;
     }
+    // The turn is over (no producer) — never strand results in the basket.
+    this._currentTurnTaking = [];
+    this._turnHadReflection = false;
+    this._flushPendingResults();
   },
 
   /** True if a callback bubble with this exact text is already in the chat.
@@ -1926,18 +2101,74 @@ const App = {
   _callbackDup(text) {
     const k = chatKey(text);
     if (!k) return false;
-    return this.chat.some(e => e.role === "callback" && chatKey(e.text) === k);
+    if (this._pendingResults.some(it => chatKey(it.text) === k)) return true;
+    return this.chat.some(e =>
+      (e.role === "callback" && chatKey(e.text) === k) ||
+      (e.role === "results" && e.items.some(it => chatKey(it.text) === k))
+    );
+  },
+
+  /** Build a result-card item from a musician coordination event (notification
+   *  or the relayed sourced user_prompt). Pre-0.18 events carry no outcome
+   *  fields — they degrade to a plain "done" card showing their raw text. */
+  _makeResultItem(raw, txt, source) {
+    return {
+      source,
+      outcome: raw.outcome || (raw.subtype === "musician_question" ? "question" : "done"),
+      summary: typeof raw.summary === "string" && raw.summary ? raw.summary : "",
+      text: txt,
+      durationMs: Number.isFinite(raw.duration_ms) ? raw.duration_ms : undefined,
+      costUsd: Number.isFinite(raw.cost_usd) ? raw.cost_usd : undefined,
+      awaitingChef: !!raw.awaitingChef,
+      ts: Date.parse(raw.timestamp) || Date.now(),
+    };
+  },
+
+  /** Route one musician result: held while the chef is mid-turn, otherwise
+   *  appended to the trailing basket (merged if recent). */
+  _fileResult(item) {
+    this._resultsSinceChefTurn.push({ source: item.source, outcome: item.outcome });
+    if (this._awaitingConductorResponse) { this._pendingResults.push(item); return; }
+    this._appendResultGroup([item]);
+  },
+
+  _appendResultGroup(items) {
+    if (!items.length) return;
+    const last = this.chat[this.chat.length - 1];
+    if (last && last.role === "results" && (Date.now() - last.ts) < 60_000) {
+      last.items.push(...items);
+      last.ts = Date.now();
+      return;
+    }
+    this.chat.push({ role: "results", items: items.slice(), ts: Date.now() });
+    if (this.chat.length > CHAT_MAX) this.chat.splice(0, this.chat.length - CHAT_MAX);
+  },
+
+  _flushPendingResults() {
+    if (!this._pendingResults.length) return;
+    this._appendResultGroup(this._pendingResults.splice(0));
   },
 
   onConductorEvent(musician, raw) {
-    if (raw?.type === "notification" && raw.subtype === "musician_done") {
+    if (raw?.type === "notification" &&
+        (raw.subtype === "musician_done" || raw.subtype === "musician_question")) {
       const txt = String(raw.text || "").trim();
       const source = raw.source || null;
       // Dedup: skip if this callback is already shown (the relayed chef dispatch
       // carries the same text, and reconnect/queue replays can repeat it).
       if (txt && source && !this._callbackDup(txt)) {
-        this.chat.push({ role: "callback", text: txt, ts: Date.parse(raw.timestamp) || Date.now(), source });
-        if (this.chat.length > CHAT_MAX) this.chat.splice(0, this.chat.length - CHAT_MAX);
+        const item = this._makeResultItem(raw, txt, source);
+        if (item.outcome === "question") {
+          // Asking the USER — jumps the basket, it needs an answer now.
+          this.chat.push({
+            role: "question", source,
+            text: item.summary || txt,
+            ts: item.ts,
+          });
+          if (this.chat.length > CHAT_MAX) this.chat.splice(0, this.chat.length - CHAT_MAX);
+        } else {
+          this._fileResult(item);
+        }
         this.showCallbackToast(source, txt);
         this.renderChat();
       }
@@ -1967,11 +2198,10 @@ const App = {
             ? raw.attachmentPaths.map(p => '/attachments/' + String(p).replace(/\\/g, '/').split('/').pop())
             : undefined;
           if (source && !isShortcut) {
-            // Callback — render as the musician's event, and dedup so the
-            // notification + this relay don't show it twice.
+            // Relayed musician callback — same routing as the notification:
+            // into the results basket, never inline in an open chef turn.
             if (!this._callbackDup(txt)) {
-              this.chat.push({ role: "callback", text: txt, ts: Date.parse(raw.timestamp) || Date.now(), source, ...(images ? { images } : {}) });
-              if (this.chat.length > CHAT_MAX) this.chat.splice(0, this.chat.length - CHAT_MAX);
+              this._fileResult(this._makeResultItem(raw, txt, source));
               this.showCallbackToast(source, txt);
             }
           } else {
@@ -2024,6 +2254,10 @@ const App = {
       // dispatch was launched with --source (whose user_prompt carries a source
       // and therefore did NOT arm above) — so this is the reliable arm point.
       this._armConductorWait();
+      // Everything that came back since the previous chef turn is what THIS turn
+      // is answering about — show it as the turn's header.
+      this._currentTurnTaking = this._resultsSinceChefTurn.splice(0);
+      this._turnHadReflection = false;
     } else if (raw?.type === "result") {
       // Chef finished — clear the waiting flag regardless of success/error.
       this._awaitingConductorResponse = false;
@@ -2043,18 +2277,34 @@ const App = {
         if (txt) e.events = e.events.filter(ev => !(ev.kind === "text" && (ev.text || "").trim() === txt));
         break;
       }
-      if (!txt) return this.renderChat();
+      if (!txt) { this._endChefTurn(); return this.renderChat(); }
       const last = this.chat[this.chat.length - 1];
       const usage = musician.lastTurnUsage;
       if (last && last.role === "conductor" && last.text.trim() === txt) {
         if (!last.usage && usage) last.usage = usage;
       } else {
-        this.chat.push({ role: "conductor", text: txt, ts: Date.now(), usage });
+        this.chat.push({
+          role: "conductor", text: txt, ts: Date.now(), usage,
+          // A chef reply ending on NEEDS_USER_INPUT is a QUESTION, not a report.
+          ...(/^NEEDS_USER_INPUT:/m.test(txt) ? { question: true } : {}),
+          // No reflection this turn → the "prend en compte" header belongs here.
+          ...(!this._turnHadReflection && this._currentTurnTaking.length
+            ? { taking: this._currentTurnTaking.slice() } : {}),
+        });
         if (this.chat.length > CHAT_MAX) this.chat.splice(0, this.chat.length - CHAT_MAX);
       }
       musician.markRead();
+      this._endChefTurn();
     }
     this.renderChat();
+  },
+
+  /** Close a chef turn: the results that landed during it are released now, so
+   *  they appear AFTER the reply instead of splitting it. */
+  _endChefTurn() {
+    this._currentTurnTaking = [];
+    this._turnHadReflection = false;
+    this._flushPendingResults();
   },
 
   showCallbackToast(source, text) {

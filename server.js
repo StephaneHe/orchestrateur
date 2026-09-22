@@ -2086,13 +2086,30 @@ app.get('/api/conductor-chat', (req, res) => {
         if (b?.type === 'text' && b.text?.trim()) lastAssistantText = b.text.trim();
       }
     } else if (ev.type === 'result' && !ev.is_error && lastAssistantText) {
+      // A chef reply that ENDS with NEEDS_USER_INPUT used to be dropped here, so
+      // the chef's own question vanished from the thread on every reload. Keep
+      // it, flagged, so the client can render it as a question bubble.
       const needs = /^NEEDS_USER_INPUT:/m.test(lastAssistantText);
-      if (!needs) {
-        msgs.push({ role: 'conductor', text: lastAssistantText, ts: monotonic(stampFrom(ev)) });
-        lastAssistantText = '';
-      }
-    } else if (ev.type === 'notification' && ev.subtype === 'musician_done' && ev.source && typeof ev.text === 'string' && ev.text.trim()) {
-      msgs.push({ role: 'callback', text: ev.text.trim(), ts: monotonic(stampFrom(ev)), source: ev.source });
+      const entry = { role: 'conductor', text: lastAssistantText, ts: monotonic(stampFrom(ev)) };
+      if (needs) entry.question = true;
+      msgs.push(entry);
+      lastAssistantText = '';
+    } else if (ev.type === 'notification'
+               && (ev.subtype === 'musician_done' || ev.subtype === 'musician_question')
+               && ev.source && typeof ev.text === 'string' && ev.text.trim()) {
+      // Additive fields (outcome/summary/duration/cost) are passed through so a
+      // reload rebuilds the same result cards as the live stream.
+      msgs.push({
+        role: 'callback',
+        text: ev.text.trim(),
+        ts: monotonic(stampFrom(ev)),
+        source: ev.source,
+        ...(ev.outcome ? { outcome: ev.outcome } : {}),
+        ...(typeof ev.summary === 'string' && ev.summary ? { summary: ev.summary } : {}),
+        ...(Number.isFinite(ev.duration_ms) ? { duration_ms: ev.duration_ms } : {}),
+        ...(Number.isFinite(ev.cost_usd)    ? { cost_usd: ev.cost_usd }       : {}),
+        ...(ev.awaitingChef ? { awaitingChef: true } : {}),
+      });
     }
   }
   res.json(msgs.slice(-n));
@@ -2102,14 +2119,17 @@ app.get('/api/conductor-chat', (req, res) => {
 // event. Updates musicianAutoStates in place; returns prev + new state so
 // the pump can detect transitions without re-reading the whole log.
 function reduceMusician(name, ev) {
-  const prev = musicianAutoStates.get(name) ?? { state: 'idle', lastAssistantText: '', lastLine: '' };
+  const prev = musicianAutoStates.get(name)
+    ?? { state: 'idle', lastAssistantText: '', lastLine: '', awaitingChef: false };
   let { state, lastAssistantText, lastLine } = prev;
+  let awaitingChef = prev.awaitingChef ?? false;
   const t = ev?.type;
   // stream_event lines are very frequent token-level deltas — skip.
-  if (t === 'stream_event') return { prevState: state, newState: state, lastLine };
+  if (t === 'stream_event') return { prevState: state, newState: state, lastLine, awaitingChef };
   // Sourced user_prompt (callback / @shortcut / notify) is not a turn start.
   if ((t === 'user_prompt' && !ev.source) || (t === 'system' && ev.subtype === 'init')) {
     if (state === 'idle' || state === 'unread') state = 'live';
+    awaitingChef = false;   // a new turn clears "waiting on the chef"
   } else if (t === 'assistant') {
     const blocks = ev.message?.content || [];
     let hasTool = false, hasThink = false, gotText = null;
@@ -2123,16 +2143,39 @@ function reduceMusician(name, ev) {
   } else if (t === 'result') {
     const isErr = !!ev.is_error || (typeof ev.subtype === 'string' && ev.subtype.startsWith('error'));
     const needs = /^NEEDS_USER_INPUT:\s*(.*)$/m.exec(lastAssistantText || '');
-    if (isErr && ev.synthetic)  state = 'idle';
-    else if (isErr)             { state = 'error'; lastLine = ev.subtype || 'échec du tour'; }
-    else if (needs)             { state = 'input'; lastLine = needs[1].trim().slice(0, 600); }
+    // NEEDS_CHEF_INPUT is a DIFFERENT wait: the musician finished its turn but is
+    // blocked on a chef decision. The state string stays `unread` (locked
+    // vocabulary) — `awaitingChef` is an ADDITIVE flag so the UI can say
+    // "attend le chef" instead of the misleading "terminé".
+    const asksChef = NEEDS_CHEF_RE.test(lastAssistantText || '')
+      || (typeof ev.result === 'string' && NEEDS_CHEF_RE.test(ev.result));
+    if (isErr && ev.synthetic)  { state = 'idle'; awaitingChef = false; }
+    else if (isErr)             { state = 'error'; lastLine = ev.subtype || 'échec du tour'; awaitingChef = false; }
+    else if (needs)             { state = 'input'; lastLine = needs[1].trim().slice(0, 600); awaitingChef = false; }
     else {
       if (ev.result) lastLine = ev.result.replace(/\s+/g, ' ').trim().slice(0, 600);
       state = 'unread';
+      awaitingChef = asksChef;
     }
   }
-  musicianAutoStates.set(name, { state, lastAssistantText, lastLine });
-  return { prevState: prev.state, newState: state, lastLine };
+  musicianAutoStates.set(name, { state, lastAssistantText, lastLine, awaitingChef });
+  return { prevState: prev.state, newState: state, lastLine, awaitingChef };
+}
+
+/** Human-facing summary of a finished turn: the LAST paragraph of the result —
+ *  musicians end with their conclusion — instead of the old `slice(0, 600)` that
+ *  cut the opening mid-sentence. Capped at 280 chars on a word boundary. */
+function summarizeResult(ev) {
+  const raw = typeof ev?.result === 'string' ? ev.result.trim() : '';
+  if (!raw) return '';
+  const paras = raw.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+  let last = paras.length ? paras[paras.length - 1] : raw;
+  // A very short tail (a closing line like "Terminé.") carries no information —
+  // fold the previous paragraph in so the card still says something.
+  if (last.length < 40 && paras.length > 1) last = `${paras[paras.length - 2]} ${last}`;
+  last = last.replace(/\s+/g, ' ').trim();
+  if (last.length <= 280) return last;
+  return last.slice(0, 279).replace(/\s+\S*$/, '') + '…';
 }
 
 // ---------- Aggregate SSE (all projects over one connection) ---------------
@@ -2763,18 +2806,48 @@ function fireDesktopNotification(source, text) {
   } catch { /* non-Windows or PS unavailable — ignore */ }
 }
 
-// Called by the SSE pump when a musician transitions to the 'unread' state,
-// meaning a non-error turn just completed. Appends a callback bubble to the
-// conductor's log (the SSE pump picks it up instantly) and fires a toast.
-function autoNotifyConductor(musicianName, summary) {
+// Called by the background watcher when a musician's turn reaches a terminal
+// state. Appends ONE coordination event to the conductor's log (the SSE pump
+// picks it up instantly) and fires a toast.
+//
+// The event carries ADDITIVE fields so the dashboard can render a proper result
+// CARD (outcome, duration, cost, a real summary) instead of a truncated bubble.
+// Older events without them still render — consumers default `outcome` to 'done'.
+//
+//   outcome: 'done' | 'failed' | 'question' | 'ask_chef'
+//   subtype: 'musician_done' (done/failed) | 'musician_question' (question/ask_chef)
+//
+// `question` = the musician asked the USER (NEEDS_USER_INPUT); `ask_chef` = it
+// asked the CHEF (NEEDS_CHEF_INPUT) — the latter is why a finished turn must not
+// be announced as plain "terminé".
+const OUTCOME_LABEL = {
+  done:     'Tour terminé',
+  failed:   'Échec',
+  question: 'Question',
+  ask_chef: 'Demande au chef',
+};
+function autoNotifyConductor(musicianName, opts = {}) {
   const cName = config.conductor || 'chef';
   if (musicianName === cName) return;
-  console.log(`[notify-bg] firing autoNotifyConductor for ${musicianName}`);
+  const outcome = OUTCOME_LABEL[opts.outcome] ? opts.outcome : 'done';
+  const summary = typeof opts.summary === 'string' ? opts.summary.trim() : '';
+  console.log(`[notify-bg] firing autoNotifyConductor for ${musicianName} (${outcome})`);
 
-  // 1. Write a visual callback bubble to the conductor log (for the human).
+  // 1. Write a visual coordination event to the conductor log (for the human).
   const logPath = path.join(LOGS_DIR, `${cName}.jsonl`);
-  const text = `[${musicianName}] Tour terminé.${summary ? ' ' + summary : ''}`;
-  const ev = { type: 'notification', subtype: 'musician_done', text, timestamp: new Date().toISOString(), source: musicianName };
+  const text = `[${musicianName}] ${OUTCOME_LABEL[outcome]}.${summary ? ' ' + summary : ''}`;
+  const ev = {
+    type: 'notification',
+    subtype: (outcome === 'question' || outcome === 'ask_chef') ? 'musician_question' : 'musician_done',
+    text,
+    timestamp: new Date().toISOString(),
+    source: musicianName,
+    outcome,
+    summary,
+    ...(Number.isFinite(opts.durationMs) ? { duration_ms: opts.durationMs } : {}),
+    ...(Number.isFinite(opts.costUsd)    ? { cost_usd: opts.costUsd }       : {}),
+    ...(opts.awaitingChef ? { awaitingChef: true } : {}),
+  };
   try {
     fs.appendFileSync(logPath, '\n' + JSON.stringify(ev) + '\n');
   } catch (e) {
@@ -3716,12 +3789,35 @@ function startBackgroundNotifyWatchers() {
         if (!line) continue;
         try {
           const ev = JSON.parse(line);
-          const { prevState, newState, lastLine } = reduceMusician(name, ev);
+          const { prevState, newState, lastLine, awaitingChef } = reduceMusician(name, ev);
           if (ev.type === 'result') {
             console.log(`[notify-bg] ${name} result: prevState=${prevState} newState=${newState}`);
           }
-          if (newState === 'unread' && (prevState === 'live' || prevState === 'think' || prevState === 'input')) {
-            autoNotifyConductor(name, lastLine);
+          // One coordination event per terminal transition of a real turn.
+          // A SYNTHETIC result (interrupted / limited) is closed by the system,
+          // not by the musician — it gets no callback at all (the card carries
+          // the cause), so the chef's thread isn't polluted with non-work.
+          if (ev.type === 'result' && !ev.synthetic &&
+              (prevState === 'live' || prevState === 'think' || prevState === 'input')) {
+            const durationMs = Number.isFinite(ev.duration_ms) ? ev.duration_ms : undefined;
+            const costUsd    = Number.isFinite(ev.total_cost_usd) ? ev.total_cost_usd : undefined;
+            if (newState === 'unread') {
+              autoNotifyConductor(name, {
+                outcome: awaitingChef ? 'ask_chef' : 'done',
+                summary: summarizeResult(ev) || lastLine,
+                durationMs, costUsd, awaitingChef,
+              });
+            } else if (newState === 'input') {
+              // The musician is asking the USER — surface it in the chef thread
+              // instead of leaving it to be spotted on an orange card.
+              autoNotifyConductor(name, { outcome: 'question', summary: lastLine, durationMs, costUsd });
+            } else if (newState === 'error') {
+              autoNotifyConductor(name, {
+                outcome: 'failed',
+                summary: summarizeResult(ev) || ev.subtype || 'échec du tour',
+                durationMs, costUsd,
+              });
+            }
           }
           // Drain the per-musician queue on any turn completion (unread/idle/error).
           // Uses setImmediate inside drainQueue so it never blocks this pump iteration.

@@ -843,6 +843,120 @@ a.pill { text-decoration: none; }   /* #btn-pupitre is an <a> styled as a pill *
   align-self: flex-start;
   align-items: flex-start;
 }
+
+/* ── 0.18.0 — three distinct voices ────────────────────────────────────────
+   user   = filled bubble, right        (dialogue)
+   chef   = bordered bubble, left, amber rule + ♛   (dialogue)
+   musician = RESULT CARD, state-coloured rule (reports, never converses)
+   system = banner / badge, never a bubble
+   ------------------------------------------------------------------------ */
+
+/* "prend en compte : A ✓ · B ✕" — links a chef turn to the results it answers. */
+.cv-taking {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--fg-2);
+  padding: 2px 0 4px;
+  opacity: 0.9;
+}
+.cv-chefgroup { display: flex; flex-direction: column; min-width: 0; }
+
+/* Chef bubble gets a permanent amber rule so the voice is unmistakable. */
+.cv-bubble.is-conductor > .cv-body {
+  border-left: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  padding-left: 10px;
+}
+.cv-bubble.is-conductor .cv-byline::before { content: "♛ "; }
+.cv-bubble.is-chef-question > .cv-body {
+  border-left-color: var(--st-input);
+}
+.cv-qtag {
+  font-size: 8px; letter-spacing: 0.18em;
+  color: var(--st-input);
+  border: 1px solid color-mix(in srgb, var(--st-input) 45%, transparent);
+  border-radius: 999px; padding: 1px 6px; margin-left: 6px;
+}
+
+/* Musician question — jumps the basket, needs an answer now. */
+.cv-bubble.is-question {
+  align-self: flex-start;
+  align-items: flex-start;
+  max-width: 88%;
+}
+.cv-bubble.is-question > .cv-body {
+  border-left: 2px solid var(--st-input);
+  padding-left: 10px;
+}
+.cv-bubble.is-question .cv-byline { color: var(--st-input); }
+.cv-q-actions { padding-top: 4px; }
+.cv-q-reply {
+  font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.14em;
+  background: transparent; color: var(--st-input); cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--st-input) 45%, transparent);
+  border-radius: 999px; padding: 3px 9px;
+}
+.cv-q-reply:hover { background: color-mix(in srgb, var(--st-input) 14%, transparent); }
+
+/* Results basket — collapsed to ONE line when several land at once. */
+.cv-results {
+  align-self: stretch;
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--card-bg) 70%, transparent);
+  overflow: hidden;
+}
+.cv-results-summary {
+  cursor: pointer; list-style: none;
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px;
+  font-family: var(--font-mono); font-size: 9px;
+  letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg-2);
+}
+.cv-results-summary::-webkit-details-marker { display: none; }
+.cv-results-summary::before { content: "▸"; font-size: 9px; transition: transform .15s; }
+.cv-results[open] .cv-results-summary::before { transform: rotate(90deg); }
+.cv-results-count {
+  background: var(--st-unread); color: #061014;
+  border-radius: 999px; padding: 0 6px; font-size: 9px;
+}
+.cv-results-names {
+  color: var(--fg-2); letter-spacing: 0.08em; text-transform: none;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.cv-results-body { display: flex; flex-direction: column; gap: 6px; padding: 4px 8px 8px; }
+
+.cv-result-card {
+  border-left: 3px solid var(--st-unread);
+  background: color-mix(in srgb, var(--card-bg) 85%, transparent);
+  border-radius: 0 8px 8px 0;
+  padding: 7px 10px;
+}
+.cv-result-card[data-outcome="failed"]   { border-left-color: var(--st-error); }
+.cv-result-card[data-outcome="ask_chef"] { border-left-color: var(--st-input); }
+.cv-result-card[data-outcome="question"] { border-left-color: var(--st-input); }
+.rc-head {
+  display: flex; align-items: center; gap: 7px;
+  font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.16em;
+}
+.rc-name { color: var(--fg-1); text-transform: uppercase; }
+.rc-mark { color: var(--st-unread); }
+.cv-result-card[data-outcome="failed"]   .rc-mark { color: var(--st-error); }
+.cv-result-card[data-outcome="ask_chef"] .rc-mark { color: var(--st-input); }
+.rc-meta { color: var(--fg-2); letter-spacing: 0.08em; }
+.rc-badge {
+  color: var(--st-input); font-size: 8px; letter-spacing: 0.14em;
+  border: 1px solid color-mix(in srgb, var(--st-input) 45%, transparent);
+  border-radius: 999px; padding: 1px 6px;
+}
+.rc-open {
+  margin-left: auto; cursor: pointer;
+  font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.14em;
+  background: transparent; color: var(--fg-2);
+  border: 1px solid var(--card-border); border-radius: 999px; padding: 2px 8px;
+}
+.rc-open:hover { color: var(--fg-0); background: var(--card-bg-hover); }
+.rc-summary { font-size: 12px; color: var(--fg-1); padding-top: 4px; }
 .cv-byline {
   font-family: var(--font-mono);
   font-size: 9px;
