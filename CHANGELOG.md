@@ -11,6 +11,30 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-09-22
+
+Redéfinition des événements et de leurs enchaînements — P0 de `docs/orchestrateur-events-redesign-fable.md`.
+Problème traité : « les callbacks sont délivrés, mais pas au bon moment ». Vocabulaire d'états **inchangé**
+(`idle|live|think|input|error|unread`) — tout est badges, regroupements et champs additifs.
+
+### Added
+- (dashboard) **Panier de résultats.** Un résultat de musicien qui arrive **pendant** un tour du chef n'est plus inséré au milieu de ce tour : il est retenu puis publié **après** la réponse du chef, dans un groupe « Résultats reçus (n) » — replié quand plusieurs atterrissent d'un coup, ouvert pour un seul. Le tour du chef suivant affiche l'en-tête **« prend en compte : A ✓ · B ✕ »**, qui rend le lien visible **sans déclencher le moindre tour** (l'acquis v0.14.3 est préservé). Le filet PID vide le panier, donc un tour qui ne se termine jamais ne peut pas y piéger de résultats. Le rechargement (`loadChatHistory`) reconstruit exactement le même ordre.
+- (dashboard + server) **Carte de résultat enrichie.** La `notification` porte désormais `outcome`, `summary`, `duration_ms`, `cost_usd` et `awaitingChef` (**champs additifs** — les anciens callbacks s'affichent comme avant). Le résumé est le **dernier paragraphe** du résultat (la conclusion du musicien), plafonné à 280 caractères sur une coupure de mot, au lieu du `slice(0, 600)` qui tronquait l'introduction en plein milieu. Rendu en **carte** à liseré de la couleur de l'état, avec durée, coût et un bouton « voir ».
+- (dashboard + server) **Question d'un musicien dans le fil du chef.** Un `NEEDS_USER_INPUT` émet une `notification/musician_question` et **saute le panier** : bulle « X te demande » avec un bouton qui préremplit `@X`. Auparavant il fallait repérer une carte orange.
+- (dashboard) **Différenciation graphique des trois voix** : l'utilisateur et le chef dialoguent en bulles (chef = liseré ambre + ♛), le **musicien ne dialogue pas** — il rend compte via une carte ; le système reste en bandeau/badge.
+
+### Fixed
+- (server) **« Attend le chef » n'est plus annoncé comme « terminé ».** Un tour qui se clôt sur `NEEDS_CHEF_INPUT` porte le drapeau additif `awaitingChef` (l'état reste `unread`) : la carte affiche « ATTEND LE CHEF » et la carte de résultat un ⇄ + badge. Cela règle du même coup la **course** entre la pompe SSE qui relaie la question au chef et le watcher qui écrivait « Tour terminé » dans le log du chef.
+- (server) **Un `result` synthétique n'émet plus de callback du tout** (tour clos par le système : redémarrage, crash, quota) — il ne pollue plus le fil du chef avec du non-travail. Un **échec** réel, lui, émet désormais une carte `failed` (avant : silence total).
+- (server) **La question du chef n'est plus supprimée de l'historique.** Une réponse se terminant par `NEEDS_USER_INPUT` était purement et simplement jetée par `/api/conductor-chat` : elle disparaissait à chaque rechargement. Elle est conservée et marquée comme question.
+- (android vc13 / 0.4.8) **Un `result` synthétique n'est plus affiché comme une ERREUR rouge** (`Musician.kt`) : il devient `idle` avec sa cause (« limité (quota) », « interrompu »), comme le font déjà le serveur et le web. Une pause de quota ressemblait à un crash. Seul point touchant un reducer — c'est un **alignement** de plateforme, pas une nouvelle chaîne d'état.
+
+### Notes
+- Périmètre **P0 strict**. P1 (bandeau attention, limite 5 h visible, badge « attend le chef » sur `/api/pupitre`, snapshot pupitre mobile, notices de transport, tri différé) et P2/P3 non faits. Rien de la section « Écarté » n'a été implémenté.
+- Acquis préservés : v0.16.1 (chef figé) et v0.17.0 (tri d'attention, 2ᵉ ligne, fraîcheur, cache `/api/pupitre`, skip parked, pas de drain sur synthétique).
+- Vérifié : headless sur le vrai client (panier retenu puis publié après la réponse, 3 callbacks → 1 panier, « prend en compte », durée/coût/résumé, rétro-compat, question qui saute le panier, ⇄ + badge, « ATTEND LE CHEF », tag question ; **0 erreur console**) ; ordre identique au rechargement ; `summarizeResult` testé isolément ; `node --check` sur `server.js` et `public/app.js` ; APK vc13 construit.
+- **Client = hard-reload. Serveur = un redémarrage 7777 par le chef.** APK : `I:\orchestrateur\android\app\build\outputs\apk\debug\app-debug.apk`.
+
 ## [0.17.0] - 2026-09-19
 
 ### Added

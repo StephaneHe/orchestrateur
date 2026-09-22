@@ -57,6 +57,11 @@ data class RawEvent(
     val type: String? = null,
     val subtype: String? = null,
     @SerialName("is_error") val isError: Boolean? = null,
+    // True on results the SERVER fabricated to close a turn nobody will close
+    // (orchestrator restart, child crash, Claude limit under no-failover). The
+    // musician did NOT fail — the turn was closed for it. Web and server both
+    // reduce these to `idle`; Android used to paint them red.
+    val synthetic: Boolean? = null,
     val message: Msg? = null,
     @SerialName("session_id") val sessionId: String? = null,
     val result: String? = null,

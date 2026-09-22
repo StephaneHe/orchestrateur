@@ -4,6 +4,17 @@ Suivi léger des tâches en cours / différées côté orchestrateur.
 
 ## Fait
 
+- [x] **Redéfinition des événements / enchaînements — P0** (2026-09-22, web v0.18.0 + android vc13/0.4.8).
+  Spec : `docs/orchestrateur-events-redesign-fable.md`. Panier de résultats (un callback n'est plus inséré dans un tour chef ;
+  publié après la réponse, groupé, replié si plusieurs ; en-tête « prend en compte : A ✓ B ✕ » sans déclencher de tour) ;
+  carte de résultat enrichie (outcome/summary/duration/cost additifs, résumé = dernier paragraphe au lieu d'un slice(0,600)) ;
+  question musicien dans le fil du chef + bouton `@X` ; « attend le chef » ≠ « terminé » (`awaitingChef`, état `unread` inchangé)
+  + course SSE/watcher réglée ; synthétique n'émet plus de callback, échec en émet un ; question du chef conservée à l'historique ;
+  Android : synthétique → `idle` + cause, plus d'ERREUR rouge. Vérifié headless + `node --check` + APK construit.
+  **Restart 7777 requis (chef)** ; client = hard-reload. Progression : `docs/orchestrateur-events-impl-progress.md`.
+  Reste : **P1** (bandeau attention, limite 5 h visible, badge attend-le-chef sur /api/pupitre, snapshot pupitre mobile,
+  notices de transport, tri différé / onglet mobile stable) puis P2/P3.
+
 - [x] **Refonte affichage musiciens + serveur — P0 (Lots 1/2/3)** (2026-09-19, v0.17.0). Spec : `docs/orchestrateur-redesign-validated.md`.
   Lot 1 (client) : PID mort > sans progrès, libellés FR (clés d'état inchangées), briefing compte erreurs+bloqués, détail live rend
   l'assistant consolidé sans deltas, pastille connexion/fraîcheur. Lot 2 (client) : tri par attention stable, 2ᵉ ligne de carte

@@ -1,0 +1,44 @@
+/* public/pupitre-detail.css — shared event-block styling for the "open row"
+   event stream. Loaded by /pupitre (drawer #d-body) and the dashboard focused
+   card (.pf-main-stream) so both render identically. Markup builder lives in
+   public/pupitre-detail.js. @keyframes pulse comes from pupitre-row.css. */
+.e {
+  margin: 0 0 8px; padding: 5px 9px; border-radius: 6px; border-left: 2px solid #2a2a32;
+  background: #131317; white-space: pre-wrap; word-break: break-word; line-height: 1.45;
+}
+.e-label { display: block; font-size: 9px; letter-spacing: 0.09em; text-transform: uppercase; color: #5c5c66; margin-bottom: 3px; }
+.e-ts { font-variant-numeric: tabular-nums; letter-spacing: 0; color: #46464f; margin-right: 2px; }
+.e-text   { color: #dcdcdc; border-left-color: #3d3d48; }
+.e-think  { color: #8b7fb0; font-style: italic; background: #131118; border-left-color: #4a3d6b; }
+.e-tool   { color: #6cc4ff; background: #101519; border-left-color: #1f5f8b; }
+.e-result { color: #9a9aa2; background: #111113; border-left-color: #2f2f38; font-size: 12px; }
+.e-prompt { color: #e8a15c; background: #17140f; border-left-color: #7a5a2a; }
+.e-done   { color: #4ade80; background: #0f1512; border-left-color: #1f6b3a; }
+.e-error  { color: #ff6b6b; background: #1a1010; border-left-color: #7a2020; }
+.e-sys    { color: #6a6a74; font-size: 11px; border-left-color: #26262e; }
+.clamp { max-height: 10em; overflow: hidden; position: relative; cursor: zoom-in; }
+.clamp::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2.6em;
+  background: linear-gradient(rgba(19,19,23,0), #131317);
+}
+.clamp.open { max-height: none; cursor: zoom-out; }
+.clamp.open::after { display: none; }
+.streaming::after { content: '█'; color: #4ade80; animation: pulse 1s steps(2) infinite; }
+
+/* Drawer chrome — d-head / d-body / d-foot. Shared so the /pupitre drawer and
+   the dashboard focused card render the "open row" identically. Assumes a
+   flex-column parent (/pupitre's .detail, the dashboard's .panel-focused). */
+.d-head { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid #23232a; }
+.d-name { font-weight: 600; color: #f0f0f0; }
+.d-meta { color: #7a7a82; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.d-head .spacer { flex: 1; }
+.d-close { background: none; border: none; color: #888; font-size: 22px; line-height: 1; cursor: pointer; padding: 0 4px; }
+.d-close:hover { color: #fff; }
+.d-body {
+  flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 10px 14px 22px; min-height: 0;
+  font-family: 'JetBrains Mono', 'SF Mono', Consolas, ui-monospace, monospace;
+  font-size: 13px; line-height: 1.5; color: #dcdcdc;
+}
+.d-foot { flex: 0 0 auto; display: flex; gap: 10px; padding: 6px 14px; border-top: 1px solid #23232a; font-size: 11px; color: #666; }
+.d-foot .spacer { flex: 1; }
+.d-foot .pin-on { color: #4ade80; }

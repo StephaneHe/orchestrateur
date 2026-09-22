@@ -151,6 +151,12 @@ class Musician(
                     (raw.subtype?.startsWith("error") == true)
                 val needsMatch = NEEDS_RE.find(lastAssistantText)
                 state = when {
+                    // A SYNTHETIC result means the system closed the turn, not that
+                    // the musician failed — show it as closed (idle) with the cause,
+                    // exactly like the web/server reducers. Painting it red made a
+                    // quota pause look like a crash.
+                    isErr && raw.synthetic == true ->
+                        State.idle.also { lastLine = syntheticCause(raw.subtype) }
                     isErr -> State.error.also { lastLine = raw.subtype ?: "échec du tour" }
                     needsMatch != null -> State.input.also {
                         lastLine = needsMatch.groupValues[1].trim().take(140)
@@ -313,6 +319,14 @@ class Musician(
         // (\w+) stops at the comma/period so we get "WebSearch" not "WebSearch,"
         val PERM_RE = Regex("requested permissions to use (\\w+)", RegexOption.IGNORE_CASE)
         private const val RING_MAX = 30
+
+        /** Human cause for a turn the SYSTEM closed (never a musician failure). */
+        fun syntheticCause(subtype: String?): String = when {
+            subtype == null -> "tour clos"
+            subtype.contains("limited") -> "limité (quota)"
+            subtype.contains("interrupted") -> "interrompu"
+            else -> subtype
+        }
 
         fun blockText(b: RawEvent.Block): String = when (val c = b.content) {
             is JsonPrimitive -> c.contentOrNull ?: ""

@@ -23,12 +23,24 @@ Spec : `docs/orchestrateur-events-redesign-fable.md` § PLAN P0. Cible web **0.1
 - [x] course réglée : le watcher n'émet plus « Tour terminé » pour un tour qui attend le chef (outcome `ask_chef`), et un `result` SYNTHÉTIQUE n'émet plus rien du tout
 - [x] échec (`error`) émet désormais une carte `failed` (avant : silence total)
 
-## P0-4 — Android : synthétique ≠ échec — À FAIRE
-- [ ] `Musician.kt` : `result.synthetic` → `idle` + cause, pas `error` rouge
+## P0-4 — Android : synthétique ≠ échec — FAIT
+- [x] `Models.kt` : champ `synthetic` désérialisé (il ne l'était pas → toujours traité comme une vraie erreur)
+- [x] `Musician.kt` : `isErr && synthetic` → `State.idle` + `syntheticCause()` (« limité (quota) » / « interrompu »)
+- [x] vc13 / 0.4.8 construit — APK `android/app/build/outputs/apk/debug/app-debug.apk`
 
 ## P0-5 — Question du chef conservée — FAIT
 - [x] `/api/conductor-chat` ne supprime plus la réponse quand `NEEDS_USER_INPUT` : elle est conservée avec `question:true`
 - [x] client : bulle chef marquée « question » (liseré orange + tag), en live comme au reload
 
 ## Notes
-- (au fil de l'eau)
+- Seul point « noyau » : la valeur choisie par le reducer Android pour un `result` synthétique (`error` → `idle`).
+  C'est un ALIGNEMENT sur les 3 reducers serveur/web, pas une nouvelle chaîne d'état.
+- `synthetic` n'était pas dans `RawEvent` : l'app ne pouvait pas distinguer un tour clos par le système d'un échec.
+- Un `result` synthétique n'émet plus AUCUN callback (avant : rien non plus, car seul `unread` notifiait — mais un
+  échec réel ne notifiait pas non plus ; c'est corrigé, `failed` émet une carte).
+- Non fait volontairement (P1) : exposer `awaitingChef` via `/api/pupitre`, bandeau attention, limite 5 h, pupitre mobile.
+
+## Reste à faire (P1, tour suivant)
+- Bandeau « Attention » en tête du fil ; `limitedUntil`/`noFailover`/`queueDepth` consommés ; badge attend-le-chef côté
+  `/api/pupitre` + `deriveState` ; snapshot `/api/pupitre` dans l'app Android ; rendu des notices `log_growth_skipped` ;
+  tri différé (web) et onglet mobile stable.
