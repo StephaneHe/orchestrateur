@@ -344,8 +344,209 @@ const lastDispatchAt = new Map();
 
 function conductorName() { return config.conductor || 'chef'; }
 
+// ---------- Callback wake: the chef keeps its promise ------------------------
+//
+// When the chef dispatches with `--callback chef` it is telling the user "I'll
+// report back when this lands". Until 0.20.0 nothing recorded that expectation,
+// so the chef was never re-invoked and the promised report never came: the user
+// sat on "je te fais le point…" until they typed again.
+//
+// v0.14.3 removed an earlier auto-wake for good reasons — it fired on EVERY
+// musician completion, fed the raw callback text in as a fake *user* prompt, and
+// replayed stale callbacks from the persisted queue on restart. This is the
+// narrow version of that idea, and every guard below answers one of those
+// failures:
+//   selectivity  — only a REAL result of a turn that was explicitly awaited
+//   coalescence  — one synthesis per batch, never one turn per result
+//   generation   — a wake-born turn can wake at most once more, then stops
+//   no interrupt — a busy chef is never killed; we fire when it goes idle
+//   budget       — min interval + hourly ceiling + never under a Claude limit
+//   idempotence  — per-result dedup keys, persisted, so a restart cannot replay
+//
+// Nothing here ever dispatches a musician; it only asks the chef to speak.
+const WAKE_COALESCE_MS    = 10_000;   // quiet window after the last result
+const WAKE_LOT_MAX_MS     = 90_000;   // hard cap on how long a batch may gather
+const WAKE_MIN_INTERVAL_MS = 60_000;  // floor between two wakes
+const WAKE_MAX_PER_HOUR   = 6;
+const WAKE_MAX_GEN        = 2;        // user → wake 1 → wake 2 → stop
+const WAKE_INFLIGHT_MAX_MS = 15 * 60_000;  // safety release if no chef result
+const WAKE_ITEM_TTL_MS    = 6 * 60 * 60_000;  // a promise older than this is moot
+const WAKE_PENDING_MAX    = 20;
+const WAKE_SIDECAR  = path.join(QUEUE_DIR, 'chef.wake.json');
+const WAKE_JOURNAL  = path.join(LOGS_DIR, 'chef.wake-log.ndjson');
+
+const wake = {
+  pending: [],       // [{ key, source, outcome, summary, durationMs, costUsd, awaitingChef, wakeGen, ts }]
+  seen: new Set(),   // dedup keys of results already accounted for
+  firstAt: 0,        // when the current batch started gathering
+  timer: null,
+  inFlight: false,
+  inFlightAt: 0,
+  lastFireAt: 0,
+  fireTimes: [],     // rolling one-hour window of fire timestamps
+};
+
+function persistWake() {
+  try {
+    const payload = JSON.stringify({
+      pending: wake.pending,
+      seen: [...wake.seen].slice(-200),
+      lastFireAt: wake.lastFireAt,
+      fireTimes: wake.fireTimes,
+    });
+    const tmp = WAKE_SIDECAR + '.tmp';
+    fs.writeFileSync(tmp, payload);
+    fs.renameSync(tmp, WAKE_SIDECAR);
+  } catch (e) {
+    debugLog(`persistWake failed: ${e.message}`);
+  }
+}
+
+function loadWakeFromDisk() {
+  let raw;
+  try { raw = fs.readFileSync(WAKE_SIDECAR, 'utf8'); } catch { return; }
+  try {
+    const o = JSON.parse(raw);
+    const now = Date.now();
+    // A restart must NOT replay history (the v0.14.3 failure). We rehydrate only
+    // what was still pending, drop anything stale, and cap the batch.
+    wake.pending = (Array.isArray(o.pending) ? o.pending : [])
+      .filter(it => it && typeof it.source === 'string' && (now - (it.ts || 0)) < WAKE_ITEM_TTL_MS)
+      .slice(-WAKE_PENDING_MAX);
+    wake.seen = new Set(Array.isArray(o.seen) ? o.seen : []);
+    wake.lastFireAt = Number(o.lastFireAt) || 0;
+    wake.fireTimes = (Array.isArray(o.fireTimes) ? o.fireTimes : []).filter(t => now - t < 3600_000);
+    if (wake.pending.length) {
+      wake.firstAt = now;
+      debugLog(`wake rehydrate: ${wake.pending.length} pending result(s) — single catch-up armed`);
+      armWakeTimer();
+    }
+  } catch (e) {
+    debugLog(`loadWakeFromDisk failed: ${e.message}`);
+  }
+}
+
+function wakeBudgetOk() {
+  const now = Date.now();
+  wake.fireTimes = wake.fireTimes.filter(t => now - t < 3600_000);
+  if (wake.lastFireAt && now - wake.lastFireAt < WAKE_MIN_INTERVAL_MS) return false;
+  return wake.fireTimes.length < WAKE_MAX_PER_HOUR;
+}
+
+function armWakeTimer(delayMs = WAKE_COALESCE_MS) {
+  if (wake.timer) clearTimeout(wake.timer);
+  // Never let a batch gather forever: cap at WAKE_LOT_MAX_MS from its first item.
+  const capRemaining = wake.firstAt ? (wake.firstAt + WAKE_LOT_MAX_MS) - Date.now() : delayMs;
+  const d = Math.max(250, Math.min(delayMs, Math.max(250, capRemaining)));
+  wake.timer = setTimeout(() => { wake.timer = null; tryFireWake(); }, d);
+  wake.timer.unref?.();
+}
+
+/** Queue one awaited result. Never spawns — the single firing point is below. */
+function scheduleConductorWake(item) {
+  if (!item || !item.key || wake.seen.has(item.key)) return;
+  wake.seen.add(item.key);
+  wake.pending.push(item);
+  if (wake.pending.length > WAKE_PENDING_MAX) wake.pending.splice(0, wake.pending.length - WAKE_PENDING_MAX);
+  if (!wake.firstAt) wake.firstAt = Date.now();
+  persistWake();
+  console.log(`[wake] queued ${item.source} (${item.outcome}) — batch=${wake.pending.length}`);
+  armWakeTimer();
+}
+
+/** The user spoke to the chef: its own turn will show the results (the client
+ *  basket renders them with "prend en compte"), so a pushed synthesis would be a
+ *  paid duplicate. Drop the batch. */
+function cancelWakeOnUserPrompt() {
+  if (!wake.pending.length && !wake.timer) return;
+  const n = wake.pending.length;
+  wake.pending = [];
+  wake.firstAt = 0;
+  if (wake.timer) { clearTimeout(wake.timer); wake.timer = null; }
+  persistWake();
+  if (n) console.log(`[wake] cancelled ${n} pending result(s) — the user is talking to the chef`);
+}
+
+function fmtWakeAge(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}`;
+}
+
+function buildWakePrompt(items, gen) {
+  const lines = items.map(it => {
+    const mark = it.outcome === 'failed' ? '✕' : (it.awaitingChef ? '⇄' : '✓');
+    const meta = [fmtWakeAge(it.durationMs), Number.isFinite(it.costUsd) ? `$${it.costUsd.toFixed(2)}` : '']
+      .filter(Boolean).join(' · ');
+    const head = `— ${it.source} ${mark}${meta ? ' ' + meta : ''}`;
+    const body = (it.summary || '').trim();
+    return body ? `${head}\n  ${body}` : head;
+  }).join('\n');
+  return (
+    `[CALLBACK_WAKE lot=${items.length} gen=${gen}]\n` +
+    `Les résultats que tu attendais sont arrivés. Fais le point à l'utilisateur ` +
+    `(2–5 puces par musicien, ce qu'il a EFFECTIVEMENT fait ; restitue verbatim toute question).\n` +
+    `Ne redispatche QUE si c'était prévu dans la demande initiale ; sinon termine ton tour.\n\n` +
+    lines
+  );
+}
+
+/** The one and only place a wake is fired. Re-armed rather than forced whenever
+ *  a condition is not met, so nothing is ever lost — only deferred. */
+function tryFireWake() {
+  if (!wake.pending.length) return;
+
+  // Safety release: a chef turn that never produced a result must not wedge the
+  // scheduler shut forever.
+  if (wake.inFlight && Date.now() - wake.inFlightAt > WAKE_INFLIGHT_MAX_MS) {
+    debugLog('[wake] in-flight guard expired — releasing');
+    wake.inFlight = false;
+  }
+  if (wake.inFlight) return;   // the chef's own result will re-trigger us
+
+  const chef = conductorName();
+  // Never interrupt: if a producer is alive for the chef, wait for it to finish.
+  // (A phantom "busy" state with no live PID is exactly what we DO fire on.)
+  if (dispatchPidAlive(chef)) { armWakeTimer(WAKE_COALESCE_MS); return; }
+
+  // Firing into an exhausted quota would just burn a slot on a synthetic result.
+  const limited = readLimitedUntil();
+  if (limited) { armWakeTimer(30_000); return; }
+
+  if (!wakeBudgetOk()) { armWakeTimer(WAKE_MIN_INTERVAL_MS); return; }
+
+  const items = wake.pending.slice();
+  const gen = Math.max(0, ...items.map(it => Number(it.wakeGen) || 0)) + 1;
+  wake.pending = [];
+  wake.firstAt = 0;
+  wake.inFlight = true;
+  wake.inFlightAt = Date.now();
+  wake.lastFireAt = Date.now();
+  wake.fireTimes.push(wake.lastFireAt);
+  persistWake();
+
+  const prompt = buildWakePrompt(items, gen);
+  try {
+    fs.appendFileSync(WAKE_JOURNAL, JSON.stringify({
+      ts: new Date().toISOString(), gen, lot: items.length,
+      sources: items.map(it => `${it.source}:${it.outcome}`),
+    }) + '\n');
+  } catch {}
+  console.log(`[wake] firing chef synthesis — lot=${items.length} gen=${gen}`);
+  spawnDirectDispatch(chef, prompt, [], [], { source: 'wake', wakeGen: gen });
+}
+
+loadWakeFromDisk();
+
 // Spawn a dispatch to a musician directly, bypassing the conductor session.
-function spawnDirectDispatch(name, prompt, attachmentPaths = [], videoPaths = []) {
+//
+// `opts.source` tags the turn's opening user_prompt (e.g. 'wake'), which makes
+// the dashboard treat it as a coordination event rather than a user message.
+// `opts.wakeGen` is exported to the child's environment so every dispatch that
+// agent launches inherits the wake depth — that is what bounds the wake chain.
+// Both are optional: the three pre-existing callers pass neither.
+function spawnDirectDispatch(name, prompt, attachmentPaths = [], videoPaths = [], opts = {}) {
   const dispatchScript = path.join(__dirname, 'scripts', 'dispatch.mjs');
   const hasAny = attachmentPaths.length || videoPaths.length;
   const stdinPayload = hasAny
@@ -358,7 +559,11 @@ function spawnDirectDispatch(name, prompt, attachmentPaths = [], videoPaths = []
   const timeSinceLastMs = prevAt ? (requestInTs - prevAt) : null;
   lastDispatchAt.set(name, requestInTs);
 
-  const child = spawn(process.execPath, [dispatchScript, name, '--prompt-stdin'], {
+  // argv is always an array — never shell-concatenated (project hard rule).
+  const args = [dispatchScript, name, '--prompt-stdin'];
+  if (typeof opts.source === 'string' && opts.source) args.push('--source', opts.source);
+
+  const child = spawn(process.execPath, args, {
     cwd: __dirname,
     env: {
       ...process.env,
@@ -367,6 +572,8 @@ function spawnDirectDispatch(name, prompt, attachmentPaths = [], videoPaths = []
       DISPATCH_INTERRUPTED: '0',
       DISPATCH_TIME_SINCE_LAST_MS: timeSinceLastMs == null ? '' : String(timeSinceLastMs),
       DISPATCH_REQUEST_IN_TS: String(requestInTs),
+      // Inherited by the agent's Bash tool → stamped on every dispatch it makes.
+      DISPATCH_WAKE_GEN: Number.isFinite(opts.wakeGen) && opts.wakeGen > 0 ? String(opts.wakeGen) : '',
     },
     stdio: ['pipe', 'ignore', 'ignore'],
     windowsHide: true,
@@ -2071,6 +2278,11 @@ app.get('/api/conductor-chat', (req, res) => {
   for (const line of chatLines) {
     if (!line.trim()) continue;
     let ev; try { ev = JSON.parse(line); } catch { continue; }
+    if (ev.type === 'user_prompt' && ev.source === 'wake') {
+      // Server-generated "go report on these results" prompt — never part of the
+      // human-visible conversation (the results themselves are already cards).
+      continue;
+    }
     if (ev.type === 'user_prompt' && typeof ev.text === 'string' && ev.text.trim()) {
       const userText = stripReplyPrefixes(ev.text.trim());
       const entry = { role: 'user', text: userText, ts: monotonic(stampFrom(ev)) };
@@ -2123,13 +2335,24 @@ function reduceMusician(name, ev) {
     ?? { state: 'idle', lastAssistantText: '', lastLine: '', awaitingChef: false };
   let { state, lastAssistantText, lastLine } = prev;
   let awaitingChef = prev.awaitingChef ?? false;
+  // Who (if anyone) is waiting for this turn's result, and at what wake depth.
+  // Stamped by dispatch.mjs on the turn's opening user_prompt; consumed once by
+  // the wake scheduler at `result`.
+  let expectCallback = prev.expectCallback ?? null;
+  let wakeGen = prev.wakeGen ?? 0;
   const t = ev?.type;
   // stream_event lines are very frequent token-level deltas — skip.
-  if (t === 'stream_event') return { prevState: state, newState: state, lastLine, awaitingChef };
+  if (t === 'stream_event') return { prevState: state, newState: state, lastLine, awaitingChef, expectCallback, wakeGen };
   // Sourced user_prompt (callback / @shortcut / notify) is not a turn start.
   if ((t === 'user_prompt' && !ev.source) || (t === 'system' && ev.subtype === 'init')) {
     if (state === 'idle' || state === 'unread') state = 'live';
     awaitingChef = false;   // a new turn clears "waiting on the chef"
+    // Only the user_prompt carries the expectation; the system/init that follows
+    // it belongs to the SAME turn, so it must not clear what we just recorded.
+    if (t === 'user_prompt') {
+      expectCallback = typeof ev.callback === 'string' && ev.callback ? ev.callback : null;
+      wakeGen = Number.isFinite(ev.wakeGen) ? ev.wakeGen : 0;
+    }
   } else if (t === 'assistant') {
     const blocks = ev.message?.content || [];
     let hasTool = false, hasThink = false, gotText = null;
@@ -2158,8 +2381,17 @@ function reduceMusician(name, ev) {
       awaitingChef = asksChef;
     }
   }
-  musicianAutoStates.set(name, { state, lastAssistantText, lastLine, awaitingChef });
-  return { prevState: prev.state, newState: state, lastLine, awaitingChef };
+  // The expectation is consumed by the terminal event: the caller sees the value
+  // that was in force during the turn, and the stored state is cleared so a later
+  // event on the same log can never re-fire the same wake.
+  const turnExpectCallback = expectCallback;
+  const turnWakeGen = wakeGen;
+  if (t === 'result') { expectCallback = null; wakeGen = 0; }
+  musicianAutoStates.set(name, { state, lastAssistantText, lastLine, awaitingChef, expectCallback, wakeGen });
+  return {
+    prevState: prev.state, newState: state, lastLine, awaitingChef,
+    expectCallback: turnExpectCallback, wakeGen: turnWakeGen,
+  };
 }
 
 /** Human-facing summary of a finished turn: the LAST paragraph of the result —
@@ -3789,9 +4021,22 @@ function startBackgroundNotifyWatchers() {
         if (!line) continue;
         try {
           const ev = JSON.parse(line);
-          const { prevState, newState, lastLine, awaitingChef } = reduceMusician(name, ev);
+          const { prevState, newState, lastLine, awaitingChef, expectCallback, wakeGen } =
+            reduceMusician(name, ev);
           if (ev.type === 'result') {
             console.log(`[notify-bg] ${name} result: prevState=${prevState} newState=${newState}`);
+          }
+          // ---- Callback-wake bookkeeping on the CHEF's own log ----------------
+          if (name === conductorName()) {
+            // The user is talking to the chef: its turn will show the results
+            // itself, so drop any batch we were about to push (no paid double).
+            if (ev.type === 'user_prompt' && !ev.source) cancelWakeOnUserPrompt();
+            // The chef finished (including a wake turn): release the in-flight
+            // lock and let anything that arrived meanwhile fire.
+            if (ev.type === 'result') {
+              wake.inFlight = false;
+              setImmediate(tryFireWake);
+            }
           }
           // One coordination event per terminal transition of a real turn.
           // A SYNTHETIC result (interrupted / limited) is closed by the system,
@@ -3817,6 +4062,32 @@ function startBackgroundNotifyWatchers() {
                 summary: summarizeResult(ev) || ev.subtype || 'échec du tour',
                 durationMs, costUsd,
               });
+            }
+
+            // ---- Wake the chef, but ONLY for a result it explicitly awaited ---
+            // The notification above is written either way (the card always shows
+            // up); this only decides whether the chef is asked to speak about it.
+            //
+            // Excluded on purpose: `input` (the musician is asking the USER — the
+            // question bubble already jumps the thread, so a relayed synthesis
+            // would duplicate it), synthetic results (guarded above), and any turn
+            // nobody awaited. A wake-born chain stops at WAKE_MAX_GEN.
+            if (expectCallback === conductorName() &&
+                name !== conductorName() &&
+                (newState === 'unread' || newState === 'error')) {
+              const gen = Number(wakeGen) || 0;
+              if (gen < WAKE_MAX_GEN) {
+                scheduleConductorWake({
+                  key: `${name}:${ev.session_id || ''}:${ev.timestamp || ev.duration_ms || ''}`,
+                  source: name,
+                  outcome: newState === 'error' ? 'failed' : (awaitingChef ? 'ask_chef' : 'done'),
+                  summary: summarizeResult(ev) || lastLine || '',
+                  durationMs, costUsd, awaitingChef, wakeGen: gen,
+                  ts: Date.now(),
+                });
+              } else {
+                console.log(`[wake] ${name} awaited but gen=${gen} ≥ ${WAKE_MAX_GEN} — not waking (loop guard)`);
+              }
             }
           }
           // Drain the per-musician queue on any turn completion (unread/idle/error).

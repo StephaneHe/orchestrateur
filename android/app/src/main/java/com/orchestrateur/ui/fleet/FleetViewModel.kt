@@ -409,6 +409,10 @@ class FleetViewModel(
                     && last.role == ChatMsg.Role.user
                     && (last.text.trim() == txt || last.text.trim() == txtStripped)
                 if (source != null) {
+                    // source="wake" is the server asking the chef to report on
+                    // results already shown as cards — not part of the visible
+                    // conversation. The chef's reply carries "prend en compte".
+                    if (source == "wake") return
                     // Relayed musician callback — same routing as the notification.
                     // An @shortcut prompt carries source="shortcut→X" but IS the
                     // user's own message, so it stays a user bubble.

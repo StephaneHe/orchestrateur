@@ -628,6 +628,25 @@ function endLogAndExit(code) {
 const userPromptEvent = { type: 'user_prompt', text: promptForLog, timestamp: new Date().toISOString() };
 if (imagePaths.length) userPromptEvent.attachmentPaths = imagePaths;
 if (sourceProject) userPromptEvent.source = sourceProject;
+// CALLBACK WAKE (0.20.0) — record the EXPECTATION, additively.
+//
+// `--callback <chef>` already tells the musician "report back to chef" by
+// injecting prose into its prompt (below), but nothing ever recorded that the
+// chef is *waiting*. Stamping it on the turn's opening event makes the
+// expectation durable (it lives in the musician's own log, so it survives a
+// server restart) and unambiguous (it belongs to THIS turn, not to the project).
+// The server's watcher reads it back to decide whether a finished turn should
+// wake the chef for a synthesis.
+if (callbackProject) userPromptEvent.callback = callbackProject;
+// Wake generation of the turn that spawned us. A chef turn started BY a wake
+// runs with DISPATCH_WAKE_GEN=n in its environment; its Bash tool inherits it,
+// so any dispatch.mjs the chef launches from that turn stamps the same n here.
+// The watcher refuses to wake again past WAKE_MAX_GEN — that is the anti-loop
+// bound, and it is carried by the data rather than guessed.
+const inheritedWakeGen = Number(process.env.DISPATCH_WAKE_GEN || 0);
+if (Number.isFinite(inheritedWakeGen) && inheritedWakeGen > 0) {
+  userPromptEvent.wakeGen = inheritedWakeGen;
+}
 logStream.write(JSON.stringify(userPromptEvent) + '\n');
 
 // ============================================================================

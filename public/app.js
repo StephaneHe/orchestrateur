@@ -2188,6 +2188,11 @@ const App = {
         // own message mirrored into the chef log for context — NOT a musician
         // callback (F5) and NOT a chef turn.
         const isShortcut = typeof source === "string" && source.startsWith("shortcut→");
+        // source="wake" is the SERVER asking the chef to report on results the
+        // user can already see as cards. Rendering it would duplicate the basket
+        // and read like a message nobody sent. The chef's reply that follows
+        // carries "prend en compte : A ✓ B ✕", which is the visible link.
+        if (source === "wake") return;
         const last = this.chat[this.chat.length - 1];
         const isLocalEcho = (!source || isShortcut) && last && last.role === "user" && (
           last.text.trim() === txt ||

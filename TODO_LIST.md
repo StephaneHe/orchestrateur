@@ -4,6 +4,16 @@ Suivi léger des tâches en cours / différées côté orchestrateur.
 
 ## Fait
 
+- [x] **Réveil sûr du chef sur callback attendu — P0** (2026-09-23, v0.20.0). Spec : `docs/orchestrateur-callback-wake-fable.md`.
+  `--callback chef` était utilisé 515 fois par le chef mais **jamais enregistré** → aucune réinvocation, promesse sans suite.
+  `dispatch.mjs` stampe `callback`/`wakeGen` sur le `user_prompt` du tour ; `reduceMusician` capture et consomme au `result` ;
+  sur résultat réel **attendu**, panier coalescé 10 s (cap 90 s) → **1 seul** tour `[CALLBACK_WAKE lot=n gen=k]` via
+  `spawnDirectDispatch(--source wake)` → le chef reprend **sa session**. Garde-fous : sélectivité, `gen ≤ 2`, 1 tir en vol,
+  jamais d'interruption, 60 s/6 h, pas sous limite, annulation si l'utilisateur écrit, idempotence + 1 rattrapage borné.
+  Client : prompt `wake` invisible (la réponse porte « prend en compte »). 20 assertions sur fixtures, 0 spawn réel.
+  **Restart 7777 requis (chef)** + **contrat du chef à appliquer par lui** (texte exact dans le doc de progression).
+  Reste P1 : stall/synthétique, `/api/pupitre`, budget visible, liveness dans `spawnDirectDispatch`.
+
 - [x] **Événements P1 — priorité MOBILE** (2026-09-23, android vc14/0.5.0 + web v0.19.0). L'app Android rattrape le P0 web.
   L'app n'interrogeait PAS `/api/pupitre` → aucune fraîcheur, un musicien planté restait « EN COMMUNICATION » : poll 5 s
   premier plan, stall/PID mort/durée/silence, 2e ligne de panneau + pastilles `✗`/`⚠`/`⇄`. Fil chef à parité web : panier

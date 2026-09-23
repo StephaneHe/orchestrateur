@@ -11,6 +11,63 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-09-23
+
+P0 de `docs/orchestrateur-callback-wake-fable.md`. **Le chef tient enfin sa promesse.**
+Quand il dispatchait avec `--callback chef` en annonçant « je te fais le point dès le callback », l'intention
+n'était enregistrée **nulle part** : le musicien finissait, la carte s'affichait, mais le chef n'était jamais
+réinvoqué — l'utilisateur restait sur une promesse sans suite jusqu'à ce qu'il retape un message.
+
+### Added
+- (server + dispatch) **Réveil du chef sur callback attendu.** `dispatch.mjs` stampe désormais `callback:"chef"`
+  (et la profondeur `wakeGen`) sur le `user_prompt` d'ouverture du tour : l'attente devient **durable** (elle vit
+  dans le log du musicien, donc survit à un redémarrage) et **non ambiguë** (elle appartient à ce tour-là, pas au
+  projet). `reduceMusician` la capture et la **consomme au `result`**. Sur un résultat **réel** d'un tour
+  **explicitement attendu**, le serveur met le résultat dans un panier, **coalesce 10 s** (plafond 90 s), puis
+  déclenche **UN SEUL** tour de synthèse via le spawn programmatique qui existait déjà (`spawnDirectDispatch` →
+  `dispatch.mjs --resume`) : le chef repart **sur sa propre session**, donc avec sa promesse en mémoire. Le prompt
+  `[CALLBACK_WAKE lot=n gen=k]` lui **donne** le lot (✓ terminé / ✕ échec / ⇄ attend ta décision, durée, coût,
+  conclusion) — il ne lit pas `chef.jsonl`.
+- (server) Panier persisté (`logs/queue/chef.wake.json`, écriture atomique) et journal des lots tirés
+  (`logs/chef.wake-log.ndjson`).
+
+### Changed
+- (server) `spawnDirectDispatch` accepte un 5ᵉ paramètre **optionnel** `{source, wakeGen}` (provenance + profondeur).
+  Les trois appelants existants — drain de file, raccourci `@`, relais `NEEDS_CHEF` — sont inchangés ; `argv` reste
+  un tableau.
+- (dashboard + android) Le prompt de réveil (`source:"wake"`) n'apparaît **pas** dans le fil : ce n'est pas un
+  message d'un humain. C'est la réponse du chef qui suit, avec son « prend en compte : A ✓ · B ✕ » (acquis
+  v0.18.0), qui explique pourquoi il parle sans qu'on lui ait écrit. `/api/conductor-chat` le saute aussi, donc un
+  rechargement ne le ressuscite pas en carte.
+
+### Notes — pourquoi ceci ne réintroduit pas le défaut retiré en v0.14.3
+L'ancien auto-réveil tirait sur **chaque** fin de musicien, injectait le texte brut du callback comme un faux
+prompt **utilisateur**, et **rejouait** les vieux callbacks depuis la file persistée au redémarrage. Chaque garde
+répond à l'une de ces trois fautes : **sélectivité** (seulement un résultat réel explicitement attendu — jamais
+`/api/notify`, ni `@`, ni un résultat synthétique, ni la fin d'un tour du chef, ni une question adressée à
+l'utilisateur, déjà poussée en bulle) ; **coalescence** (un tour par lot, pas un tour par résultat) ;
+**génération bornée** `gen ≤ 2` propagée par l'environnement (utilisateur → réveil 1 → réveil 2 → stop) ;
+**jamais d'interruption** (un chef occupé n'est pas tué — on tire quand il redevient libre ; un PID fantôme, lui,
+débloque) ; **débit** (60 s entre tirs, 6/heure, aucun tir sous limite Claude) ; **annulation** (si l'utilisateur
+écrit au chef, le panier est jeté — son propre tour montrera les résultats, zéro tour payé en double) ;
+**idempotence** (clé par résultat, panier persisté, TTL 6 h → **un** rattrapage borné au redémarrage, jamais un
+rejeu). Un échec **réveille aussi** (avec ✕) : la mauvaise nouvelle fait partie de la promesse.
+
+### Notes
+- Périmètre **P0**. P1 non fait : réveil sur tour attendu stallé / PID mort / clôture synthétique, exposition de
+  `expectCallback` et `pendingWake` sur `/api/pupitre`, compteur de budget visible, garde de liveness dans
+  `spawnDirectDispatch`.
+- **Le contrat du chef reste à appliquer par le chef lui-même** (`I:\Dev\Chef\CLAUDE.md` appartient à son
+  projet) : texte exact dans `docs/orchestrateur-callback-wake-impl-progress.md` § Lot 4. Sans lui, le chef
+  continuera à promettre sans passer `--callback chef`, et rien ne le réveillera.
+- Acquis préservés : v0.16.1, v0.17.0, v0.18.0, v0.19.0. Vocabulaire d'états inchangé.
+- Vérifié : 20 assertions sur fixtures (`.tmp/wake-logic.mjs`) couvrant **tous** les garde-fous, sans spawner un
+  seul processus `claude` ; chaîne de générations testée de bout en bout ; formes d'événements de `dispatch.mjs`
+  vérifiées ; client headless (prompt `wake` invisible, callback réel toujours en carte, séquence poussée =
+  `results,conductor` + « prend en compte ») ; `node --check` sur `server.js` et `dispatch.mjs` ; Android compilé.
+- **`server.js`, `dispatch.mjs` et `public/` modifiés → un redémarrage 7777 par le chef** (`dispatch.mjs` est relu
+  à chaque appel ; le client est statique → hard-reload).
+
 ## [0.19.0] - 2026-09-23
 
 P1 de `docs/orchestrateur-events-redesign-fable.md`, **priorité mobile** : l'app Android rattrape le P0 web.
