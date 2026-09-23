@@ -60,6 +60,17 @@ class Api(private val store: ServerStore) {
         }
     }
 
+    /** Version du SERVEUR (règle standing : la version doit être visible).
+     *  Best-effort : null si le serveur est plus ancien ou injoignable. */
+    suspend fun fetchServerVersion(): String? = withContext(Dispatchers.IO) {
+        try {
+            http.newCall(req("/api/version").build()).execute().use { resp ->
+                if (!resp.isSuccessful) null
+                else json.decodeFromString(VersionResponse.serializer(), resp.body!!.string()).version
+            }
+        } catch (_: Exception) { null }
+    }
+
     /** Last N conductor chat messages (user + conductor bubbles). */
     suspend fun fetchConductorChat(n: Int = 60): List<ConductorChatEntry> = withContext(Dispatchers.IO) {
         try {
@@ -81,6 +92,12 @@ class Api(private val store: ServerStore) {
             json.decodeFromString(PupitreSnapshot.serializer(), resp.body!!.string())
         }
     }
+
+    /** Journal du chef — source des lignes de mission au rechargement : on y
+     *  cherche les `tool_use Bash` dont la commande contient `dispatch.mjs <X>`.
+     *  Fenêtre bornée côté serveur (500 événements / 2 Mio) ; l'UI le dit. */
+    suspend fun fetchConductorEvents(conductor: String, n: Int = 500): List<RawEvent> =
+        fetchProjectEvents(conductor, n)
 
     /** Last N raw stream-json events for a project (for hydrating the ring). */
     suspend fun fetchProjectEvents(project: String, n: Int = 120): List<RawEvent> = withContext(Dispatchers.IO) {

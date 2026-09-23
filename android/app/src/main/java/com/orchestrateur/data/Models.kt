@@ -148,6 +148,10 @@ data class PermissionDenial(
 @Serializable
 data class AttachResponse(val path: String)
 
+/** Response from GET /api/version — la version du serveur, affichée dans l'app. */
+@Serializable
+data class VersionResponse(val version: String? = null)
+
 /** One entry returned by GET /api/conductor-chat */
 @Serializable
 data class ConductorChatEntry(

@@ -10,6 +10,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
@@ -19,7 +20,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -38,7 +38,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.orchestrateur.BuildConfig
-import com.orchestrateur.data.Api
 import com.orchestrateur.data.Musician
 import com.orchestrateur.data.State as MState
 import com.orchestrateur.ui.theme.Palette
@@ -57,36 +56,31 @@ private class GetContentMultiMime : ActivityResultContract<Array<String>, androi
         if (resultCode == Activity.RESULT_OK) intent?.data else null
 }
 
+// ============================================================================
+// Destination JOURNAL — la conversation de direction avec le chef.
+// L'état du chef vit dans l'EN-TÊTE (source visuelle unique) ; les musiciens
+// sont un rail (ligne « Pilotage » + feuille), pas des onglets.
+// ============================================================================
+
 @Composable
-fun FleetScreen(api: Api) {
+fun JournalScreen(
+    vm: FleetViewModel,
+    onOpenMusician: (String) -> Unit,
+    onOpenSettings: () -> Unit,
+) {
     val context = LocalContext.current
-    // Use viewModel() so the VM survives configuration changes (rotation,
-    // dark mode, language switch). With remember { } a config change
-    // recreated the VM while the old one's streamJob was still running →
-    // 2 SSE in parallel until the GC eventually got the old VM. Now the
-    // VM lives at Activity scope, single-flight stays single-flight.
-    val vm: FleetViewModel = androidx.lifecycle.viewmodel.compose.viewModel(
-        factory = object : androidx.lifecycle.ViewModelProvider.Factory {
-            @Suppress("UNCHECKED_CAST")
-            override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
-                FleetViewModel(api, context.applicationContext) as T
-        }
-    )
-    val status by vm.status.collectAsState()
     val connected by vm.connected.collectAsState()
     val scope = rememberCoroutineScope()
 
-    // Lifecycle-aware SSE: when the app goes to background (ON_STOP) we
-    // close the SSE connection cleanly so the server stops trying to push
-    // events into a socket the OS may suspend silently. Re-opens on
-    // ON_START. Without this, a backgrounded app left zombie SSE sockets
-    // that crashed the server when it tried to write to them.
+    // Lifecycle-aware SSE: when the app goes to background (ON_STOP) we close
+    // the SSE connection cleanly so the server stops trying to push events into
+    // a socket the OS may suspend silently. Re-opens on ON_START.
     val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
-    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+    DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             when (event) {
                 androidx.lifecycle.Lifecycle.Event.ON_START -> vm.resumeStream()
-                androidx.lifecycle.Lifecycle.Event.ON_STOP  -> vm.pauseStream()
+                androidx.lifecycle.Lifecycle.Event.ON_STOP -> vm.pauseStream()
                 else -> {}
             }
         }
@@ -106,87 +100,19 @@ fun FleetScreen(api: Api) {
         }
     }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(Palette.Bg0),
-    ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("Orchestre", color = Palette.Fg0, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-            Spacer(Modifier.width(6.dp))
-            Text(
-                "v${BuildConfig.VERSION_NAME}",
-                color = Palette.Fg2,
-                fontSize = 9.sp,
-                fontFamily = FontFamily.Monospace,
-            )
-            Spacer(Modifier.weight(1f))
-            // Fleet cost/token totals were shown here but glued onto the version
-            // ("v0.4.3-debug$1.85") when the row overflowed, reading like a broken
-            // build string. Per-turn cost is already in each result line, so the
-            // header now stays a clean version + status.
-            if (!connected) {
-                Text(
-                    "↺",
-                    color = Palette.StInput,
-                    fontSize = 16.sp,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .clickable { vm.reconnect() }
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                )
-                Spacer(Modifier.width(4.dp))
-            }
-            Text(status, color = if (connected) Palette.Fg2 else Palette.StInput, fontSize = 11.sp)
-        }
+    var showPilotage by remember { mutableStateOf(false) }
+    // Le LazyListState vit ICI : le retour depuis le détail rend le journal à
+    // la même ancre (la destination n'est pas reconstruite, l'état persiste).
+    val listState = rememberLazyListState()
 
-        // System voice: a thin banner, never a chat bubble. Provider availability
-        // and telemetry freshness must be impossible to miss and impossible to
-        // confuse with something the chef or a musician said.
-        val limitedUntil by vm.limitedUntil.collectAsState()
-        val telemetryFresh by vm.telemetryFresh.collectAsState()
-        if (limitedUntil != null || !telemetryFresh) {
-            val msg = when {
-                limitedUntil != null -> "⚡ Claude limité jusqu'à ${fmtLimitUntil(limitedUntil!!)}"
-                else -> "⟲ données anciennes — télémétrie injoignable"
-            }
-            val tone = if (limitedUntil != null) Palette.StInput else Palette.Fg2
-            Text(
-                msg,
-                color = tone,
-                fontSize = 10.sp,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(blend(tone, Palette.Bg0, 0.10f))
-                    .padding(horizontal = 14.dp, vertical = 5.dp),
-            )
-        }
+    Column(Modifier.fillMaxSize().background(Palette.Bg0)) {
+        JournalHeader(vm, connected, onOpenSettings) { onOpenMusician(FleetViewModel.CONDUCTOR) }
+        SystemBanner(vm, connected)
+        AttentionBand(vm, onOpenMusician)
 
         if (vm.musicians.isNotEmpty()) {
-            TabBar(
-                musicians = vm.musicians,
-                activeTab = vm.activeTab,
-                onSelect = vm::selectTab,
-                onCloseProject = { vm.selectTab(FleetViewModel.CONDUCTOR) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(width = 0.dp, color = Color.Transparent)
-                    .background(Palette.Bg0)
-                    .padding(bottom = 6.dp),
-            )
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(1.dp)
-                    .background(Palette.CardBorder),
-            )
+            PilotageLine(musicians = vm.musicians, onOpen = { showPilotage = true })
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.CardBorder))
         }
 
         var replyTo by remember { mutableStateOf<ChatMsg?>(null) }
@@ -196,18 +122,36 @@ fun FleetScreen(api: Api) {
                 Text("Chargement…", color = Palette.Fg2, modifier = Modifier.align(Alignment.Center))
             } else {
                 MainPane(
-                    activeTab = vm.activeTab,
-                    chat = vm.chat,
-                    musicians = vm.musicians,
-                    onAddTool = vm::addTool,
+                    vm = vm,
+                    listState = listState,
+                    onOpenMusician = onOpenMusician,
                     onReply = { msg -> replyTo = msg },
                 )
+                // « Nouveau rapport ↓ » — on ne force JAMAIS le défilement :
+                // le brouillon et la position de lecture sont conservés.
+                if (vm.newReportPending) {
+                    Text(
+                        "Nouveau rapport ↓",
+                        color = Palette.Bg0, fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 10.dp)
+                            .heightIn(min = 40.dp)
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(Palette.Accent)
+                            .clickable {
+                                vm.markReportSeen()
+                                scope.launch { listState.animateScrollToItem((vm.chat.size - 1).coerceAtLeast(0)) }
+                            }
+                            .wrapContentHeight()
+                            .padding(horizontal = 16.dp),
+                    )
+                }
             }
         }
 
         Composer(
-            activeTab = vm.activeTab,
-            musicians = vm.musicians,
+            vm = vm,
             pendingImages = vm.pendingImages,
             replyTo = replyTo,
             onPickImage = { mediaLauncher.launch(arrayOf("image/*", "video/*")) },
@@ -216,12 +160,308 @@ fun FleetScreen(api: Api) {
             onSend = { prompt, displayText -> vm.dispatch(prompt, displayText) },
         )
     }
+
+    if (showPilotage) {
+        PilotageSheet(
+            musicians = vm.musicians,
+            onOpenMusician = { showPilotage = false; onOpenMusician(it) },
+            onDismiss = { showPilotage = false },
+        )
+    }
+}
+
+/** En-tête : marque, version app, version serveur, état du CHEF, fraîcheur. */
+@Composable
+private fun JournalHeader(
+    vm: FleetViewModel,
+    connected: Boolean,
+    onOpenSettings: () -> Unit,
+    onOpenChef: () -> Unit,
+) {
+    val chef = vm.musicians.find { it.name == FleetViewModel.CONDUCTOR }
+    val serverVersion by vm.serverVersion.collectAsState()
+    val snapAt by vm.snapshotAt.collectAsState()
+    Column(Modifier.fillMaxWidth().statusBarsPadding()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Orchestre", color = Palette.Fg0, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "app ${BuildConfig.VERSION_NAME}" + (serverVersion?.let { " · serveur $it" } ?: ""),
+                color = Palette.Fg3, fontSize = 9.sp, fontFamily = FontFamily.Monospace,
+            )
+            Spacer(Modifier.weight(1f))
+            if (!connected) {
+                Text(
+                    "↺", color = Palette.StInput, fontSize = 16.sp,
+                    modifier = Modifier
+                        .heightIn(min = 40.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable { vm.reconnect() }
+                        .wrapContentHeight()
+                        .padding(horizontal = 8.dp),
+                )
+            }
+            Text(
+                "⋮", color = Palette.Fg2, fontSize = 18.sp,
+                modifier = Modifier
+                    .heightIn(min = 40.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable(onClick = onOpenSettings)
+                    .wrapContentHeight()
+                    .padding(horizontal = 8.dp),
+            )
+        }
+        // L'état du chef : ici et nulle part ailleurs (plus de carte chef).
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 44.dp)
+                .clickable(onClick = onOpenChef)
+                .padding(horizontal = 14.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            val tone = chef?.let { stateColor(it.state) } ?: Palette.Fg3
+            Text("♛", color = tone, fontSize = 13.sp)
+            Text(
+                "CHEF", color = Palette.Fg0, fontSize = 10.sp, letterSpacing = 1.8.sp,
+                fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace,
+            )
+            val waiting = chef != null && (chef.state == MState.live || chef.state == MState.think)
+            Text(
+                when {
+                    chef == null -> "aucun chef configuré"
+                    waiting && chef.state == MState.think -> "réfléchit…"
+                    waiting -> "répond…"
+                    else -> stateLabel(chef).lowercase()
+                },
+                color = tone, fontSize = 11.sp, fontFamily = FontFamily.Monospace,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.weight(1f))
+            // Fraîcheur : l'ÂGE de l'instantané, pas l'horloge de rendu.
+            val telemetryFresh by vm.telemetryFresh.collectAsState()
+            Text(
+                when {
+                    snapAt == 0L -> "instantané non reçu"
+                    !telemetryFresh -> "données anciennes"
+                    else -> "synchronisé il y a ${fmtAgeShort(System.currentTimeMillis() - snapAt)}"
+                },
+                color = Palette.Fg3, fontSize = 9.sp, fontFamily = FontFamily.Monospace,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/**
+ * UN SEUL bandeau système à la fois, le plus grave, les autres en compteur.
+ * Priorité : processus perdu > limite Claude > flux interrompu / données
+ * anciennes. Un SSE coupé avec un instantané frais ne dit PAS « tout est mort ».
+ */
+@Composable
+private fun SystemBanner(vm: FleetViewModel, connected: Boolean) {
+    val limitedUntil by vm.limitedUntil.collectAsState()
+    val telemetryFresh by vm.telemetryFresh.collectAsState()
+    val dead = vm.musicians.filter { it.deadInFlight && !it.parked }
+
+    data class Banner(val msg: String, val tone: Color)
+    val banners = buildList {
+        if (dead.isNotEmpty()) {
+            add(Banner("✗ processus perdu — ${dead.joinToString(", ") { it.name }}", Palette.StError))
+        }
+        limitedUntil?.let { add(Banner("⚡ Claude limité jusqu'à ${fmtLimitUntil(it)}", Palette.StInput)) }
+        if (!connected) {
+            add(Banner(
+                if (!telemetryFresh) "⟲ flux interrompu — données anciennes, reconnexion automatique"
+                else "⟲ flux interrompu — états actualisés par instantané, direct coupé",
+                Palette.Fg2,
+            ))
+        } else if (!telemetryFresh) {
+            add(Banner("⟲ télémétrie muette — dernières valeurs connues affichées", Palette.Fg2))
+        }
+    }
+    val top = banners.firstOrNull() ?: return
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(blend(top.tone, Palette.Bg0, 0.10f))
+            .padding(horizontal = 14.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            top.msg, color = top.tone, fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+            maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+        )
+        if (banners.size > 1) {
+            Text(
+                "+${banners.size - 1}", color = Palette.Fg3, fontSize = 9.sp,
+                fontFamily = FontFamily.Monospace,
+            )
+        }
+    }
+}
+
+/**
+ * Bande « À votre attention » : une ligne repliée, l'élément le plus grave
+ * lisible sans clic. Priorité : question > processus perdu > échec > sans
+ * progrès. Un parké n'y figure pas — sa santé n'est pas suivie.
+ */
+@Composable
+private fun AttentionBand(vm: FleetViewModel, onOpenMusician: (String) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+
+    data class Item(val rank: Int, val name: String, val mark: String, val text: String, val question: Boolean)
+    val items = vm.musicians
+        .filter { it.name != FleetViewModel.CONDUCTOR && !it.parked }
+        .mapNotNull { m ->
+            val health = healthNote(m)
+            when {
+                m.state == MState.input ->
+                    Item(0, m.name, "?", m.lastLine.ifBlank { "question sans texte" }, true)
+                health != null && health.second -> Item(1, m.name, "✗", health.first, false)
+                m.state == MState.error -> Item(2, m.name, "✕", m.lastLine.ifBlank { "échec du tour" }, false)
+                health != null -> Item(3, m.name, "!", health.first, false)
+                else -> null
+            }
+        }
+        .sortedWith(compareBy({ it.rank }, { it.name }))
+    if (items.isEmpty()) return
+
+    val counts = buildList {
+        val nq = items.count { it.rank == 0 }
+        val nd = items.count { it.rank == 1 }
+        val ne = items.count { it.rank == 2 }
+        val ns = items.count { it.rank == 3 }
+        if (nq > 0) add("$nq question${if (nq > 1) "s" else ""}")
+        if (nd > 0) add("$nd processus perdu${if (nd > 1) "s" else ""}")
+        if (ne > 0) add("$ne échec${if (ne > 1) "s" else ""}")
+        if (ns > 0) add("$ns sans progrès")
+    }
+    val top = items.first()
+
+    Column(Modifier.fillMaxWidth().background(blend(Palette.StInput, Palette.Bg0, 0.07f))) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .clickable { open = !open }
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                "⚠ À VOTRE ATTENTION", color = Palette.StInput, fontSize = 9.sp,
+                letterSpacing = 1.4.sp, fontFamily = FontFamily.Monospace,
+            )
+            Text(
+                counts.joinToString(" · "), color = Palette.Fg2, fontSize = 10.sp,
+                fontFamily = FontFamily.Monospace,
+            )
+            Text(
+                "${top.name} : ${top.text}", color = Palette.Fg0, fontSize = 11.sp,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+            )
+            Text(if (open) "▾" else "▸", color = Palette.Fg2, fontSize = 10.sp)
+        }
+        if (open) {
+            Column(
+                Modifier.padding(horizontal = 14.dp).padding(bottom = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items.forEach { it2 ->
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Palette.Bg1)
+                            .border(1.dp, Palette.CardBorder, RoundedCornerShape(8.dp))
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                it2.mark,
+                                color = if (it2.rank <= 2) Palette.StError else Palette.StInput,
+                                fontSize = 12.sp, fontFamily = FontFamily.Monospace,
+                            )
+                            Text(
+                                it2.name, color = Palette.Fg0, fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Monospace,
+                            )
+                            Text(
+                                it2.text, color = Palette.Fg1, fontSize = 11.sp,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (it2.question) {
+                                ActionChip("Répondre via le chef", primary = true) {
+                                    vm.applyAnswerContext(AnswerContext(it2.name, it2.text))
+                                }
+                            } else {
+                                ActionChip("En parler au chef", primary = true) {
+                                    vm.applyAnswerContext(AnswerContext(it2.name, about = true))
+                                }
+                            }
+                            ActionChip("Ouvrir") { onOpenMusician(it2.name) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Destination RÉGLAGES — admin hors du fil (version, flotte, parkés). */
+@Composable
+fun SettingsScreen(vm: FleetViewModel, onBack: () -> Unit) {
+    val serverVersion by vm.serverVersion.collectAsState()
+    Column(
+        Modifier.fillMaxSize().background(Palette.Bg0).statusBarsPadding()
+            .verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            "‹ Retour", color = Palette.Fg2, fontSize = 13.sp, fontFamily = FontFamily.Monospace,
+            modifier = Modifier
+                .heightIn(min = 48.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(onClick = onBack)
+                .wrapContentHeight()
+                .padding(horizontal = 8.dp),
+        )
+        Text("Réglages", color = Palette.Fg0, fontSize = 20.sp, fontWeight = FontWeight.Medium)
+        Text(
+            "Application ${BuildConfig.VERSION_NAME}",
+            color = Palette.Fg1, fontSize = 13.sp, fontFamily = FontFamily.Monospace,
+        )
+        Text(
+            "Serveur " + (serverVersion ?: "version non fournie"),
+            color = Palette.Fg1, fontSize = 13.sp, fontFamily = FontFamily.Monospace,
+        )
+        Text(
+            "${vm.musicians.count { !it.parked }} musiciens actifs · " +
+                "${vm.musicians.count { it.parked }} mis de côté",
+            color = Palette.Fg2, fontSize = 12.sp,
+        )
+        Text(
+            "Les projets, sessions et outils se gèrent depuis le tableau de bord web.",
+            color = Palette.Fg3, fontSize = 11.sp,
+        )
+    }
 }
 
 @Composable
 private fun Composer(
-    activeTab: String,
-    musicians: SnapshotStateList<Musician>,
+    vm: FleetViewModel,
     pendingImages: List<PendingAttachment>,
     replyTo: ChatMsg?,
     onPickImage: () -> Unit,
@@ -232,10 +472,31 @@ private fun Composer(
     var field by rememberSaveable(stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(""))
     }
-    val placeholder = if (activeTab == FleetViewModel.CONDUCTOR)
-        "Parle au chef — tape @ pour citer un musicien"
-    else
-        "Parle directement à $activeTab…"
+    val musicians = vm.musicians
+    val ctx = vm.answerContext
+
+    // « Répondre via le chef » / « En parler au chef » préremplissent le
+    // composer : le message part au CHEF, en citant la question et en nommant X.
+    LaunchedEffect(ctx) {
+        val c = ctx ?: return@LaunchedEffect
+        val prefix = if (c.about) "À propos de ${c.musician} : "
+        else "Réponse pour ${c.musician} à sa question « ${c.question.take(160)} » : "
+        if (!field.text.startsWith(prefix)) {
+            val rest = field.text.replace(Regex("^@\\S+\\s*"), "")
+            field = TextFieldValue(prefix + rest, TextRange((prefix + rest).length))
+        }
+    }
+
+    // Cible affichée : le chef par défaut, un musicien nommé si `@X` explicite.
+    val directTarget = remember(field.text, musicians.map { it.name }) {
+        Regex("^@([A-Za-z0-9_.\\-]+)").find(field.text.trim())?.groupValues?.get(1)
+            ?.takeIf { n -> musicians.any { it.name == n } }
+    }
+    val chefBusy = musicians.find { it.name == FleetViewModel.CONDUCTOR }?.pidAlive == true
+
+    val placeholder = if (directTarget != null)
+        "Envoi direct à $directTarget — aucun retour au chef"
+    else "Écrivez au chef — tape @ pour citer un musicien"
 
     val mention = remember(field.text, field.selection, musicians.toList(), musicians.map { it.state }) {
         detectMention(field.text, field.selection.start, musicians)
@@ -261,6 +522,31 @@ private fun Composer(
             .navigationBarsPadding()
             .imePadding(),
     ) {
+        if (ctx != null) {
+            Row(
+                Modifier
+                    .padding(start = 12.dp, end = 12.dp, top = 6.dp)
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(blend(Palette.Accent, Palette.CardBg, 0.08f))
+                    .border(1.dp, blend(Palette.Accent, Palette.CardBorder, 0.40f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    if (ctx.about) "AU CHEF, À PROPOS DE ${ctx.musician.uppercase()}"
+                    else "RÉPONSE VIA LE CHEF POUR ${ctx.musician.uppercase()}",
+                    color = Palette.Accent, fontSize = 9.sp, letterSpacing = 1.2.sp,
+                    fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Box(
+                    Modifier.size(20.dp).clip(CircleShape).clickable { vm.applyAnswerContext(null) },
+                    contentAlignment = Alignment.Center,
+                ) { Text("×", color = Palette.Fg2, fontSize = 14.sp, fontWeight = FontWeight.Bold) }
+            }
+        }
         if (replyTo != null) {
             QuotePreview(
                 msg = replyTo,
@@ -283,9 +569,28 @@ private fun Composer(
             )
         }
         Row(
+            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                if (directTarget != null) "À : ${directTarget.uppercase()} (DIRECT)" else "À : CHEF",
+                color = if (directTarget != null) Palette.StInput else Palette.Fg3,
+                fontSize = 9.sp, letterSpacing = 1.4.sp, fontFamily = FontFamily.Monospace,
+            )
+            // Interruption coopérative : on le DIT avant, pas après.
+            if (directTarget == null && chefBusy) {
+                Text(
+                    "· l'envoi interrompra le tour du chef",
+                    color = Palette.StInput, fontSize = 9.sp, fontFamily = FontFamily.Monospace,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        Row(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp)
+                .padding(horizontal = 12.dp, vertical = 8.dp)
                 .clip(RoundedCornerShape(16.dp))
                 .background(Palette.CardBg)
                 .padding(horizontal = 4.dp, vertical = 4.dp),
@@ -293,7 +598,7 @@ private fun Composer(
         ) {
             TextButton(
                 onClick = onPickImage,
-                modifier = Modifier.size(40.dp),
+                modifier = Modifier.size(44.dp),
                 contentPadding = PaddingValues(0.dp),
             ) {
                 Text("📎", fontSize = 18.sp)
@@ -321,6 +626,7 @@ private fun Composer(
                         } ?: ""
                         onSend(quoted + displayText, displayText)
                         field = TextFieldValue("")
+                        vm.applyAnswerContext(null)
                         onClearReply()
                     }
                 },
@@ -368,7 +674,7 @@ private fun QuotePreview(
         Spacer(Modifier.width(8.dp))
         Box(
             Modifier
-                .size(20.dp)
+                .size(24.dp)
                 .clip(CircleShape)
                 .clickable { onDismiss() },
             contentAlignment = Alignment.Center,
@@ -406,7 +712,6 @@ private fun ImageStrip(
                     contentScale = ContentScale.Crop,
                 )
 
-                // Video badge — play icon in bottom-left corner
                 if (att.isVideo) {
                     Box(
                         Modifier
@@ -420,10 +725,9 @@ private fun ImageStrip(
                     }
                 }
 
-                // Remove button — top-right
                 Box(
                     Modifier
-                        .size(18.dp)
+                        .size(20.dp)
                         .align(Alignment.TopEnd)
                         .clip(CircleShape)
                         .background(Palette.Bg0.copy(alpha = 0.85f))
@@ -500,6 +804,7 @@ private fun MentionMenu(
             Row(
                 Modifier
                     .fillMaxWidth()
+                    .heightIn(min = 48.dp)
                     .clip(RoundedCornerShape(7.dp))
                     .clickable { onPick(m) }
                     .padding(horizontal = 10.dp, vertical = 8.dp),

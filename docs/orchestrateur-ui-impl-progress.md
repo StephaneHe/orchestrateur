@@ -32,11 +32,17 @@ activité de l'orchestre séparée · wake invisible ⇒ POINT · 3 fins pendant
 `#/m/X` ouvre/ferme et rend le rail · onglets Résultat/Journal · annuaire filtrant ·
 SSE coupé ⇒ « direct interrompu ».
 
-## Android (`android/*`)
+## Android (`android/*`) — ☑ terminé
 
 | # | Lot | Statut | Notes |
 |---|---|---|---|
-| P0-7 | Navigation 3 destinations, ligne Pilotage + feuille (recherche/filtres), bottom sheet L1, détail à onglets, « Nouveau rapport ↓ », version serveur | ◐ | |
+| P0-7 | Navigation 3 destinations, ligne Pilotage + feuille (recherche/filtres), bottom sheet L1, détail à onglets, « Nouveau rapport ↓ », version serveur | ☑ | `MainActivity.kt` (NavHost, VM à l'échelle de l'activité), `PilotageSheet.kt` (nouveau), `MusicianDetailScreen.kt` (nouveau), `FleetScreen.kt` → `JournalScreen` + `SettingsScreen`, `MainPane.kt` (MissionLine / MissionSheet / point / questions via le chef), `FleetViewModel.kt` (missions, wake→point, isInfo, contexte de réponse), `Api.kt` (`/api/version`). |
+
+Dépendance ajoutée : `androidx.navigation:navigation-compose:2.8.5` (résolue, build OK).
+
+Le ViewModel est créé dans `MainActivity` et passé aux destinations : sans cela chaque
+`NavBackStackEntry` en aurait créé un nouveau (second SSE, fil rechargé, ancre perdue).
+C'est ce qui rend vrai le critère « Back depuis détail ⇒ journal à la même ancre ».
 
 ## Livraison
 
@@ -44,10 +50,10 @@ SSE coupé ⇒ « direct interrompu ».
 |---|---|
 | `package.json` 0.21.0 | ☑ |
 | `CHANGELOG.md` 2026-09-23 | ☑ |
-| Android vc15 / 0.6.0 | ☐ |
+| Android vc15 / 0.6.0 | ☑ (`versionCode = 15`, `versionName = "0.6.0"`) |
 | `node --check` sur les fichiers Node modifiés | ☑ (`public/app.js`, `public/salle.js`) |
-| APK debug construit + chemin donné | ☐ |
-| Commit local (pas de push, pas de restart) | ◐ |
+| APK debug construit + chemin donné | OK — `I:/orchestrateur/android/app/build/outputs/apk/debug/app-debug.apk` (vc15 - 0.6.0-debug) |
+| Commit local (pas de push, pas de restart) | ☑ deux commits : web puis Android |
 
 ## Garde-fous vérifiés
 
@@ -55,7 +61,7 @@ SSE coupé ⇒ « direct interrompu ».
 - [x] 0.16.1 — `_armConductorWait` / `_disarmConductorWait` inchangés ; le wake sourcé n'arme rien
 - [x] 0.17.0 — cadences `/api/pupitre` inchangées (5 s flotte / 2,5 s ciblé), aucun poll par ligne
 - [x] 0.18.0 — `_makeResultItem` / `_fileResult` / `_appendResultGroup` / `_flushPendingResults` conservés ; la mission POINTE vers la carte, ne la duplique pas
-- [ ] 0.19.0 — parité Android (snapshot, stall, PID, limite, panier/questions)
+- [x] 0.19.0 — parité Android : snapshot, stall, PID, seconde ligne, limite, panier et questions conservés ; sélection stable (la feuille trie une fois par composition)
 - [x] 0.20.0 — prompt `source:"wake"` jamais affiché ; aucun bouton ne déclenche un wake
 - [x] Aucun changement `server.js` (pas de restart P0)
 

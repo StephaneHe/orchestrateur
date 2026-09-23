@@ -70,10 +70,38 @@ Aucun changement serveur : tout est reconstruit depuis les endpoints existants.
   réponse attendue · Terminé / Attend le chef · Échec). **Les clés `idle|live|think|input|error|unread`
   sont inchangées** dans tous les réducteurs, `data-state` et l'app Android.
 
+### Added — Android (vc15 · 0.6.0)
+- **Navigation à trois destinations** (`NavHost`) : Journal (racine) · Détail musicien · Réglages, en
+  remplacement du `setContent` unique. Le `FleetViewModel` est créé à l'échelle de l'**activité** et
+  passé aux destinations : sans cela chaque `NavBackStackEntry` en aurait créé un nouveau (second SSE,
+  fil rechargé, ancre perdue). Le retour depuis le détail rend le journal **à la même ancre**.
+- **Ligne « Pilotage »** stable sous l'en-tête (`2 en cours · 1 question ›`) ouvrant une **feuille de
+  pilotage** avec recherche (parkés inclus) et filtres En cours / À examiner / Tous. La `TabBar`
+  disparaît fonctionnellement.
+- **Lignes de mission** inline, même règle que le web (preuve = `tool_use Bash dispatch.mjs <X>` du
+  chef, nom validé). Tap ⇒ **bottom sheet niveau 1** (demande, issue, durée/coût, file, modèle) ;
+  « Ouvrir » ⇒ **écran détail à trois onglets** Activité / Résultat / Journal.
+- **Bande « À votre attention »** repliée avec actions, et **un seul bandeau système** à la fois.
+- **Pastille « Nouveau rapport ↓ »** : un rapport qui arrive ne vole plus la lecture ni le brouillon —
+  le défilement automatique ne s'applique que si l'on est déjà en bas.
+- **Version du serveur** via `GET /api/version`, affichée dans l'en-tête et dans Réglages, à côté du
+  `versionName` de l'app.
+
+### Changed — Android
+- Le fil est **toujours** celui du chef : un musicien s'ouvre en détail, il ne prend pas le fil.
+  Réponse à une question **via le chef** par défaut, envoi direct `@X` explicite et annoncé
+  (« mis en file si X est occupé · aucun retour au chef »). Cible du composer affichée, interruption
+  d'un tour chef vivant annoncée **avant** l'envoi.
+- Mêmes règles d'honnêteté que le web : « Information de X » pour un notify manuel, « coût non
+  fourni », `pidAlive` inconnu ≠ mort, parké = santé non suivie, résultat synthétique gris.
+- Zones tactiles portées à ≥ 44–48 dp sur les actions du fil, de la feuille et des en-têtes.
+
 ### Removed
 - (web) La scène de cartes absolue, la nappe de fils SVG, la carte chef du panneau droit et la barre
   d'onglets mobile ne sont plus montées. Le code mort correspondant (`computeFanLayout`, `deckRotate`,
   `renderFocusedBody`…) est neutralisé et gardé ; sa suppression appartient au lot P2.
+- (android) La `TabBar` n'est plus rendue (le fichier reste pour `blend()`), pas plus que le panneau
+  de session par onglet — remplacé par l'écran détail.
 
 ## [0.20.0] - 2026-09-23
 

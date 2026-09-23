@@ -1267,6 +1267,10 @@ const App = {
   async rehydrateMissions() {
     const S = window.Salle;
     if (!S) return;
+    // Le journal du chef se lit par une queue de 2 Mio côté serveur : on ne la
+    // redemande pas à chaque battement de reconnexion SSE.
+    if (Date.now() - (this._missionsRehydratedAt || 0) < 20000) return;
+    this._missionsRehydratedAt = Date.now();
     let events;
     try {
       const resp = await fetch(`/api/project/${encodeURIComponent(this.composer.CONDUCTOR)}/events?n=500`,
