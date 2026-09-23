@@ -1,0 +1,955 @@
+// ============================================================================
+// public/salle.js — v0.21.0 « SALLE DE DIRECTION »
+// ============================================================================
+//
+// Rendu de la nouvelle conversation de direction, hors du fil lui-même :
+//   · en-tête chef (état unique, sans carte dupliquée)
+//   · rail PILOTAGE (EN COURS / À EXAMINER / Tous / Mis de côté)
+//   · bande d'attention + bandeau système unique
+//   · lignes de mission (tour du chef) et « activité de l'orchestre »
+//   · volet musicien routé par hash (#/m/<projet>) à trois onglets
+//   · annuaire / recherche global (parkés inclus)
+//
+// Chargé AVANT app.js : les fonctions sont donc définies quand app.js les
+// appelle, et `App` (const de portée script) est résolu à l'appel.
+//
+// GARDE-FOU : le vocabulaire d'états `idle|live|think|input|error|unread` est
+// verrouillé (5 réducteurs en dépendent). Rien ici n'invente de chaîne d'état :
+// on n'ajoute que des LIBELLÉS, des badges et des regroupements.
+// ============================================================================
+(function (global) {
+  "use strict";
+
+  const $  = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  // Libellés d'affichage (table d'Astra). Les CLÉS ne changent jamais.
+  const LABEL = {
+    idle:   "Prêt",
+    live:   "En cours",
+    think:  "En cours · réflexion",
+    input:  "Votre réponse attendue",
+    unread: "Terminé",
+    error:  "Échec",
+  };
+  // Marqueurs musicien (§6 « différenciation graphique »).
+  const GLYPH = {
+    idle: "○", live: "●", think: "◐", input: "?", error: "✕", unread: "✓",
+  };
+
+  function label(m) {
+    if (m.state === "unread" && m.awaitingChef) return "Attend le chef";
+    return LABEL[m.state] || LABEL.idle;
+  }
+  function glyph(m) {
+    if (m.state === "unread" && m.awaitingChef) return "⇄";
+    return GLYPH[m.state] || "○";
+  }
+
+  function fmtAge(ms) {
+    if (!isFinite(ms) || ms < 0) return "—";
+    const s = Math.floor(ms / 1000);
+    if (s < 60) return s + "s";
+    const mn = Math.floor(s / 60);
+    if (mn < 60) return mn + "m" + String(s % 60).padStart(2, "0");
+    const h = Math.floor(mn / 60);
+    return h + "h" + String(mn % 60).padStart(2, "0");
+  }
+
+  // ------------------------------------------------------------------------
+  // Accès à l'instantané /api/pupitre — source AUTORITAIRE pour la santé.
+  // `pidAlive === null` = INCONNU (jamais « mort »). Un parké n'est pas scanné :
+  // sa santé n'est pas suivie, et on le dit.
+  // ------------------------------------------------------------------------
+  function snapRow(name) {
+    const snap = App.pupitreSnapshot;
+    if (!snap || !Array.isArray(snap.fleet)) return null;
+    return snap.fleet.find(r => r.name === name) || null;
+  }
+  function snapAgeMs() {
+    return App._pollOkAt ? (Date.now() - App._pollOkAt) : Infinity;
+  }
+  /** Les mesures ont-elles plus de 15 s ? (⇒ grisées et datées, §6) */
+  function snapStale() { return snapAgeMs() > 15000; }
+
+  /** Anomalie prioritaire d'un musicien, ou null. Ordre : processus perdu >
+   *  sans progrès. `pidAlive:null` ne produit JAMAIS « perdu ». */
+  function healthFlag(r) {
+    if (!r) return null;
+    if (r.deadInFlight === true) return { kind: "dead", text: "✗ processus perdu" };
+    if (r.stalled) return { kind: "stall", text: "! sans progrès " + fmtAge(r.silentMs) };
+    return null;
+  }
+
+  // ------------------------------------------------------------------------
+  // En-tête : l'état du chef vit ICI et nulle part ailleurs.
+  // ------------------------------------------------------------------------
+  function renderChefStatus(m) {
+    const el = document.getElementById("chef-status");
+    if (!el) return;
+    if (!m) {
+      el.dataset.state = "idle";
+      el.classList.add("is-unconfigured");
+      el.classList.remove("is-answering");
+      $(".cs-label", el).textContent = "aucun chef configuré";
+      $(".cs-sync", el).textContent = "";
+      return;
+    }
+    el.classList.remove("is-unconfigured");
+    el.dataset.state = m.state;
+    $(".cs-name", el).textContent = m.name.toUpperCase();
+
+    const waiting = App._awaitingConductorResponse;
+    el.classList.toggle("is-answering", !!waiting);
+    let txt;
+    if (waiting) txt = m.state === "think" ? "réfléchit…" : "répond…";
+    else txt = label(m).toLowerCase();
+
+    const r = snapRow(m.name);
+    const h = healthFlag(r);
+    if (h) txt += " · " + h.text;
+    $(".cs-label", el).textContent = txt;
+
+    // Fraîcheur : âge de l'instantané, pas de l'horloge de rendu.
+    const sync = $(".cs-sync", el);
+    if (!App._pollOkAt) sync.textContent = "instantané non reçu";
+    else if (snapStale()) sync.textContent = "données anciennes (" + fmtAge(snapAgeMs()) + ")";
+    else sync.textContent = "synchronisé il y a " + fmtAge(snapAgeMs());
+  }
+
+  // ------------------------------------------------------------------------
+  // Bandeau système — UN SEUL visible, le plus grave. Les autres en compteur.
+  // Priorité : processus perdu > limite Claude > flux interrompu / données
+  // anciennes. « flux interrompu » ne grise JAMAIS les cartes si l'instantané
+  // est bon : les états restent actualisés.
+  // ------------------------------------------------------------------------
+  function renderSysBanner() {
+    const el = document.getElementById("sysbanner");
+    if (!el) return;
+    const snap = App.pupitreSnapshot;
+    const banners = [];
+
+    const dead = (snap?.fleet || []).filter(r => r.deadInFlight === true && !r.parked);
+    if (dead.length) {
+      banners.push({ kind: "lost", text: `✗ processus perdu — ${dead.map(r => r.name).join(", ")}` });
+    }
+    const lim = snap?.limitedUntil ? Number(snap.limitedUntil) : 0;
+    if (lim && lim > Date.now()) {
+      const d = new Date(lim);
+      const hh = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+      banners.push({ kind: "limited", text: `⚡ limite Claude — reprise annoncée à ${hh}` });
+    }
+    if (App._sseUp === false) {
+      banners.push({
+        kind: "stale",
+        text: snapStale() || App._pollFailing
+          ? "⟲ flux interrompu — données anciennes, reconnexion automatique"
+          : "⟲ flux interrompu — états actualisés par instantané, direct coupé",
+      });
+    } else if (App._pollFailing) {
+      banners.push({ kind: "stale", text: "⟲ télémétrie muette — dernières valeurs connues affichées" });
+    }
+
+    if (!banners.length) { el.hidden = true; el.innerHTML = ""; return; }
+    const top = banners[0];
+    el.hidden = false;
+    el.dataset.kind = top.kind;
+    el.innerHTML = `<span>${esc(top.text)}</span>` +
+      (banners.length > 1 ? `<span class="sb-more">+${banners.length - 1} autre${banners.length > 2 ? "s" : ""}</span>` : "");
+  }
+
+  // ------------------------------------------------------------------------
+  // Bande d'attention — une ligne repliée, l'élément le plus grave lisible
+  // sans clic. Priorité : question > processus perdu > échec > sans progrès.
+  // ------------------------------------------------------------------------
+  const ATT_RANK = { question: 0, dead: 1, error: 2, stall: 3 };
+
+  function attentionItems() {
+    const out = [];
+    for (const m of App.musicians.values()) {
+      if (m.name === App.composer.CONDUCTOR) continue;
+      if (m.parked) continue;                       // santé non suivie
+      const r = snapRow(m.name);
+      const needs = r?.needsInput || (m.state === "input" ? m.lastLine : "");
+      if (m.state === "input") {
+        out.push({ kind: "question", name: m.name, mark: "?", text: needs || "question sans texte" });
+        continue;
+      }
+      const h = healthFlag(r);
+      if (h) { out.push({ kind: h.kind, name: m.name, mark: h.kind === "dead" ? "✗" : "!", text: h.text }); continue; }
+      if (m.state === "error") {
+        out.push({ kind: "error", name: m.name, mark: "✕", text: m.lastLine || "échec du tour" });
+      }
+    }
+    out.sort((a, b) => (ATT_RANK[a.kind] - ATT_RANK[b.kind]) || a.name.localeCompare(b.name));
+    return out;
+  }
+
+  let attentionOpen = false;
+
+  function renderAttention() {
+    const el = document.getElementById("attention");
+    if (!el) return;
+    const items = attentionItems();
+    if (!items.length) { el.hidden = true; el.innerHTML = ""; attentionOpen = false; return; }
+    el.hidden = false;
+
+    const counts = [];
+    const nq = items.filter(i => i.kind === "question").length;
+    const nd = items.filter(i => i.kind === "dead").length;
+    const ne = items.filter(i => i.kind === "error").length;
+    const ns = items.filter(i => i.kind === "stall").length;
+    if (nq) counts.push(`${nq} question${nq > 1 ? "s" : ""}`);
+    if (nd) counts.push(`${nd} processus perdu${nd > 1 ? "s" : ""}`);
+    if (ne) counts.push(`${ne} échec${ne > 1 ? "s" : ""}`);
+    if (ns) counts.push(`${ns} sans progrès`);
+    const top = items[0];
+
+    const itemHtml = (it) => {
+      const acts = it.kind === "question"
+        ? `<button class="ai-act is-primary" data-via-chef="${esc(it.name)}">Répondre via le chef</button>` +
+          `<button class="ai-act" data-open-musician="${esc(it.name)}">Ouvrir</button>`
+        : `<button class="ai-act" data-open-musician="${esc(it.name)}">Ouvrir</button>` +
+          `<button class="ai-act" data-talk-chef="${esc(it.name)}">En parler au chef</button>`;
+      return `<div class="att-item" data-kind="${esc(it.kind)}">
+        <span class="ai-mark">${esc(it.mark)}</span>
+        <span class="ai-name">${esc(it.name)}</span>
+        <span class="ai-text">${esc(it.text)}</span>
+        ${acts}
+      </div>`;
+    };
+
+    el.innerHTML =
+      `<button class="att-line" type="button">
+         <span class="att-tag">⚠ À votre attention</span>
+         <span class="att-counts">${esc(counts.join(" · "))}</span>
+         <span class="att-top">${esc(top.name)} : ${esc(top.text)}</span>
+         <span class="att-caret">${attentionOpen ? "▾" : "▸"}</span>
+       </button>` +
+      `<div class="att-list"${attentionOpen ? "" : " hidden"}>${items.map(itemHtml).join("")}</div>`;
+  }
+
+  function wireAttention() {
+    const el = document.getElementById("attention");
+    if (!el || el._wired) return;
+    el._wired = true;
+    el.addEventListener("click", (e) => {
+      if (e.target.closest(".att-line")) {
+        attentionOpen = !attentionOpen;
+        renderAttention();
+        return;
+      }
+      const open = e.target.closest("[data-open-musician]");
+      if (open) { App.openMusician(open.dataset.openMusician); return; }
+      const via = e.target.closest("[data-via-chef]");
+      if (via) { App.answerViaChef(via.dataset.viaChef); return; }
+      const talk = e.target.closest("[data-talk-chef]");
+      if (talk) { App.talkToChefAbout(talk.dataset.talkChef); return; }
+    });
+  }
+
+  // ------------------------------------------------------------------------
+  // Rail PILOTAGE
+  // ------------------------------------------------------------------------
+  // Tri d'attention STABLE (même règle que PupitreRow.rank) + nom à priorité
+  // égale ; le réordonnancement est DIFFÉRÉ de 1,5 s et suspendu tant que le
+  // pointeur survole le rail (« jamais sous le pointeur »).
+  function railRank(m) {
+    const r = snapRow(m.name);
+    if (r && (r.stalled || r.deadInFlight)) return 0;
+    if (m.state === "error") return 1;
+    if (m.state === "input") return 2;
+    if (m.state === "live" || m.state === "think") return 3;
+    if (m.state === "unread") return 4;
+    return 5;
+  }
+
+  const railState = {
+    orders: {},           // clé de groupe → ordre actuellement affiché
+    pendingSince: {},     // clé de groupe → début de la permutation en attente
+    hovered: false,
+    foldAll: true,        // « Tous les musiciens » replié par défaut
+    foldParked: true,
+    open: false,          // mobile : feuille ouverte ?
+  };
+
+  function stableOrder(list, key) {
+    const desired = [...list].sort((a, b) => railRank(a) - railRank(b) || a.name.localeCompare(b.name))
+      .map(m => m.name);
+    const present = new Set(desired);
+    // Les disparus sortent tout de suite ; les nouveaux entrent tout de suite
+    // (rien ne bouge pour l'utilisateur) ; une PERMUTATION attend 1,5 s.
+    const prev = railState.orders[key] || [];
+    const kept = prev.filter(n => present.has(n));
+    const added = desired.filter(n => !kept.includes(n));
+    const current = kept.concat(added);
+    const same = current.length === desired.length && current.every((n, i) => n === desired[i]);
+    if (same) { railState.pendingSince[key] = 0; railState.orders[key] = desired; return desired; }
+    if (!railState.pendingSince[key]) railState.pendingSince[key] = Date.now();
+    if (!railState.hovered && Date.now() - railState.pendingSince[key] >= 1500) {
+      railState.pendingSince[key] = 0;
+      railState.orders[key] = desired;
+      return desired;
+    }
+    railState.orders[key] = current;
+    return current;
+  }
+
+  function railRowHtml(m) {
+    const r = snapRow(m.name);
+    const h = healthFlag(r);
+    const stale = snapStale();
+    const bits = [];
+    if (m.parked) {
+      bits.push(`<span class="rr-soft">santé non suivie</span>`);
+    } else if (h) {
+      bits.push(`<span class="rr-warn">${esc(h.text)}</span>`);
+    } else if (r && (m.state === "live" || m.state === "think")) {
+      const act = r.activity ? String(r.activity).slice(0, 48) : "";
+      const turn = r.turnElapsedMs != null ? fmtAge(r.turnElapsedMs) : null;
+      if (act) bits.push(esc(act));
+      if (turn) bits.push(esc(turn));
+    } else if (m.state === "input") {
+      bits.push(esc((r?.needsInput || m.lastLine || "").slice(0, 60)));
+    } else if (m.state === "unread") {
+      bits.push(m.awaitingChef ? "⇄ attend une décision du chef" : "✓ résultat non lu");
+    } else if (m.lastLine) {
+      bits.push(`<span class="rr-soft">${esc(m.lastLine.slice(0, 50))}</span>`);
+    }
+    if (stale && !m.parked) bits.push(`<span class="rr-soft">(données anciennes)</span>`);
+    const alert = h ? " is-alert" : "";
+    return `<button class="rail-row${alert}" data-state="${esc(m.state)}" data-name="${esc(m.name)}" type="button">
+        <span class="rr-dot"></span>
+        <span class="rr-name">${esc(m.name)}</span>
+        <span class="rr-state">${esc(glyph(m))} ${esc(label(m))}</span>
+        <span class="rr-sub">${bits.join(" · ") || "&nbsp;"}</span>
+      </button>`;
+  }
+
+  function railGroups() {
+    const CONDUCTOR = App.composer.CONDUCTOR;
+    const all = [...App.musicians.values()].filter(m => m.name !== CONDUCTOR);
+    const active = all.filter(m => !m.parked);
+    const parked = all.filter(m => m.parked);
+
+    const inFlight = active.filter(m => m.state === "live" || m.state === "think");
+    const examine = active.filter(m => {
+      if (inFlight.includes(m)) {
+        const r = snapRow(m.name);
+        return !!(r && (r.stalled || r.deadInFlight));
+      }
+      // À EXAMINER = ce qui réclame une décision : question, échec, blocage
+      // sur le chef, et tout ce qui est en vol mais sans progrès / PID mort.
+      // Un simple « terminé non lu » n'y entre pas (il tiendrait la barre).
+      return m.state === "input" || m.state === "error" ||
+             (m.state === "unread" && m.awaitingChef);
+    });
+    const running = inFlight.filter(m => !examine.includes(m));
+    return { all, active, parked, running, examine };
+  }
+
+  function renderRail() {
+    const body = document.getElementById("rail-body");
+    if (!body) return;
+    const g = railGroups();
+
+    // L'ordre affiché est celui de `stableOrder` (attention d'abord, nom à
+    // priorité égale), appliqué au sein de chaque groupe. Une permutation
+    // n'est commise qu'après 1,5 s stables et jamais sous le pointeur.
+    const group = (title, list) => {
+      if (!list.length) return "";
+      const ordered = stableOrder(list, title);
+      const byName = new Map(list.map(m => [m.name, m]));
+      const rows = ordered.filter(n => byName.has(n)).map(n => railRowHtml(byName.get(n))).join("");
+      return `<div class="rail-group">
+          <div class="rail-group-head">${esc(title)} <span class="rg-n">(${list.length})</span></div>
+          ${rows}
+        </div>`;
+    };
+
+    const running = group("En cours", g.running);
+    const examine = group("À examiner", g.examine);
+
+    const othersList = [...g.active].sort((a, b) => a.name.localeCompare(b.name));
+    const others = `<div class="rail-group">
+        <button class="rail-group-head" type="button" data-fold="all">
+          Tous les musiciens <span class="rg-n">(${g.active.length})</span>
+          <span class="rg-caret">${railState.foldAll ? "▸" : "▾"}</span>
+        </button>
+        ${railState.foldAll ? "" : othersList.map(railRowHtml).join("")}
+      </div>`;
+
+    const parkedList = [...g.parked].sort((a, b) => a.name.localeCompare(b.name));
+    const parkedBlock = g.parked.length ? `<div class="rail-group">
+        <button class="rail-group-head" type="button" data-fold="parked">
+          Mis de côté <span class="rg-n">(${g.parked.length})</span>
+          <span class="rg-caret">${railState.foldParked ? "▸" : "▾"}</span>
+        </button>
+        ${railState.foldParked ? "" : parkedList.map(railRowHtml).join("")}
+      </div>` : "";
+
+    const empty = (!g.running.length && !g.examine.length)
+      ? `<div class="rail-empty">Aucun musicien en cours ni à examiner.</div>` : "";
+
+    // Écriture seulement si le contenu a changé : pas de re-mount inutile, pas
+    // de scroll qui saute pendant qu'on lit le rail.
+    const html = running + examine + empty + others + parkedBlock;
+    if (body._html !== html) { body.innerHTML = html; body._html = html; }
+    renderMobilePilot(g);
+  }
+
+  function renderMobilePilot(g) {
+    const el = document.getElementById("mobile-pilot");
+    if (!el) return;
+    g = g || railGroups();
+    const parts = [];
+    if (g.running.length) parts.push(`${g.running.length} en cours`);
+    const nq = g.examine.filter(m => m.state === "input").length;
+    if (nq) parts.push(`${nq} question${nq > 1 ? "s" : ""}`);
+    const nOther = g.examine.length - nq;
+    if (nOther > 0) parts.push(`${nOther} à examiner`);
+    if (!parts.length) parts.push("orchestre au repos");
+    el.hidden = false;
+    el.innerHTML = `<span class="mp-k">Pilotage</span><span>${esc(parts.join(" · "))}</span><span class="mp-caret">›</span>`;
+  }
+
+  function wireRail() {
+    const rail = document.getElementById("rail");
+    if (!rail || rail._wired) return;
+    rail._wired = true;
+    rail.addEventListener("pointerenter", () => { railState.hovered = true; });
+    rail.addEventListener("pointerleave", () => { railState.hovered = false; });
+    rail.addEventListener("click", (e) => {
+      const fold = e.target.closest("[data-fold]");
+      if (fold) {
+        if (fold.dataset.fold === "all") railState.foldAll = !railState.foldAll;
+        else railState.foldParked = !railState.foldParked;
+        renderRail();
+        return;
+      }
+      const row = e.target.closest(".rail-row");
+      if (row) App.openMusician(row.dataset.name);
+    });
+    const pilot = document.getElementById("mobile-pilot");
+    if (pilot) pilot.addEventListener("click", () => toggleRailSheet());
+  }
+
+  function isMobile() { return window.innerWidth < 768; }
+
+  function toggleRailSheet(force) {
+    const rail = document.getElementById("rail");
+    if (!rail) return;
+    railState.open = (force === undefined) ? !railState.open : !!force;
+    if (isMobile()) rail.hidden = !railState.open;
+    else rail.hidden = false;
+  }
+
+  function syncRailVisibility() {
+    const rail = document.getElementById("rail");
+    const dive = document.getElementById("dive");
+    if (!rail) return;
+    const diveOpen = dive && !dive.hidden;
+    if (isMobile()) rail.hidden = !railState.open || diveOpen;
+    else rail.hidden = !!diveOpen;   // le volet REMPLACE le rail sur desktop
+  }
+
+  // ------------------------------------------------------------------------
+  // Missions — reconstruites depuis le `tool_use Bash` du chef.
+  // Le nom capturé est VALIDÉ contre la flotte connue : pas de mission
+  // inventée depuis une ligne de commande qui parle d'autre chose.
+  // ------------------------------------------------------------------------
+  /** Extrait les projets dispatchés par une commande Bash du chef. */
+  function extractDispatches(command) {
+    const cmd = String(command || "");
+    if (!/dispatch\.mjs/i.test(cmd)) return [];
+    const names = [];
+    // Un `&&`/`;`/saut de ligne peut enchaîner plusieurs dispatches.
+    const re = /dispatch\.mjs["']?([^\n;&|]*)/gi;
+    let mm;
+    while ((mm = re.exec(cmd)) !== null) {
+      const tail = mm[1] || "";
+      // Premier jeton positionnel : on saute les options et leurs valeurs
+      // « évidentes » (un jeton qui suit une option connue à valeur).
+      const toks = tail.trim().split(/\s+/).filter(Boolean);
+      for (let i = 0; i < toks.length; i++) {
+        const t = toks[i].replace(/^["']|["']$/g, "");
+        if (t.startsWith("-")) {
+          if (/^--(callback|source|model|provider|prompt|resume|await)/.test(t) && !t.includes("=")) i++;
+          continue;
+        }
+        if (!/^[A-Za-z0-9_.\-]+$/.test(t)) break;
+        if (App.musicians.has(t) && t !== App.composer.CONDUCTOR) names.push(t);
+        break;   // le projet est le PREMIER positionnel
+      }
+    }
+    return [...new Set(names)];
+  }
+
+  /** L'état vivant d'une ligne de mission, depuis /api/pupitre + la flotte. */
+  function missionRowHtml(it) {
+    const m = App.musicians.get(it.name);
+    const r = snapRow(it.name);
+    let state = m ? m.state : "idle";
+    let mark, text;
+
+    if (it.outcome) {
+      // Issue connue : la ligne porte l'issue et POINTE vers la carte du panier.
+      if (it.outcome === "failed")        { mark = "✕"; state = "error"; }
+      else if (it.outcome === "ask_chef") { mark = "⇄"; state = "unread"; }
+      else if (it.outcome === "question") { mark = "?"; state = "input"; }
+      else                                { mark = "✓"; state = "unread"; }
+      const bits = [];
+      bits.push(it.outcome === "failed" ? "échec" :
+                it.outcome === "ask_chef" ? "attend le chef" :
+                it.outcome === "question" ? "vous demande" : "terminé");
+      if (Number.isFinite(it.durationMs)) bits.push(fmtAge(it.durationMs));
+      bits.push(Number.isFinite(it.costUsd) ? `$${it.costUsd.toFixed(2)}` : "coût non fourni");
+      text = esc(bits.join(" · "));
+    } else if (!it.started) {
+      // « lancée » ≠ « démarrée » : on n'affirme le démarrage qu'au system/init
+      // réellement observé côté musicien.
+      mark = "▸";
+      text = "lancée — démarrage non encore observé";
+    } else {
+      mark = m ? glyph(m) : "●";
+      const h = healthFlag(r);
+      const bits = [];
+      bits.push(m ? label(m).toLowerCase() : "en cours");
+      if (r?.turnElapsedMs != null) bits.push(fmtAge(r.turnElapsedMs));
+      if (r?.activity) bits.push(String(r.activity).slice(0, 40));
+      text = esc(bits.join(" · "));
+      if (h) text += ` · <span class="mr-warn">${esc(h.text)}</span>`;
+    }
+
+    const goto = it.outcome
+      ? `<button class="mr-open" data-goto-result="${esc(it.name)}" title="Voir la carte du panier">résultat ↓</button>`
+      : "";
+    return `<div class="mission-row" data-state="${esc(state)}" data-name="${esc(it.name)}">
+        <span class="mr-mark">${esc(mark)}</span>
+        <span class="mr-name">${esc(it.name)}</span>
+        <span class="mr-text">${text}</span>
+        ${goto}<button class="mr-open" data-open-musician="${esc(it.name)}">Ouvrir ›</button>
+      </div>`;
+  }
+
+  function missionsHtml(b) {
+    if (!b.items || !b.items.length) return "";
+    const title = b.observed ? "Activité de l'orchestre" : "Missions";
+    const note = b.truncated
+      ? `<div class="cv-missions-note">activité plus ancienne non chargée — fenêtre bornée (500 événements / 2 Mio)</div>`
+      : "";
+    return `<div class="cv-missions${b.observed ? " is-observed" : ""}">
+        <div class="cv-missions-head">${esc(title)} <span class="cm-n">(${b.items.length})</span></div>
+        <div class="cv-missions-body">${b.items.map(missionRowHtml).join("")}</div>
+        ${note}
+      </div>`;
+  }
+
+  /** Bloc « ACTIVITÉ DE L'ORCHESTRE » : musiciens en vol SANS dispatch chef
+   *  observé (@X, file, relais). Jamais « mission » sans preuve. */
+  function orchestraActivityHtml() {
+    const piloted = new Set();
+    for (const b of App.chat) {
+      if (b.role !== "missions" || b.observed) continue;
+      for (const it of b.items) if (!it.outcome) piloted.add(it.name);
+    }
+    const items = [];
+    for (const m of App.musicians.values()) {
+      if (m.name === App.composer.CONDUCTOR || m.parked) continue;
+      if (m.state !== "live" && m.state !== "think") continue;
+      if (piloted.has(m.name)) continue;
+      items.push({ name: m.name, started: true, outcome: null });
+    }
+    if (!items.length) return "";
+    return missionsHtml({ items, observed: true });
+  }
+
+  // ------------------------------------------------------------------------
+  // Volet musicien routé — #/m/<projet>
+  // ------------------------------------------------------------------------
+  const dive = {
+    name: null,
+    tab: "activity",
+    detail: null,       // instance PupitreDetail
+    events: [],         // fenêtre brute (journal + dernier résultat)
+    truncated: false,
+    returnFocus: null,
+    fromApp: false,     // ouvert depuis l'app (⇒ history.back reste dans le site)
+  };
+  let pendingFromApp = false;
+
+  /** Retour : `history.back()` si on est arrivé ici depuis le fil, sinon on
+   *  revient à la racine sans sortir du site (lien direct `#/m/X`). */
+  function goBack() {
+    if (dive.fromApp) history.back();
+    else location.hash = "#/";
+  }
+
+  function diveEl() { return document.getElementById("dive"); }
+
+  function parseHash() {
+    const h = String(location.hash || "");
+    const mm = /^#\/m\/([^/?#]+)/.exec(h);
+    return mm ? decodeURIComponent(mm[1]) : null;
+  }
+
+  function router() {
+    const want = parseHash();
+    if (want && App.musicians.has(want)) {
+      if (dive.name !== want) openDive(want);
+      else renderDive();
+    } else {
+      if (dive.name) closeDive();
+      if (want) {
+        // Nom inconnu : on ne prétend pas, on revient au fil.
+        location.replace("#/");
+      }
+    }
+    syncRailVisibility();
+  }
+
+  function openDive(name) {
+    const el = diveEl();
+    if (!el) return;
+    dive.name = name;
+    dive.tab = "activity";
+    dive.events = [];
+    dive.truncated = false;
+    dive.fromApp = pendingFromApp;
+    pendingFromApp = false;
+    el.hidden = false;
+    $(".dive-name", el).textContent = name;
+    $$(".dive-tab", el).forEach(b => b.classList.toggle("is-on", b.dataset.tab === "activity"));
+    const act = $(".dive-activity", el);
+    act.innerHTML = "";
+    dive.detail = global.PupitreDetail
+      ? global.PupitreDetail.create(act, {
+          maxNodes: 600,
+          onCount: (n) => { const c = $(".dive-count", el); if (c) c.textContent = n + " evts"; },
+        })
+      : null;
+    if (dive.detail) dive.detail.setPinned(true);
+    const m = App.musicians.get(name);
+    if (m) m.markRead();
+    renderDive();
+    syncRailVisibility();
+    App.ensurePupitrePoll();
+    backfillDive(name);
+  }
+
+  function closeDive() {
+    const el = diveEl();
+    dive.name = null;
+    dive.detail = null;
+    dive.events = [];
+    if (el) el.hidden = true;
+    const adv = el && $(".dive-adv", el);
+    if (adv) adv.hidden = true;
+    syncRailVisibility();
+    App.ensurePupitrePoll();
+    // Restitution du focus à l'élément d'origine (§3.3).
+    if (dive.returnFocus && document.contains(dive.returnFocus)) {
+      try { dive.returnFocus.focus(); } catch { /* ignore */ }
+    }
+    dive.returnFocus = null;
+  }
+
+  function backfillDive(name) {
+    fetch(`/api/project/${encodeURIComponent(name)}/events?n=200`,
+          { headers: { Accept: "application/json" }, credentials: "same-origin" })
+      .then(r => r.ok ? r.json() : [])
+      .then(list => {
+        if (dive.name !== name) return;
+        dive.events = Array.isArray(list) ? list : [];
+        dive.truncated = dive.events.length >= 200;
+        if (dive.detail) {
+          dive.detail.reset();
+          for (const raw of dive.events) dive.detail.addEvent(raw);
+          dive.detail.setPinned(true); dive.detail.stick();
+        }
+        const m = App.musicians.get(name);
+        if (m && dive.events.length) m.ring = dive.events.slice(-30);
+        renderDive();
+      })
+      .catch(() => { /* non fatal */ });
+  }
+
+  /** Un événement live du musicien ouvert est poussé dans le flux du volet. */
+  function onLiveEvent(name, raw) {
+    if (dive.name !== name) return;
+    if (dive.detail) dive.detail.onLive(raw);
+    dive.events.push(raw);
+    if (dive.events.length > 400) dive.events.splice(0, dive.events.length - 400);
+    if (dive.tab !== "activity") renderDive();
+  }
+
+  function renderDive() {
+    const el = diveEl();
+    if (!el || !dive.name) return;
+    const m = App.musicians.get(dive.name);
+    const r = snapRow(dive.name);
+    el.dataset.state = m ? m.state : "idle";
+
+    // Sous-titre : le rôle du musicien + sa mission si le chef l'a lancée.
+    const mission = findMission(dive.name);
+    const sub = $(".dive-sub", el);
+    if (m && m.parked) sub.textContent = "Musicien mis de côté · santé non suivie";
+    else if (mission) sub.textContent = `Musicien piloté par le chef · mission lancée ${new Date(mission.launchedAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
+    else sub.textContent = "Musicien de l'orchestre";
+
+    // Ligne d'état + télémétrie (mêmes champs que /pupitre).
+    const st = $(".dive-state", el);
+    const h = healthFlag(r);
+    st.innerHTML = m
+      ? `${esc(glyph(m))} ${esc(label(m))}` + (h ? ` · <span style="color:var(--st-error)">${esc(h.text)}</span>` : "")
+      : "—";
+
+    const meta = $(".dive-meta", el);
+    if (m && m.parked) {
+      meta.textContent = "santé non suivie (projet mis de côté) — aucun scan périodique";
+    } else if (!r) {
+      meta.textContent = "instantané non disponible pour ce musicien";
+    } else {
+      const el2 = App.pupitreRecvPerf ? (performance.now() - App.pupitreRecvPerf) : 0;
+      const pid = r.pid == null ? "processus —"
+        : r.pidAlive === true ? `processus ✓ ${r.pid}`
+        : r.pidAlive === false ? `processus ✗ ${r.pid}`
+        : `processus inconnu ${r.pid}`;
+      meta.textContent = [
+        "tour " + (r.turnElapsedMs != null ? fmtAge(r.turnElapsedMs + el2) : "—"),
+        "dernier progrès " + fmtAge(r.silentMs + el2),
+        pid,
+        (r.model || r.configModel || "modèle —"),
+        (App._pollOkAt ? "instantané il y a " + fmtAge(snapAgeMs()) : "instantané non reçu"),
+      ].join(" · ");
+    }
+
+    $$(".dive-tab", el).forEach(b => b.classList.toggle("is-on", b.dataset.tab === dive.tab));
+    $(".dive-activity", el).hidden = dive.tab !== "activity";
+    $(".dive-result",   el).hidden = dive.tab !== "result";
+    $(".dive-journal",  el).hidden = dive.tab !== "journal";
+    if (dive.tab === "result")  renderDiveResult(el);
+    if (dive.tab === "journal") renderDiveJournal(el);
+
+    // Notices de transport : uniquement au niveau 2 (§7).
+    const notices = dive.events.filter(e =>
+      e?.type === "notice" || e?.subtype === "log_growth_skipped" || e?.subtype === "oversized_line_skipped");
+    $(".dive-notice", el).textContent = notices.length
+      ? `⚠ ${notices.length} notice${notices.length > 1 ? "s" : ""} de transport — du contenu n'est pas passé par le flux (il reste sur disque)`
+      : "";
+  }
+
+  function findMission(name) {
+    for (let i = App.chat.length - 1; i >= 0; i--) {
+      const b = App.chat[i];
+      if (b.role !== "missions" || b.observed) continue;
+      const it = b.items.find(x => x.name === name);
+      if (it) return it;
+    }
+    return null;
+  }
+
+  function renderDiveResult(el) {
+    const pane = $(".dive-result", el);
+    const evs = dive.events;
+    let res = null, servedText = "";
+    for (let i = evs.length - 1; i >= 0; i--) {
+      if (evs[i]?.type === "result") { res = evs[i]; break; }
+    }
+    for (let i = evs.length - 1; i >= 0; i--) {
+      const e = evs[i];
+      if (e?.type !== "assistant") continue;
+      const t = (e.message?.content || []).filter(b => b?.type === "text").map(b => b.text).join("\n").trim();
+      if (t) { servedText = t; break; }
+    }
+    if (!res && !servedText) {
+      pane.innerHTML = `<div class="dj-note">Aucun résultat dans la fenêtre chargée.</div>`;
+      return;
+    }
+    const isErr = res && (!!res.is_error || (typeof res.subtype === "string" && res.subtype.startsWith("error")));
+    const synthetic = res && res.synthetic;
+    let issue;
+    if (synthetic)      issue = `⟲ clos par le système — ${esc(res.subtype || "interrompu")}`;
+    else if (isErr)     issue = `✕ échec — ${esc(res.subtype || "erreur")}`;
+    else if (res)       issue = "✓ terminé";
+    else                issue = "… tour en cours";
+    const dur  = res && Number.isFinite(res.duration_ms) ? fmtAge(res.duration_ms) : "—";
+    const cost = res && Number.isFinite(res.total_cost_usd) ? `$${res.total_cost_usd.toFixed(2)}` : "coût non fourni";
+    const r = snapRow(dive.name);
+    const q = r?.needsInput;
+
+    // Livrables : liens /downloads/... trouvés dans le texte servi.
+    const dl = [...new Set((servedText.match(/\/downloads\/[^\s)"'`]+/g) || []))];
+    const dlHtml = dl.length
+      ? `<div class="dr-k">Livrables</div><div class="dr-v">${dl.map(p =>
+          `<a href="${esc(p)}" target="_blank" rel="noopener">${esc(p)}</a>`).join("<br>")}</div>`
+      : "";
+
+    pane.innerHTML =
+      `<div class="dr-k">Issue</div><div class="dr-v">${issue}${synthetic ? " (gris, ce n'est pas un échec)" : ""}</div>` +
+      `<div class="dr-k">Durée · coût</div><div class="dr-v">${esc(dur)} · ${esc(cost)}</div>` +
+      (q ? `<div class="dr-k">Question posée</div><div class="dr-v">${esc(q)}</div>` : "") +
+      `<div class="dr-k">Texte servi</div><div class="dr-v md">${
+        servedText ? (typeof global.mdToHtml === "function" ? global.mdToHtml(servedText) : esc(servedText).replace(/\n/g, "<br>")) : "—"
+      }</div>` +
+      dlHtml;
+  }
+
+  function renderDiveJournal(el) {
+    const pane = $(".dive-journal", el);
+    const rows = dive.events.slice(-300).map(e => {
+      const ts = e?.timestamp ? new Date(e.timestamp) : null;
+      const t = ts && !isNaN(ts.getTime())
+        ? String(ts.getHours()).padStart(2, "0") + ":" + String(ts.getMinutes()).padStart(2, "0") + ":" + String(ts.getSeconds()).padStart(2, "0")
+        : "--:--:--";
+      const kind = e?.type + (e?.subtype ? "/" + e.subtype : "");
+      let prev = "";
+      if (e?.type === "assistant") {
+        const b = (e.message?.content || [])[0] || {};
+        prev = b.type === "tool_use" ? `${b.name} ${JSON.stringify(b.input || {}).slice(0, 90)}`
+             : b.type === "thinking" ? String(b.thinking || "").slice(0, 90)
+             : String(b.text || "").slice(0, 90);
+      } else if (e?.type === "user_prompt") prev = String(e.text || "").slice(0, 90);
+      else if (e?.type === "result") prev = (e.is_error ? "is_error " : "") + (e.subtype || "");
+      return `<div class="dj-line"><span class="dj-ts">${esc(t)}</span><span class="dj-type">${esc(kind)}</span>${esc(prev)}</div>`;
+    }).join("");
+    pane.innerHTML =
+      `<div class="dj-note">fenêtre bornée (500 événements / 2 Mio côté serveur) — ce n'est pas tout l'historique</div>` +
+      rows + (dive.truncated ? `<div class="dj-note">plus ancien : non chargé</div>` : "");
+  }
+
+  function wireDive() {
+    const el = diveEl();
+    if (!el || el._wired) return;
+    el._wired = true;
+    $(".dive-back", el).addEventListener("click", () => goBack());
+    $$(".dive-tab", el).forEach(b => b.addEventListener("click", () => {
+      dive.tab = b.dataset.tab;
+      renderDive();
+    }));
+    $(".dive-talk", el).addEventListener("click", () => {
+      const n = dive.name;
+      goBack();
+      // Retour au composer chef, projet nommé, extrait cité (§3.3).
+      setTimeout(() => App.talkToChefAbout(n), 0);
+    });
+    $(".dive-menu", el).addEventListener("click", (e) => {
+      e.stopPropagation();
+      const adv = $(".dive-adv", el);
+      if (!adv.hidden) { adv.hidden = true; return; }
+      const m = App.musicians.get(dive.name);
+      adv.innerHTML =
+        `<button class="da-item" data-adv="direct">Envoyer directement à ${esc(dive.name)}…</button>` +
+        `<div class="da-sep"></div>` +
+        `<button class="da-item" data-adv="park">${m && m.parked ? "Remettre en avant" : "Mettre de côté"}</button>` +
+        `<button class="da-item" data-adv="session">Session Claude…</button>` +
+        `<button class="da-item" data-adv="read">Marquer lu</button>` +
+        `<a class="da-item" href="/pupitre" target="_blank" rel="noopener">Ouvrir /pupitre</a>`;
+      adv.hidden = false;
+    });
+    $(".dive-adv", el).addEventListener("click", (e) => {
+      const b = e.target.closest("[data-adv]");
+      if (!b) return;
+      $(".dive-adv", el).hidden = true;
+      const m = App.musicians.get(dive.name);
+      if (!m) return;
+      if (b.dataset.adv === "direct")  App.sendDirectTo(m.name);
+      if (b.dataset.adv === "park")    m.parked ? App.unparkProject(m.name) : App.parkProject(m);
+      if (b.dataset.adv === "session") App.openSession(m);
+      if (b.dataset.adv === "read")    { m.markRead(); renderRail(); }
+    });
+    document.addEventListener("click", (e) => {
+      const adv = $(".dive-adv", el);
+      if (adv && !adv.hidden && !e.target.closest(".dive-adv") && !e.target.closest(".dive-menu")) adv.hidden = true;
+    });
+  }
+
+  // ------------------------------------------------------------------------
+  // Annuaire / recherche — accessible partout, parkés inclus.
+  // ------------------------------------------------------------------------
+  function openSearch() {
+    const ov = document.getElementById("overlay-search");
+    if (!ov) return;
+    ov.hidden = false;
+    const inp = $(".psr-input", ov);
+    inp.value = "";
+    renderSearch("");
+    setTimeout(() => inp.focus(), 40);
+  }
+
+  function renderSearch(q) {
+    const ov = document.getElementById("overlay-search");
+    if (!ov) return;
+    const list = $(".psr-list", ov);
+    const needle = String(q || "").toLowerCase();
+    const all = [...App.musicians.values()]
+      .filter(m => !needle || m.name.toLowerCase().includes(needle))
+      .sort((a, b) => {
+        const ap = a.name.toLowerCase().startsWith(needle) ? 0 : 1;
+        const bp = b.name.toLowerCase().startsWith(needle) ? 0 : 1;
+        return ap - bp || railRank(a) - railRank(b) || a.name.localeCompare(b.name);
+      });
+    if (!all.length) { list.innerHTML = `<div class="psr-empty">Aucun musicien ne correspond.</div>`; return; }
+    list.innerHTML = all.map((m, i) => `
+      <button class="psr-row${i === 0 ? " is-sel" : ""}" data-name="${esc(m.name)}" data-state="${esc(m.state)}" type="button">
+        <span class="pr-dot"></span>
+        <span class="pr-name">${esc(m.name)}</span>
+        ${m.parked ? `<span class="pr-parked">MIS DE CÔTÉ</span>` : ""}
+        ${m.name === App.composer.CONDUCTOR ? `<span class="pr-parked">CHEF</span>` : ""}
+        <span class="pr-state">${esc(glyph(m))} ${esc(label(m))}</span>
+      </button>`).join("");
+  }
+
+  function wireSearch() {
+    const ov = document.getElementById("overlay-search");
+    if (!ov || ov._wired) return;
+    ov._wired = true;
+    const inp = $(".psr-input", ov);
+    inp.addEventListener("input", () => renderSearch(inp.value));
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        const sel = $(".psr-row.is-sel", ov) || $(".psr-row", ov);
+        if (sel) { ov.hidden = true; App.openMusician(sel.dataset.name); }
+      }
+      if (e.key === "Escape") ov.hidden = true;
+    });
+    ov.addEventListener("click", (e) => {
+      if (e.target.classList.contains("overlay-scrim") || e.target.closest(".psr-close")) { ov.hidden = true; return; }
+      const row = e.target.closest(".psr-row");
+      if (row) { ov.hidden = true; App.openMusician(row.dataset.name); }
+    });
+  }
+
+  // ------------------------------------------------------------------------
+  function init() {
+    wireAttention();
+    wireRail();
+    wireDive();
+    wireSearch();
+    window.addEventListener("hashchange", router);
+    window.addEventListener("resize", () => { syncRailVisibility(); renderMobilePilot(); });
+    // Le volet est un niveau de navigation : Échap = retour (history.back).
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      const ov = document.getElementById("overlay-search");
+      if (ov && !ov.hidden) { ov.hidden = true; return; }
+      if (dive.name) { e.preventDefault(); goBack(); }
+      else if (railState.open && isMobile()) toggleRailSheet(false);
+    });
+  }
+
+  global.Salle = {
+    init, router, openDive, closeDive, renderDive, onLiveEvent, backfillDive,
+    renderChefStatus, renderSysBanner, renderAttention, renderRail, renderMobilePilot,
+    syncRailVisibility, toggleRailSheet, openSearch, renderSearch,
+    missionsHtml, orchestraActivityHtml, extractDispatches, findMission,
+    label, glyph, fmtAge, snapRow, snapStale, snapAgeMs, healthFlag, railRank,
+    goBack,
+    get diveName() { return dive.name; },
+    set returnFocus(el) { dive.returnFocus = el; },
+    /** Signale que la prochaine ouverture vient du fil (et non d'un lien). */
+    markInAppNavigation() { pendingFromApp = true; },
+  };
+})(window);

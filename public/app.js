@@ -45,12 +45,12 @@ const GRID_ROW_GAP    = 18;
 // are the locked vocabulary shared by 5 reducers + the Android app and must
 // never change. These are action-oriented French strings for the human.
 const STATE_LABELS = {
-  idle:   { label: "PRÊT",                  icon: "○" },
-  live:   { label: "EN COURS",              icon: "●" },
-  think:  { label: "RÉFLEXION",             icon: "◌" },
-  input:  { label: "RÉPONSE REQUISE",       icon: "?" },
-  error:  { label: "ÉCHEC",                 icon: "✕" },
-  unread: { label: "TERMINÉ · non lu",      icon: "✉" },
+  idle:   { label: "Prêt",                  icon: "○" },
+  live:   { label: "En cours",              icon: "●" },
+  think:  { label: "En cours · réflexion",  icon: "◐" },
+  input:  { label: "Votre réponse attendue", icon: "?" },
+  error:  { label: "Échec",                 icon: "✕" },
+  unread: { label: "Terminé",               icon: "✓" },
 };
 
 // Claude Code's interactive UI draws lots of noise via box-drawing + cursor
@@ -498,9 +498,13 @@ function outcomeIcon(outcome) {
 // triggered by a callback (that regression was removed in v0.14.3).
 function takingHtml(b) {
   if (!b || !Array.isArray(b.taking) || !b.taking.length) return "";
+  // Puces cliquables : la carte du panier correspondante + le musicien.
+  // « prend en compte » reste une ASSOCIATION D'AFFICHAGE — le serveur
+  // n'accuse rien, et aucun tour chef n'est déclenché par un callback.
   const list = b.taking
-    .map(t => `${esc(t.source || "?")} ${outcomeIcon(t.outcome)}`)
-    .join(" · ");
+    .map(t => `<button class="cv-taking-chip" data-outcome="${esc(t.outcome || "done")}"` +
+              ` data-goto-result="${esc(t.source || "")}">${esc(t.source || "?")} ${outcomeIcon(t.outcome)}</button>`)
+    .join(" ");
   return `<div class="cv-taking">prend en compte : ${list}</div>`;
 }
 
@@ -762,7 +766,11 @@ function apexFirstIndices(n) {
 // --------------------------------------------------------------------------
 
 function redrawThreads() {
+  // v0.21.0 — la scène de cartes (et donc la nappe de fils) a disparu au
+  // profit du fil + rail. La fonction reste un no-op gardé : plusieurs
+  // appelants historiques la déclenchent encore (P2 les supprimera).
   const svg = $("#threads");
+  if (!svg) return;
   svg.innerHTML = "";
   // Threads only make sense on desktop — the mobile view has no fan.
   if (isMobileViewport()) return;
@@ -889,13 +897,10 @@ class FleetStream {
         const d = m.pendingDenials[m.pendingDenials.length - 1];
         App.showPermDenialToast(m, d.toolName);
       }
-      if (App.focused === m && App.focusedDetail) {
-        // Append the live line to the drawer EXACTLY like /pupitre's onLive
-        // (token-level deltas + consolidated events) — no full rebuild. Stays
-        // immediate (that's the live view); its auto-scroll is throttled to
-        // 1×/frame inside pupitre-detail.js.
-        App.focusedDetail.onLive(raw);
-      }
+      // Volet musicien ouvert : la ligne live est ajoutée EXACTEMENT comme
+      // dans /pupitre (onLive) — pas de reconstruction complète.
+      App.noteMusicianEvent(m, raw);
+      window.Salle?.onLiveEvent(m.name, raw);
       // Conductor chat/reflection must observe every event, in order — but it's
       // infrequent vs. token deltas, so keep it synchronous.
       if (m.name === App.composer.CONDUCTOR) App.onConductorEvent(m, raw);
@@ -963,6 +968,11 @@ const App = {
   // running. They are held here and flushed after the chef's reply so a callback
   // can never split a turn. Nothing here ever triggers a chef turn.
   _pendingResults: [],
+  // v0.21.0 — état du tour chef courant pour les lignes de mission et le point.
+  _currentMissions: null,     // entrée `{role:"missions"}` du tour en cours
+  _wakeObservedAt: 0,         // réveil OBSERVÉ (jamais affiché) → prochain tour = point
+  _turnIsReport: false,       // le tour courant est un « point sur les résultats »
+  _lastTurnStartTs: 0,        // début du dernier tour chef (frontière des paniers)
   // Results received since the last chef turn started → rendered as the next
   // turn's "prend en compte : …" header.
   _resultsSinceChefTurn: [],
@@ -973,10 +983,15 @@ const App = {
   // project's event stream and the composer dispatches there.
   activeTab: "chef",
 
-  /** Paint the fixed chef card (bottom-center of the right pane) from the
-   *  conductor musician's state. It is only a compact fleet summary: opening
-   *  it delegates to openFocused(), exactly like every musician card. */
+  /** v0.21.0 — l'état du chef vit dans l'EN-TÊTE, une seule source visuelle
+   *  (plus de carte chef dupliquée dans une scène de cartes). */
   syncChefCard(m) {
+    window.Salle?.renderChefStatus(m || null);
+  },
+
+  /** Ancien peintre de la carte chef — conservé inerte le temps du P2 (des
+   *  appelants historiques peuvent encore le viser). */
+  _legacySyncChefCard(m) {
     const card = document.getElementById("chef-card");
     if (!card) return;
     // m may be null/undefined when no conductor is configured or when the
@@ -1030,7 +1045,7 @@ const App = {
     this.wireKeyboard();
     this.wireTweaks();
     this.wireOverlays();
-    this.wireFanSwipe();
+    window.Salle?.init();
     window.addEventListener("resize", () => { this.relayout(); this.renderChat(); });
 
     await this.loadConfig();
@@ -1038,10 +1053,13 @@ const App = {
       .then(r => r.ok ? r.json() : null)
       .then(j => {
         const el = document.getElementById("app-version");
-        if (el && j?.version) el.textContent = "v" + j.version;
+        if (el && j?.version) el.textContent = "serveur v" + j.version;
       })
       .catch(() => {});
     await this.loadChatHistory();
+    // Le hash est appliqué APRÈS le chargement de la flotte : #/m/<X> est un
+    // lien direct partageable, il doit ouvrir le bon volet au chargement.
+    window.Salle?.router();
     this.stream = new FleetStream();
 
     // Periodic freq decay + layout re-sort to surface recently-active musicians.
@@ -1086,16 +1104,9 @@ const App = {
       // clear even in the background. Self-guarded + only fetches when armed.
       this._conductorLivenessCheck();
       if (document.hidden) return;
-      let touched = false;
-      for (const m of this.musicians.values()) {
-        const inFlight = m.state === "live" || m.state === "think";
-        const stale = m.el && m.el.classList.contains("is-stale");
-        if (!inFlight && !stale) continue;
-        if (m.name === this.composer.CONDUCTOR) this.syncChefCard(m);
-        else m.updateCard();
-        touched = true;
-      }
-      if (touched) this.renderTabs();
+      this.syncChefCard(this.musicians.get(this.composer.CONDUCTOR) || null);
+      window.Salle?.renderRail();
+      window.Salle?.renderAttention();
     }, 5000);
   },
 
@@ -1142,14 +1153,12 @@ const App = {
     } catch { return; }
     const projects = cfg.projects || [];
     const wanted = new Set(projects.map(p => p.name));
-    const arc = $("#arc");
     let changed = false;
     // Add newcomers.
     for (const p of projects) {
       if (this.musicians.has(p.name)) continue;
       const m = new Musician(p);
       this.musicians.set(m.name, m);
-      if (p.name !== this.composer.CONDUCTOR && arc) arc.appendChild(m.buildCard());
       changed = true;
     }
     // Remove departed ones (keep the conductor even if absent — it's special).
@@ -1158,14 +1167,13 @@ const App = {
       const m = this.musicians.get(name);
       try { m.el?.remove(); } catch {}
       this.musicians.delete(name);
-      if (this.activeTab === name) this.setActiveTab(this.composer.CONDUCTOR);
+      if (window.Salle?.diveName === name) location.hash = "#/";
       changed = true;
     }
     if (!changed) return;
     this.syncChefCard(this.musicians.get(this.composer.CONDUCTOR) || null);
     this.relayout();
     this.toggleEmptyHint();
-    this.renderTabs();
   },
 
   async loadChatHistory() {
@@ -1246,17 +1254,107 @@ const App = {
       flush();
       this.chat = built;
       this.renderChat();
+      // Les lignes de mission ne sont PAS dans /api/conductor-chat : on les
+      // reconstruit depuis le journal du chef (signal `tool_use Bash`).
+      await this.rehydrateMissions();
     } catch { /* non-fatal */ }
   },
 
+  /** Reconstruit les blocs MISSIONS depuis `/api/project/<chef>/events`.
+   *  Chaque dispatch observé est rattaché au tour chef qu'il précède ; les
+   *  dispatches postérieurs au dernier tour restent ouverts (tour en cours).
+   *  La fenêtre est bornée côté serveur (500 évts / 2 Mio) : on le DIT. */
+  async rehydrateMissions() {
+    const S = window.Salle;
+    if (!S) return;
+    let events;
+    try {
+      const resp = await fetch(`/api/project/${encodeURIComponent(this.composer.CONDUCTOR)}/events?n=500`,
+                               { headers: { Accept: "application/json" } });
+      if (!resp.ok) return;
+      events = await resp.json();
+    } catch { return; }
+    if (!Array.isArray(events) || !events.length) return;
+    const windowFull = events.length >= 500;
+
+    const dispatches = [];
+    for (const ev of events) {
+      if (ev?.type !== "assistant") continue;
+      const ts = ev.timestamp ? Date.parse(ev.timestamp) : NaN;
+      for (const b of ev.message?.content || []) {
+        if (b?.type !== "tool_use" || b.name !== "Bash") continue;
+        for (const name of S.extractDispatches(b.input?.command)) {
+          dispatches.push({ name, ts: Number.isFinite(ts) ? ts : 0 });
+        }
+      }
+    }
+    if (!dispatches.length) return;
+
+    // Bornes de tour : les bulles `conductor` du fil reconstruit.
+    const bubbleIdx = [];
+    this.chat.forEach((b, i) => { if (b.role === "conductor") bubbleIdx.push(i); });
+
+    const buckets = new Map();      // index de bulle (ou -1 pour « en cours ») → items
+    let prevTs = 0;
+    for (const bi of bubbleIdx) {
+      const ts = this.chat[bi].ts || 0;
+      const slice = dispatches.filter(d => d.ts > prevTs && d.ts <= ts);
+      if (slice.length) buckets.set(bi, slice);
+      prevTs = ts;
+    }
+    const trailing = dispatches.filter(d => d.ts > prevTs);
+    if (trailing.length) buckets.set(-1, trailing);
+    if (!buckets.size) return;
+
+    const mkItems = (slice, afterIdx) => {
+      const seen = new Set();
+      const items = [];
+      for (const d of slice) {
+        if (seen.has(d.name)) continue;
+        seen.add(d.name);
+        const it = { name: d.name, launchedAt: d.ts || Date.now(), started: true, outcome: null };
+        // Issue : première carte de résultat pour ce musicien APRÈS ce tour.
+        for (let i = Math.max(0, afterIdx); i < this.chat.length; i++) {
+          const e = this.chat[i];
+          if (e.role !== "results") continue;
+          const hit = e.items.find(x => x.source === d.name && !x.isInfo);
+          if (!hit) continue;
+          it.outcome = hit.outcome || "done";
+          if (Number.isFinite(hit.durationMs)) it.durationMs = hit.durationMs;
+          if (Number.isFinite(hit.costUsd)) it.costUsd = hit.costUsd;
+          break;
+        }
+        items.push(it);
+      }
+      return items;
+    };
+
+    // Insertion de la fin vers le début pour ne pas décaler les index.
+    const keys = [...buckets.keys()].filter(k => k >= 0).sort((a, b) => b - a);
+    let firstBlock = null;
+    for (const bi of keys) {
+      const entry = { role: "missions", items: mkItems(buckets.get(bi), bi), ts: this.chat[bi].ts || Date.now() };
+      if (!entry.items.length) continue;
+      this.chat.splice(bi + 1, 0, entry);
+      firstBlock = entry;
+    }
+    if (buckets.has(-1)) {
+      const entry = { role: "missions", items: mkItems(buckets.get(-1), this.chat.length - 1), ts: Date.now() };
+      if (entry.items.length) {
+        this.chat.push(entry);
+        this._currentMissions = entry;
+        firstBlock = firstBlock || entry;
+      }
+    }
+    if (windowFull && firstBlock) firstBlock.truncated = true;
+    this.renderChat();
+  },
+
   renderFleet(projects) {
-    const arc = $("#arc");
-    arc.innerHTML = "";
     this.musicians.clear();
     for (const p of projects) {
       const m = new Musician(p);
       this.musicians.set(p.name, m);
-      if (p.name !== this.composer.CONDUCTOR) arc.appendChild(m.buildCard());
     }
     // Paint the conductor card. If no project matches composer.CONDUCTOR,
     // pass null so the card renders its "unconfigured" visual state.
@@ -1273,22 +1371,16 @@ const App = {
     $("#empty-hint").hidden = hasMusicians;
   },
 
+  /** v0.21.0 — « relayout » = repeindre le rail de pilotage, la bande
+   *  d'attention et le bandeau système. Plus aucune géométrie de cartes. */
   relayout() {
-    const viewport = { w: window.innerWidth, h: window.innerHeight };
-    const stage = document.getElementById("stage");
-    if (viewport.w >= MOBILE_BREAKPOINT) {
-      stage.style.setProperty("--left-panel-w", computeLeftPanelW(viewport.w) + "px");
-    }
-    // Exclude conductor and parked musicians from the arc layout.
-    const list = [...this.musicians.values()]
-      .filter(m => m.name !== this.composer.CONDUCTOR && !m.parked);
-    if (!list.length) { this.renderParkedShelf(); return redrawThreads(); }
-    computeLayout(list, viewport);
-    for (const m of list) m.updateCard();
-    // Cards slide to their new spots over a 0.7s CSS transition; re-anchor the
-    // threads for the duration of that slide, then stop (no permanent loop).
-    this.scheduleThreadSettle();
-    this.renderParkedShelf();
+    const S = window.Salle;
+    if (!S) return;
+    S.renderRail();
+    S.renderAttention();
+    S.renderSysBanner();
+    S.syncRailVisibility();
+    if (S.diveName) S.renderDive();
   },
 
   reorderSoon() {
@@ -1357,15 +1449,15 @@ const App = {
     this._flushScheduled = false;
     const dirty = this._dirty; this._dirty = null;
     if (!dirty || !dirty.size) return;
-    const mobile = isMobileViewport();
-    let mobilePaneNeedsRender = false;
+    const S = window.Salle;
+    let diveNeedsRender = false;
     for (const m of dirty) {
-      m.updateCard();                                        // no-op if the card has no .el
       if (m.name === this.composer.CONDUCTOR) this.syncChefCard(m);
-      if (mobile && this.activeTab === m.name && m.name !== this.composer.CONDUCTOR) mobilePaneNeedsRender = true;
+      if (S && S.diveName === m.name) diveNeedsRender = true;
     }
-    this.renderTabs();
-    if (mobilePaneNeedsRender) this.renderMainPane();
+    S?.renderRail();
+    S?.renderAttention();
+    if (diveNeedsRender) S.renderDive();
   },
 
   // Mobile-only: swipe left/right on the stage rotates the deck — the top
@@ -1408,9 +1500,44 @@ const App = {
 
   // ---------- Topbar wiring ----------
   wireTopbar() {
-    $("#btn-add").addEventListener("click", () => this.openAdd());
-    $("#btn-briefing").addEventListener("click", () => this.openBriefing());
     $("#btn-tweaks").addEventListener("click", () => $("#tweaks").hidden = !$("#tweaks").hidden);
+    $("#btn-search").addEventListener("click", () => window.Salle?.openSearch());
+
+    // Menu ⋮ — les routes secondaires et l'administration sortent du fil.
+    const menu = $("#topmenu");
+    const btn  = $("#btn-menu");
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      menu.hidden = !menu.hidden;
+      btn.setAttribute("aria-expanded", String(!menu.hidden));
+    });
+    menu.addEventListener("click", (e) => {
+      const act = e.target.closest("[data-act]")?.dataset.act;
+      if (!act) return;
+      menu.hidden = true;
+      btn.setAttribute("aria-expanded", "false");
+      if (act === "add")      this.openAdd();
+      if (act === "briefing") this.openBriefing();
+    });
+    document.addEventListener("click", (e) => {
+      if (menu.hidden) return;
+      if (e.target.closest("#topmenu") || e.target.closest("#btn-menu")) return;
+      menu.hidden = true;
+      btn.setAttribute("aria-expanded", "false");
+    });
+
+    // L'en-tête chef ouvre le pupitre du chef (même chemin qu'un musicien).
+    const chefStatus = $("#chef-status");
+    const openChef = () => {
+      if (chefStatus.classList.contains("is-unconfigured")) return;
+      this.openMusician(this.composer.CONDUCTOR);
+    };
+    chefStatus.addEventListener("click", openChef);
+    chefStatus.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
+      openChef();
+    });
   },
 
   // ---------- Composer wiring ----------
@@ -1422,7 +1549,7 @@ const App = {
       const has = input.value.trim().length > 0 || this.composer.images.length > 0;
       send.disabled = !has;
       this.composer.hasDraft = has;
-      redrawThreads();
+      this._syncComposerTarget();
     };
 
     // @mention picker — helps the user spell project names correctly so
@@ -1670,47 +1797,23 @@ const App = {
     });
   },
 
-  // ---------- Conductor transcript ----------
+  // ---------- Conversation de direction ----------
   renderChat() {
-    // Always refresh the tab bar + main pane in tandem; both depend on
-    // activeTab + musician states.
-    this.renderTabs();
     this.renderMainPane();
+    window.Salle?.renderRail();
   },
 
   renderMainPane() {
     const scroll = $("#cv-scroll");
     if (!scroll) return;
-    const activeIsConductor = this.activeTab === this.composer.CONDUCTOR && this.conductorMode;
-    scroll.classList.toggle("cv-session", !activeIsConductor);
-
-    if (!activeIsConductor) {
-      const m = this.musicians.get(this.activeTab);
-      if (!m || !m.ring.length) {
-        this._setPaneMode(scroll, "empty:" + this.activeTab);
-        reconcileChildren(scroll, [`<div class="cv-empty">
-          <div class="cv-empty-title">${esc(this.activeTab)}</div>
-          <div class="cv-empty-sub">Aucun événement. Écris un message pour démarrer un tour direct.</div>
-        </div>`]);
-        return;
-      }
-      // Reconcile the event stream in place — only new events append; existing
-      // rows keep their identity (no clear+rebuild flash, scroll preserved).
-      const changedMode = this._setPaneMode(scroll, "session:" + this.activeTab);
-      const wasAtBottom = changedMode || (scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80);
-      const toolNames = buildToolNameMap(m.ring);
-      reconcileChildren(scroll, m.ring.map(raw => renderFocusedEventMain(raw, m.name, toolNames)));
-      if (wasAtBottom) requestAnimationFrame(() => { scroll.scrollTop = scroll.scrollHeight; });
-      this.renderPupitreStrip();
-      return;
-    }
 
     if (!this.chat.length) {
       this._setPaneMode(scroll, "empty:conductor");
       reconcileChildren(scroll, [`<div class="cv-empty">
           <div class="cv-empty-title">Salle de direction</div>
-          <div class="cv-empty-sub">Parle au chef. Il délègue aux musiciens et te rapporte la synthèse.</div>
+          <div class="cv-empty-sub">Écrivez au chef. Il délègue aux musiciens et vous fait le point.</div>
         </div>`]);
+      this._syncComposerTarget();
       return;
     }
     const conductor = this.musicians.get(this.composer.CONDUCTOR);
@@ -1728,6 +1831,10 @@ const App = {
     // so every other bubble keeps its DOM node — no whole-transcript rebuild,
     // no blank frame.
     const htmls = this.chat.map((b, idx) => this._conductorBubbleHtml(b, idx));
+    // Un musicien en vol SANS dispatch du chef observé n'est pas une mission :
+    // il va dans un bloc « Activité de l'orchestre » séparé, en pied de fil.
+    const activity = window.Salle?.orchestraActivityHtml() || "";
+    if (activity) htmls.push(activity);
     if (isWaitingConductor) {
       htmls.push(`<div class="cv-thinking">le chef ${conductor && conductor.state === "think" ? "réfléchit" : "répond"}<span class="cv-dots"></span></div>`);
     }
@@ -1735,6 +1842,7 @@ const App = {
     this._wireCvDelegation(scroll);
     if (wasAtBottom) requestAnimationFrame(() => { scroll.scrollTop = scroll.scrollHeight; });
     this.renderReplyChip();
+    this._syncComposerTarget();
   },
 
   /** Clear the pane exactly once when its content MODE changes (tab switch,
@@ -1767,10 +1875,15 @@ const App = {
       return `<div class="cv-bubble is-user" data-idx="${idx}">
           <div class="cv-byline">
             <button class="cv-edit-btn" data-edit-idx="${idx}" title="Modifier et renvoyer">✎ éditer</button>
-            toi${tsChip}
+            vous${tsChip}
           </div>
           <div class="cv-body">${replyQuote}${esc(b.text)}${attachHtml}</div>
         </div>`;
+    }
+    // Lignes de mission : une par musicien, elles VIVENT sur place jusqu'à
+    // l'issue, puis POINTENT vers leur carte du panier (jamais de recopie).
+    if (b.role === "missions") {
+      return window.Salle ? window.Salle.missionsHtml(b) : "";
     }
     if (b.role === "callback") {
       // Legacy shape (pre-0.18 logs / plain /api/notify): no outcome fields.
@@ -1785,25 +1898,46 @@ const App = {
     if (b.role === "results") {
       const n = b.items.length;
       const cards = b.items.map(it => {
-        const meta = [
-          Number.isFinite(it.durationMs) ? formatElapsed(it.durationMs) : "",
-          Number.isFinite(it.costUsd) ? `$${it.costUsd.toFixed(2)}` : "",
-        ].filter(Boolean).join(" · ");
+        // « coût non fourni » : jamais un faux 0,00 $ (honnêteté des affichages).
+        const dur  = Number.isFinite(it.durationMs) ? esc(formatElapsed(it.durationMs)) : "";
+        const cost = Number.isFinite(it.costUsd)
+          ? `$${it.costUsd.toFixed(2)}`
+          : `<span class="rc-cost-missing">coût non fourni</span>`;
+        const meta = [dur, cost].filter(Boolean).join(" · ");
         const badge = it.awaitingChef ? `<span class="rc-badge">attend le chef</span>` : "";
-        return `<div class="cv-result-card" data-outcome="${esc(it.outcome || "done")}">
+        // Un notify manuel n'est pas un tour terminé : « Information de X ».
+        const outcome = it.isInfo ? "info" : (it.outcome || "done");
+        const mark = it.isInfo ? "ⓘ" : outcomeIcon(it.outcome);
+        const who = it.isInfo
+          ? `Information de ${esc(it.source || "musicien")}`
+          : esc(it.source || "musicien");
+        return `<div class="cv-result-card" data-outcome="${esc(outcome)}" data-name="${esc(it.source || "")}">
             <div class="rc-head">
-              <span class="rc-name">${esc(it.source || "musicien")}</span>
-              <span class="rc-mark">${outcomeIcon(it.outcome)}</span>
-              ${meta ? `<span class="rc-meta">${esc(meta)}</span>` : ""}
+              <span class="rc-name">${who}</span>
+              <span class="rc-mark">${mark}</span>
+              ${meta ? `<span class="rc-meta">${meta}</span>` : ""}
               ${badge}
-              <button class="rc-open" data-open-musician="${esc(it.source || "")}">voir</button>
             </div>
             <div class="rc-summary md">${mdToHtml(it.summary || it.text || "")}</div>
+            <div class="rc-actions">
+              <button class="rc-act" data-open-musician="${esc(it.source || "")}">Ouvrir ${esc(it.source || "")} ›</button>
+              <button class="rc-act is-primary" data-talk-chef="${esc(it.source || "")}">En parler au chef</button>
+            </div>
           </div>`;
       }).join("");
       const names = b.items
-        .map(it => `${esc(it.source || "?")} ${outcomeIcon(it.outcome)}`)
+        .map(it => `${esc(it.source || "?")} ${it.isInfo ? "ⓘ" : outcomeIcon(it.outcome)}`)
         .join(" · ");
+      const nDone    = b.items.filter(it => !it.isInfo && (!it.outcome || it.outcome === "done")).length;
+      const nFailed  = b.items.filter(it => it.outcome === "failed").length;
+      const nWaiting = b.items.filter(it => it.outcome === "ask_chef").length;
+      const nInfo    = b.items.filter(it => it.isInfo).length;
+      const issues = [
+        nDone    ? `${nDone} terminé${nDone > 1 ? "s" : ""}` : "",
+        nFailed  ? `${nFailed} échec${nFailed > 1 ? "s" : ""}` : "",
+        nWaiting ? `${nWaiting} attend le chef` : "",
+        nInfo    ? `${nInfo} information${nInfo > 1 ? "s" : ""}` : "",
+      ].filter(Boolean).join(" · ");
       // Progressive disclosure: a lone result opens (level 1); several collapse
       // to ONE line (level 0) so a burst never floods the thread.
       const openAttr = n === 1 ? " open" : "";
@@ -1811,18 +1945,25 @@ const App = {
           <summary class="cv-results-summary">
             <span class="cv-results-label">Résultat${n > 1 ? "s" : ""} reçu${n > 1 ? "s" : ""}</span>
             <span class="cv-results-count">${n}</span>
+            <span class="cv-results-issues">${esc(issues)}</span>
             <span class="cv-results-names">${names}</span>
           </summary>
           <div class="cv-results-body">${cards}</div>
         </details>`;
     }
     // A musician asking the USER jumps the basket: it needs an answer now.
+    // Défaut = répondre VIA LE CHEF (règle dure du CLAUDE.md : le routage des
+    // réponses est le travail du chef). L'envoi direct reste atteignable, mais
+    // explicite — et sans `--callback`, donc sans réveil ni point.
     if (b.role === "question") {
+      const who = esc(b.source || "musicien");
       return `<div class="cv-bubble is-question">
-          <div class="cv-byline">${esc(b.source || "musicien")} te demande${tsChip}</div>
+          <div class="cv-byline">Question de ${who} · votre décision${tsChip}</div>
           <div class="cv-body md">${mdToHtml(b.text || "")}</div>
           <div class="cv-q-actions">
-            <button class="cv-q-reply" data-answer-musician="${esc(b.source || "")}">↩ répondre à ${esc(b.source || "")}</button>
+            <button class="cv-q-primary" data-via-chef="${who}">Répondre via le chef</button>
+            <button class="cv-q-secondary" data-direct-to="${who}">Répondre directement à ${who}</button>
+            <span class="cv-q-note">mis en file si ${who} est occupé · pas de retour au chef</span>
           </div>
         </div>`;
     }
@@ -1837,10 +1978,13 @@ const App = {
         if (ev.kind === "result") return `<div class="cv-refl-ev cv-refl-res">↳ ${esc(ev.text)}</div>`;
         return "";
       }).join("");
-      const openAttr = b.closed ? "" : " open";
-      const details = `<details class="cv-reflection${b.closed ? " is-closed" : " is-live"}"${openAttr}>
+      // Divulgation progressive : l'activité du chef est REPLIÉE par défaut
+      // (résumé « n étapes · durée »), et le dépliage de l'utilisateur est
+      // mémorisé sur l'entrée — sinon chaque nouvel événement le refermerait.
+      const openAttr = b.userOpen ? " open" : "";
+      const details = `<details class="cv-reflection${b.closed ? " is-closed" : " is-live"}"${openAttr} data-idx="${idx}">
           <summary class="cv-refl-summary">
-            <span class="cv-refl-label">Réflexion du chef</span>
+            <span class="cv-refl-label">Activité du chef</span>
             <span class="cv-refl-meta">${esc(statusTxt)}</span>
           </summary>
           <div class="cv-refl-body">${evHtml || '<div class="cv-refl-empty">…</div>'}</div>
@@ -1853,11 +1997,18 @@ const App = {
     const usageChip = b.usage ? `<span class="cv-usage">${esc(fmtTurnUsage(b.usage))}</span>` : "";
     const qCls = b.question ? " is-chef-question" : "";
     const qTag = b.question ? `<span class="cv-qtag">question</span>` : "";
-    return `<div class="cv-bubble is-conductor${qCls}">
-          <div class="cv-byline">chef d'orchestre${tsChip}${qTag}${usageChip}
+    // Un tour consécutif à un réveil OBSERVÉ est un POINT sur les résultats :
+    // liseré double, en-tête explicite, aide « reçus avant ce tour ». Au
+    // rechargement l'origine wake est perdue (le serveur saute ce prompt) ⇒
+    // bulle chef ordinaire portant quand même « prend en compte » (P1-2).
+    const rCls = b.report ? " is-report" : "";
+    const byline = b.report ? "chef — point sur les résultats" : "chef d'orchestre";
+    const hint = b.report ? `<div class="cv-report-hint">ⓘ résultats reçus avant ce tour</div>` : "";
+    return `<div class="cv-bubble is-conductor${qCls}${rCls}">
+          <div class="cv-byline">${esc(byline)}${tsChip}${qTag}${usageChip}
             <button class="cv-reply-btn" data-reply-idx="${idx}" title="Répondre à ce message">↩ répondre</button>
           </div>
-          ${takingHtml(b)}
+          ${hint}${takingHtml(b)}
           <div class="cv-body md">${mdToHtml(b.text || "")}</div>
         </div>`;
   },
@@ -1869,6 +2020,29 @@ const App = {
     if (scroll._cvWired) return;
     scroll._cvWired = true;
     scroll.addEventListener("click", (e) => {
+      // Dépliage de l'activité du chef : mémorisé sur l'entrée pour qu'un
+      // nouvel événement ne referme pas ce qu'on est en train de lire.
+      const reflSum = e.target.closest(".cv-refl-summary");
+      if (reflSum) {
+        e.preventDefault();
+        const idx = Number(reflSum.closest("details")?.dataset.idx);
+        const entry = this.chat[idx];
+        if (entry) { entry.userOpen = !entry.userOpen; this.renderChat(); }
+        return;
+      }
+      // Déplier un panier vaut « lu » côté serveur — « lu » n'efface rien et
+      // n'acquitte rien, c'est seulement la fin du compteur non-lu.
+      const basket = e.target.closest(".cv-results-summary");
+      if (basket) {
+        const det = basket.closest("details");
+        if (det && !det.open) {
+          for (const card of $$(".cv-result-card", det)) {
+            const m = this.musicians.get(card.dataset.name || "");
+            if (m) m.markRead();
+          }
+        }
+        return;   // laisse le <details> natif basculer
+      }
       const replyBtn = e.target.closest(".cv-reply-btn");
       if (replyBtn) {
         e.stopPropagation();
@@ -1882,25 +2056,39 @@ const App = {
         this.startInlineEdit(scroll, Number(editBtn.dataset.editIdx));
         return;
       }
-      // Result card → open that musician's panel (level 2 detail).
+      // Nom de musicien (ligne de mission, carte, bande) → volet routé.
       const openBtn = e.target.closest("[data-open-musician]");
       if (openBtn) {
         e.stopPropagation();
-        const m = this.musicians.get(openBtn.dataset.openMusician);
-        if (m) this.openFocused(m);
+        this.openMusician(openBtn.dataset.openMusician);
         return;
       }
-      // Musician question → prefill the composer with the @route to that
-      // musician, reusing the existing @shortcut path (no new routing).
-      const ansBtn = e.target.closest("[data-answer-musician]");
-      if (ansBtn) {
+      // Une puce « prend en compte » ou l'issue d'une mission POINTE vers la
+      // carte du panier : on y défile, on la surligne. Jamais de recopie.
+      const goto = e.target.closest("[data-goto-result]");
+      if (goto) {
         e.stopPropagation();
-        const name = ansBtn.dataset.answerMusician;
+        this.revealResultCard(goto.dataset.gotoResult);
+        return;
+      }
+      // Question d'un musicien : défaut = via le chef.
+      const viaBtn = e.target.closest("[data-via-chef]");
+      if (viaBtn) { e.stopPropagation(); this.answerViaChef(viaBtn.dataset.viaChef); return; }
+      const talkBtn = e.target.closest("[data-talk-chef]");
+      if (talkBtn) { e.stopPropagation(); this.talkToChefAbout(talkBtn.dataset.talkChef); return; }
+      // Envoi DIRECT — action secondaire, jamais implicite.
+      const directBtn = e.target.closest("[data-direct-to]");
+      if (directBtn) {
+        e.stopPropagation();
+        const name = directBtn.dataset.directTo;
         const input = $("#composer-input");
         if (input && name) {
           if (!input.value.trim().startsWith("@" + name)) input.value = `@${name} `;
+          this.composer.answerFor = null;
+          this.renderComposerContext();
           input.focus();
           input.setSelectionRange(input.value.length, input.value.length);
+          this._syncComposerTarget();
         }
       }
     });
@@ -1954,96 +2142,121 @@ const App = {
     $(".crc-close", chip).addEventListener("click", () => this.cancelReply());
   },
 
-  // Priority order: 'input'/'error' (needs attention) > 'unread' > 'live'/'think'
-  // (active) > 'idle'. Ties broken by recent-freq then alpha.
-  _tabPriority(m) {
-    const P = { input: 0, error: 0, unread: 1, live: 2, think: 2, idle: 3 };
-    return (P[m.state] ?? 3);
-  },
-
+  // v0.21.0 — la barre d'onglets mobile est remplacée par la ligne
+  // « Pilotage » + la feuille du rail : les musiciens sont des SUBORDONNÉS,
+  // pas des interlocuteurs. Conservés en no-op gardés (appelants historiques).
   renderTabs() {
     const bar = $("#tab-bar");
-    if (!bar) return;
-    if (!isMobileViewport()) { bar.hidden = true; return; }
-    bar.hidden = false;
-
-    const CONDUCTOR = this.composer.CONDUCTOR;
-    const conductorM = this.musicians.get(CONDUCTOR);
-    const others = [...this.musicians.values()].filter(m => m.name !== CONDUCTOR);
-    others.sort((a, b) => {
-      const pa = this._tabPriority(a), pb = this._tabPriority(b);
-      if (pa !== pb) return pa - pb;
-      if (b.freq !== a.freq) return b.freq - a.freq;
-      return a.name.localeCompare(b.name);
-    });
-
-    const tabs = [conductorM ? {
-      name: CONDUCTOR, state: conductorM.state, unread: conductorM.unreadCount,
-      conductor: true, directMode: !this.conductorMode,
-    } : null].filter(Boolean).concat(
-      others.map(m => ({ name: m.name, state: m.state, unread: m.unreadCount }))
-    );
-
-    bar.innerHTML = tabs.map(t => {
-      const isActive = t.name === this.activeTab;
-      const showBadge = t.unread > 0 && t.state === "unread";
-      const tabLabel = t.conductor
-        ? (t.directMode ? "@orchestrateur" : "Chef")
-        : t.name;
-      const tabClass = [
-        "tab",
-        t.conductor ? "is-conductor" : "",
-        t.directMode ? "is-direct" : "",
-        isActive ? "is-active" : "",
-      ].filter(Boolean).join(" ");
-      return `
-        <button class="${tabClass}"
-                data-tab="${esc(t.name)}" data-state="${t.state}"
-                style="--state-color: ${varByState(t.state)};">
-          <span class="tab-dot"></span>
-          <span class="tab-name">${esc(tabLabel)}</span>
-          <span class="tab-badge" ${showBadge ? "" : "hidden"}>${t.unread || ""}</span>
-          ${(t.directMode || (!t.conductor && isActive)) ? `<span class="tab-close" data-act="close" title="Revenir au chef">×</span>` : ""}
-        </button>`;
-    }).join("");
-
-    $$(".tab", bar).forEach(el => {
-      el.addEventListener("click", (e) => {
-        if (e.target.closest("[data-act='close']")) {
-          this.setActiveTab(CONDUCTOR);
-          return;
-        }
-        this.setActiveTab(el.dataset.tab);
-      });
-    });
+    if (bar) bar.hidden = true;
+    window.Salle?.renderMobilePilot();
   },
 
-  setActiveTab(name, { direct = false } = {}) {
-    this.activeTab = name || this.composer.CONDUCTOR;
-    // Clicking the "Chef" tab always returns to conductor mode.
-    if (this.activeTab === this.composer.CONDUCTOR && !direct) this.conductorMode = true;
-    if (this.activeTab === this.composer.CONDUCTOR &&  direct) this.conductorMode = false;
-    // When the user opens a project session, mark their unread as read.
-    const m = this.musicians.get(this.activeTab);
-    if (m) m.markRead();
-    this._syncComposerPlaceholder();
-    this.composer.target = this.activeTab;
-    this.renderChat();
-    // Live telemetry strip for the newly-active musician tab (mobile).
-    this.ensurePupitrePoll();
-    redrawThreads();
+  setActiveTab(name) {
+    // Tout message part au chef par défaut ; ouvrir un musicien = #/m/<X>.
+    if (name && name !== this.composer.CONDUCTOR) { this.openMusician(name); return; }
+    this.activeTab = this.composer.CONDUCTOR;
+    this.composer.target = this.composer.CONDUCTOR;
+    this._syncComposerTarget();
   },
 
-  _syncComposerPlaceholder() {
+  _syncComposerPlaceholder() { this._syncComposerTarget(); },
+
+  /** Cible affichée du composer : « À : CHEF » par défaut, « À : X (direct) »
+   *  quand la saisie commence par @X. Si le chef a un tour vivant, l'envoi est
+   *  annoncé comme une interruption coopérative. */
+  _syncComposerTarget() {
     const input = $("#composer-input");
+    const chip  = $("#composer-target");
+    const send  = $("#composer-send");
     if (!input) return;
-    if (this.activeTab === this.composer.CONDUCTOR && this.conductorMode) {
-      input.placeholder = "Parle au chef — tape @ pour citer un musicien";
-    } else if (this.activeTab === this.composer.CONDUCTOR && !this.conductorMode) {
-      input.placeholder = "Tâche directe à @orchestrateur…";
-    } else {
-      input.placeholder = `Parle directement à ${this.activeTab}…`;
+    const mm = /^@([A-Za-z0-9_.\-]+)/.exec(input.value.trim());
+    const direct = mm && this.musicians.has(mm[1]) ? mm[1] : null;
+    if (chip) {
+      chip.textContent = direct ? `À : ${direct.toUpperCase()} (direct)` : "À : CHEF";
+      chip.classList.toggle("is-direct", !!direct);
     }
+    input.placeholder = direct
+      ? `Envoi direct à ${direct} — aucun retour au chef`
+      : "Écrivez au chef — tape @ pour citer un musicien";
+    const chefRow = this.pupitreSnapshot?.fleet?.find(r => r.name === this.composer.CONDUCTOR);
+    const chefBusy = !direct && chefRow?.pidAlive === true;
+    if (send) send.title = chefBusy ? "Envoyer et interrompre le tour du chef" : "Envoyer au chef";
+    const hint = $(".composer-hint");
+    if (hint) {
+      const base = "<kbd>↵</kbd> envoyer · <kbd>⇧ ↵</kbd> nouvelle ligne · <kbd>Esc</kbd> fermer";
+      const warn = chefBusy ? " · <span class=\"composer-warn\">le chef a un tour en cours — l’envoi l’interrompra</span>" : "";
+      const html = base + warn;
+      if (hint.innerHTML !== html) hint.innerHTML = html;
+    }
+  },
+
+  /** Répondre à un musicien VIA LE CHEF (défaut) : le composer vise le chef,
+   *  le message cite la question et nomme X. C'est le chef qui route. */
+  answerViaChef(name) {
+    if (!name) return;
+    const m = this.musicians.get(name);
+    const snapQ = this.pupitreSnapshot?.fleet?.find(r => r.name === name)?.needsInput;
+    const q = (snapQ || m?.lastLine || "").trim();
+    this.composer.answerFor = { name, question: q };
+    const input = $("#composer-input");
+    if (input) {
+      const prefix = `Réponse pour ${name} à sa question « ${q.slice(0, 160)}${q.length > 160 ? "…" : ""} » : `;
+      if (!input.value.startsWith(prefix)) input.value = prefix + input.value.replace(/^@\S+\s*/, "");
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+      input.dispatchEvent(new Event("input"));
+    }
+    this.renderComposerContext();
+    this._syncComposerTarget();
+  },
+
+  /** « En parler au chef » : retour au composer chef, projet nommé. */
+  talkToChefAbout(name) {
+    if (!name) return;
+    this.composer.answerFor = { name, question: "", about: true };
+    const input = $("#composer-input");
+    if (input) {
+      const prefix = `À propos de ${name} : `;
+      if (!input.value.startsWith(prefix)) input.value = prefix + input.value.replace(/^@\S+\s*/, "");
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+      input.dispatchEvent(new Event("input"));
+    }
+    this.renderComposerContext();
+    this._syncComposerTarget();
+  },
+
+  renderComposerContext() {
+    const el = $("#composer-context");
+    if (!el) return;
+    const ctx = this.composer.answerFor;
+    if (!ctx) { el.hidden = true; el.innerHTML = ""; return; }
+    el.hidden = false;
+    el.innerHTML =
+      `<span class="cc-label">${ctx.about ? "Au chef, à propos de" : "Réponse via le chef pour"} ${esc(ctx.name)}</span>` +
+      (ctx.question ? `<span class="cc-quote">« ${esc(ctx.question.slice(0, 160))} »</span>` : `<span class="cc-quote"></span>`) +
+      `<button class="cc-close" aria-label="Retirer le contexte">✕</button>`;
+    $(".cc-close", el).addEventListener("click", () => {
+      this.composer.answerFor = null;
+      this.renderComposerContext();
+    });
+  },
+
+  /** Défile jusqu'à la carte du panier d'un musicien et la surligne. La ligne
+   *  de mission POINTE vers la carte, elle ne la duplique pas. */
+  revealResultCard(name) {
+    if (!name) return;
+    const scroll = $("#cv-scroll");
+    if (!scroll) return;
+    const cards = $$(`.cv-result-card[data-name="${CSS.escape(name)}"]`, scroll);
+    const card = cards[cards.length - 1];
+    if (!card) { this.openMusician(name); return; }
+    const det = card.closest("details.cv-results");
+    if (det && !det.open) det.open = true;
+    card.scrollIntoView({ block: "center", behavior: "smooth" });
+    card.style.transition = "outline-color .8s";
+    card.style.outline = "2px solid var(--st-think)";
+    setTimeout(() => { card.style.outline = "2px solid transparent"; }, 1400);
   },
 
   /**
@@ -2091,6 +2304,7 @@ const App = {
     // The turn is over (no producer) — never strand results in the basket.
     this._currentTurnTaking = [];
     this._turnHadReflection = false;
+    this._turnIsReport = false;
     this._flushPendingResults();
   },
 
@@ -2114,6 +2328,10 @@ const App = {
   _makeResultItem(raw, txt, source) {
     return {
       source,
+      // Un événement SANS champ `outcome` n'est pas un tour terminé : c'est un
+      // /api/notify manuel (ou un log pré-0.18). On l'affiche « Information de
+      // X », sans coche — on ne prétend pas qu'un tour s'est achevé.
+      isInfo: !raw.outcome && raw.subtype !== "musician_done" && raw.subtype !== "musician_question",
       outcome: raw.outcome || (raw.subtype === "musician_question" ? "question" : "done"),
       summary: typeof raw.summary === "string" && raw.summary ? raw.summary : "",
       text: txt,
@@ -2128,6 +2346,9 @@ const App = {
    *  appended to the trailing basket (merged if recent). */
   _fileResult(item) {
     this._resultsSinceChefTurn.push({ source: item.source, outcome: item.outcome });
+    // La ligne de mission correspondante prend son issue et POINTE vers la
+    // carte du panier — elle ne recopie jamais le contenu.
+    this._closeMission(item);
     if (this._awaitingConductorResponse) { this._pendingResults.push(item); return; }
     this._appendResultGroup([item]);
   },
@@ -2135,13 +2356,72 @@ const App = {
   _appendResultGroup(items) {
     if (!items.length) return;
     const last = this.chat[this.chat.length - 1];
-    if (last && last.role === "results" && (Date.now() - last.ts) < 60_000) {
+    // Fusion dans le panier de queue seulement s'il appartient à la MÊME vague :
+    // un résultat arrivé après le début d'un tour chef ouvre un NOUVEAU panier
+    // (jamais ajouté rétroactivement à un panier que le chef a déjà traité).
+    const sameWave = last && last.role === "results" &&
+      (Date.now() - last.ts) < 60_000 &&
+      (!this._lastTurnStartTs || last.ts >= this._lastTurnStartTs);
+    if (sameWave) {
       last.items.push(...items);
       last.ts = Date.now();
       return;
     }
     this.chat.push({ role: "results", items: items.slice(), ts: Date.now() });
     if (this.chat.length > CHAT_MAX) this.chat.splice(0, this.chat.length - CHAT_MAX);
+  },
+
+  // ---------- Missions (P0-2) ----------
+  //
+  // Une ligne de mission n'existe QUE sur preuve : un `tool_use Bash` du chef
+  // dont la commande contient `dispatch.mjs <X>`, X validé contre la flotte.
+  // Sans ce signal, le musicien actif va dans « Activité de l'orchestre ».
+
+  /** Ouvre (ou complète) le bloc MISSIONS du tour chef courant. */
+  _openMission(name) {
+    if (!name || !this.musicians.has(name) || name === this.composer.CONDUCTOR) return;
+    let entry = this._currentMissions;
+    if (!entry || this.chat.indexOf(entry) === -1) {
+      entry = { role: "missions", items: [], ts: Date.now() };
+      this._currentMissions = entry;
+      this.chat.push(entry);
+      if (this.chat.length > CHAT_MAX) this.chat.splice(0, this.chat.length - CHAT_MAX);
+    }
+    if (entry.items.some(it => it.name === name && !it.outcome)) return;
+    entry.items.push({ name, launchedAt: Date.now(), started: false, outcome: null });
+  },
+
+  /** Le musicien a réellement démarré (son propre system/init a été observé). */
+  _markMissionStarted(name) {
+    for (let i = this.chat.length - 1; i >= 0; i--) {
+      const b = this.chat[i];
+      if (b.role !== "missions") continue;
+      const it = b.items.find(x => x.name === name && !x.outcome);
+      if (it) { it.started = true; return; }
+    }
+  },
+
+  /** Issue reçue : la mission ouverte la plus récente pour ce musicien la prend. */
+  _closeMission(item) {
+    for (let i = this.chat.length - 1; i >= 0; i--) {
+      const b = this.chat[i];
+      if (b.role !== "missions") continue;
+      const it = b.items.find(x => x.name === item.source && !x.outcome);
+      if (!it) continue;
+      it.outcome = item.isInfo ? null : (item.outcome || "done");
+      if (Number.isFinite(item.durationMs)) it.durationMs = item.durationMs;
+      if (Number.isFinite(item.costUsd)) it.costUsd = item.costUsd;
+      if (it.outcome) it.started = true;
+      return;
+    }
+  },
+
+  /** Observation d'un événement musicien (hors chef) — démarrage de mission. */
+  noteMusicianEvent(m, raw) {
+    if (!m || m.name === this.composer.CONDUCTOR) return;
+    const isStart = (raw?.type === "system" && raw.subtype === "init") ||
+                    (raw?.type === "user_prompt" && !raw.source);
+    if (isStart) this._markMissionStarted(m.name);
   },
 
   _flushPendingResults() {
@@ -2192,7 +2472,9 @@ const App = {
         // user can already see as cards. Rendering it would duplicate the basket
         // and read like a message nobody sent. The chef's reply that follows
         // carries "prend en compte : A ✓ B ✕", which is the visible link.
-        if (source === "wake") return;
+        // v0.21.0 : on MÉMORISE l'origine (sans jamais l'afficher) pour que le
+        // tour qui suit soit rendu comme un POINT SUR LES RÉSULTATS.
+        if (source === "wake") { this._wakeObservedAt = Date.now(); return; }
         const last = this.chat[this.chat.length - 1];
         const isLocalEcho = (!source || isShortcut) && last && last.role === "user" && (
           last.text.trim() === txt ||
@@ -2227,6 +2509,13 @@ const App = {
       const refl = this._ensureReflection();
       for (const b of blocks) {
         if (b?.type === "tool_use") {
+          // SIGNAL STRUCTURÉ : le chef dispatche ⇒ une ligne de mission naît
+          // dans son tour. Le nom est validé contre la flotte, sinon rien.
+          if (b.name === "Bash" && window.Salle) {
+            for (const target of window.Salle.extractDispatches(b.input?.command)) {
+              this._openMission(target);
+            }
+          }
           refl.events.push({
             kind: "tool",
             name: (b.name || "tool").toLowerCase(),
@@ -2263,6 +2552,13 @@ const App = {
       // is answering about — show it as the turn's header.
       this._currentTurnTaking = this._resultsSinceChefTurn.splice(0);
       this._turnHadReflection = false;
+      this._lastTurnStartTs = Date.now();
+      // Un tour qui suit IMMÉDIATEMENT un réveil observé est un point sur les
+      // résultats. Le drapeau est consommé ici, une seule fois (0.16.1 : le
+      // wake sourcé n'arme rien, c'est system/init qui arme, comme avant).
+      this._turnIsReport = !!this._wakeObservedAt && (Date.now() - this._wakeObservedAt) < 120000;
+      this._wakeObservedAt = 0;
+      this._currentMissions = null;      // nouveau tour ⇒ nouveau bloc MISSIONS
     } else if (raw?.type === "result") {
       // Chef finished — clear the waiting flag regardless of success/error.
       this._awaitingConductorResponse = false;
@@ -2292,11 +2588,16 @@ const App = {
           role: "conductor", text: txt, ts: Date.now(), usage,
           // A chef reply ending on NEEDS_USER_INPUT is a QUESTION, not a report.
           ...(/^NEEDS_USER_INPUT:/m.test(txt) ? { question: true } : {}),
+          // Réveil observé ⇒ « CHEF — POINT SUR LES RÉSULTATS ».
+          ...(this._turnIsReport ? { report: true } : {}),
           // No reflection this turn → the "prend en compte" header belongs here.
           ...(!this._turnHadReflection && this._currentTurnTaking.length
             ? { taking: this._currentTurnTaking.slice() } : {}),
         });
         if (this.chat.length > CHAT_MAX) this.chat.splice(0, this.chat.length - CHAT_MAX);
+        // Les lignes de mission de ce tour se lisent APRÈS la réponse du chef
+        // (« je leur confie… » puis la liste), exactement comme la maquette.
+        this._reorderMissionsAfterReply();
       }
       musician.markRead();
       this._endChefTurn();
@@ -2309,7 +2610,20 @@ const App = {
   _endChefTurn() {
     this._currentTurnTaking = [];
     this._turnHadReflection = false;
+    this._turnIsReport = false;
     this._flushPendingResults();
+  },
+
+  /** Replace le bloc MISSIONS du tour juste après la bulle du chef. */
+  _reorderMissionsAfterReply() {
+    const entry = this._currentMissions;
+    if (!entry) return;
+    const from = this.chat.indexOf(entry);
+    if (from === -1) return;
+    const last = this.chat.length - 1;
+    if (from === last) return;
+    this.chat.splice(from, 1);
+    this.chat.push(entry);
   },
 
   showCallbackToast(source, text) {
@@ -2436,8 +2750,11 @@ const App = {
     const msg = input.value.trim();
     const pendingImages = [...this.composer.images];
     if (!msg && !pendingImages.length) return;
-    const target = isMobileViewport() ? this.activeTab : this.composer.CONDUCTOR;
-    const isConductorMsg = target === this.composer.CONDUCTOR && this.conductorMode;
+    // Tout part au chef : c'est lui qui route. Un préfixe `@X` reste un envoi
+    // direct EXPLICITE, géré par le raccourci serveur existant (pas de
+    // `--callback` : aucun réveil, aucun point — l'UI le dit).
+    const target = this.composer.CONDUCTOR;
+    const isConductorMsg = true;
 
     // If the user is replying to a chef bubble, prepend a quoted reference
     // to the prompt so the chef sees exactly which prior message this is
@@ -2474,6 +2791,8 @@ const App = {
       if (this.chat.length > CHAT_MAX) this.chat.splice(0, this.chat.length - CHAT_MAX);
     }
     this.cancelReply();
+    this.composer.answerFor = null;
+    this.renderComposerContext();
     this.renderChat();
     input.disabled = true;
     try {
@@ -2533,9 +2852,10 @@ const App = {
       input.style.height = "auto";
       this.composer.hasDraft = false;
       $("#composer-send").disabled = true;
-      redrawThreads();
+      this._syncComposerTarget();
     } catch (err) {
-      alert("Envoi échoué : " + (err.message || err));
+      // Échec d'envoi : le brouillon est CONSERVÉ (rien n'est perdu).
+      this.showComposerError("Envoi échoué : " + (err.message || err));
     } finally {
       input.disabled = false;
       input.focus();
@@ -2573,55 +2893,14 @@ const App = {
 
   // ---------- Overlays wiring ----------
   wireOverlays() {
-    for (const id of ["overlay-focused", "overlay-briefing", "overlay-add", "overlay-session"]) {
+    for (const id of ["overlay-briefing", "overlay-add", "overlay-session"]) {
       const ov = document.getElementById(id);
+      if (!ov) continue;
       ov.addEventListener("click", (e) => {
         if (e.target.classList.contains("overlay-scrim")) this.closeOverlay(ov);
       });
-      $$(".pf-close, .pb-close, .pa-close, .ps-close", ov).forEach(b => {
+      $$(".pb-close, .pa-close, .ps-close", ov).forEach(b => {
         b.addEventListener("click", () => this.closeOverlay(ov));
-      });
-    }
-    // pf-compose
-    const pfInput = $(".pf-input", $("#overlay-focused"));
-    const pfSend  = $(".pf-send",  $("#overlay-focused"));
-    pfInput.addEventListener("input", () => {
-      pfSend.disabled = pfInput.value.trim().length === 0;
-      pfInput.style.height = "auto";
-      pfInput.style.height = Math.min(pfInput.scrollHeight, 180) + "px";
-    });
-    pfInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this.sendFocusedMessage(); }
-    });
-    pfSend.addEventListener("click", () => this.sendFocusedMessage());
-
-    // The conductor keeps its fixed fleet card, but opening it follows the
-    // exact same path as a musician card: shared /pupitre drawer + composer.
-    const chefCard = document.getElementById("chef-card");
-    const openChef = () => {
-      if (chefCard.classList.contains("is-unconfigured")) return;
-      const chef = this.musicians.get(this.composer.CONDUCTOR);
-      if (chef) this.openFocused(chef);
-    };
-    chefCard.addEventListener("click", openChef);
-    chefCard.addEventListener("keydown", (e) => {
-      if (e.key !== "Enter" && e.key !== " ") return;
-      e.preventDefault();
-      openChef();
-    });
-
-    // Drawer body scroll → pin-to-bottom indicator (same behaviour as /pupitre).
-    const pfDBody = $(".pf-d-body", $("#overlay-focused"));
-    if (pfDBody) {
-      pfDBody.addEventListener("scroll", () => {
-        if (!this.focusedDetail) return;
-        const atB = this.focusedDetail.atBottom();
-        this.focusedDetail.setPinned(atB);
-        const pin = $(".pf-d-pin", $("#overlay-focused"));
-        if (pin) {
-          pin.textContent = atB ? "⏬ suit le flux" : "défilement libre";
-          pin.className = atB ? "pf-d-pin pin-on" : "pf-d-pin";
-        }
       });
     }
 
@@ -2649,33 +2928,15 @@ const App = {
         .catch(() => { btn.textContent = "Erreur réseau"; });
     });
 
-    // Delegated handler for "unpark" buttons rendered inside the parked shelf.
-    document.addEventListener("click", (e) => {
-      const btn = e.target.closest(".psh-unpark");
-      if (btn) { e.stopPropagation(); this.unparkProject(btn.dataset.name); return; }
-      // Click on the strip row itself (not the button) opens the focused panel.
-      const strip = e.target.closest(".psh-strip");
-      if (strip && !e.target.closest("button")) {
-        const m = this.musicians.get(strip.dataset.name);
-        if (m) this.openFocused(m);
-      }
-    });
-
     // briefing — re-render live by itself, no special button
   },
 
   closeOverlay(ov) {
-    ov.hidden = true;
-    if (ov.id === "overlay-focused") {
-      this.focused = null;
-      this.focusedDetail = null;
-      // Keep polling if a mobile musician tab is still showing the strip.
-      this.ensurePupitrePoll();
-    }
+    if (ov) ov.hidden = true;
   },
 
   closeAllOverlays() {
-    ["overlay-focused", "overlay-briefing", "overlay-add", "overlay-session"]
+    ["overlay-search", "overlay-briefing", "overlay-add", "overlay-session"]
       .forEach(id => this.closeOverlay(document.getElementById(id)));
   },
 
@@ -2685,81 +2946,33 @@ const App = {
   // (.d-head name + telemetry meta + close · .d-body event stream · .d-foot pin
   // + count) driven by the SAME PupitreDetail renderer /pupitre uses, plus the
   // composer below to talk to the musician. No pf-head / pf-main / pf-tech.
+  /** v0.21.0 — ouvrir un musicien = NAVIGUER vers `#/m/<projet>`. Le volet
+   *  remplace le rail, le fil ne défile pas, `Échap` / ‹ = history.back(), et
+   *  le bouton Retour du navigateur fonctionne (pile d'historique réelle). */
   openFocused(m) {
-    this.focused = m;
-    m.markRead();
-    m.updateCard();
-    const ov = $("#overlay-focused");
-    const root = $(".panel-focused", ov);
-    root.style.setProperty("--state-color", varByState(m.state));
-    $(".pf-d-name", ov).textContent = m.name;
-    const input = $(".pf-input", ov);
-    input.placeholder = m.name === this.composer.CONDUCTOR
-      ? "Parle au chef…"
-      : `Réponds à ${m.name}…`;
-
-    // Fresh event-stream renderer for this musician — identical to /pupitre's
-    // openDetail: reset → backfill history → live deltas append via SSE.
-    const dBody = $(".pf-d-body", ov);
-    const dCount = $(".pf-d-count", ov);
-    dBody.innerHTML = "";
-    this.focusedDetail = window.PupitreDetail.create(dBody, {
-      maxNodes: 600,
-      onCount: (n) => { dCount.textContent = n + " evts"; },
-    });
-    this.focusedDetail.setPinned(true);
-    const pin = $(".pf-d-pin", ov);
-    if (pin) { pin.textContent = "⏬ suit le flux"; pin.className = "pf-d-pin pin-on"; }
-
-    ov.hidden = false;
-    this.renderCardMeta();                 // d-meta telemetry (fills once poll lands)
-    setTimeout(() => input.focus(), 100);
-    this.backfillFocusedDetail(m.name);    // history (same endpoint /pupitre uses)
-    this.ensurePupitrePoll();              // live d-meta (state/silence/pid/model)
+    if (!m) return;
+    this.openMusician(m.name);
   },
 
-  // Backfill the focused drawer with the musician's recent event history — the
-  // SAME /api/project/:name/events endpoint /pupitre's openDetail backfills
-  // from. Also refreshes the fleet-card ring so its mini-feed stays in sync.
-  backfillFocusedDetail(name) {
-    const det = this.focusedDetail;
-    const m = this.focused;
-    fetch(`/api/project/${encodeURIComponent(name)}/events?n=200`,
-          { headers: { Accept: "application/json" }, credentials: "same-origin" })
-      .then(r => r.ok ? r.json() : [])
-      .then(list => {
-        if (!this.focused || this.focused.name !== name || this.focusedDetail !== det) return;
-        det.reset();
-        for (const raw of list) det.addEvent(raw);
-        det.setPinned(true); det.stick();
-        if (m && Array.isArray(list) && list.length) {
-          m.ring = list.slice(-RING_MAX);
-          m.recomputeFromRing?.();
-          m.updateCard();
-        }
-      })
-      .catch(() => { /* non-fatal */ });
+  openMusician(name) {
+    if (!name || !this.musicians.has(name)) return;
+    // L'élément d'origine reprend le focus à la fermeture du volet (§3.3).
+    if (window.Salle && document.activeElement && document.activeElement !== document.body) {
+      window.Salle.returnFocus = document.activeElement;
+    }
+    window.Salle?.markInAppNavigation();
+    const target = "#/m/" + encodeURIComponent(name);
+    if (location.hash === target) window.Salle?.router();
+    else location.hash = target;
   },
 
   // Fill the drawer head's telemetry meta line — byte-for-byte the same compact
   // string /pupitre's render() writes into its own d-meta, from the shared
   // /api/pupitre snapshot + PupitreRow helpers.
+  /** La ligne de télémétrie du niveau 2 est rendue par Salle.renderDive() à
+   *  partir des MÊMES champs `/api/pupitre` que `renderCardMeta` historique. */
   renderCardMeta() {
-    const ov = $("#overlay-focused");
-    if (!ov || ov.hidden) return;
-    const el = $(".pf-d-meta", ov);
-    if (!el || !this.focused || !window.PupitreRow) return;
-    const snap = this.pupitreSnapshot;
-    const r = snap && snap.fleet.find(x => x.name === this.focused.name);
-    if (!r) { el.textContent = ""; return; }
-    const elapsed = performance.now() - this.pupitreRecvPerf;
-    const si = window.PupitreRow.stateInfo(r);
-    const fmt = window.PupitreRow.fmtAge;
-    el.textContent = si.label
-      + " · tour " + (r.turnElapsedMs != null ? fmt(r.turnElapsedMs + elapsed) : "—")
-      + " · silence " + fmt(r.silentMs + elapsed)
-      + " · pid " + (r.pid ? (r.pid + (r.pidAlive === false ? " ✗" : " ✓")) : "—")
-      + ((r.model || r.configModel) ? " · " + (r.model || r.configModel) : "");
+    window.Salle?.renderDive();
   },
 
   // ---------- Pupitre-parity live strip (focused card) ----------
@@ -2817,19 +3030,28 @@ const App = {
     if (!el) return;
     const dot = el.querySelector(".conn-dot");
     const txt = el.querySelector(".conn-text");
+    // Quatre notions DISTINCTES (§6) : synchronisé · flux interrompu ·
+    // données anciennes · sans progrès. Un SSE coupé avec un instantané frais
+    // ne veut PAS dire que tout est mort : les états restent actualisés.
     let cls, label, title;
-    if (this._sseUp === false) {
-      cls = "conn-lost"; label = "hors ligne"; title = "Flux temps réel perdu — reconnexion automatique en cours";
+    if (this._sseUp === false && !this._pollFailing) {
+      cls = "conn-stale"; label = "direct interrompu";
+      title = "Flux temps réel perdu — les états restent actualisés par instantané ; reconnexion automatique";
+    } else if (this._sseUp === false) {
+      cls = "conn-lost"; label = "hors ligne";
+      title = "Flux temps réel perdu ET télémétrie muette — dernières valeurs connues affichées";
     } else if (this._pollFailing) {
-      cls = "conn-stale"; label = "données anciennes"; title = "La télémétrie /api/pupitre ne répond pas — dernières valeurs connues affichées";
+      cls = "conn-stale"; label = "données anciennes";
+      title = "La télémétrie /api/pupitre ne répond pas — dernières valeurs connues affichées";
     } else {
-      cls = "conn-ok"; label = "en ligne"; title = "Flux temps réel connecté";
+      cls = "conn-ok"; label = "synchronisé"; title = "Flux temps réel connecté";
     }
     el.classList.remove("conn-ok", "conn-lost", "conn-stale");
     el.classList.add(cls);
     if (txt) txt.textContent = label;
     el.title = title;
     if (dot) { /* colour is CSS-driven via the class */ }
+    window.Salle?.renderSysBanner();
   },
 
   // P0-b safety net: if "le chef répond…" has been armed for a while but the
@@ -2861,39 +3083,25 @@ const App = {
   // Second card line from the authoritative /api/pupitre snapshot: PID liveness
   // and turn duration — signals the event-only reducer cannot derive. Values are
   // as-of the last poll (refreshed every 5s); no per-frame ticker.
+  /** Le snapshot autoritaire alimente désormais le rail, la bande d'attention,
+   *  le bandeau système et l'en-tête du volet — mêmes champs, mêmes cadences
+   *  (5 s flotte / 2,5 s ciblé), aucun poll par ligne. */
   applyPupitreToCards() {
     const snap = this.pupitreSnapshot;
     if (!snap || !Array.isArray(snap.fleet)) return;
-    for (const r of snap.fleet) {
-      const m = this.musicians.get(r.name);
-      if (!m || !m.el) continue;
-      const telem = $(".m-telem", m.el);
-      if (!telem) continue;
-      const parts = [];
-      if (r.pid) parts.push(r.pidAlive === false ? "PID ✗" : (r.pidAlive ? "PID ✓" : "PID ?"));
-      if (r.turnElapsedMs != null) parts.push("tour " + formatElapsed(r.turnElapsedMs));
-      const mp = r.model || r.configModel;
-      if (mp) parts.push(String(mp).replace(/^claude-/, ""));
-      if (parts.length) { setHtmlIfChanged(telem, esc(parts.join(" · "))); telem.hidden = false; }
-      else telem.hidden = true;
-      // Authoritative dead-producer flag — a stronger stall signal than silence.
-      m.el.classList.toggle("pid-dead", r.deadInFlight === true);
-    }
+    const S = window.Salle;
+    S?.renderRail();
+    S?.renderAttention();
+    S?.renderSysBanner();
+    this.syncChefCard(this.musicians.get(this.composer.CONDUCTOR) || null);
+    if (S?.diveName) S.renderDive();
+    // Le fil porte des lignes de mission vivantes : elles suivent le snapshot.
+    this.renderMainPane();
   },
 
-  // Which musician's telemetry should the strip show right now?
-  //   desktop → the focused-overlay musician (this.focused)
-  //   mobile  → the active musician tab (never the conductor tab)
-  // Returns a name, or null when no single-musician view is open.
+  // Quel musicien la télémétrie ciblée doit-elle suivre ? Le volet ouvert.
   pupitreTargetName() {
-    if (this.focused) return this.focused.name;
-    if (isMobileViewport()
-        && this.activeTab
-        && this.activeTab !== this.composer.CONDUCTOR
-        && this.musicians.has(this.activeTab)) {
-      return this.activeTab;
-    }
-    return null;
+    return window.Salle?.diveName || null;
   },
 
   // Build the shared /pupitre row markup for one musician from the last
@@ -2914,27 +3122,10 @@ const App = {
     this.renderPupitreStrip();
   },
 
-  // Paint BOTH possible strip containers from the cached snapshot. Cheap; runs
-  // on the 1s ticker and after every relevant event, so counters stay smooth.
+  /** Le « strip » de télémétrie est devenu l'en-tête du volet musicien :
+   *  mêmes champs, même instantané, une seule surface. */
   renderPupitreStrip() {
-    const target = this.pupitreTargetName();
-
-    // Desktop focused-overlay: telemetry lives in the drawer head's meta line.
-    this.renderCardMeta();
-
-    // Mobile main-pane strip.
-    const mpEl = document.getElementById("mp-pupitre-strip");
-    if (mpEl) {
-      const showMobile = isMobileViewport() && target && !this.focused;
-      if (showMobile) {
-        const html = this._pupitreRowHtml(target);
-        mpEl.innerHTML = html || `<div class="pf-pupitre-loading">chargement…</div>`;
-        mpEl.hidden = false;
-      } else {
-        mpEl.hidden = true;
-        mpEl.innerHTML = "";
-      }
-    }
+    if (window.Salle?.diveName) window.Salle.renderDive();
   },
 
   async hydrateMusicianRing(m) {
@@ -2946,180 +3137,59 @@ const App = {
       // Replace the ring wholesale — the fetched list is authoritative and
       // already includes anything we streamed so far (same log file).
       m.ring = events;
-      // Recompute per-turn usage / tool counters from the fresh ring.
       m.recomputeFromRing?.();
-      if (this.focused === m) {
-        this.renderFocusedBody();
-        this.updateFocusedUsage(m);
-      }
-      m.updateCard();
+      if (window.Salle?.diveName === m.name) window.Salle.renderDive();
     } catch { /* non-fatal */ }
   },
 
-  updateFocusedUsage(m) {
-    const el = $(".pf-usage", $("#overlay-focused"));
-    if (!el) return;
-    if (!m.turnCount && !m.totalCostUsd) { el.hidden = true; el.textContent = ""; return; }
-    const inTot = m.totalInputTokens + m.totalCacheReadTokens + m.totalCacheCreateTokens;
-    const parts = [];
-    if (m.totalCostUsd) parts.push(fmtCost(m.totalCostUsd));
-    if (inTot)          parts.push(`↓${fmtTok(inTot)}`);
-    if (m.totalOutputTokens) parts.push(`↑${fmtTok(m.totalOutputTokens)}`);
-    if (m.lastTurnUsage?.ctxMax && m.lastTurnUsage.ctxUsed) {
-      const pct = Math.round((m.lastTurnUsage.ctxUsed / m.lastTurnUsage.ctxMax) * 100);
-      if (pct > 0) parts.push(`${pct}% ctx`);
-    }
-    el.textContent = parts.join(" · ");
-    el.hidden = parts.length === 0;
-  },
+  updateFocusedSessionChip() { /* le chip de session vit dans « Actions avancées » */ },
 
-  updateFocusedSessionChip(m) {
-    const chip = $(".pf-session-chip", $("#overlay-focused"));
-    if (!chip) return;   // the focused card no longer shows a session chip
-    const label = $(".psc-label", chip);
-    const id    = $(".psc-id",    chip);
-    if (m.attachedSession) {
-      chip.classList.add("attached");
-      label.textContent = "SID";
-      id.textContent = m.attachedSession.slice(0, 8);
-    } else {
-      chip.classList.remove("attached");
-      label.textContent = "+";
-      id.textContent = "attacher";
-    }
-  },
-
-  // pf-main renders EXACTLY like a /pupitre opened row: the telemetry row
-  // (.pf-main-telem, filled by renderPupitreStrip) followed by the same event
-  // stream a /pupitre detail drawer shows (.pf-main-stream, built by the shared
-  // PupitreDetail renderer replaying the musician's ring). pf-tech and the
-  // composer are untouched. The old standalone #pf-pupitre-strip is gone —
-  // telemetry now lives once, at the top of pf-main.
-  // Legacy pf-main/pf-tech renderer — no longer used by the focused card (which
-  // now renders as a /pupitre drawer via focusedDetail). Kept as a guarded
-  // no-op so any stray caller can't throw; the .pf-body element no longer exists.
+  /** v0.21.0 — le corps du musicien est rendu par le volet routé
+   *  (`Salle.renderDive`), qui réutilise le MÊME PupitreDetail. Conservé en
+   *  no-op gardé : des appelants historiques le visent encore (P2). */
   renderFocusedBody() {
-    const m = this.focused;
-    if (!m) return;
-    const body = $(".pf-body", $("#overlay-focused"));
-    if (!body) return;
-
-    // pf-tech is built from the same ring by its own (unchanged) renderer.
-    const techParts = [];
-    for (const raw of m.ring) {
-      const tech = renderFocusedEventTech(raw);
-      if (tech) techParts.push(tech);
-    }
-
-    body.innerHTML =
-      `<div class="pf-main">` +
-        `<div class="pf-main-telem"></div>` +
-        `<div class="pf-main-stream"></div>` +
-        `<div class="ev-heartbeat" hidden><span class="hb-dot"></span><span class="hb-label"></span><span class="hb-elapsed"></span></div>` +
-      `</div>` +
-      `<div class="pf-tech"${techParts.length === 0 ? ' hidden' : ''}>${techParts.length ? '<div class="pf-tech-label">OUTILS</div>' + techParts.join("") : ''}</div>`;
-
-    const pfMain = $(".pf-main", body);
-    const stream = $(".pf-main-stream", body);
-    if (!m.ring.length) {
-      stream.innerHTML = `<div class="pf-empty">En attente d'événements. Envoie un message à <strong>${esc(m.name)}</strong> pour commencer.</div>`;
-    } else if (window.PupitreDetail) {
-      // Same renderer as /pupitre's drawer; scroll the pf-main container.
-      const det = window.PupitreDetail.create(stream, { scrollEl: pfMain, maxNodes: 600 });
-      for (const raw of m.ring) det.addEvent(raw);
-    }
-
-    // Fill the telemetry row at the top (same /api/pupitre data + PupitreRow).
-    this.renderPupitreStrip();
-
-    const pfTech = $(".pf-tech", body);
-    if (pfMain) pfMain.scrollTop = pfMain.scrollHeight;
-    if (pfTech) pfTech.scrollTop = pfTech.scrollHeight;
-    this.updateHeartbeat();
+    window.Salle?.renderDive();
   },
 
-  /** Compute and paint the heartbeat banner for the currently-focused panel.
-   *  Called by renderFocusedBody and by the 1s ticker (startHeartbeatTicker). */
-  updateHeartbeat() {
-    const m = this.focused;
-    const ov = $("#overlay-focused");
-    if (!ov || ov.hidden) return;
-    const el = $(".ev-heartbeat", ov);
-    if (!el || !m) return;
-    const inFlight = (m.state === "live" || m.state === "think") &&
-      (m.ring.length === 0 || m.ring[m.ring.length - 1].type !== "result");
-    if (!inFlight) { el.hidden = true; return; }
-    el.hidden = false;
-    // Derive a short activity label from the last meaningful event.
-    let label = "démarrage…";
-    for (let i = m.ring.length - 1; i >= 0; i--) {
-      const r = m.ring[i];
-      if (r.type === "assistant") {
-        const blocks = r.message?.content || [];
-        const last = blocks[blocks.length - 1];
-        if (last?.type === "tool_use") {
-          label = `⚙ ${(last.name || "tool").toLowerCase()} — ${toolArgPreview(last)}`;
-        } else if (last?.type === "thinking") {
-          label = "◌ réflexion";
-        } else if (last?.type === "text") {
-          label = "… rédige";
-        }
-        break;
-      }
-      if (r.type === "user" && Array.isArray(r.message?.content) && r.message.content.some(b => b?.type === "tool_result")) {
-        label = "↳ tool result reçu";
-        break;
-      }
-      if (r.type === "system" && r.subtype === "init") { label = "session ouverte…"; break; }
-      if (r.type === "user_prompt") { label = "envoi au musicien…"; break; }
-    }
-    const startMs = m.turnStartMs || (m.ring[0] && Date.parse(m.ring[0].timestamp)) || Date.now();
-    const elapsed = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
-    const mm = Math.floor(elapsed / 60);
-    const ss = String(elapsed % 60).padStart(2, "0");
-    $(".hb-label", el).textContent = label;
-    $(".hb-elapsed", el).textContent = mm > 0 ? `${mm}m${ss}` : `${elapsed}s`;
-  },
+  /** Battement de coeur : le volet affiche l'activité et le tour depuis
+   *  `/api/pupitre` (en-tête du volet), plus fiable que l'anneau local. */
+  updateHeartbeat() { /* remplacé par l'en-tête du volet musicien */ },
 
   startHeartbeatTicker() {
     if (this._hbTimer) return;
     this._hbTimer = setInterval(() => {
       if (document.hidden) return;   // no counter repaint while the tab is hidden
-      this.updateHeartbeat();
-      // Smooth turn/silence counters between /api/pupitre polls on BOTH the
-      // desktop overlay strip and the mobile main-pane strip — same pattern
-      // as /pupitre's own setInterval(render, 1000). Runs regardless of the
-      // overlay being open (mobile has no overlay).
+      // Interpolation des compteurs tour/silence entre deux polls — même
+      // cadence que /pupitre (setInterval(render, 1000)).
       this.renderPupitreStrip();
+      window.Salle?.renderChefStatus(this.musicians.get(this.composer.CONDUCTOR) || null);
     }, 1000);
   },
 
-  async sendFocusedMessage() {
-    const m = this.focused;
+  /** Envoi DIRECT à un musicien — action explicite, jamais implicite : elle
+   *  n'est atteignable que par « Actions avancées » du volet ou par `@X`.
+   *  Un envoi direct n'a PAS de `--callback` : aucun réveil, aucun point. */
+  async sendDirectTo(name) {
+    const m = this.musicians.get(name);
     if (!m) return;
-    const ov = $("#overlay-focused");
-    const input = $(".pf-input", ov);
-    const msg = input.value.trim();
-    if (!msg) return;
-    input.disabled = true;
+    const busy = this.pupitreSnapshot?.fleet?.find(r => r.name === name)?.pidAlive === true;
+    const txt = prompt(
+      `Envoyer directement à ${name}` +
+      (busy ? " (occupé — le message sera mis en file)" : "") +
+      " — aucun retour au chef ne sera déclenché.",
+      "");
+    if (!txt || !txt.trim()) return;
     try {
       const resp = await fetch("/api/dispatch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ project: m.name, prompt: msg }),
+        body: JSON.stringify({ project: name, prompt: txt.trim() }),
       });
-      if (!resp.ok) {
-        const data = await resp.json().catch(() => ({}));
-        throw new Error(data.error || `HTTP ${resp.status}`);
-      }
-      input.value = "";
-      input.style.height = "auto";
-      $(".pf-send", ov).disabled = true;
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+      if (data.queued) this.showCallbackToast("file", `${name} est occupé — message en file (position ${data.queueLength}).`);
     } catch (err) {
-      alert("Envoi échoué : " + (err.message || err));
-    } finally {
-      input.disabled = false;
-      input.focus();
+      this.showComposerError("Envoi direct échoué : " + (err.message || err));
     }
   },
 
@@ -3216,7 +3286,6 @@ const App = {
       }
       const m = new Musician(data.project);
       this.musicians.set(m.name, m);
-      $("#arc").appendChild(m.buildCard());
       this.relayout();
       this.toggleEmptyHint();
       this.closeOverlay($("#overlay-add"));

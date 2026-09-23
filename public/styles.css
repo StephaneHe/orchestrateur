@@ -121,10 +121,24 @@ kbd {
   width: 100vw;
   height: 100vh;
   overflow: hidden;
+  /* v0.21.0 — the stage is no longer an absolute-positioned scene of cards:
+     it is a column (topbar · system banner · attention · main row). */
+  display: flex;
+  flex-direction: column;
   background:
     var(--stage-glow),
     radial-gradient(80% 50% at 50% 0%, rgba(255,255,255,0.02) 0%, transparent 60%),
     linear-gradient(180deg, var(--bg-0) 0%, var(--bg-1) 55%, var(--bg-2) 100%);
+}
+
+/* Main row — conversation (≈ 2/3) + pilot rail, or dive replacing the rail. */
+.main-row {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  position: relative;
+  z-index: 20;
 }
 
 /* Floor perspective — subtle ellipse under the musicians */
@@ -145,13 +159,16 @@ kbd {
    TOPBAR
    ============================================================ */
 .topbar {
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  padding: 18px 26px;
+  position: relative;
+  flex-shrink: 0;
+  padding: 12px 20px;
   z-index: 50;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 16px;
+  border-bottom: 1px solid var(--card-border);
+  background: var(--bg-0);
 }
 
 .brand {
@@ -769,12 +786,9 @@ a.pill { text-decoration: none; }   /* #btn-pupitre is an <a> styled as a pill *
    Sits between the topbar and the compact fan-strip.
    ============================================================ */
 .conductor-view {
-  position: absolute;
-  left: 0;
-  top: 72px;
-  bottom: 0;
-  transform: none;
-  width: var(--left-panel-w, 460px);
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
   z-index: 30;
   display: flex;
   flex-direction: column;

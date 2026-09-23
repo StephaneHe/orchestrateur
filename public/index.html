@@ -3,155 +3,159 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<title>Orchestre · Agent Conductor</title>
+<title>Orchestre · Salle de direction</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230a0908'/%3E%3Cpath d='M6 22 Q16 4 26 22' fill='none' stroke='%23e8a15c' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='26' r='2.5' fill='%23e8a15c'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="./fonts/fonts.css">
 <link rel="stylesheet" href="./styles.css">
 <link rel="stylesheet" href="./pupitre-row.css">
 <link rel="stylesheet" href="./pupitre-detail.css">
+<!-- v0.21.0 — chargé APRÈS styles.css : complète et surcharge, ne remplace rien -->
+<link rel="stylesheet" href="./salle.css">
 </head>
 <body data-theme="cinematic">
 
-<div id="app-version" aria-hidden="true"
-     style="position:fixed; right:8px; bottom:6px; z-index:50;
-            font-family:'JetBrains Mono', ui-monospace, monospace;
-            font-size:10px; color:#888; opacity:0.55; pointer-events:none;">
-</div>
-
 <div id="stage" class="stage">
 
-  <!-- Topbar -------------------------------------------------------- -->
+  <!-- Topbar — brand · chef state (single source) · global actions ---- -->
   <header class="topbar">
     <div class="brand">
       Orchestre
       <span class="brand-sub">SALLE DE DIRECTION</span>
     </div>
+
+    <!-- Chef state lives HERE and nowhere else (no duplicated chef card). -->
+    <div id="chef-status" class="chef-status" data-state="idle" role="button" tabindex="0"
+         title="Ouvrir le pupitre du chef">
+      <span class="cs-crown">♛</span>
+      <span class="cs-name">CHEF</span>
+      <span class="cs-sep">·</span>
+      <span class="cs-label">au repos</span>
+      <span class="cs-sync" title="Âge du dernier instantané /api/pupitre">—</span>
+    </div>
+
     <div class="topbar-actions">
+      <button id="btn-search" class="pill" title="Chercher un musicien (parkés inclus)">Musiciens / chercher</button>
       <span id="conn-status" class="pill conn-ok" title="État du flux temps réel">
         <span class="conn-dot"></span><span class="conn-text">connexion…</span>
       </span>
-      <button id="btn-add"      class="pill">+ PROJET</button>
-      <button id="btn-briefing" class="pill pill-accent">
-        <span class="pill-dot"></span>Briefing
-      </button>
-      <a id="btn-pupitre" class="pill" href="/pupitre"
-         title="Suivi temps réel de chaque musicien (chef inclus)">Pupitre</a>
-      <button id="btn-tweaks"   class="pill-icon" title="Paramètres visuels">⚙</button>
+      <button id="btn-menu" class="pill-icon" title="Menu" aria-haspopup="true" aria-expanded="false">⋮</button>
+      <button id="btn-tweaks" class="pill-icon" title="Paramètres visuels">⚙</button>
     </div>
   </header>
 
-  <!-- Luminous thread layer (SVG full-screen) ---------------------- -->
-  <svg id="threads" class="threads" xmlns="http://www.w3.org/2000/svg"></svg>
-
-  <!-- Conductor transcript — primary view, left panel --------------- -->
-  <div id="conductor-view" class="conductor-view">
-    <!-- Mobile-only project tab bar (pill per musician) ------------- -->
-    <div id="tab-bar" class="tab-bar" hidden></div>
-    <!-- Mobile-only live telemetry strip for the active musician tab —
-         same /api/pupitre data + renderer as one /pupitre row. Persistent
-         (outside #cv-scroll so the event stream re-render never wipes it). -->
-    <div id="mp-pupitre-strip" class="mp-pupitre-strip" hidden></div>
-    <div id="cv-scroll" class="cv-scroll">
-      <div class="cv-empty">
-        <div class="cv-empty-title">Salle de direction</div>
-        <div class="cv-empty-sub">Parle au chef. Il délègue aux musiciens et te rapporte la synthèse.</div>
-      </div>
-    </div>
-    <!-- Composer — bas du panneau gauche, on parle au chef ici -------->
-    <div id="composer" class="composer">
-      <div id="mention-menu" class="mention-menu" hidden></div>
-      <div id="composer-image-strip" class="composer-image-strip" hidden></div>
-      <div id="composer-error" class="composer-error" hidden></div>
-      <input type="file" id="composer-file" accept="image/*,video/*" multiple style="display:none">
-      <div class="composer-box">
-        <button id="composer-attach" class="composer-attach" type="button" title="Joindre image ou vidéo">
-          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M13.5 8.5 7.8 14.2a4 4 0 0 1-5.6-5.6l7-7a2.5 2.5 0 0 1 3.5 3.5L6.2 11.6a1 1 0 0 1-1.4-1.4L10.5 4.5"/>
-          </svg>
-        </button>
-        <textarea id="composer-input"
-                  placeholder="Parle au chef — tape @ pour citer un musicien"
-                  rows="1"></textarea>
-        <button id="composer-send" class="composer-send" disabled>
-          <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-            <path d="M1 8 L14 1.5 L11 8 L14 14.5 Z"/>
-          </svg>
-        </button>
-      </div>
-      <div class="composer-hint">
-        <kbd>↵</kbd> envoyer · <kbd>⇧ ↵</kbd> nouvelle ligne · <kbd>Esc</kbd> fermer
-      </div>
-    </div>
+  <!-- Dropdown for the ⋮ menu (secondary routes / admin, out of the thread) -->
+  <div id="topmenu" class="topmenu" hidden>
+    <button class="tm-item" data-act="add">+ Projet</button>
+    <button class="tm-item" data-act="briefing">Briefing de l'orchestre</button>
+    <a class="tm-item" href="/pupitre">Pupitre (tableau de santé)</a>
+    <a class="tm-item" href="/downloads">Téléchargements</a>
   </div>
 
-  <!-- Fleet panel — right pane, scrollable, populated by app.js ---- -->
-  <div id="fleet-panel" class="fleet-panel">
-    <div id="arc" class="arc"></div>
-    <div id="parked-shelf" class="parked-shelf" hidden></div>
-  </div>
+  <!-- ONE system banner at a time (worst wins), full width ------------- -->
+  <div id="sysbanner" class="sysbanner" hidden></div>
 
-  <!-- Conductor card — bas-centre du panneau droit. Comme toute carte -->
-  <!-- musicien, elle ouvre le drawer /pupitre partagé au clic.        -->
-  <div id="chef-card" class="chef-card" data-state="idle" role="button"
-       tabindex="0" aria-label="Ouvrir le pupitre du chef">
-    <div class="chef-halo"></div>
-    <div class="chef-inner">
-      <span class="chef-dot"></span>
-      <div class="chef-identity">
-        <div class="chef-name">chef</div>
-        <div class="chef-sub"><span class="badge badge-chef">CHEF</span></div>
-        <div class="chef-path" title="Répertoire du Claude Code du chef"></div>
+  <!-- Attention band — one folded line, details on demand -------------- -->
+  <div id="attention" class="attention" hidden></div>
+
+  <div id="main-row" class="main-row">
+
+    <!-- Conversation de direction — the only scrolling surface --------- -->
+    <div id="conductor-view" class="conductor-view">
+      <!-- Mobile: the rail collapses to this single stable line -------- -->
+      <button id="mobile-pilot" class="mobile-pilot" hidden></button>
+
+      <div id="cv-scroll" class="cv-scroll">
+        <div class="cv-empty">
+          <div class="cv-empty-title">Salle de direction</div>
+          <div class="cv-empty-sub">Parle au chef. Il délègue aux musiciens et te rapporte la synthèse.</div>
+        </div>
       </div>
-      <div class="chef-feed"></div>
-      <div class="chef-state-row">
-        <span class="chef-activity" aria-hidden="true"></span>
-        <span class="chef-state-icon">○</span>
-        <span class="chef-state-label">AU REPOS</span>
+
+      <!-- Composer — always addressed to the chef by default ----------- -->
+      <div id="composer" class="composer">
+        <div id="mention-menu" class="mention-menu" hidden></div>
+        <div id="composer-context" class="composer-context" hidden></div>
+        <div id="composer-image-strip" class="composer-image-strip" hidden></div>
+        <div id="composer-error" class="composer-error" hidden></div>
+        <input type="file" id="composer-file" accept="image/*,video/*" multiple style="display:none">
+        <div class="composer-box">
+          <span id="composer-target" class="composer-target">À : CHEF</span>
+          <button id="composer-attach" class="composer-attach" type="button" title="Joindre image ou vidéo">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M13.5 8.5 7.8 14.2a4 4 0 0 1-5.6-5.6l7-7a2.5 2.5 0 0 1 3.5 3.5L6.2 11.6a1 1 0 0 1-1.4-1.4L10.5 4.5"/>
+            </svg>
+          </button>
+          <textarea id="composer-input"
+                    placeholder="Écrivez au chef — tape @ pour citer un musicien"
+                    rows="1"></textarea>
+          <button id="composer-send" class="composer-send" disabled>
+            <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+              <path d="M1 8 L14 1.5 L11 8 L14 14.5 Z"/>
+            </svg>
+          </button>
+        </div>
+        <div class="composer-hint">
+          <kbd>↵</kbd> envoyer · <kbd>⇧ ↵</kbd> nouvelle ligne · <kbd>Esc</kbd> fermer
+        </div>
       </div>
     </div>
-    <div class="chef-unconfigured-hint">
-      <div class="chef-uc-title">Aucun chef configuré</div>
-      <div class="chef-uc-sub">Clique <kbd>+ PROJET</kbd> et coche "Chef d'orchestre"</div>
-    </div>
+
+    <!-- Rail PILOTAGE — secondary, compact, never the primary surface -- -->
+    <aside id="rail" class="rail" aria-label="Pilotage de l'orchestre">
+      <div class="rail-title">PILOTAGE</div>
+      <div id="rail-body" class="rail-body"></div>
+    </aside>
+
+    <!-- Level 2 — musician dive, routed by hash (#/m/<name>) ----------- -->
+    <section id="dive" class="dive" hidden aria-label="Détail du musicien">
+      <header class="dive-head">
+        <button class="dive-back" title="Retour au chef (Échap)">‹ Retour au chef</button>
+        <span class="dive-name">—</span>
+        <span class="dive-badges"></span>
+        <span class="spacer"></span>
+        <button class="dive-menu" title="Actions avancées">⋮</button>
+      </header>
+      <div class="dive-sub"></div>
+      <div class="dive-state"></div>
+      <div class="dive-meta"></div>
+      <div class="dive-tabs" role="tablist">
+        <button class="dive-tab is-on" data-tab="activity" role="tab">Activité</button>
+        <button class="dive-tab" data-tab="result" role="tab">Dernier résultat</button>
+        <button class="dive-tab" data-tab="journal" role="tab">Journal récent</button>
+      </div>
+      <div class="dive-body">
+        <div class="dive-pane dive-activity"></div>
+        <div class="dive-pane dive-result" hidden></div>
+        <div class="dive-pane dive-journal" hidden></div>
+      </div>
+      <div class="dive-notice"></div>
+      <footer class="dive-foot">
+        <button class="dive-talk">En parler au chef</button>
+        <span class="spacer"></span>
+        <span class="dive-count">0 evts</span>
+      </footer>
+      <div class="dive-adv" hidden></div>
+    </section>
+
   </div>
 
   <!-- Empty-fleet hint --------------------------------------------- -->
   <div id="empty-hint" class="empty-hint" hidden>
     <div class="empty-title">Aucun musicien</div>
-    <div class="empty-sub">Ajoute un projet pour commencer — <kbd>+ PROJET</kbd> en haut à droite.</div>
+    <div class="empty-sub">Ajoute un projet pour commencer — menu <kbd>⋮</kbd> en haut à droite.</div>
   </div>
 
 </div>
 
-<!-- Overlay: focused musician ---------------------------------------- -->
-<div id="overlay-focused" class="overlay" hidden>
+<!-- Overlay: musicians directory / search ---------------------------- -->
+<div id="overlay-search" class="overlay" hidden>
   <div class="overlay-scrim"></div>
-  <div class="panel-focused" role="dialog" aria-modal="true">
-    <!-- IDENTICAL to a /pupitre opened row: d-head (name + telemetry meta +
-         close) · d-body (shared event stream) · d-foot (pin + count). The
-         composer below stays to talk to the musician. -->
-    <div class="d-head">
-      <span class="d-name pf-d-name">-</span>
-      <span class="d-meta pf-d-meta"></span>
-      <span class="spacer"></span>
-      <button class="d-close pf-close" aria-label="Fermer" title="Fermer (Échap)">&times;</button>
-    </div>
-    <div class="d-body pf-d-body"></div>
-    <div class="d-foot">
-      <span class="pf-d-pin pin-on">⏬ suit le flux</span>
-      <span class="spacer"></span>
-      <span class="pf-d-count">0 evts</span>
-    </div>
-    <footer class="pf-compose">
-      <textarea class="pf-input"
-                placeholder="Réponds à ce musicien…"
-                rows="1"></textarea>
-      <button class="pf-send" disabled>
-        <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-          <path d="M1 8 L14 1.5 L11 8 L14 14.5 Z"/>
-        </svg>
-      </button>
-    </footer>
+  <div class="panel-search" role="dialog" aria-modal="true" aria-label="Chercher un musicien">
+    <header class="psr-head">
+      <input class="psr-input" placeholder="Chercher un musicien… (parkés inclus)" autocomplete="off">
+      <button class="psr-close" aria-label="Fermer">✕</button>
+    </header>
+    <div class="psr-list"></div>
   </div>
 </div>
 
@@ -254,8 +258,14 @@
   </div>
 </div>
 
+<!-- Server version — règle standing du CLAUDE.md (pied de page) ------ -->
+<div id="app-version" class="app-version" aria-hidden="true"></div>
+
 <script src="./pupitre-row.js"></script>
 <script src="./pupitre-detail.js"></script>
+<!-- salle.js est chargé AVANT app.js : ses fonctions sont donc définies quand
+     app.js les appelle, et `App` est résolu au moment de l'appel. -->
+<script src="./salle.js"></script>
 <script src="./app.js"></script>
 </body>
 </html>

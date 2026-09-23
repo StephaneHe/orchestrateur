@@ -11,6 +11,70 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-09-23
+
+Lot **P0** de `docs/orchestrateur-ui-redesign-validated.md`. **La salle de direction.**
+Le tableau de bord cesse d'être une scène de cartes qu'il faut interpréter pour devenir une
+**conversation de direction avec le chef** : le fil occupe ≈ 2/3 de la largeur, les musiciens
+deviennent un **rail de pilotage** compact (des subordonnés, pas des interlocuteurs), et chaque
+délégation apparaît comme une **ligne de mission qui vit sur place** dans le tour du chef.
+Aucun changement serveur : tout est reconstruit depuis les endpoints existants.
+
+### Added
+- (web) **Ligne de mission.** Une ligne naît au `tool_use Bash` du chef dont la commande contient
+  `dispatch.mjs <X>` — **le seul signal structuré qui prouve une délégation** — avec `X` validé contre
+  la flotte de `/api/config`. Elle passe de « lancée » à « démarrée » quand le `system/init` du musicien
+  est **réellement observé**, suit ensuite `/api/pupitre` (activité, tour, sans progrès, PID), puis porte
+  son issue et **pointe** vers sa carte du panier (jamais de recopie). Un musicien actif **sans** dispatch
+  chef observé (`@X`, file, relais) va dans un bloc **« Activité de l'orchestre »** distinct : jamais
+  « mission » sans preuve. Rehydraté au rechargement via `/api/project/<chef>/events?n=500`, avec mention
+  explicite de la fenêtre bornée au-delà.
+- (web) **Point sur les résultats.** Le prompt de réveil (`source:"wake"`) reste **invisible** (acquis
+  v0.20.0) mais son origine est désormais **mémorisée** : le tour qui suit est rendu
+  `CHEF — POINT SUR LES RÉSULTATS`, liseré double, aide « ⓘ résultats reçus avant ce tour », et les puces
+  « prend en compte » sont **cliquables** (elles défilent jusqu'à la carte du panier et la surlignent).
+  Un résultat arrivé **après** le début du point ouvre un **nouveau** panier, jamais ajouté rétroactivement.
+- (web) **Bande « À votre attention »** repliée en une ligne — priorité question > processus perdu >
+  échec > sans progrès — dépliable avec actions directes ; et **un seul bandeau système** à la fois
+  (processus perdu > limite Claude > flux interrompu), les autres en compteur.
+- (web) **Volet musicien routé par hash `#/m/<projet>`** : il remplace le rail (plein écran en fenêtre
+  étroite), onglets **Activité / Dernier résultat / Journal récent**, en-tête de télémétrie
+  `/api/pupitre`, notices de transport rendues au niveau 2 uniquement, action principale
+  **« En parler au chef »** et **« Actions avancées »** (envoi direct, parquer, session, marquer lu).
+  `Échap` et `‹` = `history.back()` ; le bouton Retour du navigateur fonctionne ; le fil ne défile pas et
+  le focus revient à l'élément d'origine.
+- (web) **Annuaire « Musiciens / chercher »** accessible partout, **parkés inclus**.
+- (web) **Cible du composer affichée** (« À : CHEF », « À : X (direct) » sur `@X`), **contexte de réponse
+  retirable**, et avertissement explicite quand l'envoi **interrompra** un tour chef vivant.
+
+### Changed
+- (web) **Disposition.** Fil ≈ 2/3 + **rail PILOTAGE** (En cours / À examiner / Tous les musiciens /
+  Mis de côté), tri d'attention stable, réordonnancement **différé de 1,5 s** et suspendu sous le pointeur.
+  L'état du chef vit désormais **dans l'en-tête** — une seule source visuelle, plus de carte chef dupliquée.
+  Sur mobile, le rail devient une feuille ouverte par une ligne « Pilotage : 2 en cours · 1 question › »
+  qui remplace la barre d'onglets.
+- (web) **Réponse à une question de musicien : via le chef par défaut.** « Répondre via le chef » prépare
+  un message au chef citant la question et nommant X ; « Répondre directement à X » reste possible en
+  action **secondaire explicite**, avec la mention « mis en file si X est occupé · pas de retour au chef »
+  (un dispatch direct n'a pas de `--callback`, donc ni réveil ni point). Conforme à la règle dure du
+  `CLAUDE.md` : le routage des réponses est le travail du chef.
+- (web) **Honnêteté des affichages.** Coût absent = « coût non fourni » (jamais un faux 0,00 $) ;
+  un `/api/notify` manuel s'affiche « Information de X », sans coche ; `pidAlive: null` = « processus
+  inconnu », jamais « mort » ; un projet parké affiche « santé non suivie » ; un `result.synthetic` est
+  « ⟲ clos par le système », gris, jamais rouge ; un SSE coupé avec instantané frais dit **« direct
+  interrompu »** et ne grise rien — les états restent actualisés.
+- (web) **Divulgation progressive.** L'activité du chef est repliée par défaut (« n étapes · durée ») et
+  le dépliage de l'utilisateur est mémorisé, donc un nouvel événement ne referme pas ce qu'il lit ;
+  un panier de plusieurs résultats reste en une ligne ; déplier un panier vaut « lu ».
+- (web) Libellés d'état alignés sur la table validée (Prêt · En cours · En cours · réflexion · Votre
+  réponse attendue · Terminé / Attend le chef · Échec). **Les clés `idle|live|think|input|error|unread`
+  sont inchangées** dans tous les réducteurs, `data-state` et l'app Android.
+
+### Removed
+- (web) La scène de cartes absolue, la nappe de fils SVG, la carte chef du panneau droit et la barre
+  d'onglets mobile ne sont plus montées. Le code mort correspondant (`computeFanLayout`, `deckRotate`,
+  `renderFocusedBody`…) est neutralisé et gardé ; sa suppression appartient au lot P2.
+
 ## [0.20.0] - 2026-09-23
 
 P0 de `docs/orchestrateur-callback-wake-fable.md`. **Le chef tient enfin sa promesse.**
