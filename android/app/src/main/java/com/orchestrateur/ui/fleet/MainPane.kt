@@ -201,10 +201,175 @@ private fun ActivityLine(msg: ChatMsg) {
     }
 }
 
+/** done ✓ · failed ✕ · ask_chef ⇄ — shared by cards and the "prend en compte" line. */
+internal fun outcomeIcon(outcome: String): String = when (outcome) {
+    "failed" -> "✕"
+    "ask_chef" -> "⇄"
+    "question" -> "?"
+    else -> "✓"
+}
+
+internal fun outcomeColor(outcome: String): Color = when (outcome) {
+    "failed" -> Palette.StError
+    "ask_chef", "question" -> Palette.StInput
+    else -> Palette.StUnread
+}
+
+private fun fmtAge(ms: Long): String {
+    val s = ms / 1000
+    if (s < 60) return "${s}s"
+    val m = s / 60
+    if (m < 60) return "${m}m${(s % 60).toString().padStart(2, '0')}"
+    return "${m / 60}h${(m % 60).toString().padStart(2, '0')}"
+}
+
+/**
+ * A musician REPORTS — it does not converse. Results are a basket of cards with
+ * a state-coloured rule, never dialogue bubbles, and the basket is placed AFTER
+ * the chef's reply so a callback can never split a turn. Collapsed to a single
+ * line when several land at once (progressive disclosure).
+ */
+@Composable
+private fun ResultsBasket(msg: ChatMsg) {
+    val n = msg.results.size
+    var expanded by remember(msg.id) { mutableStateOf(n == 1) }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .border(1.dp, Palette.CardBorder, RoundedCornerShape(10.dp))
+            .background(Palette.CardBg),
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded }
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            Text(if (expanded) "▾" else "▸", color = Palette.Fg2, fontSize = 10.sp)
+            Text(
+                if (n > 1) "RÉSULTATS REÇUS" else "RÉSULTAT REÇU",
+                color = Palette.Fg2, fontSize = 9.sp, letterSpacing = 1.4.sp,
+                fontFamily = FontFamily.Monospace,
+            )
+            Box(
+                Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Palette.StUnread)
+                    .padding(horizontal = 5.dp),
+            ) {
+                Text("$n", color = Palette.Bg0, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+            }
+            Text(
+                msg.results.joinToString(" · ") { "${it.source} ${outcomeIcon(it.outcome)}" },
+                color = Palette.Fg2, fontSize = 10.sp,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (expanded) {
+            Column(
+                Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                msg.results.forEach { ResultCard(it) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ResultCard(item: ResultItem) {
+    val c = outcomeColor(item.outcome)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(blend(c, Palette.CardBg, 0.06f))
+            .padding(start = 0.dp),
+    ) {
+        Box(Modifier.width(3.dp).fillMaxHeight().background(c))
+        Column(Modifier.padding(horizontal = 9.dp, vertical = 7.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    item.source.uppercase(), color = Palette.Fg1, fontSize = 9.sp,
+                    letterSpacing = 1.2.sp, fontFamily = FontFamily.Monospace,
+                )
+                Text(outcomeIcon(item.outcome), color = c, fontSize = 10.sp)
+                val meta = listOfNotNull(
+                    item.durationMs?.let { fmtAge(it) },
+                    item.costUsd?.let { String.format(java.util.Locale.US, "$%.2f", it) },
+                ).joinToString(" · ")
+                if (meta.isNotEmpty()) {
+                    Text(meta, color = Palette.Fg2, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
+                }
+                if (item.awaitingChef) {
+                    Text(
+                        "attend le chef", color = Palette.StInput, fontSize = 8.sp,
+                        letterSpacing = 1.0.sp,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .border(1.dp, blend(Palette.StInput, Palette.CardBg, 0.45f), RoundedCornerShape(999.dp))
+                            .padding(horizontal = 5.dp, vertical = 1.dp),
+                    )
+                }
+            }
+            val body = item.summary.ifEmpty { item.text }
+            if (body.isNotBlank()) {
+                Spacer(Modifier.height(3.dp))
+                Text(body, color = Palette.Fg1, fontSize = 12.sp, lineHeight = 17.sp)
+            }
+        }
+    }
+}
+
+/** A musician asking the USER — jumps the basket, it needs an answer now. */
+@Composable
+private fun QuestionBubble(msg: ChatMsg) {
+    Column(
+        Modifier
+            .fillMaxWidth(0.92f)
+            .clip(RoundedCornerShape(12.dp))
+            .border(1.dp, blend(Palette.StInput, Palette.CardBorder, 0.45f), RoundedCornerShape(12.dp))
+            .background(blend(Palette.StInput, Palette.CardBg, 0.08f))
+            .padding(horizontal = 12.dp, vertical = 9.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            "${(msg.source ?: "musicien").uppercase()} TE DEMANDE",
+            color = Palette.StInput, fontSize = 9.sp, letterSpacing = 1.4.sp,
+            fontFamily = FontFamily.Monospace,
+        )
+        Markdown(msg.text, Palette.Fg0)
+        Text(
+            "réponds avec @${msg.source ?: ""}",
+            color = Palette.Fg2, fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+        )
+    }
+}
+
+@Composable
+private fun TakingLine(taking: List<TakingRef>) {
+    if (taking.isEmpty()) return
+    Text(
+        "prend en compte : " + taking.joinToString(" · ") { "${it.source} ${outcomeIcon(it.outcome)}" },
+        color = Palette.Fg2, fontSize = 9.sp, letterSpacing = 0.8.sp,
+        fontFamily = FontFamily.Monospace,
+        maxLines = 2, overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.padding(start = 8.dp, bottom = 2.dp),
+    )
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChatBubble(msg: ChatMsg, onReply: (ChatMsg) -> Unit = {}) {
     if (msg.role == ChatMsg.Role.activity) { ActivityLine(msg); return }
+    if (msg.role == ChatMsg.Role.results) { ResultsBasket(msg); return }
+    if (msg.role == ChatMsg.Role.question) { QuestionBubble(msg); return }
     var showMenu by remember { mutableStateOf(false) }
     val isUser = msg.role == ChatMsg.Role.user
     val isCallback = msg.role == ChatMsg.Role.callback
@@ -212,11 +377,13 @@ private fun ChatBubble(msg: ChatMsg, onReply: (ChatMsg) -> Unit = {}) {
     val label = when {
         isUser -> "TOI"
         isCallback -> (msg.source ?: "musicien").uppercase()
+        msg.question -> "CHEF D'ORCHESTRE · QUESTION"
         else -> "CHEF D'ORCHESTRE"
     }
     val labelColor = when {
         isUser -> Palette.Fg2
         isCallback -> Palette.Fg2
+        msg.question -> Palette.StInput
         else -> Palette.Accent
     }
     val bubbleBg = when {
@@ -237,6 +404,8 @@ private fun ChatBubble(msg: ChatMsg, onReply: (ChatMsg) -> Unit = {}) {
             horizontalAlignment = if (isRight) Alignment.End else Alignment.Start,
             modifier = Modifier.fillMaxWidth(0.88f),
         ) {
+            // Links this chef turn to the results it is answering about.
+            TakingLine(msg.taking)
             Text(
                 label,
                 color = labelColor,
@@ -338,6 +507,7 @@ private fun ProjectSession(
         }
     }
     Column(modifier.fillMaxSize()) {
+        TelemetryStrip(m)
         if (deniedTools.isNotEmpty()) {
             DenialBanner(
                 denials = deniedTools,
@@ -357,6 +527,56 @@ private fun ProjectSession(
             if (streaming && (m.liveText.isNotBlank() || m.liveActivity.isNotBlank())) {
                 item { LiveLine(activity = m.liveActivity, text = m.liveText) }
             }
+        }
+    }
+}
+
+/**
+ * Second line of a musician's panel, fed by the authoritative /api/pupitre
+ * snapshot: current activity, turn duration, silence, PID liveness. These cannot
+ * be derived from the event stream — without them a crashed musician kept
+ * claiming "EN COMMUNICATION" forever on the phone.
+ */
+@Composable
+private fun TelemetryStrip(m: Musician) {
+    val dead = m.deadInFlight
+    val stalled = m.stalled && !dead
+    val tone = when {
+        dead -> Palette.StError
+        stalled -> Palette.StInput
+        else -> Palette.Fg2
+    }
+    val bits = buildList {
+        m.activity?.takeIf { it.isNotBlank() }?.let { add(it.take(40)) }
+        m.turnElapsedMs?.let { add("tour ${fmtAge(it)}") }
+        m.silentMs?.let { add("silence ${fmtAge(it)}") }
+        m.pid?.let { add("pid $it${if (m.pidAlive == false) " ✗" else if (m.pidAlive == true) " ✓" else ""}") }
+        m.observedModel?.takeIf { it.isNotBlank() }?.let { add(it.removePrefix("claude-")) }
+        if (m.queueDepth > 0) add("file ${m.queueDepth}")
+    }
+    if (bits.isEmpty() && !dead && !stalled) return
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(blend(tone, Palette.Bg0, 0.07f))
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        if (dead || stalled) {
+            Text(
+                if (dead) "⚠ PROCESSUS PERDU — aucun producteur vivant"
+                else "⚠ SANS PROGRÈS OBSERVÉ",
+                color = tone, fontSize = 9.sp, letterSpacing = 1.2.sp,
+                fontFamily = FontFamily.Monospace,
+            )
+        }
+        if (bits.isNotEmpty()) {
+            Text(
+                bits.joinToString(" · "),
+                color = if (dead || stalled) tone else Palette.Fg2,
+                fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                maxLines = 2, overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

@@ -48,6 +48,51 @@ class Musician(
     var readAt: String? = initialReadAt
         private set
 
+    /** Finished, but blocked on a CHEF decision (NEEDS_CHEF_INPUT). The state
+     *  stays `unread` (locked vocabulary) — this additive flag is what keeps the
+     *  pill from claiming "terminé". Set by the reducer AND by /api/pupitre. */
+    var awaitingChef: Boolean by mutableStateOf(false)
+        private set
+
+    // ---- Authoritative telemetry from /api/pupitre ------------------------
+    // Event streams cannot prove a producer died or a turn went silent; the
+    // server derives these from the .pid sidecar and the log mtime. Null until
+    // the first successful snapshot.
+    var stalled: Boolean by mutableStateOf(false)
+        private set
+    var deadInFlight: Boolean by mutableStateOf(false)
+        private set
+    var pid: Int? by mutableStateOf(null)
+        private set
+    var pidAlive: Boolean? by mutableStateOf(null)
+        private set
+    var silentMs: Long? by mutableStateOf(null)
+        private set
+    var turnElapsedMs: Long? by mutableStateOf(null)
+        private set
+    var observedModel: String? by mutableStateOf(null)
+        private set
+    var activity: String? by mutableStateOf(null)
+        private set
+    var queueDepth: Int by mutableStateOf(0)
+        private set
+
+    /** Merge one authoritative snapshot row. Never touches `state`: the SSE
+     *  reducer owns it — except that a confirmed-dead producer must not keep
+     *  claiming the turn is running. */
+    fun applyPupitre(row: PupitreRow) {
+        stalled = row.stalled
+        deadInFlight = row.deadInFlight
+        pid = row.pid
+        pidAlive = row.pidAlive
+        silentMs = row.silentMs
+        turnElapsedMs = row.turnElapsedMs
+        observedModel = row.model ?: row.configModel
+        activity = row.activity
+        queueDepth = row.queueDepth
+        if (row.awaitingChef) awaitingChef = true
+    }
+
     // Cumulative usage for this musician — harvested from `result` events.
     var totalCostUsd: Double by mutableStateOf(0.0)
         private set
@@ -105,6 +150,9 @@ class Musician(
                 lastToolUseName = null
                 liveText = ""
                 liveActivity = ""
+                awaitingChef = false      // a new turn clears the pending chef decision
+                stalled = false
+                deadInFlight = false
             }
             "assistant" -> {
                 val content = raw.message?.content.orEmpty()
@@ -150,6 +198,10 @@ class Musician(
                 val isErr = (raw.isError == true) ||
                     (raw.subtype?.startsWith("error") == true)
                 val needsMatch = NEEDS_RE.find(lastAssistantText)
+                // Finished but blocked on a chef decision — NOT the same as "terminé".
+                awaitingChef = !isErr && needsMatch == null &&
+                    (NEEDS_CHEF_RE.containsMatchIn(lastAssistantText) ||
+                        NEEDS_CHEF_RE.containsMatchIn(raw.result.orEmpty()))
                 state = when {
                     // A SYNTHETIC result means the system closed the turn, not that
                     // the musician failed — show it as closed (idle) with the cause,
@@ -315,6 +367,7 @@ class Musician(
 
     companion object {
         private val NEEDS_RE = Regex("^NEEDS_USER_INPUT:\\s*(.*)$", RegexOption.MULTILINE)
+        private val NEEDS_CHEF_RE = Regex("NEEDS_CHEF_INPUT:", RegexOption.IGNORE_CASE)
         // Matches "Claude requested permissions to use WebSearch, but you haven't granted it yet"
         // (\w+) stops at the comma/period so we get "WebSearch" not "WebSearch,"
         val PERM_RE = Regex("requested permissions to use (\\w+)", RegexOption.IGNORE_CASE)

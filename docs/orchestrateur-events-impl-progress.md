@@ -40,7 +40,24 @@ Spec : `docs/orchestrateur-events-redesign-fable.md` § PLAN P0. Cible web **0.1
   échec réel ne notifiait pas non plus ; c'est corrigé, `failed` émet une carte).
 - Non fait volontairement (P1) : exposer `awaitingChef` via `/api/pupitre`, bandeau attention, limite 5 h, pupitre mobile.
 
-## Reste à faire (P1, tour suivant)
-- Bandeau « Attention » en tête du fil ; `limitedUntil`/`noFailover`/`queueDepth` consommés ; badge attend-le-chef côté
-  `/api/pupitre` + `deriveState` ; snapshot `/api/pupitre` dans l'app Android ; rendu des notices `log_growth_skipped` ;
-  tri différé (web) et onglet mobile stable.
+## P1 — priorité MOBILE (2026-09-23, android vc14/0.5.0 + web 0.19.0) — FAIT
+- [x] **Snapshot pupitre mobile** : `Api.fetchPupitre()` + `PupitreSnapshot`/`PupitreRow` ; poll 5 s **premier plan seulement**
+      (démarré par boot/resumeStream, arrêté par pauseStream) ; `Musician.applyPupitre()` alimente stalled/deadInFlight/pid/
+      pidAlive/silentMs/turnElapsedMs/observedModel/activity/queueDepth. Un musicien planté ne reste plus « EN COMMUNICATION ».
+- [x] **2ᵉ ligne de panneau** (`TelemetryStrip` dans MainPane) : activité · tour · silence · pid ✓/✗ · modèle · file,
+      + bandeau « ⚠ PROCESSUS PERDU » / « ⚠ SANS PROGRÈS OBSERVÉ ». Pastilles d'onglet : `✗` / `⚠` / `⇄`.
+- [x] **Fil chef mobile à parité** : panier « Résultats reçus (n) » (retenu pendant un tour chef, publié après la réponse,
+      replié si plusieurs), `ResultCard` (liseré couleur d'issue + durée + coût + résumé + badge « attend le chef »),
+      `QuestionBubble` (saute le panier), `TakingLine` (« prend en compte : A ✓ B ✕ »), réponse chef marquée QUESTION.
+      `loadConductorHistory` rejoue le même ordre (maintien pendant un tour + fusion des paniers).
+- [x] **Onglet stable** : promotion en tête seulement au passage en `input`/`error` (avant : à CHAQUE transition).
+- [x] **`awaitingChef` sur `/api/pupitre`** : ajouté dans `deriveState` + `scanProject` (additif, état inchangé).
+- [x] **Limite 5 h + fraîcheur** : bandeau système « ⚡ Claude limité jusqu'à HH:MM » / « ⟲ données anciennes ».
+- [x] Bonus : dédup des callbacks (notification + user_prompt relayé) ; `shortcut→X` rendu en bulle utilisateur.
+- Vérif : build Android **sans warning**, APK vc14/0.5.0-debug ; `node --check` server.js + fleet-status-core.mjs ;
+  `deriveState` testé (NEEDS_CHEF_INPUT → unread+awaitingChef, NEEDS_USER_INPUT → input, nouveau tour → reset).
+
+## Reste à faire (P2 / web)
+- **Mobile P2** : replier l'activité intermédiaire du chef (aujourd'hui chaque outil = une ligne à plat dans le fil).
+- **Web P1 restant** : bandeau « Attention » agrégé en tête du fil ; consommer `limitedUntil`/`noFailover`/`queueDepth`
+  côté web ; rendu des notices `log_growth_skipped` ; tri différé des cartes.

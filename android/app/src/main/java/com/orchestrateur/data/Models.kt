@@ -70,6 +70,13 @@ data class RawEvent(
     val text: String? = null,
     val timestamp: String? = null,
     val source: String? = null,
+    // Additive coordination fields on `notification` events (server >= 0.18.0):
+    // how the turn ended, its conclusion, and whether it is blocked on the chef.
+    // Absent on older events — consumers fall back to a plain "done" card.
+    val outcome: String? = null,
+    val summary: String? = null,
+    @SerialName("cost_usd") val costUsd: Double? = null,
+    val awaitingChef: Boolean? = null,
     @SerialName("attachmentPaths") val attachmentPaths: List<String>? = null,
     // Usage + cost — present on `result` events.
     val usage: Usage? = null,
@@ -149,4 +156,48 @@ data class ConductorChatEntry(
                                 // must not fail the whole list deserialization
     val ts: Long = 0L,
     val source: String? = null,
+    // Additive result fields (server >= 0.18.0) — absent on older callbacks.
+    val outcome: String? = null,
+    val summary: String? = null,
+    @SerialName("duration_ms") val durationMs: Long? = null,
+    @SerialName("cost_usd") val costUsd: Double? = null,
+    val awaitingChef: Boolean? = null,
+    /** Chef reply that ends on NEEDS_USER_INPUT — a question, not a report. */
+    val question: Boolean? = null,
+)
+
+/**
+ * GET /api/pupitre — the AUTHORITATIVE fleet snapshot. Event streams alone
+ * cannot tell you that a producer died or that a turn went silent: those come
+ * from the server reading the `.pid` sidecar and the log's mtime. Without this
+ * the app showed a crashed musician as "EN COURS" forever.
+ */
+@Serializable
+data class PupitreSnapshot(
+    val now: Long = 0L,
+    val conductor: String? = null,
+    val noFailover: Boolean = false,
+    val limitedUntil: String? = null,
+    val fleet: List<PupitreRow> = emptyList(),
+)
+
+@Serializable
+data class PupitreRow(
+    val name: String,
+    val state: String? = null,
+    val awaitingChef: Boolean = false,
+    val stalled: Boolean = false,
+    val deadInFlight: Boolean = false,
+    val activity: String? = null,
+    val lastKind: String? = null,
+    val silentMs: Long? = null,
+    val turnElapsedMs: Long? = null,
+    val pid: Int? = null,
+    val pidAlive: Boolean? = null,
+    val model: String? = null,
+    val provider: String? = null,
+    val configModel: String? = null,
+    val queueDepth: Int = 0,
+    val parked: Boolean = false,
+    val isConductor: Boolean = false,
 )

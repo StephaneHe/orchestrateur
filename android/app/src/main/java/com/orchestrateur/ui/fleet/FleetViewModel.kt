@@ -24,6 +24,8 @@ import kotlinx.coroutines.launch
 
 private const val TAG = "FleetViewModel"
 private const val CHAT_MAX = 200   // conductor chat entries kept (incl. chef activity steps)
+private const val PUPITRE_POLL_MS = 5_000L   // same cadence as the web dashboard
+private const val BASKET_MERGE_MS = 60_000L  // results landing within a minute share a basket
 
 data class PendingAttachment(
     val uri: Uri,
@@ -31,6 +33,21 @@ data class PendingAttachment(
     val isVideo: Boolean,
     val thumbBitmap: Bitmap? = null,
 )
+
+/** One musician result inside a "Résultats reçus" basket. */
+data class ResultItem(
+    val source: String,
+    val outcome: String,          // done | failed | ask_chef
+    val summary: String,
+    val text: String,
+    val durationMs: Long? = null,
+    val costUsd: Double? = null,
+    val awaitingChef: Boolean = false,
+    val ts: Long = System.currentTimeMillis(),
+)
+
+/** "prend en compte : A ✓ · B ✕" — what a chef turn is answering about. */
+data class TakingRef(val source: String, val outcome: String)
 
 data class ChatMsg(
     val role: Role,
@@ -42,10 +59,18 @@ data class ChatMsg(
     val source: String? = null,
     // For role=activity: which kind of chef mid-turn block this is.
     val kind: String? = null,   // "thinking" | "tool" | "text" | "result"
+    // role=results: the basket's cards.
+    val results: List<ResultItem> = emptyList(),
+    // role=conductor: results this turn is answering about.
+    val taking: List<TakingRef> = emptyList(),
+    // role=conductor: the reply ends on NEEDS_USER_INPUT → it is a question.
+    val question: Boolean = false,
 ) {
     // activity = the chef's mid-turn steps (thinking / tool_use / intermediate
     // text), kept persistently so nothing is erased when the next block arrives.
-    enum class Role { user, conductor, callback, activity }
+    // results  = a musician result basket (a musician REPORTS, it does not talk).
+    // question = a musician asking the USER — jumps the basket, needs an answer.
+    enum class Role { user, conductor, callback, activity, results, question }
 }
 
 class FleetViewModel(
@@ -71,9 +96,53 @@ class FleetViewModel(
     private val _connected = MutableStateFlow(false)
     val connected: StateFlow<Boolean> = _connected
 
+    /** Fleet-wide availability from the last snapshot (banner, never a bubble). */
+    private val _limitedUntil = MutableStateFlow<String?>(null)
+    val limitedUntil: StateFlow<String?> = _limitedUntil
+    private val _noFailover = MutableStateFlow(false)
+    val noFailover: StateFlow<Boolean> = _noFailover
+
+    /** False when the last /api/pupitre poll failed — the telemetry on screen is
+     *  the last known one, so the UI must say so instead of implying it is live. */
+    private val _telemetryFresh = MutableStateFlow(true)
+    val telemetryFresh: StateFlow<Boolean> = _telemetryFresh
+
     private var streamJob: Job? = null
+    private var pupitreJob: Job? = null
 
     init { boot() }
+
+    // ---- Authoritative snapshot poll --------------------------------------
+    //
+    // The SSE stream carries events; it cannot tell us a producer died or a turn
+    // went silent. Without this poll a crashed musician stayed "EN COURS" on the
+    // phone forever. Runs only while the app is in the FOREGROUND (started by
+    // resumeStream / boot, cancelled by pauseStream) so a backgrounded phone
+    // does not poll a USB-backed server every 5s for nothing.
+    private fun startPupitrePoll() {
+        if (pupitreJob?.isActive == true) return
+        pupitreJob = viewModelScope.launch {
+            while (true) {
+                try {
+                    val snap = api.fetchPupitre()
+                    val byName = snap.fleet.associateBy { it.name }
+                    for (m in musicians) byName[m.name]?.let { m.applyPupitre(it) }
+                    _limitedUntil.value = snap.limitedUntil
+                    _noFailover.value = snap.noFailover
+                    _telemetryFresh.value = true
+                } catch (_: Exception) {
+                    // Keep the last snapshot on screen, but flag it as stale.
+                    _telemetryFresh.value = false
+                }
+                kotlinx.coroutines.delay(PUPITRE_POLL_MS)
+            }
+        }
+    }
+
+    private fun stopPupitrePoll() {
+        pupitreJob?.cancel()
+        pupitreJob = null
+    }
 
     private fun boot() {
         viewModelScope.launch {
@@ -83,6 +152,7 @@ class FleetViewModel(
             // reachable — so the app never gets stuck on "Chargement…".
             syncFromConfig()
             startStream()
+            startPupitrePoll()
         }
     }
 
@@ -138,6 +208,7 @@ class FleetViewModel(
         paused = true
         streamJob?.cancel()
         streamJob = null
+        stopPupitrePoll()          // foreground-only telemetry
         _connected.value = false
         _status.value = "en pause"
     }
@@ -150,6 +221,7 @@ class FleetViewModel(
             reconnectDelayMs = 1_000L
             startStream()
         }
+        startPupitrePoll()   // resumes the authoritative telemetry with the UI
     }
 
     private fun startStream() {
@@ -178,7 +250,14 @@ class FleetViewModel(
                                 }
                                 m.ingest(raw)
                                 if (m.name == CONDUCTOR) onConductorEvent(m, raw)
-                                if (m.state != prevState) {
+                                // Only promote a musician to the front when it starts
+                                // NEEDING something (question / failure). Promoting on
+                                // EVERY transition made the tab under the user's thumb
+                                // jump away mid-tap (live→think→live is constant).
+                                val needsAttentionNow =
+                                    (m.state == State.input || m.state == State.error) &&
+                                        m.state != prevState
+                                if (needsAttentionNow) {
                                     val idx = musicians.indexOf(m)
                                     if (idx > 0) { musicians.removeAt(idx); musicians.add(0, m) }
                                 }
@@ -227,12 +306,95 @@ class FleetViewModel(
         }
     }
 
+    // ---- Results basket (mirrors the web dashboard, 0.18.0) ----------------
+    //
+    // A musician result that lands WHILE the chef is mid-turn must not be spliced
+    // into that turn: it is held here and released after the chef's reply, as a
+    // "Résultats reçus (n)" basket. Nothing here ever starts a chef turn.
+    private val pendingResults = mutableListOf<ResultItem>()
+    private val resultsSinceChefTurn = mutableListOf<TakingRef>()
+    private var currentTurnTaking: List<TakingRef> = emptyList()
+    private var chefTurnOpen = false
+
+    private fun chatKey(s: String): String = s.replace(Regex("\\s+"), " ").trim().take(160)
+
+    /** The notification and the relayed sourced user_prompt carry the SAME text;
+     *  reconnect replays can repeat one. Collapse them to a single card. */
+    private fun isDuplicateResult(txt: String): Boolean {
+        val k = chatKey(txt)
+        if (k.isEmpty()) return false
+        if (pendingResults.any { chatKey(it.text) == k }) return true
+        return chat.any { msg ->
+            (msg.role == ChatMsg.Role.callback && chatKey(msg.text) == k) ||
+                (msg.role == ChatMsg.Role.results && msg.results.any { chatKey(it.text) == k })
+        }
+    }
+
+    private fun makeResultItem(raw: RawEvent, txt: String, source: String) = ResultItem(
+        source = source,
+        outcome = raw.outcome ?: if (raw.subtype == "musician_question") "question" else "done",
+        summary = raw.summary.orEmpty(),
+        text = txt,
+        durationMs = raw.durationMs,
+        costUsd = raw.costUsd,
+        awaitingChef = raw.awaitingChef == true,
+    )
+
+    private fun fileResult(item: ResultItem) {
+        resultsSinceChefTurn.add(TakingRef(item.source, item.outcome))
+        if (chefTurnOpen) { pendingResults.add(item); return }
+        appendResultGroup(listOf(item))
+    }
+
+    private fun appendResultGroup(items: List<ResultItem>) {
+        if (items.isEmpty()) return
+        val last = chat.lastOrNull()
+        if (last != null && last.role == ChatMsg.Role.results &&
+            System.currentTimeMillis() - last.ts < BASKET_MERGE_MS
+        ) {
+            // Same id → the LazyColumn keeps its slot, no scroll jump.
+            chat[chat.size - 1] = last.copy(results = last.results + items)
+            return
+        }
+        chat.add(ChatMsg(ChatMsg.Role.results, text = "", results = items))
+        while (chat.size > CHAT_MAX) chat.removeAt(0)
+    }
+
+    private fun endChefTurn() {
+        chefTurnOpen = false
+        currentTurnTaking = emptyList()
+        if (pendingResults.isNotEmpty()) {
+            val released = pendingResults.toList()
+            pendingResults.clear()
+            appendResultGroup(released)
+        }
+    }
+
     private fun onConductorEvent(m: Musician, raw: RawEvent) {
         when (raw.type) {
             "notification" -> {
                 val txt = raw.text?.trim().orEmpty()
                 val source = raw.source ?: return
-                if (txt.isNotEmpty()) chat.add(ChatMsg(ChatMsg.Role.callback, txt, source = source))
+                if (txt.isEmpty() || isDuplicateResult(txt)) return
+                val item = makeResultItem(raw, txt, source)
+                if (item.outcome == "question") {
+                    // Asking the USER — jumps the basket, it needs an answer now.
+                    chat.add(ChatMsg(
+                        ChatMsg.Role.question,
+                        text = item.summary.ifEmpty { txt },
+                        source = source,
+                    ))
+                    while (chat.size > CHAT_MAX) chat.removeAt(0)
+                } else {
+                    fileResult(item)
+                }
+            }
+            "system" -> if (raw.subtype == "init") {
+                // A real chef turn starts: hold incoming results until it replies,
+                // and remember what came back since the previous turn.
+                chefTurnOpen = true
+                currentTurnTaking = resultsSinceChefTurn.toList()
+                resultsSinceChefTurn.clear()
             }
             "user_prompt" -> {
                 val txt = raw.text?.trim().orEmpty()
@@ -246,12 +408,18 @@ class FleetViewModel(
                     && last != null
                     && last.role == ChatMsg.Role.user
                     && (last.text.trim() == txt || last.text.trim() == txtStripped)
-                if (!isLocalEcho) {
-                    if (source != null) {
-                        chat.add(ChatMsg(ChatMsg.Role.callback, txt, source = source))
-                    } else {
-                        chat.add(ChatMsg(ChatMsg.Role.user, txt))
+                if (source != null) {
+                    // Relayed musician callback — same routing as the notification.
+                    // An @shortcut prompt carries source="shortcut→X" but IS the
+                    // user's own message, so it stays a user bubble.
+                    if (source.startsWith("shortcut")) {
+                        if (!isLocalEcho) chat.add(ChatMsg(ChatMsg.Role.user, txt))
+                    } else if (!isDuplicateResult(txt)) {
+                        fileResult(makeResultItem(raw, txt, source))
                     }
+                } else {
+                    if (!isLocalEcho) chat.add(ChatMsg(ChatMsg.Role.user, txt))
+                    chefTurnOpen = true      // the user just opened a chef turn
                 }
             }
             "assistant" -> {
@@ -285,7 +453,7 @@ class FleetViewModel(
             }
             "result" -> {
                 val txt = m.lastAssistantText.trim()
-                if (txt.isEmpty()) return
+                if (txt.isEmpty()) { endChefTurn(); return }
                 // The final synthesis also arrived as an assistant `text` activity —
                 // drop that trailing activity so it shows once, as the conductor bubble.
                 val tail = chat.lastOrNull()
@@ -293,8 +461,16 @@ class FleetViewModel(
                     chat.removeAt(chat.size - 1)
                 }
                 val last = chat.lastOrNull()
-                if (last != null && last.role == ChatMsg.Role.conductor && last.text.trim() == txt) return
-                chat.add(ChatMsg(ChatMsg.Role.conductor, txt))
+                if (last != null && last.role == ChatMsg.Role.conductor && last.text.trim() == txt) {
+                    endChefTurn(); return
+                }
+                chat.add(ChatMsg(
+                    ChatMsg.Role.conductor, txt,
+                    taking = currentTurnTaking,
+                    question = CHEF_QUESTION_RE.containsMatchIn(txt),
+                ))
+                while (chat.size > CHAT_MAX) chat.removeAt(0)
+                endChefTurn()   // release results held during this turn, AFTER the reply
             }
         }
     }
@@ -311,17 +487,86 @@ class FleetViewModel(
         }
     }
 
+    /**
+     * Rebuild the thread from the server history using the SAME ordering rule as
+     * the live stream: a result that landed between a user prompt and the chef's
+     * reply was held during that turn, so it replays AFTER the reply; runs of
+     * results collapse into one basket. Otherwise a reload showed a different
+     * story from the one the user had just watched.
+     */
     private suspend fun loadConductorHistory() {
         val entries = api.fetchConductorChat()
-        chat.clear()
-        chat.addAll(entries.map { e ->
-            val role = when {
-                e.role == "conductor" -> ChatMsg.Role.conductor
-                e.source != null -> ChatMsg.Role.callback
-                else -> ChatMsg.Role.user
+        val built = mutableListOf<ChatMsg>()
+        val seen = mutableSetOf<String>()
+        var pending = mutableListOf<ResultItem>()
+        var sinceChefTurn = mutableListOf<TakingRef>()
+        var taking: List<TakingRef> = emptyList()
+        var inTurn = false
+
+        fun flush() {
+            if (pending.isEmpty()) return
+            val tail = built.lastOrNull()
+            if (tail != null && tail.role == ChatMsg.Role.results) {
+                built[built.size - 1] = tail.copy(results = tail.results + pending)
+            } else {
+                built.add(ChatMsg(ChatMsg.Role.results, text = "", results = pending.toList()))
             }
-            ChatMsg(role = role, text = e.text.orEmpty(), ts = e.ts, source = e.source)
-        })
+            pending = mutableListOf()
+        }
+
+        for (e in entries) {
+            val txt = e.text.orEmpty()
+            when {
+                e.source != null -> {
+                    val k = chatKey(txt)
+                    if (k.isEmpty() || !seen.add(k)) continue
+                    val outcome = e.outcome
+                        ?: if (e.source.startsWith("shortcut")) "user" else "done"
+                    if (outcome == "user") { built.add(ChatMsg(ChatMsg.Role.user, txt, ts = e.ts)); continue }
+                    val item = ResultItem(
+                        source = e.source,
+                        outcome = outcome,
+                        summary = e.summary.orEmpty(),
+                        text = txt,
+                        durationMs = e.durationMs,
+                        costUsd = e.costUsd,
+                        awaitingChef = e.awaitingChef == true,
+                        ts = e.ts,
+                    )
+                    if (outcome == "question") {
+                        built.add(ChatMsg(
+                            ChatMsg.Role.question,
+                            text = item.summary.ifEmpty { txt },
+                            ts = e.ts, source = e.source,
+                        ))
+                    } else {
+                        sinceChefTurn.add(TakingRef(item.source, item.outcome))
+                        pending.add(item)
+                        if (!inTurn) flush()   // outside a turn → shown in place
+                    }
+                }
+                e.role == "conductor" -> {
+                    built.add(ChatMsg(
+                        ChatMsg.Role.conductor, txt, ts = e.ts,
+                        taking = taking,
+                        question = e.question == true || CHEF_QUESTION_RE.containsMatchIn(txt),
+                    ))
+                    taking = emptyList()
+                    inTurn = false
+                    flush()                    // held results land after the reply
+                }
+                else -> {
+                    flush()
+                    inTurn = true              // a turn opens
+                    taking = sinceChefTurn.toList()
+                    sinceChefTurn = mutableListOf()
+                    built.add(ChatMsg(ChatMsg.Role.user, txt, ts = e.ts))
+                }
+            }
+        }
+        flush()
+        chat.clear()
+        chat.addAll(built)
     }
 
     private suspend fun loadProjectEvents(project: String) {
@@ -381,6 +626,8 @@ class FleetViewModel(
         // Matches the reply-quote prefix written by the Android composer:
         // "> [chef] quoted text\n\n"  or  "> [moi] quoted text\n\n"
         val REPLY_PREFIX_RE = Regex("^> \\[(?:chef|moi)\\] [^\n]*\n\n")
+        /** A chef reply ending on this is a QUESTION to the user, not a report. */
+        val CHEF_QUESTION_RE = Regex("^NEEDS_USER_INPUT:", RegexOption.MULTILINE)
     }
 }
 

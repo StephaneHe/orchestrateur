@@ -4,6 +4,15 @@ Suivi léger des tâches en cours / différées côté orchestrateur.
 
 ## Fait
 
+- [x] **Événements P1 — priorité MOBILE** (2026-09-23, android vc14/0.5.0 + web v0.19.0). L'app Android rattrape le P0 web.
+  L'app n'interrogeait PAS `/api/pupitre` → aucune fraîcheur, un musicien planté restait « EN COMMUNICATION » : poll 5 s
+  premier plan, stall/PID mort/durée/silence, 2e ligne de panneau + pastilles `✗`/`⚠`/`⇄`. Fil chef à parité web : panier
+  « Résultats reçus (n) » publié APRÈS la réponse du chef, cartes de résultat (issue/durée/coût/résumé), question musicien
+  qui saute le panier, « prend en compte : A ✓ B ✕ », réponse chef marquée QUESTION, historique rejoué dans le même ordre.
+  Onglet stable (promotion seulement sur input/error). Bandeau système limite 5 h + « données anciennes ». Dédup des
+  callbacks. Serveur : `awaitingChef` additif sur `/api/pupitre`. **Restart 7777 requis (chef)** pour la part serveur.
+  APK `android/app/build/outputs/apk/debug/app-debug.apk`. Reste : P2 mobile (replier l'activité du chef) + P1 web restant.
+
 - [x] **Redéfinition des événements / enchaînements — P0** (2026-09-22, web v0.18.0 + android vc13/0.4.8).
   Spec : `docs/orchestrateur-events-redesign-fable.md`. Panier de résultats (un callback n'est plus inséré dans un tour chef ;
   publié après la réponse, groupé, replié si plusieurs ; en-tête « prend en compte : A ✓ B ✕ » sans déclencher de tour) ;

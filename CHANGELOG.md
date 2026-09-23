@@ -11,6 +11,30 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-09-23
+
+P1 de `docs/orchestrateur-events-redesign-fable.md`, **priorité mobile** : l'app Android rattrape le P0 web.
+Symptôme utilisateur traité : « je ne vois plus les retours du chef » et un musicien planté restait « EN COMMUNICATION »
+indéfiniment sur le téléphone. Vocabulaire d'états **inchangé** — tout est badges, bandeaux et champs additifs.
+
+### Added
+- (android vc14 / 0.5.0) **L'app interroge enfin `/api/pupitre`.** Elle ne consommait QUE le flux SSE, qui ne peut pas prouver qu'un producteur est mort ni qu'un tour est silencieux (ces signaux viennent du sidecar `.pid` et du mtime du log, côté serveur). Poll toutes les 5 s **au premier plan uniquement** (démarré/arrêté avec le SSE par le cycle de vie), qui alimente : **stall**, **PID mort**, durée du tour, silence, modèle observé, profondeur de file.
+- (android) **2ᵉ ligne de panneau musicien** (`TelemetryStrip`) : activité, `tour 3m12`, `silence 1m20`, `pid 1234 ✓/✗`, modèle, file — avec un bandeau **« ⚠ PROCESSUS PERDU »** ou **« ⚠ SANS PROGRÈS OBSERVÉ »** quand la télémétrie le prouve. Les pastilles d'onglet portent le même signal (`✗` / `⚠` / `⇄`) pour qu'un musicien planté se voie **sans ouvrir l'onglet**.
+- (android) **Parité du fil chef avec le web** : **panier « Résultats reçus (n) »** (un résultat qui arrive pendant un tour du chef est retenu et publié **après** sa réponse, jamais inséré au milieu ; replié quand plusieurs arrivent, ouvert pour un seul) ; **cartes de résultat** à liseré de la couleur de l'issue avec durée, coût et résumé ; **question d'un musicien** en bulle dédiée qui **saute le panier** ; en-tête **« prend en compte : A ✓ · B ✕ »** sur la réponse du chef ; réponse du chef marquée **« QUESTION »** quand elle se termine par `NEEDS_USER_INPUT`. Le rechargement de l'historique rejoue exactement le même ordre.
+- (android) **Bandeau système** (jamais une bulle) : **« ⚡ Claude limité jusqu'à HH:MM »** (depuis `limitedUntil`) et **« ⟲ données anciennes »** quand le poll de télémétrie échoue — l'écran cesse de faire passer des valeurs figées pour des valeurs à jour.
+- (server) `/api/pupitre` expose le champ additif **`awaitingChef`** (dérivé dans `deriveState`) : un musicien qui a fini mais attend une décision du chef. L'état reste `unread`.
+
+### Fixed
+- (android) **L'onglet ne saute plus sous le doigt.** Un musicien remontait en tête de liste à **chaque** transition (`live→think→live` est incessant), donc la pastille visée se déplaçait pendant le tap. Il ne remonte plus que lorsqu'il se met à **réclamer** quelque chose (`input` / `error`).
+- (android) **Callbacks dupliqués.** La `notification` et le `user_prompt` sourcé relayé portent le même texte : l'app les affichait deux fois (le web dédupliquait déjà). Ils sont désormais fusionnés en une seule carte.
+- (android) **`@musicien` n'est plus rendu comme un callback de musicien** : un prompt `source="shortcut→X"` est le message de l'utilisateur, il reste une bulle utilisateur.
+
+### Notes
+- Périmètre **P1**. Non fait, volontairement : repliage de l'activité intermédiaire du chef sur mobile (chaque outil reste une ligne — **P2**), bandeau « Attention » agrégé côté web, notices `log_growth_skipped`, tri différé côté web.
+- Acquis préservés : v0.16.1 (chef figé), v0.17.0 (tri d'attention, cache `/api/pupitre`, skip parked) et v0.18.0 (panier web, cartes enrichies, questions, question du chef conservée), ainsi que « synthétique ≠ échec » côté Android.
+- Vérifié : `node --check` sur `server.js` et `scripts/fleet-status-core.mjs` ; `deriveState` testé (NEEDS_CHEF_INPUT → `unread` + `awaitingChef`, question utilisateur → `input`, nouveau tour → remis à zéro) ; `scanProject` expose bien `awaitingChef` ; build Android **sans warning**, APK vc14 / 0.5.0-debug.
+- **`server.js` et `scripts/fleet-status-core.mjs` modifiés → un redémarrage 7777 par le chef** (l'app affiche simplement `awaitingChef=false` jusque-là ; tout le reste du P1 mobile fonctionne sans redémarrage). APK : `I:\orchestrateur\android\app\build\outputs\apk\debug\app-debug.apk`.
+
 ## [0.18.0] - 2026-09-22
 
 Redéfinition des événements et de leurs enchaînements — P0 de `docs/orchestrateur-events-redesign-fable.md`.

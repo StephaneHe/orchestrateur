@@ -82,6 +82,14 @@ fun TabBar(
                     name = m.name,
                     state = m.state,
                     unread = if (m.state == MState.unread) m.unreadCount else 0,
+                    // Authoritative health from /api/pupitre — a dead producer or a
+                    // silent turn must be visible without opening the tab.
+                    health = when {
+                        m.deadInFlight -> "✗"
+                        m.stalled -> "⚠"
+                        m.awaitingChef -> "⇄"
+                        else -> null
+                    },
                     isActive = activeTab == m.name,
                     isConductor = false,
                     showClose = activeTab == m.name,
@@ -117,6 +125,7 @@ private fun TabPill(
     showClose: Boolean,
     onClick: () -> Unit,
     onClose: () -> Unit,
+    health: String? = null,
 ) {
     val stateColor = stateColor(state)
     val bg = when {
@@ -154,6 +163,13 @@ private fun TabPill(
             fontSize = 11.sp,
             fontWeight = if (isConductor) FontWeight.SemiBold else FontWeight.Normal,
         )
+        if (health != null) {
+            Text(
+                health,
+                color = if (health == "✗") Palette.StError else Palette.StInput,
+                fontSize = 11.sp,
+            )
+        }
         if (unread > 0) {
             Box(
                 Modifier

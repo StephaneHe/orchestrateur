@@ -146,6 +146,29 @@ fun FleetScreen(api: Api) {
             Text(status, color = if (connected) Palette.Fg2 else Palette.StInput, fontSize = 11.sp)
         }
 
+        // System voice: a thin banner, never a chat bubble. Provider availability
+        // and telemetry freshness must be impossible to miss and impossible to
+        // confuse with something the chef or a musician said.
+        val limitedUntil by vm.limitedUntil.collectAsState()
+        val telemetryFresh by vm.telemetryFresh.collectAsState()
+        if (limitedUntil != null || !telemetryFresh) {
+            val msg = when {
+                limitedUntil != null -> "⚡ Claude limité jusqu'à ${fmtLimitUntil(limitedUntil!!)}"
+                else -> "⟲ données anciennes — télémétrie injoignable"
+            }
+            val tone = if (limitedUntil != null) Palette.StInput else Palette.Fg2
+            Text(
+                msg,
+                color = tone,
+                fontSize = 10.sp,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(blend(tone, Palette.Bg0, 0.10f))
+                    .padding(horizontal = 14.dp, vertical = 5.dp),
+            )
+        }
+
         if (vm.musicians.isNotEmpty()) {
             TabBar(
                 musicians = vm.musicians,
@@ -510,3 +533,9 @@ private fun MentionMenu(
         }
     }
 }
+
+/** "2026-09-23T07:00:00Z" → "09:00" (local). Falls back to the raw string. */
+private fun fmtLimitUntil(iso: String): String = try {
+    val t = java.time.Instant.parse(iso).atZone(java.time.ZoneId.systemDefault())
+    String.format(java.util.Locale.US, "%02d:%02d", t.hour, t.minute)
+} catch (_: Exception) { iso }

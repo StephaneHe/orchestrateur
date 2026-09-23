@@ -72,6 +72,10 @@ export function deriveState(lines) {
   let turnStartTs = null;     // ts of the in-flight turn's opening event, else null
   let model = null;
   let provider = null;
+  // Finished, but blocked on a CHEF decision (NEEDS_CHEF_INPUT). The state stays
+  // `unread` — the vocabulary is locked — so this additive flag is what lets a
+  // card say "attend le chef" instead of the misleading "terminé".
+  let awaitingChef = false;
 
   for (const ln of lines) {
     let ev; try { ev = JSON.parse(ln); } catch { continue; }
@@ -91,6 +95,7 @@ export function deriveState(lines) {
         state = 'live';
         turnStartTs = ev.timestamp ? Date.parse(ev.timestamp) : Date.now();
       }
+      awaitingChef = false;   // a new turn clears the pending chef decision
     } else if (t === 'assistant') {
       const blocks = ev.message?.content || [];
       let hasTool = false, hasThink = false, gotText = null;
@@ -106,10 +111,13 @@ export function deriveState(lines) {
       const needs = /^NEEDS_USER_INPUT:\s*(.*)$/m.exec(lastAssistantText);
       if (isErr && ev.synthetic) state = 'idle';          // crash/restart — no question posed
       else state = isErr ? 'error' : (needs ? 'input' : 'unread');
+      awaitingChef = !isErr && !needs &&
+        (/NEEDS_CHEF_INPUT:/i.test(lastAssistantText || '') ||
+         (typeof ev.result === 'string' && /NEEDS_CHEF_INPUT:/i.test(ev.result)));
       turnStartTs = null;                                  // turn is over
     }
   }
-  return { state, lastAssistantText, turnStartTs, model, provider };
+  return { state, lastAssistantText, turnStartTs, model, provider, awaitingChef };
 }
 
 export function readPid(project, logsDir = DEFAULT_LOGS) {
@@ -187,7 +195,7 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
   const { lines, mtimeMs, size } = tailLines(logPath);
   const last = lastMeaningful(lines);
   const tail = lastAny(lines);
-  const { state, lastAssistantText, turnStartTs, model, provider } = deriveState(lines);
+  const { state, lastAssistantText, turnStartTs, model, provider, awaitingChef } = deriveState(lines);
   const now = Date.now();
   const lastMeaningfulTs = last?.timestamp ? Date.parse(last.timestamp) : (mtimeMs || 0);
   const silentMs = now - (lastMeaningfulTs || now);
@@ -203,6 +211,8 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
   return {
     name,
     state,
+    // Additive: finished but waiting on a chef decision (state stays `unread`).
+    awaitingChef,
     stalled,
     // Dead process while the log still says a turn is running — a stronger,
     // separate stall signal (the child was SIGKILLed or crashed silently).

@@ -70,6 +70,18 @@ class Api(private val store: ServerStore) {
         } catch (_: Exception) { emptyList() }
     }
 
+    /**
+     * Authoritative fleet snapshot (state, stall, PID liveness, turn/silence
+     * timers, quota). Throws on failure so the caller can flag the data as
+     * stale instead of silently showing values that stopped updating.
+     */
+    suspend fun fetchPupitre(): PupitreSnapshot = withContext(Dispatchers.IO) {
+        http.newCall(req("/api/pupitre").build()).execute().use { resp ->
+            if (!resp.isSuccessful) error("pupitre ${resp.code}")
+            json.decodeFromString(PupitreSnapshot.serializer(), resp.body!!.string())
+        }
+    }
+
     /** Last N raw stream-json events for a project (for hydrating the ring). */
     suspend fun fetchProjectEvents(project: String, n: Int = 120): List<RawEvent> = withContext(Dispatchers.IO) {
         try {
