@@ -11,6 +11,31 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-09-24
+
+Correctif d'affichage (web) sur la « Salle de direction » (0.21.0).
+
+### Fixed
+- (web) **Gouttière gauche manquante.** `.main-row` remplissait `#stage` sans marge latérale : la
+  colonne du fil (`.conductor-view`) était collée au bord gauche du viewport (`left: 0`) et les bords
+  gauches des cadres — bloc **Missions**, cartes de résultat, bulles du chef — n'avaient que les 18 px
+  de padding de `.cv-scroll`, si près du bord qu'ils paraissaient rognés. Symétriquement, le rail
+  touchait le bord droit (`right: 0`). Ajout d'une **gouttière horizontale de 14 px sur `.main-row`**
+  (`box-sizing: border-box`, donc sans débordement), réinitialisée à `0` sur mobile (≤ 768 px, où le
+  rail devient une feuille fixe). Vérifié par rendu Chrome headless à 1600 px : bord gauche des cadres
+  passé de 18 px → **32 px** (14 px de gouttière + 18 px de `.cv-scroll`), gouttière droite passée de
+  0 → 14 px — désormais symétrique. Mobile à 390 px : colonne pleine largeur, aucun rognage.
+
+### Changed
+- (web) **Cache-busting.** Les liens CSS/JS de `public/index.html` portent un suffixe `?v=0.21.1` :
+  un rechargement normal prend les changements sans `Ctrl+F5` (le HTML est servi du disque à chaque
+  requête, donc la nouvelle URL est effective immédiatement, sans redémarrage serveur). À incrémenter
+  à chaque release cliente.
+
+### TODO
+- Généraliser le cache-busting au moment du build/release (ex. injecter la version depuis
+  `package.json` au lieu du littéral `?v=0.21.1`) — reporté, gain marginal tant que le bump reste manuel.
+
 ## [0.21.0] - 2026-09-23
 
 Lot **P0** de `docs/orchestrateur-ui-redesign-validated.md`. **La salle de direction.**

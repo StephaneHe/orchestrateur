@@ -131,7 +131,12 @@ kbd {
     linear-gradient(180deg, var(--bg-0) 0%, var(--bg-1) 55%, var(--bg-2) 100%);
 }
 
-/* Main row — conversation (≈ 2/3) + pilot rail, or dive replacing the rail. */
+/* Main row — conversation (≈ 2/3) + pilot rail, or dive replacing the rail.
+   Outer horizontal gutter so the fil (left) and the rail/dive (right) never
+   sit flush against the viewport edges: the left borders of the mission /
+   result frames and chef bubbles stay fully visible, symmetric with the right
+   (box-sizing:border-box keeps this inside the width — no overflow). The
+   mobile layout resets it to 0 (rail becomes a fixed bottom sheet). */
 .main-row {
   flex: 1;
   min-height: 0;
@@ -139,6 +144,7 @@ kbd {
   align-items: stretch;
   position: relative;
   z-index: 20;
+  padding: 0 14px;
 }
 
 /* Floor perspective — subtle ellipse under the musicians */

@@ -488,7 +488,9 @@
   #conn-status .conn-text { display: none; }
   .chef-status { order: 3; width: 100%; justify-content: flex-start; }
 
-  .main-row { flex-direction: column; }
+  /* Sur mobile le rail devient une feuille fixe : pas de gouttière latérale
+     sur la colonne (le fil prend toute la largeur). */
+  .main-row { flex-direction: column; padding: 0; }
   .mobile-pilot { display: flex; }
 
   /* Le rail devient une feuille ancrée en bas, ouverte depuis la ligne. */

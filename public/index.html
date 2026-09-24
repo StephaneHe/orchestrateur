@@ -5,12 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Orchestre · Salle de direction</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230a0908'/%3E%3Cpath d='M6 22 Q16 4 26 22' fill='none' stroke='%23e8a15c' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='26' r='2.5' fill='%23e8a15c'/%3E%3C/svg%3E">
+<!-- Cache-busting : le suffixe ?v=<version> force le navigateur à recharger
+     CSS/JS à chaque release sans Ctrl+F5 (le HTML est servi du disque à chaque
+     requête, donc la nouvelle URL est prise immédiatement). Bump à chaque MàJ. -->
 <link rel="stylesheet" href="./fonts/fonts.css">
-<link rel="stylesheet" href="./styles.css">
-<link rel="stylesheet" href="./pupitre-row.css">
-<link rel="stylesheet" href="./pupitre-detail.css">
+<link rel="stylesheet" href="./styles.css?v=0.21.1">
+<link rel="stylesheet" href="./pupitre-row.css?v=0.21.1">
+<link rel="stylesheet" href="./pupitre-detail.css?v=0.21.1">
 <!-- v0.21.0 — chargé APRÈS styles.css : complète et surcharge, ne remplace rien -->
-<link rel="stylesheet" href="./salle.css">
+<link rel="stylesheet" href="./salle.css?v=0.21.1">
 </head>
 <body data-theme="cinematic">
 
@@ -261,11 +264,11 @@
 <!-- Server version — règle standing du CLAUDE.md (pied de page) ------ -->
 <div id="app-version" class="app-version" aria-hidden="true"></div>
 
-<script src="./pupitre-row.js"></script>
-<script src="./pupitre-detail.js"></script>
+<script src="./pupitre-row.js?v=0.21.1"></script>
+<script src="./pupitre-detail.js?v=0.21.1"></script>
 <!-- salle.js est chargé AVANT app.js : ses fonctions sont donc définies quand
      app.js les appelle, et `App` est résolu au moment de l'appel. -->
-<script src="./salle.js"></script>
-<script src="./app.js"></script>
+<script src="./salle.js?v=0.21.1"></script>
+<script src="./app.js?v=0.21.1"></script>
 </body>
 </html>
