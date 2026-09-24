@@ -118,7 +118,11 @@ kbd {
    ============================================================ */
 .stage {
   position: relative;
-  width: 100vw;
+  /* width:100% (not 100vw): 100vw INCLUT la largeur de la scrollbar verticale,
+     donc dès qu'une scrollbar apparaît la scène déborde de ~15px et les bords
+     des cadres sont rognés/décalés. 100% = largeur du body (scrollbar exclue),
+     jamais de débordement horizontal. */
+  width: 100%;
   height: 100vh;
   overflow: hidden;
   /* v0.21.0 — the stage is no longer an absolute-positioned scene of cards:

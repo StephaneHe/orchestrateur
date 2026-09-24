@@ -11,6 +11,41 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.21.2] - 2026-09-24
+
+Suite du correctif d'affichage (web) sur la « Salle de direction ».
+
+### Fixed
+- (web) **Débordement horizontal `.stage { width: 100vw }` → `width: 100%`.** `100vw` compte la largeur
+  de la **scrollbar verticale** : dès qu'une scrollbar est présente, `.stage` devient ~15 px plus large
+  que la zone visible et, avec `overflow: hidden`, les bords des cadres sont rognés/décalés. `100%`
+  correspond à la largeur du `body` (scrollbar exclue) et ne déborde jamais. La gouttière symétrique de
+  0.21.1 (`.main-row { padding: 0 14px }`) est conservée.
+
+  **Preuve du mécanisme** (Chrome headless, profil isolé) : sur un cas minimal avec scrollbar
+  (`body { overflow-y: scroll }`), une boîte `width: 100vw` mesure **1584 px** (⇒ `scrollWidth −
+  clientWidth = 15 px` de débordement) alors qu'une boîte `width: 100%` mesure **1569 px = clientWidth**
+  (aucun débordement). **Vérification sur la page live** (profil Chrome dédié, jamais le profil par
+  défaut) : à 1600 px, `documentElement.scrollWidth == clientWidth` (débordement 0), `#stage` = 1584 px
+  = `innerWidth`, gouttières symétriques (`conductor-view.left = 14`, `rightGutter = 14`), 1ʳᵉ carte non
+  rognée (`.cv-missions.left = 32`). À 390 px : débordement 0, colonne pleine largeur, aucun rognage.
+
+  Note : le rendu headless du dépôt (avec `html, body { overflow: hidden }`) mesurait déjà un
+  débordement de 0 — mais l'environnement réel de l'utilisateur (scrollbars classiques Windows, gutter
+  réservé, zoom) peut exposer la scrollbar ; `100%` rend `.stage` immunisé dans tous les cas.
+
+### Changed
+- (web) **Cache-busting** relevé à `?v=0.21.2` sur les liens CSS/JS de `public/index.html`, pour qu'un
+  rechargement normal prenne le correctif sans `Ctrl+F5`.
+
+### TODO
+- Généraliser le cache-busting au build/release (injecter la version depuis `package.json` plutôt que le
+  littéral `?v=…`) — reporté tant que le bump reste manuel.
+- Audit ponctuel des autres `width: 100vw` restants : overlays plein écran (`.panel-*`), règles mobiles
+  (`.conductor-view`, `.dive`) et l'ancienne `.chef-card` (code mort, non montée) — laissés tels quels,
+  aucun ne déborde au niveau du document (vérifié : overlays en `position: fixed`, mobile sans scrollbar
+  classique). À nettoyer avec le code mort en P2.
+
 ## [0.21.1] - 2026-09-24
 
 Correctif d'affichage (web) sur la « Salle de direction » (0.21.0).
