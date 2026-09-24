@@ -4,6 +4,26 @@ Suivi léger des tâches en cours / différées côté orchestrateur.
 
 ## Fait
 
+- [x] **Pool de chefs — P0-A : la file devant un chef unique** (2026-09-24, v0.22.0).
+  Spec : `docs/orchestrateur-multichef-queue-fable.md` (§5, lots A1→A7). Progression :
+  `docs/orchestrateur-multichef-impl-progress.md`.
+  Écrire au chef pendant qu'il travaille **ne tue plus** son tour (`server.js` interrompait) : le message
+  devient un **ticket FIFO persisté** (`logs/queue/chef.pool.json` + journal `chef.pool-log.ndjson`) et un
+  ordonnanceur unique (`schedulePool`, modèle `tryFireWake`) le tire quand le chef se libère. L'interruption
+  reste un **geste explicite** (`!interrupt`, `force_interrupt`, `POST /api/pool/interrupt/:slot`) et le
+  remplaçant passe en tête. Classes `user`/`decision`/`point` (le réveil 0.20.0 et le relais
+  `NEEDS_CHEF_INPUT` passent par la file) ; `LOST` requeué **×1** avec note `[REPRISE]` ; gelé sous
+  `claude-limited.until`. Prérequis de concurrence posés : **`dispatch.mjs --model/--provider`** (fin de la
+  « dance » `config.json`), **`--queue-if-busy`** (un musicien occupé n'est jamais doublé d'un second
+  `--resume`), **`drainQueue` ne perd plus le `--callback`**. API additive `/api/pupitre.pool`, SSE `pool`,
+  `/api/conductor-chat` avec `ticket`/`slot`/`queued`/`answersTicket`. UI : statut sous chaque bulle, bande
+  « File de direction », `À : CHEF (n libre)`, pill « ↩ répond à ». 42 assertions
+  (`scripts/_test_pool_p0a.mjs`) sur le code réel en bac à sable, 0 spawn réel.
+  **Restart 7777 requis (chef)** + **contrat du chef à appliquer par lui** (texte exact dans le doc de
+  progression, §A6). **Toujours UN SEUL chef** : `conductorPool.size` est borné à 1.
+  Reste : **P0-B** (pool de 3 : slots `chef-2`/`chef-3`, affinité/épinglage, registre de direction,
+  délégation bornée, UI 3 pastilles) puis **P1** (Android, `/pupitre`, métriques, accessibilité).
+
 - [x] **Réveil sûr du chef sur callback attendu — P0** (2026-09-23, v0.20.0). Spec : `docs/orchestrateur-callback-wake-fable.md`.
   `--callback chef` était utilisé 515 fois par le chef mais **jamais enregistré** → aucune réinvocation, promesse sans suite.
   `dispatch.mjs` stampe `callback`/`wakeGen` sur le `user_prompt` du tour ; `reduceMusician` capture et consomme au `result` ;

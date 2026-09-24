@@ -9,11 +9,11 @@
      CSS/JS à chaque release sans Ctrl+F5 (le HTML est servi du disque à chaque
      requête, donc la nouvelle URL est prise immédiatement). Bump à chaque MàJ. -->
 <link rel="stylesheet" href="./fonts/fonts.css">
-<link rel="stylesheet" href="./styles.css?v=0.21.3">
-<link rel="stylesheet" href="./pupitre-row.css?v=0.21.3">
-<link rel="stylesheet" href="./pupitre-detail.css?v=0.21.3">
+<link rel="stylesheet" href="./styles.css?v=0.22.0">
+<link rel="stylesheet" href="./pupitre-row.css?v=0.22.0">
+<link rel="stylesheet" href="./pupitre-detail.css?v=0.22.0">
 <!-- v0.21.0 — chargé APRÈS styles.css : complète et surcharge, ne remplace rien -->
-<link rel="stylesheet" href="./salle.css?v=0.21.3">
+<link rel="stylesheet" href="./salle.css?v=0.22.0">
 </head>
 <body data-theme="cinematic">
 
@@ -59,6 +59,10 @@
 
   <!-- Attention band — one folded line, details on demand -------------- -->
   <div id="attention" class="attention" hidden></div>
+
+  <!-- Direction queue band (0.22.0) — only when at least one ticket waits.
+       Attention first (a question blocks someone), queue second. ------- -->
+  <div id="poolband" class="poolband" hidden></div>
 
   <div id="main-row" class="main-row">
 
@@ -264,11 +268,11 @@
 <!-- Server version — règle standing du CLAUDE.md (pied de page) ------ -->
 <div id="app-version" class="app-version" aria-hidden="true"></div>
 
-<script src="./pupitre-row.js?v=0.21.3"></script>
-<script src="./pupitre-detail.js?v=0.21.3"></script>
+<script src="./pupitre-row.js?v=0.22.0"></script>
+<script src="./pupitre-detail.js?v=0.22.0"></script>
 <!-- salle.js est chargé AVANT app.js : ses fonctions sont donc définies quand
      app.js les appelle, et `App` est résolu au moment de l'appel. -->
-<script src="./salle.js?v=0.21.3"></script>
-<script src="./app.js?v=0.21.3"></script>
+<script src="./salle.js?v=0.22.0"></script>
+<script src="./app.js?v=0.22.0"></script>
 </body>
 </html>

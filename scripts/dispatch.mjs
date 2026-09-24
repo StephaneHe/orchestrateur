@@ -101,6 +101,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import http from 'node:http';
 import https from 'node:https';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -123,7 +124,7 @@ if (argv.includes('--test-failover')) {
   await runFailoverSelfTest();   // never returns — exits with the test result
 }
 
-if (argv.length < 1) die('usage: node scripts/dispatch.mjs <project> "<prompt>" | --prompt-stdin [--callback <project>] | --test-failover');
+if (argv.length < 1) die('usage: node scripts/dispatch.mjs <project> "<prompt>" | --prompt-stdin [--callback <project>] [--source <project>] [--model <id>] [--provider claude|codex] [--queue-if-busy|--no-queue-if-busy] | --test-failover');
 
 const projectName = argv[0];
 
@@ -144,6 +145,47 @@ if (srcIdx !== -1) {
   sourceProject = argv[srcIdx + 1];
   argv.splice(srcIdx, 2);
 }
+
+// ---------------------------------------------------------------------------
+// --model / --provider (0.22.0)
+// ---------------------------------------------------------------------------
+// Avant : pour lancer un musicien sur un autre model, le chef éditait
+// `config.json` (set → dispatch → revert). Avec plusieurs chefs c'est une
+// écriture concurrente sur un fichier partagé : perte de mise à jour garantie,
+// et le hot-reload du serveur tourne dans le vide. Le flag remplace la danse ;
+// `config.json` n'a plus à être écrit par un chef. Absent, on retombe
+// EXACTEMENT sur l'ancien comportement (`project.model || defaults.model`) :
+// rien de ce qui marche aujourd'hui ne casse.
+function takeFlagValue(flag) {
+  const i = argv.indexOf(flag);
+  if (i === -1) return null;
+  if (i + 1 >= argv.length) die(`${flag} requires a value`);
+  const v = argv[i + 1];
+  argv.splice(i, 2);
+  return v;
+}
+const modelOverride    = takeFlagValue('--model');
+const providerOverride = takeFlagValue('--provider');
+if (providerOverride && !['claude', 'codex'].includes(providerOverride)) {
+  die(`--provider must be "claude" or "codex" (got "${providerOverride}")`);
+}
+
+// ---------------------------------------------------------------------------
+// --queue-if-busy (0.22.0)
+// ---------------------------------------------------------------------------
+// Un musicien occupé n'est JAMAIS interrompu par un chef. Jusqu'ici ce script
+// spawnait sans regarder le `.pid` de sa cible : deux dispatches rapprochés
+// lançaient deux `claude --resume` sur la même session. Quand la file est
+// active, on POSTe au serveur qui range dans la file par musicien.
+// Par défaut ACTIF quand DISPATCH_SLOT est défini (c'est un chef qui parle) ;
+// inactif sinon, pour ne rien changer aux appels manuels/outillés.
+const noQueueIdx = argv.indexOf('--no-queue-if-busy');
+if (noQueueIdx !== -1) argv.splice(noQueueIdx, 1);
+const queueIdx = argv.indexOf('--queue-if-busy');
+if (queueIdx !== -1) argv.splice(queueIdx, 1);
+const CHEF_SLOT   = Number(process.env.DISPATCH_SLOT || 0) || null;
+const CHEF_TICKET = process.env.DISPATCH_TICKET || null;
+const queueIfBusy = noQueueIdx !== -1 ? false : (queueIdx !== -1 || CHEF_SLOT != null);
 
 let prompt = '';
 let imagePaths = [];   // populated when server passes attachment paths
@@ -175,6 +217,24 @@ if (!prompt.trim() && !imagePaths.length && !videoPaths.length) die('empty promp
 // ---------- config ----------------------------------------------------------
 
 const config = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
+
+// ---------------------------------------------------------------------------
+// Garde-fous du pool (0.22.0) — AVANT la résolution du projet, pour que le
+// message explique le vrai problème plutôt qu'un « unknown project ».
+// ---------------------------------------------------------------------------
+const CONDUCTOR = config.conductor || 'chef';
+// Un chef ne cible jamais un slot par son nom : le pool s'adresse par son nom
+// logique, et c'est le serveur qui choisit le slot. (Les alias `chef-2`/
+// `chef-3` arrivent en P0-B ; les refuser dès maintenant évite l'habitude.)
+if (CHEF_SLOT != null && new RegExp(`^${CONDUCTOR}-\\d+$`).test(projectName)) {
+  die(`un chef ne cible jamais un slot (« ${projectName} ») — écris « ${CONDUCTOR} », le serveur choisit`, 65);
+}
+// Délégation chef → chef : c'est P0-B. Refuser explicitement vaut mieux que
+// spawner un second `--resume` sur la session du chef (suicide de tour).
+if (CHEF_SLOT != null && projectName === CONDUCTOR) {
+  die('délégation chef → chef non disponible (P0-B) — route vers un musicien ou réponds toi-même', 65);
+}
+
 const project = config.projects.find(p => p.name === projectName);
 if (!project) {
   die(`unknown project "${projectName}". Known: ${config.projects.map(p => p.name).join(', ')}`);
@@ -186,9 +246,10 @@ if (callbackProject && !config.projects.find(p => p.name === callbackProject)) {
   die(`--callback: unknown project "${callbackProject}". Known: ${config.projects.map(p => p.name).join(', ')}`);
 }
 
-const model    = project.model    || config.defaults?.model        || 'claude-sonnet-4-6';
+// Le flag gagne sur la config ; sans flag, le comportement historique.
+const model    = modelOverride    || project.model    || config.defaults?.model        || 'claude-sonnet-4-6';
 const tools    = project.tools    || config.defaults?.allowedTools || 'Read,Edit,Write,Bash';
-const provider = project.provider || config.defaults?.provider     || 'claude';
+const provider = providerOverride || project.provider || config.defaults?.provider     || 'claude';
 
 // ---------- paths -----------------------------------------------------------
 
@@ -564,6 +625,81 @@ async function runFailoverSelfTest() {
   process.exit(anyOk ? 0 : 1);
 }
 
+// ---------- musicien occupé ⇒ file, jamais un second --resume ---------------
+//
+// Deux `claude --resume` sur la même session, c'est au mieux deux tours qui
+// s'écrasent, au pire une session corrompue. Le serveur possède déjà une file
+// par musicien (`dispatchQueue`) : on la lui confie plutôt que de spawner.
+// Serveur injoignable ⇒ ancien comportement + avertissement explicite : la
+// file est un confort, pas un point de panne.
+
+function pidAliveFor(name) {
+  const p = path.join(LOGS, `${name}.pid`);
+  try {
+    const st = fs.statSync(p);
+    if (Date.now() - st.mtimeMs > 12 * 60 * 60 * 1000) return null;   // sidecar périmé
+    const pid = Number(fs.readFileSync(p, 'utf8').trim());
+    if (!Number.isFinite(pid) || pid <= 0) return null;
+    try { process.kill(pid, 0); return pid; }
+    catch (e) { return e.code === 'EPERM' ? pid : null; }
+  } catch { return null; }
+}
+
+function postQueueIfBusy() {
+  return new Promise((resolve) => {
+    let token;
+    try { token = fs.readFileSync(path.join(ROOT, '.token'), 'utf8').trim(); }
+    catch { return resolve(null); }
+    const payload = { project: projectName, prompt, queueIfBusy: true };
+    if (callbackProject)   payload.callback = callbackProject;
+    if (sourceProject)     payload.source   = sourceProject;
+    if (modelOverride)     payload.model    = modelOverride;
+    if (providerOverride)  payload.provider = providerOverride;
+    // L'origine (quel tour de chef attend ce résultat) voyage avec l'entrée de
+    // file : une demande qui patiente ne doit pas perdre à qui elle répond.
+    if (CHEF_SLOT != null) payload.slot   = CHEF_SLOT;
+    if (CHEF_TICKET)       payload.ticket = CHEF_TICKET;
+    if (imagePaths.length) payload.attachmentPaths = imagePaths;
+    if (videoPaths.length) payload.videoPaths      = videoPaths;
+    const body = Buffer.from(JSON.stringify(payload));
+    const req = http.request({
+      hostname: '127.0.0.1', port: 7777, path: '/api/dispatch', method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Orchestrator-Token': token,
+        'Content-Length': body.length,
+      },
+    }, (res) => {
+      let buf = '';
+      res.setEncoding('utf8');
+      res.on('data', c => { buf += c; });
+      res.on('end', () => {
+        if (res.statusCode !== 202 && res.statusCode !== 200) return resolve(null);
+        try { resolve(JSON.parse(buf)); } catch { resolve(null); }
+      });
+    });
+    req.on('error', () => resolve(null));
+    req.setTimeout(5000, () => { try { req.destroy(); } catch {} resolve(null); });
+    req.end(body);
+  });
+}
+
+if (queueIfBusy && projectName !== CONDUCTOR) {
+  const busyPid = pidAliveFor(projectName);
+  if (busyPid) {
+    const r = await postQueueIfBusy();
+    if (r?.queued) {
+      console.log(`[dispatch] ${projectName} a un tour en cours — mis en file derrière lui (position ${r.position ?? r.queueLength})`);
+      process.exit(0);
+    }
+    if (r?.direct) {
+      console.log(`[dispatch] ${projectName} s'est libéré — lancé par le serveur (pid=${r.pid})`);
+      process.exit(0);
+    }
+    console.error(`[dispatch] ATTENTION : ${projectName} a un tour en cours (pid=${busyPid}) et le serveur est injoignable — dispatch direct malgré tout`);
+  }
+}
+
 // ---------- callback injection ----------------------------------------------
 
 // promptForLog = original prompt shown in the viewer (no boilerplate).
@@ -646,6 +782,25 @@ if (callbackProject) userPromptEvent.callback = callbackProject;
 const inheritedWakeGen = Number(process.env.DISPATCH_WAKE_GEN || 0);
 if (Number.isFinite(inheritedWakeGen) && inheritedWakeGen > 0) {
   userPromptEvent.wakeGen = inheritedWakeGen;
+}
+// POOL (0.22.0) — stampage d'origine, même mécanisme que wakeGen.
+//
+// Deux cas, distingués par la CIBLE et non par une seconde variable :
+//   · cible = le chef  ⇒ ce tour EST la consommation d'un ticket de la file :
+//     on stampe `ticket`/`slot`. C'est le log qui prouve « pris par CHEF n »,
+//     jamais la réponse HTTP.
+//   · cible = un musicien ⇒ `DISPATCH_SLOT`/`DISPATCH_TICKET` ont été hérités
+//     de l'env du chef via son outil Bash : c'est le tour de chef qui ATTEND
+//     ce résultat. On stampe `callbackSlot`/`callbackTicket` pour que le point
+//     revienne au bon chef (exploité en P0-B).
+if (CHEF_SLOT != null) {
+  if (projectName === CONDUCTOR) {
+    userPromptEvent.slot = CHEF_SLOT;
+    if (CHEF_TICKET) userPromptEvent.ticket = CHEF_TICKET;
+  } else {
+    userPromptEvent.callbackSlot = CHEF_SLOT;
+    if (CHEF_TICKET) userPromptEvent.callbackTicket = CHEF_TICKET;
+  }
 }
 logStream.write(JSON.stringify(userPromptEvent) + '\n');
 

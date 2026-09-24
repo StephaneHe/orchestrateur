@@ -128,6 +128,88 @@
 .att-item .ai-act:hover { background: var(--card-bg-hover); color: var(--fg-0); }
 .att-item .ai-act.is-primary { border-color: var(--st-think); color: var(--st-think); }
 
+/* ---------- Bande « File de direction » (0.22.0) ----------
+   Même grammaire que la bande d'attention : une ligne repliée, le détail à la
+   demande. Elle vient APRÈS l'attention (une question bloque quelqu'un ; une
+   file fait seulement attendre) et n'apparaît que si un ticket attend.
+   Piège CSS connu : `display:flex` écrase `[hidden]` — d'où la règle explicite. */
+.poolband {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--card-border);
+  background: color-mix(in srgb, var(--st-think) 6%, var(--bg-1));
+}
+.poolband[hidden] { display: none; }
+.pb-line {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 20px;
+  font-size: 12px;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+}
+.pb-line:hover { background: color-mix(in srgb, var(--st-think) 12%, transparent); }
+.pb-tag {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--st-think); flex-shrink: 0;
+}
+.pb-counts { color: var(--fg-2); font-size: 11px; flex-shrink: 0; }
+.pb-top { color: var(--fg-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.pb-caret { margin-left: auto; color: var(--fg-2); font-size: 10px; flex-shrink: 0; }
+.pb-list { padding: 2px 20px 10px; display: flex; flex-direction: column; gap: 6px; }
+.pb-list[hidden] { display: none; }
+.pb-item {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 6px 10px; border-radius: 7px;
+  border: 1px solid var(--card-border);
+  background: var(--bg-1);
+  font-size: 12px;
+}
+.pb-item .pb-n    { font-family: var(--font-mono); color: var(--fg-2); flex-shrink: 0; }
+.pb-item .pb-time { font-family: var(--font-mono); color: var(--fg-2); font-size: 11px; flex-shrink: 0; }
+.pb-item .pb-head { color: var(--fg-0); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.pb-item .pb-why  { color: var(--fg-2); font-size: 11px; flex-shrink: 0; }
+.pb-item[data-class="point"]    .pb-why { color: var(--st-unread, var(--fg-2)); }
+.pb-item[data-class="decision"] .pb-why { color: var(--st-input); }
+.pb-item .pb-act {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em;
+  padding: 3px 8px; border-radius: 5px;
+  border: 1px solid var(--card-border); color: var(--fg-1);
+}
+.pb-item .pb-act:hover { background: var(--card-bg-hover); color: var(--fg-0); }
+
+/* ---------- Statut de ticket sous une bulle utilisateur ----------
+   « en file · position n » — jamais de compte à rebours, jamais « pris par »
+   avant que le log du slot ne le prouve. */
+.cv-ticket {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-top: 5px;
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+.cv-ticket[data-phase="queued"]    .ct-txt { color: var(--st-think); }
+.cv-ticket[data-phase="running"]   .ct-txt { color: var(--st-live, var(--fg-1)); }
+.cv-ticket[data-phase="withdrawn"] .ct-txt { color: var(--fg-3, var(--fg-2)); }
+.cv-ticket .ct-act {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em;
+  padding: 2px 7px; border-radius: 5px;
+  border: 1px solid var(--card-border); color: var(--fg-2);
+  text-transform: none;
+}
+.cv-ticket .ct-act:hover { background: var(--card-bg-hover); color: var(--fg-0); }
+.cv-bubble.is-flash { outline: 1px solid var(--st-think); outline-offset: 3px; }
+
+/* Pill « ↩ répond à … » — seulement quand la bulle visée n'est pas juste
+   au-dessus. Le lien est cliquable et défile jusqu'à elle. */
+.cv-answers {
+  display: inline-block; margin: 0 0 4px;
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.04em;
+  padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--card-border); color: var(--fg-2);
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cv-answers:hover { background: var(--card-bg-hover); color: var(--fg-0); }
+
 /* ---------- Rail PILOTAGE ---------- */
 .rail {
   flex: 0 0 330px;

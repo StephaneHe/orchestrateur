@@ -84,6 +84,127 @@
   }
 
   // ------------------------------------------------------------------------
+  // FILE DE DIRECTION (0.22.0, P0-A)
+  // ------------------------------------------------------------------------
+  //
+  // Un message envoyé pendant un tour du chef ne le tue plus : il attend, et
+  // cette attente est VISIBLE — sous la bulle concernée d'abord (c'est là que
+  // l'utilisateur regarde), dans une bande repliée ensuite (combien, dans quel
+  // ordre, avec quoi faire). Honnêteté : « en file · position n » sans compte à
+  // rebours, « pris par » seulement quand le log du slot le prouve.
+  //
+  // P0-A n'affiche qu'un chef. Les trois pastilles de slot sont P0-B.
+  // ------------------------------------------------------------------------
+  function poolSnap()  { return App.pupitreSnapshot?.pool || null; }
+  function poolQueue() { const p = poolSnap(); return Array.isArray(p?.queue) ? p.queue : []; }
+  function poolSlots() { const p = poolSnap(); return Array.isArray(p?.slots) ? p.slots : []; }
+  function poolFreeSlots() {
+    const s = poolSlots();
+    if (!s.length) return null;                      // instantané non reçu : on ne prétend rien
+    return s.filter(x => !x.pidAlive && !x.ticket).length;
+  }
+  function poolTicket(id) { return poolQueue().find(t => t.id === id) || null; }
+  function poolRunningTicket(id) {
+    return poolSlots().find(s => s.ticket && s.ticket.id === id) || null;
+  }
+  function hhmm(ts) {
+    if (!ts) return "";
+    const d = new Date(ts);
+    return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+  }
+
+  /** Ligne de statut sous une bulle utilisateur. Rien si le message n'a pas de
+   *  ticket (historique d'avant 0.22.0) ou si son tour est déjà fini. */
+  function ticketStatusHtml(b) {
+    if (!b || !b.ticket) return "";
+    const qt = poolTicket(b.ticket);
+    if (qt) {
+      const bits = [`⏳ en file · position ${qt.position}`];
+      if (qt.pinnedSlot) bits.push(`attend le CHEF ${qt.pinnedSlot}`);
+      else {
+        const free = poolFreeSlots();
+        if (free === 0) bits.push("chef occupé");
+      }
+      if (qt.lost) bits.push("tour perdu · remis en tête");
+      return `<div class="cv-ticket" data-phase="queued">
+          <span class="ct-txt">${esc(bits.join(" · "))}</span>
+          <button class="ct-act" data-pool-withdraw="${esc(qt.id)}">Retirer</button>
+          <button class="ct-act" data-pool-interrupt="1">Interrompre le chef avec ce message</button>
+        </div>`;
+    }
+    const run = poolRunningTicket(b.ticket);
+    if (run) {
+      const taken = run.ticket.state === "RUNNING";
+      const when = run.ticket.since ? " · " + hhmm(run.ticket.since) : "";
+      return `<div class="cv-ticket" data-phase="${taken ? "running" : "assigned"}">
+          <span class="ct-txt">${taken
+            ? `▸ pris par CHEF ${run.slot}${when}`
+            : `▸ assigné au CHEF ${run.slot}`}</span>
+        </div>`;
+    }
+    if (b.withdrawn) return `<div class="cv-ticket" data-phase="withdrawn"><span class="ct-txt">⟲ retiré de la file</span></div>`;
+    return "";
+  }
+
+  let poolBandOpen = false;
+
+  function renderPoolBand() {
+    const el = document.getElementById("poolband");
+    if (!el) return;
+    const q = poolQueue();
+    if (!q.length) { el.hidden = true; el.innerHTML = ""; poolBandOpen = false; return; }
+    el.hidden = false;
+
+    const users  = q.filter(t => t.class === "user" || t.class === "decision" || t.class === "delegation");
+    const points = q.filter(t => t.class === "point");
+    const free   = poolFreeSlots();
+    const counts = [];
+    counts.push(`${users.length} message${users.length > 1 ? "s" : ""} en attente`);
+    if (free === 0) counts.push("chef occupé");
+    else if (free != null && free > 0) counts.push(`${free} libre`);
+    if (points.length) counts.push(`${points.length} point${points.length > 1 ? "s" : ""} en préparation`);
+
+    const rowHtml = (t, i) => {
+      const why = t.class === "decision" ? "décision demandée par un musicien"
+        : t.class === "point" ? "point sur les résultats"
+        : t.pinnedSlot ? `attend le CHEF ${t.pinnedSlot}`
+        : "n'importe quel chef";
+      const acts = t.class === "point" ? "" :
+        `<button class="pb-act" data-pool-withdraw="${esc(t.id)}">Retirer</button>` +
+        `<button class="pb-act" data-pool-interrupt="1">Interrompre le chef avec ce message</button>`;
+      return `<div class="pb-item" data-class="${esc(t.class)}">
+          <span class="pb-n">${i + 1}.</span>
+          <span class="pb-time">${esc(hhmm(t.enqueuedAt))}</span>
+          <span class="pb-head">${esc(t.head || "(sans texte)")}</span>
+          <span class="pb-why">${esc(why)}</span>
+          ${acts}
+        </div>`;
+    };
+
+    el.innerHTML =
+      `<button class="pb-line" type="button">
+         <span class="pb-tag">⏳ File de direction</span>
+         <span class="pb-counts">${esc(counts.join(" · "))}</span>
+         <span class="pb-top">${esc(q[0].head || "")}</span>
+         <span class="pb-caret">${poolBandOpen ? "▾" : "▸"}</span>
+       </button>` +
+      `<div class="pb-list"${poolBandOpen ? "" : " hidden"}>${q.map(rowHtml).join("")}</div>`;
+  }
+
+  function wirePoolBand() {
+    const el = document.getElementById("poolband");
+    if (!el || el._wired) return;
+    el._wired = true;
+    el.addEventListener("click", (e) => {
+      if (e.target.closest(".pb-line")) { poolBandOpen = !poolBandOpen; renderPoolBand(); return; }
+      const w = e.target.closest("[data-pool-withdraw]");
+      if (w) { App.withdrawTicket(w.dataset.poolWithdraw); return; }
+      const it = e.target.closest("[data-pool-interrupt]");
+      if (it) { App.interruptChef(Number(it.dataset.poolInterrupt) || 1); return; }
+    });
+  }
+
+  // ------------------------------------------------------------------------
   // En-tête : l'état du chef vit ICI et nulle part ailleurs.
   // ------------------------------------------------------------------------
   function renderChefStatus(m) {
@@ -110,6 +231,9 @@
     const r = snapRow(m.name);
     const h = healthFlag(r);
     if (h) txt += " · " + h.text;
+    // File de direction (0.22.0) : combien attendent, lisible sans clic.
+    const nq = poolQueue().length;
+    if (nq) txt += ` · file ${nq}`;
     $(".cs-label", el).textContent = txt;
 
     // Fraîcheur : âge de l'instantané, pas de l'horloge de rendu.
@@ -925,6 +1049,7 @@
   // ------------------------------------------------------------------------
   function init() {
     wireAttention();
+    wirePoolBand();
     wireRail();
     wireDive();
     wireSearch();
@@ -942,6 +1067,7 @@
 
   global.Salle = {
     init, router, openDive, closeDive, renderDive, onLiveEvent, backfillDive,
+    renderPoolBand, ticketStatusHtml, poolQueue, poolSlots, poolFreeSlots,
     renderChefStatus, renderSysBanner, renderAttention, renderRail, renderMobilePilot,
     syncRailVisibility, toggleRailSheet, openSearch, renderSearch,
     missionsHtml, orchestraActivityHtml, extractDispatches, findMission,

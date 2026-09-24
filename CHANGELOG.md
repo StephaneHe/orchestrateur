@@ -11,6 +11,89 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-09-24
+
+**P0-A du pool de chefs : la file devant un chef unique.** Spec :
+`docs/orchestrateur-multichef-queue-fable.md` (§5, lots A1→A7). Écrire au chef
+pendant qu'il travaille ne tue plus son tour : le message attend, visiblement.
+La concurrence n'est PAS ouverte — il y a toujours **un seul chef**
+(`conductorPool.size` est lu mais borné à 1) ; le pool de trois est P0-B.
+Progression détaillée : `docs/orchestrateur-multichef-impl-progress.md`.
+
+### Added
+- (server) **File de direction.** Tout ce qui fait parler le chef devient un
+  ticket FIFO persisté (`logs/queue/chef.pool.json`, écriture atomique) avec
+  son journal d'audit (`logs/chef.pool-log.ndjson`). Classes : `user`
+  (composer), `decision` (relais `NEEDS_CHEF_INPUT`), `point` (lot de réveil
+  0.20.0). États `QUEUED → ASSIGNED → RUNNING → DONE|FAILED`, plus `LOST`
+  (reprise ×1 en tête, avec note `[REPRISE]`) et `WITHDRAWN`. Un ordonnanceur
+  unique (`schedulePool`, sur le modèle de `tryFireWake`) est le seul endroit
+  où un tour de chef est lancé : ré-armé plutôt que forcé, rien n'est perdu,
+  seulement différé. Gelé sous `logs/claude-limited.until`.
+- (server) **`GET /api/pupitre` expose `pool`** : `{ size, model, slots[], queue[] }`.
+  Additif ; les slots ne sont PAS ajoutés à `fleet[]` (le rail ne montre jamais
+  un chef) et aucun poll supplémentaire n'est introduit.
+- (server) **SSE `{type:'pool', reason}`** comme signal « quelque chose a
+  changé » ; le snapshot reste la vérité.
+- (server) **`DELETE /api/pool/queue/:ticket`** (retirer, rend le brouillon) et
+  **`POST /api/pool/interrupt/:slot`** (interrompre sans nouveau message).
+- (server) **`GET /api/conductor-chat`** porte `ticket`, `slot`, `queued` et
+  `answersTicket` ; les tickets encore en file y sont restitués, donc un
+  rechargement retrouve « ⏳ en file · position n ».
+- (dispatch) **`--model <id>` et `--provider claude|codex`.** Remplacent la
+  « dance » set → dispatch → revert de `config.json` : trois chefs écrivant le
+  même fichier, c'est une perte de mise à jour garantie. Sans flag, le
+  comportement historique (`project.model || defaults.model`) est strictement
+  conservé.
+- (dispatch) **`--queue-if-busy` / `--no-queue-if-busy`.** Actif par défaut
+  quand `DISPATCH_SLOT` est défini (c'est un chef qui parle). Si la cible a un
+  `.pid` vivant, `dispatch.mjs` POSTe au serveur qui range dans la file par
+  musicien, au lieu de lancer un second `claude --resume` sur la même session.
+  Serveur injoignable ⇒ comportement actuel + avertissement explicite.
+- (dispatch) **Stampage d'origine** : `ticket`/`slot` sur le `user_prompt` d'un
+  tour de chef, `callbackSlot`/`callbackTicket` sur celui d'un musicien lancé
+  par un chef (préparation du retour de point au bon chef en P0-B).
+- (web) **Statut sous chaque bulle utilisateur** (« ⏳ en file · position n »,
+  « ▸ assigné », « ▸ pris par CHEF 1 · 09:38 ») avec les actions *Retirer* et
+  *Interrompre le chef avec ce message* ; **bande « File de direction »**
+  repliée/dépliable, sous la bande d'attention, visible seulement si un ticket
+  attend ; compteur `file n` dans l'en-tête ; pastille composer
+  « À : CHEF (n libre) » ; pill « ↩ répond à … » cliquable quand la bulle visée
+  n'est pas juste au-dessus.
+- (tests) `scripts/_test_pool_p0a.mjs` — 42 assertions sur le **code réel** du
+  pool chargé en bac à sable (dépendances doublées), zéro `claude` lancé.
+
+### Changed
+- (server) **L'interruption du chef devient un geste explicite.** `!interrupt`,
+  `force_interrupt:true` et `POST /api/pool/interrupt/:slot` tuent toujours le
+  tour en vol ; un message ordinaire ne le fait plus jamais. Le message qui
+  interrompt passe en tête de file (il remplace le tour qu'il vient de tuer) et
+  ne se fait pas doubler par les tickets qui patientaient.
+- (server) **Le réveil-callback passe par la file.** `tryFireWake` n'appelle
+  plus `spawnDirectDispatch` : il enfile un ticket `point`, servi **après** les
+  tickets `user`/`decision`. Le verrou `wake.inFlight` appartient désormais au
+  ticket (relâché à la fin de CE tour, ou à son retrait), plus à n'importe quel
+  `result` du chef. Un point encore en file est retiré si l'utilisateur écrit
+  au chef (même règle anti-doublon payant qu'en 0.20.0).
+- (server) **Le relais `NEEDS_CHEF_INPUT`** enfile un ticket `decision` au lieu
+  de spawner ; un musicien bloqué passe avec les messages utilisateur.
+- (web) Le composer annonce la mise en file **avant** l'envoi ; le libellé du
+  bouton ne change pas.
+
+### Fixed
+- (server) **`drainQueue` perdait le `callback`.** Une entrée de la file par
+  musicien ne portait que le prompt et ses pièces jointes : un dispatch mis en
+  file perdait son `--callback chef`, donc le chef attendait un point que le
+  musicien n'avait jamais été chargé d'envoyer. Les entrées portent désormais
+  `callback`, `source`, `model` et `provider`, et `spawnDirectDispatch` les
+  transmet. Les entrées rehydratées d'avant 0.22.0 se comportent comme avant.
+- (web) **Deux messages d'affilée se dédoublaient.** Un message mis en file part
+  plus tard : quand son écho SSE revient, sa bulle locale n'est plus la dernière
+  et la détection d'écho (par texte) échouait. L'écho est maintenant identifié
+  par son ticket, le texte restant le repli pour l'historique antérieur.
+- (dispatch) Un chef ciblant `chef` ou `chef-N` est refusé (exit 65) avec un
+  message clair, au lieu de lancer un second `--resume` sur la session du chef.
+
 ## [0.21.3] - 2026-09-24
 
 Suite du réglage d'affichage (web) sur la « Salle de direction » — respiration.

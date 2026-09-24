@@ -888,6 +888,9 @@ class FleetStream {
       // Hot config reload: a musician was added/removed in config.json server-side.
       // Re-fetch the list and reconcile without dropping live musician state.
       if (env.type === "fleet_config_changed") { App.refreshFleet(); return; }
+      // File de direction : signal « quelque chose a changé » — l'instantané
+      // /api/pupitre reste la vérité, on se contente de le redemander.
+      if (env.type === "pool") { App.schedulePupitreHint(); return; }
       const m = App.musicians.get(env.project);
       if (!m) return;
       let raw; try { raw = JSON.parse(env.line); } catch { return; }
@@ -1212,6 +1215,12 @@ const App = {
           ts: m.ts,
           source: m.source || undefined,
           ...(m.attachmentPaths?.length ? { images: m.attachmentPaths } : {}),
+          // 0.22.0 — file de direction : un rechargement doit retrouver
+          // « ⏳ en file · position n » et « ▸ pris par CHEF n ».
+          ...(m.ticket ? { ticket: m.ticket } : {}),
+          ...(m.queued ? { queued: true } : {}),
+          ...(m.answersTicket ? { answersTicket: m.answersTicket } : {}),
+          ...(Number.isFinite(m.slot) ? { slot: m.slot } : {}),
         };
         // A source-less "[musician] Tour terminé…" is a relayed callback, not a
         // user message — reclassify so it's never shown as the user.
@@ -1876,12 +1885,17 @@ const App = {
       const attachHtml = (imgThumbs.length || vidThumbs.length)
         ? `<div class="cv-attach-strip">${imgThumbs.join("") + vidThumbs.join("")}</div>`
         : "";
-      return `<div class="cv-bubble is-user" data-idx="${idx}">
+      // File de direction (0.22.0) : chaque message dit OÙ IL EN EST. Le
+      // statut vient du pool (file) ou du log du slot (« pris par »), jamais
+      // d'une supposition — et il n'y a pas de compte à rebours.
+      const ticketHtml = window.Salle ? window.Salle.ticketStatusHtml(b) : "";
+      return `<div class="cv-bubble is-user" data-idx="${idx}"${b.ticket ? ` data-ticket="${esc(b.ticket)}"` : ""}>
           <div class="cv-byline">
             <button class="cv-edit-btn" data-edit-idx="${idx}" title="Modifier et renvoyer">✎ éditer</button>
             vous${tsChip}
           </div>
           <div class="cv-body">${replyQuote}${esc(b.text)}${attachHtml}</div>
+          ${ticketHtml}
         </div>`;
     }
     // Lignes de mission : une par musicien, elles VIVENT sur place jusqu'à
@@ -2008,11 +2022,24 @@ const App = {
     const rCls = b.report ? " is-report" : "";
     const byline = b.report ? "chef — point sur les résultats" : "chef d'orchestre";
     const hint = b.report ? `<div class="cv-report-hint">ⓘ résultats reçus avant ce tour</div>` : "";
+    // « ↩ répond à … » — affiché SEULEMENT si la bulle visée n'est pas juste
+    // au-dessus (sinon c'est du bruit). Avec un seul chef c'est rare ; avec
+    // trois (P0-B) ce sera la règle, et le lien est déjà porté par la donnée.
+    let answers = "";
+    if (b.answersTicket) {
+      const prev = this.chat[idx - 1];
+      if (!(prev && prev.role === "user" && prev.ticket === b.answersTicket)) {
+        const target = this.chat.find(e => e.role === "user" && e.ticket === b.answersTicket);
+        if (target) {
+          answers = `<button class="cv-answers" data-goto-ticket="${esc(b.answersTicket)}" title="Aller au message concerné">↩ répond à « ${esc(String(target.text).replace(/\s+/g, " ").slice(0, 60))} »</button>`;
+        }
+      }
+    }
     return `<div class="cv-bubble is-conductor${qCls}${rCls}">
           <div class="cv-byline">${esc(byline)}${tsChip}${qTag}${usageChip}
             <button class="cv-reply-btn" data-reply-idx="${idx}" title="Répondre à ce message">↩ répondre</button>
           </div>
-          ${hint}${takingHtml(b)}
+          ${answers}${hint}${takingHtml(b)}
           <div class="cv-body md">${mdToHtml(b.text || "")}</div>
         </div>`;
   },
@@ -2073,6 +2100,22 @@ const App = {
       if (goto) {
         e.stopPropagation();
         this.revealResultCard(goto.dataset.gotoResult);
+        return;
+      }
+      // File de direction : retirer / interrompre / aller au message visé.
+      const wd = e.target.closest("[data-pool-withdraw]");
+      if (wd) { e.stopPropagation(); this.withdrawTicket(wd.dataset.poolWithdraw); return; }
+      const itr = e.target.closest("[data-pool-interrupt]");
+      if (itr) { e.stopPropagation(); this.interruptChef(Number(itr.dataset.poolInterrupt) || 1); return; }
+      const gt = e.target.closest("[data-goto-ticket]");
+      if (gt) {
+        e.stopPropagation();
+        const node = scroll.querySelector(`.cv-bubble.is-user[data-ticket="${CSS.escape(gt.dataset.gotoTicket)}"]`);
+        if (node) {
+          node.scrollIntoView({ block: "center", behavior: "smooth" });
+          node.classList.add("is-flash");
+          setTimeout(() => node.classList.remove("is-flash"), 1600);
+        }
         return;
       }
       // Question d'un musicien : défaut = via le chef.
@@ -2175,8 +2218,14 @@ const App = {
     if (!input) return;
     const mm = /^@([A-Za-z0-9_.\-]+)/.exec(input.value.trim());
     const direct = mm && this.musicians.has(mm[1]) ? mm[1] : null;
+    // Combien de chefs sont disponibles MAINTENANT. `null` = instantané non
+    // reçu : on n'affiche alors aucun compte plutôt qu'un chiffre inventé.
+    const free = window.Salle?.poolFreeSlots?.() ?? null;
+    const queued = (window.Salle?.poolQueue?.() || []).length;
     if (chip) {
-      chip.textContent = direct ? `À : ${direct.toUpperCase()} (direct)` : "À : CHEF";
+      chip.textContent = direct
+        ? `À : ${direct.toUpperCase()} (direct)`
+        : (free == null ? "À : CHEF" : `À : CHEF (${free} libre)`);
       chip.classList.toggle("is-direct", !!direct);
     }
     input.placeholder = direct
@@ -2184,11 +2233,15 @@ const App = {
       : "Écrivez au chef — tape @ pour citer un musicien";
     const chefRow = this.pupitreSnapshot?.fleet?.find(r => r.name === this.composer.CONDUCTOR);
     const chefBusy = !direct && chefRow?.pidAlive === true;
-    if (send) send.title = chefBusy ? "Envoyer et interrompre le tour du chef" : "Envoyer au chef";
+    // 0.22.0 : l'envoi n'interrompt PLUS. On l'annonce AVANT l'envoi, et le
+    // libellé du bouton ne change pas (l'action reste « envoyer »).
+    if (send) send.title = chefBusy ? "Envoyer — le message sera mis en file" : "Envoyer au chef";
     const hint = $(".composer-hint");
     if (hint) {
       const base = "<kbd>↵</kbd> envoyer · <kbd>⇧ ↵</kbd> nouvelle ligne · <kbd>Esc</kbd> fermer";
-      const warn = chefBusy ? " · <span class=\"composer-warn\">le chef a un tour en cours — l’envoi l’interrompra</span>" : "";
+      const warn = chefBusy
+        ? ` · <span class="composer-warn">le chef a un tour en cours — votre message sera mis en file${queued ? ` (${queued} devant)` : ""}</span>`
+        : "";
       const html = base + warn;
       if (hint.innerHTML !== html) hint.innerHTML = html;
     }
@@ -2480,10 +2533,19 @@ const App = {
         // tour qui suit soit rendu comme un POINT SUR LES RÉSULTATS.
         if (source === "wake") { this._wakeObservedAt = Date.now(); return; }
         const last = this.chat[this.chat.length - 1];
-        const isLocalEcho = (!source || isShortcut) && last && last.role === "user" && (
+        // 0.22.0 — un message mis en file part PLUS TARD : quand son écho
+        // arrive, sa bulle locale n'est plus forcément la dernière (l'utilisateur
+        // a pu en écrire d'autres entre-temps). Le ticket l'identifie sans
+        // ambiguïté ; la comparaison de texte reste le repli pour l'historique
+        // d'avant 0.22.0. Sans ça, deux messages d'affilée se dédoublaient.
+        const byTicket = typeof raw.ticket === "string"
+          ? this.chat.find(e => e.role === "user" && e.ticket === raw.ticket)
+          : null;
+        if (byTicket && Number.isFinite(raw.slot)) byTicket.slot = raw.slot;
+        const isLocalEcho = !!byTicket || ((!source || isShortcut) && last && last.role === "user" && (
           last.text.trim() === txt ||
           (last._fullPrompt != null && last._fullPrompt.trim() === txt)
-        );
+        ));
         if (!isLocalEcho) {
           const images = Array.isArray(raw.attachmentPaths) && raw.attachmentPaths.length
             ? raw.attachmentPaths.map(p => '/attachments/' + String(p).replace(/\\/g, '/').split('/').pop())
@@ -2497,7 +2559,12 @@ const App = {
             }
           } else {
             // Real user message (or an @shortcut echo) — render as the user.
-            this.chat.push({ role: "user", text: txt, ts: Date.parse(raw.timestamp) || Date.now(), ...(images ? { images } : {}) });
+            this.chat.push({
+              role: "user", text: txt, ts: Date.parse(raw.timestamp) || Date.now(),
+              ...(images ? { images } : {}),
+              ...(typeof raw.ticket === "string" ? { ticket: raw.ticket } : {}),
+              ...(Number.isFinite(raw.slot) ? { slot: raw.slot } : {}),
+            });
             if (this.chat.length > CHAT_MAX) this.chat.splice(0, this.chat.length - CHAT_MAX);
           }
         }
@@ -2843,6 +2910,19 @@ const App = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+      // File de direction (0.22.0) : le message a un TICKET. On l'attache à la
+      // bulle locale pour que sa ligne de statut le suive (en file → pris →
+      // répondu) ; on ne dit PAS « pris » ici — c'est le log du slot qui le dit.
+      if (data.ticket && isConductorMsg) {
+        for (let i = this.chat.length - 1; i >= 0; i--) {
+          const e = this.chat[i];
+          if (e.role !== "user") continue;
+          e.ticket = data.ticket;
+          break;
+        }
+        this.schedulePupitreHint();
+        this.renderChat();
+      }
       // Server routed the message directly (queued or bypassed the conductor).
       if (data.queued) {
         this.chat.push({
@@ -2863,6 +2943,51 @@ const App = {
     } finally {
       input.disabled = false;
       input.focus();
+    }
+  },
+
+  // ---------- File de direction (0.22.0) ----------
+  //
+  // Deux gestes, tous deux explicites et réversibles côté utilisateur :
+  // retirer un message qui attend (le brouillon revient dans le composer), ou
+  // interrompre franchement le tour en cours. Aucun des deux n'est automatique.
+
+  async withdrawTicket(id) {
+    try {
+      const resp = await fetch(`/api/pool/queue/${encodeURIComponent(id)}`, { method: "DELETE" });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+      // La bulle reste dans le fil, grisée : on ne réécrit pas l'histoire.
+      for (const e of this.chat) if (e.role === "user" && e.ticket === id) e.withdrawn = true;
+      // Rien n'est perdu : le brouillon repart dans le composer s'il est vide.
+      const input = $("#composer-input");
+      if (data.draft && input && !input.value.trim()) {
+        input.value = data.draft;
+        this.composer.hasDraft = true;
+        const send = $("#composer-send");
+        if (send) send.disabled = false;
+        input.focus();
+      }
+      this.pollPupitre();
+      this.renderChat();
+    } catch (err) {
+      this.showComposerError("Retrait impossible : " + (err.message || err));
+    }
+  },
+
+  async interruptChef(slot = 1) {
+    if (!confirm(`Interrompre le tour en cours du chef ${slot} ?\n\nLe travail non terminé de ce tour sera perdu ; le message suivant de la file démarrera aussitôt.`)) return;
+    try {
+      const resp = await fetch(`/api/pool/interrupt/${slot}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+      this._disarmConductorWait();
+      this.pollPupitre();
+      this.renderChat();
+    } catch (err) {
+      this.showComposerError("Interruption impossible : " + (err.message || err));
     }
   },
 
@@ -3096,6 +3221,7 @@ const App = {
     const S = window.Salle;
     S?.renderRail();
     S?.renderAttention();
+    S?.renderPoolBand();
     S?.renderSysBanner();
     this.syncChefCard(this.musicians.get(this.composer.CONDUCTOR) || null);
     if (S?.diveName) S.renderDive();

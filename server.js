@@ -458,6 +458,14 @@ function scheduleConductorWake(item) {
  *  basket renders them with "prend en compte"), so a pushed synthesis would be a
  *  paid duplicate. Drop the batch. */
 function cancelWakeOnUserPrompt() {
+  // 0.22.0 : un lot déjà transformé en TICKET `point` et encore en file est le
+  // même doublon payant — il part avec le reste (un ticket ASSIGNED/RUNNING,
+  // lui, n'est jamais tué : c'est un tour en cours).
+  let withdrawn = 0;
+  for (const t of pool.queue.filter(t => t.class === 'point')) {
+    if (poolWithdraw(t.id)) withdrawn++;
+  }
+  if (withdrawn) console.log(`[wake] ${withdrawn} ticket(s) point retiré(s) — l'utilisateur parle au chef`);
   if (!wake.pending.length && !wake.timer) return;
   const n = wake.pending.length;
   wake.pending = [];
@@ -505,10 +513,9 @@ function tryFireWake() {
   }
   if (wake.inFlight) return;   // the chef's own result will re-trigger us
 
-  const chef = conductorName();
-  // Never interrupt: if a producer is alive for the chef, wait for it to finish.
-  // (A phantom "busy" state with no live PID is exactly what we DO fire on.)
-  if (dispatchPidAlive(chef)) { armWakeTimer(WAKE_COALESCE_MS); return; }
+  // 0.22.0 : plus besoin d'attendre que le chef soit libre — le lot devient un
+  // TICKET et l'ordonnanceur le tire quand un slot se libère. Le « jamais
+  // d'interruption » de 0.20.0 est désormais structurel, pas conditionnel.
 
   // Firing into an exhausted quota would just burn a slot on a synthetic result.
   const limited = readLimitedUntil();
@@ -534,7 +541,13 @@ function tryFireWake() {
     }) + '\n');
   } catch {}
   console.log(`[wake] firing chef synthesis — lot=${items.length} gen=${gen}`);
-  spawnDirectDispatch(chef, prompt, [], [], { source: 'wake', wakeGen: gen });
+  // Le lot n'est plus spawné ici : il entre dans la file comme ticket `point`,
+  // servi après les tickets `user`/`decision` (§2.4 du design).
+  poolEnqueue({
+    class: 'point', text: prompt, source: 'wake', wakeGen: gen,
+    displayText: `point sur ${items.length} résultat${items.length > 1 ? 's' : ''} : ` +
+      items.map(it => it.source).join(', '),
+  });
 }
 
 loadWakeFromDisk();
@@ -546,6 +559,17 @@ loadWakeFromDisk();
 // `opts.wakeGen` is exported to the child's environment so every dispatch that
 // agent launches inherits the wake depth — that is what bounds the wake chain.
 // Both are optional: the three pre-existing callers pass neither.
+//
+// 0.22.0 additions, all optional and backward-compatible:
+//   opts.callback  — forwarded as `--callback <p>`. Until now the per-musician
+//                    queue LOST it (drainQueue never passed it on), so a turn
+//                    that was queued instead of spawned silently stopped being
+//                    awaited: no wake, no promised report.
+//   opts.model / opts.provider — forwarded as flags rather than a config.json
+//                    edit (no concurrent write on a shared file).
+//   opts.ticket / opts.slot    — pool stamping; dispatch.mjs copies them onto
+//                    the turn's opening user_prompt so the file's status can be
+//                    read back from the log rather than guessed.
 function spawnDirectDispatch(name, prompt, attachmentPaths = [], videoPaths = [], opts = {}) {
   const dispatchScript = path.join(__dirname, 'scripts', 'dispatch.mjs');
   const hasAny = attachmentPaths.length || videoPaths.length;
@@ -562,18 +586,25 @@ function spawnDirectDispatch(name, prompt, attachmentPaths = [], videoPaths = []
   // argv is always an array — never shell-concatenated (project hard rule).
   const args = [dispatchScript, name, '--prompt-stdin'];
   if (typeof opts.source === 'string' && opts.source) args.push('--source', opts.source);
+  if (typeof opts.callback === 'string' && opts.callback) args.push('--callback', opts.callback);
+  if (typeof opts.model === 'string' && opts.model) args.push('--model', opts.model);
+  if (typeof opts.provider === 'string' && opts.provider) args.push('--provider', opts.provider);
 
   const child = spawn(process.execPath, args, {
     cwd: __dirname,
     env: {
       ...process.env,
       ANTHROPIC_API_KEY: '',
-      DISPATCH_TRACE_ID: '',
+      DISPATCH_TRACE_ID: typeof opts.traceId === 'string' ? opts.traceId : '',
       DISPATCH_INTERRUPTED: '0',
       DISPATCH_TIME_SINCE_LAST_MS: timeSinceLastMs == null ? '' : String(timeSinceLastMs),
       DISPATCH_REQUEST_IN_TS: String(requestInTs),
       // Inherited by the agent's Bash tool → stamped on every dispatch it makes.
       DISPATCH_WAKE_GEN: Number.isFinite(opts.wakeGen) && opts.wakeGen > 0 ? String(opts.wakeGen) : '',
+      // Pool stamping (0.22.0). Also inherited by the chef's Bash tool, which
+      // is how a musician's turn learns WHICH conductor turn is awaiting it.
+      DISPATCH_TICKET: typeof opts.ticket === 'string' ? opts.ticket : '',
+      DISPATCH_SLOT: Number.isFinite(opts.slot) && opts.slot > 0 ? String(opts.slot) : '',
     },
     stdio: ['pipe', 'ignore', 'ignore'],
     windowsHide: true,
@@ -597,14 +628,463 @@ function spawnDirectDispatch(name, prompt, attachmentPaths = [], videoPaths = []
 }
 
 // Pop one item from a musician's queue and dispatch it.
+//
+// 0.22.0 fix: a queue entry now carries `callback`, `source`, `model` and
+// `provider` and they are all forwarded. Before, the entry held only the prompt
+// and its attachments, so a dispatch that was QUEUED (rather than spawned) lost
+// its `--callback chef`: the chef kept waiting for a report the musician was
+// never told to send. Old entries rehydrated from disk simply have the fields
+// undefined and behave exactly as before.
 function drainQueue(name) {
   const q = dispatchQueue.get(name);
   if (!q || q.length === 0) { dispatchQueue.delete(name); persistQueue(name); return; }
-  const { prompt, attachmentPaths, videoPaths } = q.shift();
+  const { prompt, attachmentPaths, videoPaths, callback, source, model, provider, slot, ticket } = q.shift();
   if (q.length === 0) dispatchQueue.delete(name);
   persistQueue(name);
-  console.log(`[queue] auto-dispatch to ${name} (${dispatchQueue.get(name)?.length ?? 0} remaining)`);
-  setImmediate(() => spawnDirectDispatch(name, prompt, attachmentPaths, videoPaths));
+  console.log(`[queue] auto-dispatch to ${name} (${dispatchQueue.get(name)?.length ?? 0} remaining)` +
+    (callback ? ` callback=${callback}` : ''));
+  setImmediate(() => spawnDirectDispatch(name, prompt, attachmentPaths, videoPaths,
+    { callback, source, model, provider, slot, ticket }));
+}
+
+// ---------- File de direction (pool P0-A, 0.22.0) ---------------------------
+//
+// Jusqu'à 0.21.3, écrire au chef pendant qu'il travaillait TUAIT son tour
+// (`/api/dispatch` → killDispatchTree). L'utilisateur perdait un travail en
+// cours qu'il n'avait pas demandé à perdre, et le chef reprenait avec une note
+// de reprise plutôt qu'un résultat. Désormais tout ce qui veut faire parler le
+// chef — message utilisateur, relais NEEDS_CHEF_INPUT, réveil-callback 0.20.0 —
+// devient un TICKET dans une file FIFO persistée, et un ordonnanceur unique la
+// draine quand le chef se libère. L'interruption existe toujours, mais c'est un
+// GESTE EXPLICITE : `!interrupt`, `force_interrupt:true`, ou
+// POST /api/pool/interrupt/:slot.
+//
+// P0-A n'ouvre PAS la concurrence : `conductorPool.size` est lu mais borné à 1,
+// le slot 1 est le chef actuel avec ses fichiers actuels (`logs/chef.*`), rien
+// n'est renommé. Le pool de trois chefs (slots `chef-2`, `chef-3`, affinité,
+// épinglage, registre de direction, délégation) est P0-B.
+//
+// Le modèle suit `wake` (0.20.0) : un seul point de tir, ré-armé plutôt que
+// forcé, rien n'est perdu — seulement différé.
+
+const POOL_SIDECAR    = path.join(QUEUE_DIR, 'chef.pool.json');
+const POOL_JOURNAL    = path.join(LOGS_DIR, 'chef.pool-log.ndjson');
+// P0-A : la taille est VERROUILLÉE à 1. Le champ config existe pour que P0-B
+// n'ait qu'à relever cette borne, sans changer de schéma.
+const POOL_MAX_SIZE   = 1;
+// Un slot assigné dont aucun processus ne vit depuis ce délai a perdu son tour.
+const POOL_LOST_MS    = 60_000;
+// Filet d'ordonnancement : un slot peut se libérer sans qu'aucun événement ne
+// nous réveille (kill externe, log muet). On repasse régulièrement.
+const POOL_RETRY_MS   = 5_000;
+const POOL_MAX_QUEUE  = 100;
+const POOL_HEAD_CHARS = 120;
+
+const pool = {
+  queue: [],     // tickets QUEUED, du plus ancien au plus récent
+  slots: [],     // [{ slot, name, ticket, assignedAt }]
+  timer: null,
+  timerAt: 0,
+  lastResultAt: new Map(),   // nom de slot → ts du dernier result observé
+};
+
+function poolSize() {
+  const n = Number(config.conductorPool?.size);
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return Math.min(POOL_MAX_SIZE, Math.floor(n));
+}
+function poolModel() {
+  return config.conductorPool?.model
+    || config.projects.find(p => p.name === conductorName())?.model
+    || config.defaults?.model
+    || null;
+}
+/** Nom de fichiers d'un slot. Le slot 1 EST le chef actuel : aucun renommage,
+ *  aucune migration de session. Les alias `chef-N` arrivent en P0-B. */
+function poolSlotName(slot) {
+  return slot === 1 ? conductorName() : `${conductorName()}-${slot}`;
+}
+
+function poolEnsureSlots() {
+  const size = poolSize();
+  const want = [];
+  for (let i = 1; i <= size; i++) {
+    const name = poolSlotName(i);
+    const prev = pool.slots.find(s => s.slot === i);
+    want.push(prev && prev.name === name ? prev : { slot: i, name, ticket: null, assignedAt: 0 });
+  }
+  pool.slots = want;
+  return pool.slots;
+}
+
+function poolHead(text) {
+  return String(text || '').replace(/\s+/g, ' ').trim().slice(0, POOL_HEAD_CHARS);
+}
+
+function newTicketId() {
+  return `m-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
+}
+
+function poolJournalWrite(event, ticket, extra = {}) {
+  try {
+    fs.appendFileSync(POOL_JOURNAL, JSON.stringify({
+      ts: new Date().toISOString(),
+      event,
+      ticket: ticket?.id || null,
+      class: ticket?.class || null,
+      slot: ticket?.slot ?? null,
+      attempts: ticket?.attempts ?? 0,
+      head: ticket?.head || '',
+      ...extra,
+    }) + '\n');
+  } catch { /* audit is best-effort; it never blocks a turn */ }
+}
+
+function persistPool() {
+  const payload = JSON.stringify({
+    v: 1,
+    queue: pool.queue,
+    slots: pool.slots.map(s => ({ slot: s.slot, name: s.name, ticket: s.ticket, assignedAt: s.assignedAt })),
+  });
+  const tmp = POOL_SIDECAR + '.tmp';
+  try {
+    fs.writeFileSync(tmp, payload);
+    fs.renameSync(tmp, POOL_SIDECAR);
+  } catch (e) {
+    debugLog(`persistPool failed: ${e.message}`);
+  }
+}
+
+/** Broadcast « quelque chose a changé dans la file ». Le snapshot
+ *  (/api/pupitre.pool) reste la vérité — cet événement n'est qu'un signal.
+ *  Le try/catch couvre l'amorçage : `fleetSseClients` peut ne pas être encore
+ *  évalué quand la file est rehydratée au boot. */
+function broadcastPool(reason) {
+  try {
+    const payload = `data: ${JSON.stringify({ type: 'pool', reason })}\n\n`;
+    for (const res of [...fleetSseClients]) {
+      if (res.writableEnded || res.destroyed) { fleetSseClients.delete(res); continue; }
+      try { res.write(payload); } catch { fleetSseClients.delete(res); }
+    }
+  } catch { /* trop tôt — rien à notifier */ }
+}
+
+/** Rehydratation au boot, AVANT tout dispatch. Un ticket qui était en vol sans
+ *  processus vivant est PERDU : il repart une seule fois, en tête, avec une
+ *  note de reprise. `attempts = 2` ⇒ échec définitif, jamais une boucle. */
+function loadPoolFromDisk() {
+  poolEnsureSlots();
+  let raw;
+  try { raw = fs.readFileSync(POOL_SIDECAR, 'utf8'); } catch { return; }
+  let o;
+  try { o = JSON.parse(raw); } catch (e) { debugLog(`loadPoolFromDisk parse failed: ${e.message}`); return; }
+  const now = Date.now();
+  pool.queue = (Array.isArray(o.queue) ? o.queue : [])
+    .filter(t => t && t.id && typeof t.text === 'string')
+    // Un message utilisateur n'expire jamais ; un POINT sur des résultats
+    // vieux de six heures est sans objet (même TTL qu'en 0.20.0).
+    .filter(t => t.class !== 'point' || (now - (t.enqueuedAt || 0)) < WAKE_ITEM_TTL_MS);
+  for (const t of pool.queue) t.state = 'QUEUED';
+  const inFlight = (Array.isArray(o.slots) ? o.slots : []).map(s => s?.ticket).filter(Boolean);
+  for (const t of inFlight) {
+    const s = pool.slots.find(x => x.slot === t.slot) || pool.slots[0];
+    if (s && dispatchPidAlive(s.name)) {
+      // Le tour a survécu au redémarrage du serveur : on le réadopte tel quel.
+      s.ticket = t; s.assignedAt = t.assignedAt || Date.now();
+      continue;
+    }
+    poolRequeueLost(t, 'restart');
+  }
+  if (pool.queue.length || pool.slots.some(s => s.ticket)) {
+    console.log(`[pool] rehydraté — ${pool.queue.length} en file, ${pool.slots.filter(s => s.ticket).length} en vol`);
+    persistPool();
+    schedulePool('boot');
+  }
+}
+
+/** Un ticket dont le tour a disparu : remis en tête UNE fois, avec une note de
+ *  reprise, sinon clos en échec. */
+function poolRequeueLost(t, why) {
+  t.slot = null;
+  if ((t.attempts || 0) >= 2) {
+    t.state = 'FAILED';
+    poolJournalWrite('failed_lost', t, { why });
+    console.log(`[pool] ticket ${t.id} perdu 2× — abandonné`);
+    return;
+  }
+  if (!t.repriseNoted) {
+    t.text = `[REPRISE] Ton tour précédent a été perdu (${why}) ; vérifie l'état réel avant d'agir.\n\n${t.text}`;
+    t.repriseNoted = true;
+  }
+  t.state = 'QUEUED';
+  t.lost = true;
+  pool.queue.unshift(t);
+  poolJournalWrite('requeued_lost', t, { why });
+  console.log(`[pool] ticket ${t.id} perdu (${why}) — remis en tête de file`);
+}
+
+function poolSlotFree(s) {
+  return !s.ticket && !dispatchPidAlive(s.name);
+}
+
+/** Choix du ticket pour un slot libre. FIFO, avec une seule règle de classe en
+ *  P0-A : un `point` (lot de réveil) ne passe que si rien d'autre n'est
+ *  prenable — l'utilisateur et un musicien bloqué passent avant, et attendre
+ *  enrichit le lot au lieu de l'appauvrir. */
+function poolPickFor(s) {
+  let pointIdx = -1;
+  for (let i = 0; i < pool.queue.length; i++) {
+    const t = pool.queue[i];
+    if (t.pinnedSlot != null && t.pinnedSlot !== s.slot) continue;
+    if (t.class === 'point') { if (pointIdx < 0) pointIdx = i; continue; }
+    return i;
+  }
+  return pointIdx;
+}
+
+/** Ré-armement de l'ordonnanceur. `delayMs = 0` passe TOUT DE SUITE et de
+ *  façon synchrone : l'appelant HTTP peut donc répondre « pris par CHEF 1 »
+ *  plutôt que « position 1 » quand le chef était libre. Un délai non nul ne
+ *  fait que rapprocher le prochain passage, jamais le repousser. */
+let poolSchedulerRunning = false;
+function schedulePool(reason = 'tick', delayMs = 0) {
+  if (delayMs === 0) {
+    if (poolSchedulerRunning) return;        // déjà dans la boucle : elle repassera
+    poolSchedulerRunning = true;
+    try { runPoolScheduler(reason); }
+    catch (e) { debugLog(`pool scheduler error: ${e.message}`); }
+    finally { poolSchedulerRunning = false; }
+    return;
+  }
+  const at = Date.now() + delayMs;
+  if (pool.timer && pool.timerAt && pool.timerAt <= at) return;
+  if (pool.timer) clearTimeout(pool.timer);
+  pool.timerAt = at;
+  pool.timer = setTimeout(() => { pool.timer = null; pool.timerAt = 0; schedulePool(reason); }, delayMs);
+  pool.timer.unref?.();
+}
+
+/** Le seul endroit où un tour de chef est lancé. */
+function runPoolScheduler(reason) {
+  poolEnsureSlots();
+  poolReapLost();
+  if (!pool.queue.length) return;
+
+  // Même garde que tryFireWake : tirer dans un quota épuisé ne produirait
+  // qu'un result synthétique. La file reste visible, l'UI porte le bandeau.
+  if (readLimitedUntil()) { schedulePool('limited', 30_000); return; }
+
+  let assigned = 0;
+  for (const s of pool.slots) {
+    if (!pool.queue.length) break;
+    if (!poolSlotFree(s)) continue;
+    const idx = poolPickFor(s);
+    if (idx < 0) continue;
+    const t = pool.queue.splice(idx, 1)[0];
+    poolAssign(s, t);
+    assigned++;
+  }
+  if (assigned) { persistPool(); broadcastPool('assigned'); }
+  if (pool.queue.length) schedulePool('retry', POOL_RETRY_MS);
+}
+
+function poolAssign(s, t) {
+  t.state = 'ASSIGNED';
+  t.slot = s.slot;
+  t.assignedAt = Date.now();
+  t.attempts = (t.attempts || 0) + 1;
+  s.ticket = t;
+  s.assignedAt = t.assignedAt;
+  poolJournalWrite('assigned', t, { reason: 'scheduler' });
+  console.log(`[pool] ticket ${t.id} (${t.class}) → CHEF ${s.slot} « ${t.head} »`);
+  if (t.traceId) projectTrace.set(s.name, t.traceId);
+  const pid = spawnDirectDispatch(s.name, t.text, t.attachmentPaths || [], t.videoPaths || [], {
+    source: t.source || undefined,
+    wakeGen: t.wakeGen,
+    ticket: t.id,
+    slot: s.slot,
+    traceId: t.traceId,
+  });
+  t.pid = pid || null;
+}
+
+/** Un slot assigné sans processus vivant depuis POOL_LOST_MS a perdu son tour.
+ *  `healOrphanedLogs` fait la même chose au boot pour le log ; ici on fait
+ *  repartir le TICKET, ce que le log ne sait pas faire. */
+function poolReapLost() {
+  let changed = false;
+  for (const s of pool.slots) {
+    const t = s.ticket;
+    if (!t) continue;
+    if (Date.now() - (s.assignedAt || 0) < POOL_LOST_MS) continue;
+    if (dispatchPidAlive(s.name)) continue;
+    s.ticket = null; s.assignedAt = 0;
+    if (t.class === 'point') wake.inFlight = false;
+    poolRequeueLost(t, 'processus perdu');
+    changed = true;
+  }
+  if (changed) { persistPool(); broadcastPool('lost'); }
+}
+
+/** Mise en file. `front:true` pour un ticket qui REMPLACE un tour interrompu :
+ *  il n'attend pas derrière ceux qu'il vient de doubler. */
+function poolEnqueue(ticket) {
+  poolEnsureSlots();
+  const t = {
+    id: newTicketId(),
+    class: 'user',
+    text: '',
+    attachmentPaths: [],
+    videoPaths: [],
+    source: null,
+    pinnedSlot: null,
+    affinitySlot: null,
+    hop: 0,
+    attempts: 0,
+    interrupting: false,
+    ...ticket,
+  };
+  t.head = poolHead(t.displayText ?? t.text);
+  t.state = 'QUEUED';
+  t.enqueuedAt = Date.now();
+  if (t.front) pool.queue.unshift(t); else pool.queue.push(t);
+  delete t.front;
+  // Borne de sécurité : on ne garde jamais une file sans fin. On sacrifie les
+  // POINTS les plus anciens (leur contenu est reconstructible) avant tout
+  // message utilisateur, qui lui n'expire jamais.
+  while (pool.queue.length > POOL_MAX_QUEUE) {
+    const i = pool.queue.findIndex(x => x.class === 'point');
+    const dropped = pool.queue.splice(i >= 0 ? i : 0, 1)[0];
+    if (dropped) {
+      dropped.state = 'WITHDRAWN';
+      if (dropped.class === 'point') wake.inFlight = false;
+      poolJournalWrite('dropped_overflow', dropped);
+    }
+  }
+  poolJournalWrite('enqueued', t, { position: pool.queue.indexOf(t) + 1 });
+  persistPool();
+  broadcastPool('enqueued');
+  schedulePool('enqueue');
+  return t;
+}
+
+function poolPosition(id) {
+  const i = pool.queue.findIndex(t => t.id === id);
+  return i < 0 ? null : i + 1;
+}
+
+function poolFindRunning(id) {
+  for (const s of pool.slots) if (s.ticket && s.ticket.id === id) return s;
+  return null;
+}
+
+/** Le log du slot a montré le `user_prompt` stampé : le ticket est réellement
+ *  PRIS. C'est le log qui fait foi, jamais la réponse HTTP. */
+function poolMarkRunning(name, ticketId) {
+  const s = pool.slots.find(x => x.name === name);
+  if (!s || !s.ticket || s.ticket.id !== ticketId) return;
+  if (s.ticket.state === 'RUNNING') return;
+  s.ticket.state = 'RUNNING';
+  s.ticket.startedAt = Date.now();
+  poolJournalWrite('running', s.ticket);
+  persistPool();
+  broadcastPool('started');
+}
+
+/** Un slot vient de terminer son tour : on clôt son ticket et on re-draine. */
+function poolOnSlotResult(name, ev) {
+  pool.lastResultAt.set(name, Date.now());
+  const s = pool.slots.find(x => x.name === name);
+  if (s && s.ticket) {
+    const t = s.ticket;
+    t.state = ev?.is_error ? 'FAILED' : 'DONE';
+    t.endedAt = Date.now();
+    s.ticket = null;
+    s.assignedAt = 0;
+    // Le verrou de réveil 0.20.0 appartient désormais au TICKET de point : il
+    // se relâche quand ce tour-là finit, pas sur n'importe quel result du chef.
+    if (t.class === 'point') wake.inFlight = false;
+    poolJournalWrite(t.state.toLowerCase(), t, { synthetic: !!ev?.synthetic });
+    persistPool();
+    broadcastPool('done');
+  }
+  // Le `result` précède la sortie du processus : le `.pid` vit encore une
+  // fraction de seconde. On repasse peu après plutôt que de tirer dans le vide
+  // (le filet POOL_RETRY_MS reste là si cette passe arrive encore trop tôt).
+  schedulePool('result', 1200);
+}
+
+function poolWithdraw(id) {
+  const i = pool.queue.findIndex(t => t.id === id);
+  if (i < 0) return null;
+  const t = pool.queue.splice(i, 1)[0];
+  t.state = 'WITHDRAWN';
+  // Le verrou de réveil appartient au ticket : retirer le ticket le rend.
+  if (t.class === 'point') wake.inFlight = false;
+  poolJournalWrite('withdrawn', t);
+  persistPool();
+  broadcastPool('withdrawn');
+  schedulePool('withdraw');
+  return t;
+}
+
+/** Interruption EXPLICITE d'un slot. Tue le tour en vol et clôt son ticket.
+ *
+ *  `reschedule = false` quand l'appelant va enfiler le message REMPLAÇANT juste
+ *  après : sans ça, le slot libéré serait immédiatement pris par le ticket qui
+ *  patientait, et le message qui vient d'interrompre attendrait derrière lui —
+ *  l'inverse de ce que l'utilisateur a demandé. */
+function poolInterruptSlot(slotNum, why = 'explicite', reschedule = true) {
+  poolEnsureSlots();
+  const s = pool.slots.find(x => x.slot === slotNum);
+  if (!s) return { ok: false, error: `unknown slot ${slotNum}` };
+  const pid = dispatchPidAlive(s.name);
+  let killed = false;
+  if (pid) {
+    killed = killDispatchTree(s.name, pid);
+    try { fs.unlinkSync(path.join(LOGS_DIR, `${s.name}.pid`)); } catch {}
+    crashLog(`pool interrupt: slot=${slotNum} name=${s.name} pid=${pid} why=${why}`);
+  }
+  if (s.ticket) {
+    const t = s.ticket;
+    t.state = 'FAILED';
+    t.endedAt = Date.now();
+    t.interruptedBy = why;
+    s.ticket = null; s.assignedAt = 0;
+    if (t.class === 'point') wake.inFlight = false;
+    poolJournalWrite('interrupted', t, { why });
+  }
+  persistPool();
+  broadcastPool('done');
+  if (reschedule) schedulePool('interrupt');
+  return { ok: true, slot: slotNum, name: s.name, pid: pid || null, killed };
+}
+
+/** Instantané additif exposé par /api/pupitre. `stateOf` fournit l'état du
+ *  réducteur (vocabulaire verrouillé `idle|live|think|input|error|unread`). */
+function poolSnapshot(stateOf) {
+  poolEnsureSlots();
+  return {
+    size: poolSize(),
+    model: poolModel(),
+    slots: pool.slots.map(s => ({
+      slot: s.slot,
+      name: s.name,
+      state: stateOf ? stateOf(s.name) : 'idle',
+      pidAlive: dispatchPidAlive(s.name) != null,
+      ticket: s.ticket ? {
+        id: s.ticket.id, class: s.ticket.class, head: s.ticket.head,
+        state: s.ticket.state, since: s.ticket.assignedAt || null,
+      } : null,
+      lastResultAt: pool.lastResultAt.get(s.name) || null,
+    })),
+    queue: pool.queue.map((t, i) => ({
+      id: t.id, class: t.class, head: t.head, source: t.source || null,
+      pinnedSlot: t.pinnedSlot ?? null, affinitySlot: t.affinitySlot ?? null,
+      enqueuedAt: t.enqueuedAt, position: i + 1, hop: t.hop || 0,
+      lost: !!t.lost, interrupting: !!t.interrupting,
+    })),
+  };
 }
 
 // ---------- Heal orphaned log tails ----------------------------------------
@@ -1791,13 +2271,43 @@ app.get('/api/pupitre', (req, res) => {
       configProvider: p.provider ?? config.defaults?.provider ?? 'claude',
     };
   });
+  // 0.22.0 — objet `pool` ADDITIF : file de direction + slots. Aucun poll
+  // supplémentaire (les slots réutilisent les lignes déjà scannées ci-dessus)
+  // et les slots ne sont PAS ajoutés à `fleet[]` : le rail ne montre jamais un
+  // chef. `pool` viendra s'enrichir en P0-B (affinité, épinglage, 3 pastilles).
+  const stateOf = (n) => fleet.find(r => r.name === n)?.state
+    || musicianAutoStates.get(n)?.state || 'idle';
   res.json({
     now: Date.now(),
     conductor,
     noFailover: readNoFailover(),
     limitedUntil: readLimitedUntil(),
     fleet,
+    pool: poolSnapshot(stateOf),
   });
+});
+
+// ---------- Actions sur la file de direction (0.22.0) -----------------------
+//
+// Trois gestes, tous EXPLICITES. Rien ici n'est déclenché automatiquement :
+// l'ordonnanceur ne retire ni n'interrompt jamais de lui-même.
+
+/** Retirer un ticket encore en file. Le brouillon est rendu à l'appelant pour
+ *  que le composer puisse le restituer (rien n'est perdu). */
+app.delete('/api/pool/queue/:ticket', (req, res) => {
+  const t = poolWithdraw(String(req.params.ticket || ''));
+  if (!t) return res.status(404).json({ error: 'ticket introuvable ou déjà pris' });
+  res.json({ ok: true, ticket: t.id, class: t.class, draft: t.class === 'user' ? t.text : null });
+});
+
+/** Interrompre un slot — l'équivalent API de `!interrupt`, sans nouveau
+ *  message. Le tour en vol est tué, son ticket clos, le suivant démarre. */
+app.post('/api/pool/interrupt/:slot', express.json({ limit: '1kb' }), (req, res) => {
+  const slot = parseInt(req.params.slot, 10);
+  if (!Number.isFinite(slot) || slot < 1) return res.status(400).json({ error: 'slot invalide' });
+  const r = poolInterruptSlot(slot, 'api');
+  if (!r.ok) return res.status(404).json(r);
+  res.json(r);
 });
 
 // Self-contained live desk page. Reuses the EXISTING SSE stream
@@ -2040,7 +2550,6 @@ function maybeDispatchChefQuestion(musicianName, question) {
   const dedupeKey = `${musicianName}:${question.slice(0, 100)}`;
   if (dispatchedNeedsChef.has(dedupeKey)) return;
   dispatchedNeedsChef.add(dedupeKey);
-  const chef = conductorName();
   const prompt =
     `[NEEDS_CHEF_INPUT_FROM:${musicianName}] Le musicien « ${musicianName} » te demande une décision :\n\n` +
     `${question}\n\n` +
@@ -2049,7 +2558,12 @@ function maybeDispatchChefQuestion(musicianName, question) {
     `autorisation, choix sans bonne réponse objective), réponds plutôt par ` +
     `NEEDS_USER_INPUT: <question reformulée pour le user>.`;
   console.log(`[needs-chef] ${musicianName} → chef : ${question.slice(0, 80)}…`);
-  spawnDirectDispatch(chef, prompt);
+  // 0.22.0 : ticket de classe `decision`. Un musicien bloqué passe avec les
+  // messages utilisateur (avant les points), mais n'interrompt plus le chef.
+  poolEnqueue({
+    class: 'decision', text: prompt,
+    displayText: `décision demandée par ${musicianName} : ${question}`,
+  });
 }
 
 function maybeRelayChefAnswer(parsedEv) {
@@ -2266,6 +2780,7 @@ app.get('/api/conductor-chat', (req, res) => {
   // result's duration_ms — and clamp to log order, which is the real truth.
   let lastPromptTs = null;
   let lastTs = 0;
+  let lastTicket = null;   // ticket du dernier tour ouvert (0.22.0)
   const stampFrom = (ev) => {
     if (ev.timestamp) { const t = Date.parse(ev.timestamp); if (Number.isFinite(t)) return t; }
     if (lastPromptTs != null && Number.isFinite(ev.duration_ms)) return lastPromptTs + ev.duration_ms;
@@ -2288,6 +2803,10 @@ app.get('/api/conductor-chat', (req, res) => {
       const entry = { role: 'user', text: userText, ts: monotonic(stampFrom(ev)) };
       lastPromptTs = entry.ts;
       if (ev.source) entry.source = ev.source;
+      // 0.22.0 — le ticket qui a produit ce tour. C'est ce qui permet à un
+      // rechargement de reconstruire « ▸ pris par CHEF 1 » et « ↩ répond à ».
+      if (typeof ev.ticket === 'string') { entry.ticket = ev.ticket; lastTicket = ev.ticket; }
+      if (Number.isFinite(ev.slot)) entry.slot = ev.slot;
       if (Array.isArray(ev.attachmentPaths) && ev.attachmentPaths.length) {
         entry.attachmentPaths = ev.attachmentPaths.map(p => '/attachments/' + path.basename(String(p)));
       }
@@ -2304,6 +2823,7 @@ app.get('/api/conductor-chat', (req, res) => {
       const needs = /^NEEDS_USER_INPUT:/m.test(lastAssistantText);
       const entry = { role: 'conductor', text: lastAssistantText, ts: monotonic(stampFrom(ev)) };
       if (needs) entry.question = true;
+      if (lastTicket) { entry.answersTicket = lastTicket; lastTicket = null; }
       msgs.push(entry);
       lastAssistantText = '';
     } else if (ev.type === 'notification'
@@ -2324,7 +2844,22 @@ app.get('/api/conductor-chat', (req, res) => {
       });
     }
   }
-  res.json(msgs.slice(-n));
+  const out = msgs.slice(-n);
+  // Les tickets ENCORE EN FILE n'ont produit aucun événement : ils n'existent
+  // nulle part dans le log. On les ajoute en queue de fil, dans leur ordre
+  // d'arrivée, pour qu'un rechargement retrouve « ⏳ en file · position n ».
+  const alreadyShown = new Set(out.map(m => m.ticket).filter(Boolean));
+  for (const t of pool.queue) {
+    if (t.class !== 'user') continue;
+    // Un ticket PERDU puis remis en file a déjà une entrée dans le log :
+    // on ne le montre pas deux fois.
+    if (alreadyShown.has(t.id)) continue;
+    out.push({
+      role: 'user', text: stripReplyPrefixes(String(t.text || '').trim()),
+      ts: t.enqueuedAt, ticket: t.id, queued: true,
+    });
+  }
+  res.json(out);
 });
 
 // Incremental state reducer mirroring scanProjectState() but for a single
@@ -3412,6 +3947,40 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
   const proj = config.projects.find(p => p.name === name);
   if (!proj) return res.status(404).json({ error: `unknown project "${name}"` });
 
+  // ── Un musicien occupé n'est JAMAIS interrompu par un chef (0.22.0) ───────
+  //
+  // `dispatch.mjs` ne regardait pas le `.pid` de sa cible : deux dispatches
+  // rapprochés lançaient deux `claude --resume` sur LA MÊME session. Avec un
+  // seul chef c'était déjà un risque de corruption de session ; avec trois ce
+  // serait la règle. `dispatch.mjs --queue-if-busy` poste donc ici, et la file
+  // par musicien qui existe déjà (`dispatchQueue`) fait le travail — en
+  // portant désormais le callback, la source et le model du dispatch.
+  if (req.body?.queueIfBusy === true && name !== conductorName()) {
+    const busy = await dispatchPidAliveAsync(name);
+    const entry = {
+      prompt, attachmentPaths, videoPaths,
+      callback: typeof req.body?.callback === 'string' ? req.body.callback : undefined,
+      source:   typeof req.body?.source   === 'string' ? req.body.source   : undefined,
+      model:    typeof req.body?.model    === 'string' ? req.body.model    : undefined,
+      provider: typeof req.body?.provider === 'string' ? req.body.provider : undefined,
+      // Quel tour de chef attend ce résultat. Inutile avec un seul chef, mais
+      // le conserver DANS la file est ce qui fera revenir le point au bon chef
+      // en P0-B : une entrée qui a patienté ne doit rien perdre de son origine.
+      slot:     Number.isFinite(Number(req.body?.slot)) && Number(req.body.slot) > 0 ? Number(req.body.slot) : undefined,
+      ticket:   typeof req.body?.ticket   === 'string' ? req.body.ticket   : undefined,
+    };
+    if (busy) {
+      const q = dispatchQueue.get(name) ?? [];
+      q.push(entry);
+      dispatchQueue.set(name, q);
+      persistQueue(name);
+      console.log(`[queue] ${name} occupé (pid=${busy}) — dispatch mis en file (pos=${q.length})`);
+      return res.status(202).json({ ok: true, queued: true, project: name, queueLength: q.length, position: q.length });
+    }
+    const pid = spawnDirectDispatch(name, prompt, attachmentPaths, videoPaths, entry);
+    return res.status(202).json({ ok: true, direct: true, project: name, pid });
+  }
+
   // ── Direct @mention shortcut ─────────────────────────────────────────────
   // If the message is sent to the conductor AND starts with "@musicianX",
   // route it straight to musicianX — no conductor turn needed when the
@@ -3495,6 +4064,48 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
     try { fs.appendFileSync(routerLine, JSON.stringify(record) + '\n'); } catch {}
     traceWrite({ trace: traceId, event: 'override', project: name, source: record.override_source });
     debugLog(`dispatch trace=${traceId} explicit override (${record.override_source})`);
+  }
+
+  // ── Le chef passe par la FILE DE DIRECTION (0.22.0) ──────────────────────
+  //
+  // Le changement de fond de P0-A : un message qui arrive pendant un tour du
+  // chef ne le TUE plus. Il devient un ticket et attend son tour. Interrompre
+  // reste possible — mais c'est un geste explicite (`!interrupt`,
+  // `force_interrupt:true`), et il est traité ici : on tue le tour en vol puis
+  // on met le ticket EN TÊTE de file (il remplace le tour qu'il vient de
+  // doubler, il n'attend pas derrière ceux qui patientaient).
+  if (name === conductorName()) {
+    let interruptedSlot = null;
+    if (isOverride) {
+      const slotNum = Number(req.body?.slot) || 1;
+      const r = poolInterruptSlot(slotNum, 'user', /* reschedule */ false);
+      if (r.ok && r.killed) {
+        interruptedSlot = slotNum;
+        traceWrite({ trace: traceId, event: 'interrupt', project: name, prev_pid: r.pid, override: true, slot: slotNum });
+      }
+    }
+    const ticket = poolEnqueue({
+      class: 'user',
+      text: isOverride ? promptForRouting : prompt,
+      attachmentPaths, videoPaths,
+      traceId,
+      interrupting: interruptedSlot != null,
+      front: isOverride,
+      pinnedSlot: Number(req.body?.replyToSlot) || null,
+    });
+    traceWrite({
+      trace: traceId, event: 'pool_enqueued', project: name,
+      ticket: ticket.id, position: poolPosition(ticket.id), interrupting: ticket.interrupting,
+    });
+    const s = poolFindRunning(ticket.id);
+    return res.status(202).json({
+      ok: true, project: name, ticket: ticket.id, class: 'user',
+      slot: s ? s.slot : null,
+      position: poolPosition(ticket.id),
+      poolSize: poolSize(),
+      interrupting: ticket.interrupting,
+      trace_id: traceId,
+    });
   }
 
   // Cooperative interrupt: if a turn is already in flight for THIS project
@@ -4031,10 +4642,15 @@ function startBackgroundNotifyWatchers() {
             // The user is talking to the chef: its turn will show the results
             // itself, so drop any batch we were about to push (no paid double).
             if (ev.type === 'user_prompt' && !ev.source) cancelWakeOnUserPrompt();
-            // The chef finished (including a wake turn): release the in-flight
-            // lock and let anything that arrived meanwhile fire.
+            // « Pris par » n'est affirmé que quand le log du slot le prouve —
+            // jamais sur la foi d'une réponse HTTP (garde-fou §6 du design).
+            if (ev.type === 'user_prompt' && typeof ev.ticket === 'string') {
+              poolMarkRunning(name, ev.ticket);
+            }
+            // The chef finished (including a wake turn): close its ticket,
+            // release the slot, and let the queue advance.
             if (ev.type === 'result') {
-              wake.inFlight = false;
+              poolOnSlotResult(name, ev);
               setImmediate(tryFireWake);
             }
           }
@@ -4251,6 +4867,10 @@ httpServer.listen(PORT, '0.0.0.0', onListening);
 
 function onListening() {
   _listenAttempts = 0;
+  // La file de direction est rehydratée ICI, une fois le module entièrement
+  // évalué (l'ensemble SSE, `config`, les watchers) et AVANT tout dispatch :
+  // un ticket en vol perdu au redémarrage repart une seule fois, en tête.
+  try { loadPoolFromDisk(); } catch (e) { crashLog(`loadPoolFromDisk failed: ${e.message}`); }
   const url = `http://127.0.0.1:${PORT}/?token=${TOKEN}`;
   const tsUrl = TAILSCALE_IP ? `http://${TAILSCALE_IP}:${PORT}/?token=${TOKEN}` : null;
   console.log('┌─ Claude Code Orchestrator ─────────────────────────────────');
