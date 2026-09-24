@@ -46,6 +46,11 @@
 
   --halo-intensity: 1;
 
+  /* Gouttière horizontale de la scène (fil à gauche, rail/volet à droite).
+     Responsive : ~20px sur fenêtre étroite, jusqu'à 44px sur large. Utilisée
+     symétriquement par .main-row. Le mobile (≤768px) la neutralise. */
+  --stage-gutter: clamp(20px, 2.2vw, 44px);
+
   --font-display: "Chakra Petch", "Helvetica Neue", sans-serif;
   --font-body:    "Chakra Petch", system-ui, sans-serif;
   --font-mono:    "JetBrains Mono", ui-monospace, monospace;
@@ -138,9 +143,12 @@ kbd {
 /* Main row — conversation (≈ 2/3) + pilot rail, or dive replacing the rail.
    Outer horizontal gutter so the fil (left) and the rail/dive (right) never
    sit flush against the viewport edges: the left borders of the mission /
-   result frames and chef bubbles stay fully visible, symmetric with the right
-   (box-sizing:border-box keeps this inside the width — no overflow). The
-   mobile layout resets it to 0 (rail becomes a fixed bottom sheet). */
+   result frames and chef bubbles breathe clearly and stay symmetric with the
+   right (box-sizing:border-box keeps this inside the width — no overflow).
+   Responsive via clamp(): ~20px on a small window, up to 44px on a wide one, so
+   on large screens the frames' left edge sits ~40-56px off the viewport edge
+   (the gutter + .cv-scroll's own 18px padding). The mobile layout (≤768px)
+   overrides it with a smaller non-zero gutter (rail becomes a fixed sheet). */
 .main-row {
   flex: 1;
   min-height: 0;
@@ -148,7 +156,8 @@ kbd {
   align-items: stretch;
   position: relative;
   z-index: 20;
-  padding: 0 14px;
+  padding-left: var(--stage-gutter);
+  padding-right: var(--stage-gutter);
 }
 
 /* Floor perspective — subtle ellipse under the musicians */

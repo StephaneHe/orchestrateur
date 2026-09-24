@@ -11,6 +11,27 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.21.3] - 2026-09-24
+
+Suite du réglage d'affichage (web) sur la « Salle de direction » — respiration.
+
+### Changed
+- (web) **Gouttière horizontale de la scène élargie et responsive.** La marge fixe de 0.21.1
+  (`.main-row { padding: 0 14px }`) laissait le contenu trop serré (bord gauche des cartes/bulles à
+  ~32 px du bord). Introduction d'une variable `--stage-gutter: clamp(20px, 2.2vw, 44px)` appliquée
+  **symétriquement** à gauche et à droite de `.main-row`. Résultat (bureau) : ~20 px de gouttière sur
+  fenêtre étroite, jusqu'à 44 px sur large ; à 1600 px la colonne du fil commence à ~35 px et le bord
+  gauche des cadres à ~53 px (35 px de gouttière + 18 px de `.cv-scroll`), nettement décollé. Le rail
+  conserve une gouttière **droite égale** à la gouttière gauche (symétrie des deux bords de la scène,
+  la marge externe étant portée par `.main-row` pour les deux colonnes). Aucun débordement introduit
+  (`box-sizing: border-box`). Mobile (≤ 768 px) inchangé : `.main-row { padding: 0 }` conservé, le fil
+  garde les 12 px de `.cv-scroll` et le rail reste une feuille fixe.
+- (web) **Cache-busting** relevé à `?v=0.21.3` sur les liens CSS/JS de `public/index.html`.
+
+### TODO
+- Généraliser le cache-busting au build/release (injecter la version depuis `package.json`).
+- P2 : nettoyage du code mort et des `100vw` résiduels (overlays, mobile, `.chef-card`).
+
 ## [0.21.2] - 2026-09-24
 
 Suite du correctif d'affichage (web) sur la « Salle de direction ».
