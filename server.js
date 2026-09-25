@@ -291,10 +291,60 @@ const musicianAutoStates = new Map();
 // via atomic write-then-rename. On boot, loadQueuesFromDisk() rehydrates the
 // in-memory Map BEFORE any new dispatch is accepted, so a SIGKILL between
 // push and drainQueue cannot lose turns.
-const dispatchQueue = new Map(); // projectName → [{prompt, attachmentPaths, videoPaths}]
+//
+// 0.24.0 — chaque entrée porte un `id` stable et un `enqueuedAt`, et la file se
+// gère par l'API (GET/DELETE /api/queue/:project, `scripts/queue.mjs`), JAMAIS
+// en éditant le sidecar : la mémoire est la source de vérité et réécrit le
+// fichier à chaque mutation, donc une retouche à la main était écrasée — des
+// tâches déjà faites « revenaient » en tête (TranslateOverlay, 25/09/2026).
+const dispatchQueue = new Map(); // projectName → [{id, enqueuedAt, prompt, attachmentPaths, videoPaths, callback?, source?, model?, provider?, slot?, ticket?}]
 
 const QUEUE_DIR = path.join(LOGS_DIR, 'queue');
 try { fs.mkdirSync(QUEUE_DIR, { recursive: true }); } catch {}
+
+function newQueueEntryId() {
+  return `q-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
+}
+
+/** Le seul point d'entrée dans une file par musicien : l'id naît ici. */
+function queuePush(name, entry) {
+  const q = dispatchQueue.get(name) ?? [];
+  q.push({ id: newQueueEntryId(), enqueuedAt: new Date().toISOString(), ...entry });
+  dispatchQueue.set(name, q);
+  persistQueue(name);
+  return q.length;
+}
+
+function queueRemove(name, id) {
+  const q = dispatchQueue.get(name);
+  const i = q ? q.findIndex(e => e.id === id) : -1;
+  if (i < 0) return null;
+  const [removed] = q.splice(i, 1);
+  if (!q.length) dispatchQueue.delete(name);
+  persistQueue(name);
+  return removed;
+}
+
+function queueClear(name) {
+  const n = dispatchQueue.get(name)?.length ?? 0;
+  dispatchQueue.delete(name);
+  persistQueue(name);
+  return n;
+}
+
+/** Vue publique d'une entrée : ce qu'il faut pour décider de la retirer, sans
+ *  renvoyer des prompts de plusieurs Kio à chaque liste. */
+function queueEntryView(e, i) {
+  const text = String(e.prompt || '').replace(/\s+/g, ' ').trim();
+  return {
+    id: e.id, position: i + 1,
+    head: text.slice(0, 200) + (text.length > 200 ? '…' : ''),
+    enqueuedAt: e.enqueuedAt || null,
+    model: e.model || null, provider: e.provider || null,
+    callback: e.callback || null, source: e.source || null,
+    attachments: (e.attachmentPaths?.length || 0) + (e.videoPaths?.length || 0),
+  };
+}
 
 function queueSidecarPath(name) {
   return path.join(QUEUE_DIR, `${name}.json`);
@@ -338,8 +388,17 @@ function loadQueuesFromDisk() {
       const raw = fs.readFileSync(path.join(QUEUE_DIR, fname), 'utf8');
       const arr = JSON.parse(raw);
       if (Array.isArray(arr) && arr.length > 0) {
+        // Migration (0.24.0) : les entrées d'avant n'ont pas d'id. On leur en
+        // donne un UNE fois, persisté aussitôt, pour qu'il reste stable d'un
+        // boot à l'autre. Ordre et contenu inchangés.
+        let migrated = 0;
+        const mtime = fs.statSync(path.join(QUEUE_DIR, fname)).mtime.toISOString();
+        for (const e of arr) {
+          if (e && typeof e === 'object' && !e.id) { e.id = newQueueEntryId(); e.enqueuedAt ??= mtime; migrated++; }
+        }
         dispatchQueue.set(name, arr);
-        debugLog(`queue rehydrate ${name} (${arr.length} pending)`);
+        if (migrated) persistQueue(name);
+        debugLog(`queue rehydrate ${name} (${arr.length} pending${migrated ? `, ${migrated} id(s) attribué(s)` : ''})`);
       }
     } catch (e) {
       debugLog(`queue rehydrate ${name} failed: ${e.message}`);
@@ -2278,6 +2337,53 @@ app.get('/api/pupitre', (req, res) => {
 
 /** Retirer un ticket encore en file. Le brouillon est rendu à l'appelant pour
  *  que le composer puisse le restituer (rien n'est perdu). */
+// ---------- File par musicien : consulter / retirer (0.24.0) -----------------
+//
+// Avant, la seule façon de retirer une tâche était d'éditer
+// logs/queue/<projet>.json — or la mémoire fait foi et réécrit ce fichier à
+// chaque mutation : la retouche était perdue et la tâche revenait. Ces routes
+// agissent sur la mémoire ET le sidecar d'un même geste. Le nom de projet est
+// validé contre config.json (jamais interpolé dans un chemin sinon).
+function queueProjectOr404(req, res) {
+  const name = String(req.params.project || '');
+  if (!config.projects.find(p => p.name === name)) {
+    res.status(404).json({ error: `unknown project "${name}"` });
+    return null;
+  }
+  return name;
+}
+
+app.get('/api/queue/:project', async (req, res) => {
+  const name = queueProjectOr404(req, res);
+  if (!name) return;
+  const q = dispatchQueue.get(name) ?? [];
+  res.json({
+    project: name,
+    busy: (await dispatchPidAliveAsync(name)) != null,
+    count: q.length,
+    entries: q.map(queueEntryView),
+  });
+});
+
+app.delete('/api/queue/:project/:id', (req, res) => {
+  const name = queueProjectOr404(req, res);
+  if (!name) return;
+  const removed = queueRemove(name, String(req.params.id || ''));
+  if (!removed) return res.status(404).json({ error: `aucune entrée « ${req.params.id} » dans la file de ${name} (déjà lancée ou retirée ?)` });
+  const msg = `[queue] ${name} : entrée ${removed.id} retirée (reste ${dispatchQueue.get(name)?.length ?? 0})`;
+  console.log(msg); debugLog(msg);
+  res.json({ ok: true, project: name, removed: queueEntryView(removed, -1), remaining: dispatchQueue.get(name)?.length ?? 0 });
+});
+
+app.delete('/api/queue/:project', (req, res) => {
+  const name = queueProjectOr404(req, res);
+  if (!name) return;
+  const n = queueClear(name);
+  const msg = `[queue] ${name} : file vidée (${n} entrée(s) retirée(s))`;
+  console.log(msg); debugLog(msg);
+  res.json({ ok: true, project: name, removed: n, remaining: 0 });
+});
+
 app.delete('/api/pool/queue/:ticket', (req, res) => {
   const t = poolWithdraw(String(req.params.ticket || ''));
   if (!t) return res.status(404).json({ error: 'ticket introuvable ou déjà pris' });
@@ -3954,12 +4060,10 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
       ticket:   typeof req.body?.ticket   === 'string' ? req.body.ticket   : undefined,
     };
     if (busy) {
-      const q = dispatchQueue.get(name) ?? [];
-      q.push(entry);
-      dispatchQueue.set(name, q);
-      persistQueue(name);
-      console.log(`[queue] ${name} occupé (pid=${busy}) — dispatch mis en file (pos=${q.length})`);
-      return res.status(202).json({ ok: true, queued: true, project: name, queueLength: q.length, position: q.length });
+      const len = queuePush(name, entry);
+      const id = dispatchQueue.get(name)[len - 1].id;
+      console.log(`[queue] ${name} occupé (pid=${busy}) — dispatch mis en file (pos=${len}, id=${id})`);
+      return res.status(202).json({ ok: true, queued: true, project: name, queueLength: len, position: len, id });
     }
     const pid = spawnDirectDispatch(name, prompt, attachmentPaths, videoPaths, entry);
     return res.status(202).json({ ok: true, direct: true, project: name, pid });
@@ -3995,13 +4099,11 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
       }
       const st = musicianAutoStates.get(directProj.name)?.state ?? 'idle';
       if (st === 'live' || st === 'think') {
-        const q = dispatchQueue.get(directProj.name) ?? [];
-        q.push({ prompt: stripped, attachmentPaths, videoPaths });
-        dispatchQueue.set(directProj.name, q);
-        persistQueue(directProj.name);
-        console.log(`[queue] queued for ${directProj.name} (pos=${q.length}, state=${st})`);
+        const len = queuePush(directProj.name, { prompt: stripped, attachmentPaths, videoPaths });
+        const id = dispatchQueue.get(directProj.name)[len - 1].id;
+        console.log(`[queue] queued for ${directProj.name} (pos=${len}, state=${st}, id=${id})`);
         return res.status(202).json({
-          ok: true, queued: true, project: directProj.name, queueLength: q.length,
+          ok: true, queued: true, project: directProj.name, queueLength: len, id,
         });
       }
       const pid = spawnDirectDispatch(directProj.name, stripped, attachmentPaths, videoPaths);

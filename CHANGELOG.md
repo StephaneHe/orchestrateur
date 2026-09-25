@@ -11,6 +11,44 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-09-25
+
+On peut retirer une tâche de la file d'un musicien **sans redémarrer le serveur**.
+
+### Added
+- (server) **`GET /api/queue/:project`** : état occupé/libre et liste des
+  entrées. Chaque entrée donne son id, sa position, un extrait du prompt, sa
+  date d'ajout, son model/provider, son callback et le nombre de pièces jointes.
+  **`DELETE /api/queue/:project/:id`** retire une entrée (404 si absente) et
+  **`DELETE /api/queue/:project`** vide la file. Ces routes sont derrière le
+  token gate comme le reste, le projet est validé contre `config.json`, et la
+  mémoire et le sidecar changent d'un même geste.
+- (server) **Id stable par entrée** (`q-<ms>-<hex>`) et `enqueuedAt`, attribués
+  à la mise en file par un point d'entrée unique, `queuePush`. Au boot, les
+  entrées existantes sans id en reçoivent un une fois, persisté aussitôt ;
+  leur ordre et leur contenu ne changent pas. Les réponses 202 de mise en file
+  renvoient l'`id`.
+- (cli) **`scripts/queue.mjs <projet> [--list | --remove <id> | --clear] [--json]`**
+  appelle l'API en lisant `.token`. Sortie lisible ; codes : 2 pour une entrée
+  ou un projet introuvable, 3 si la route est absente (serveur antérieur à
+  0.24.0, non redémarré).
+- (web) **Le panneau du musicien liste sa file** (« ⏸ En file derrière son
+  tour (n) ») avec un bouton **Retirer** confirmé. La liste n'est redemandée que
+  si le compte de l'instantané `/api/pupitre` change, sans poll supplémentaire.
+- (tests) `scripts/_test_queue_api.mjs` : 21 assertions. Il monte le bloc de
+  file et les routes réels de `server.js` sur un express éphémère et pilote le
+  vrai `queue.mjs`. Il couvre la migration d'ids stable d'un boot à l'autre,
+  la liste, le retrait, le vidage et les 404. Il vérifie surtout qu'une tâche
+  retirée ne revient pas après un redémarrage, ce qui était le cas de l'incident.
+- (chef) `I:\Dev\Chef\CLAUDE.md`, section « Ne relance jamais un musicien
+  occupé » : la file se gère avec `queue.mjs`, jamais via le fichier.
+
+### Fixed
+- (server) **Éditer `logs/queue/<projet>.json` à la main ne marchait pas.** La
+  mémoire fait foi et réécrit ce fichier à chaque mutation : la retouche était
+  écrasée et des tâches déjà faites revenaient en tête (TranslateOverlay,
+  25/09). Ce n'est plus nécessaire, le retrait passe par l'API.
+
 ## [0.23.1] - 2026-09-25
 
 ### Fixed

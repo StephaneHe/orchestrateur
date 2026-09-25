@@ -863,6 +863,83 @@
     $(".dive-notice", el).textContent = notices.length
       ? `⚠ ${notices.length} notice${notices.length > 1 ? "s" : ""} de transport — du contenu n'est pas passé par le flux (il reste sur disque)`
       : "";
+    renderDiveQueue(el, r);
+  }
+
+  // ------------------------------------------------------------------------
+  // File du musicien (0.24.0) : les tâches qui attendent la fin de son tour,
+  // avec « Retirer ». La liste n'est redemandée que si le nombre annoncé par
+  // l'instantané change (ou au changement de musicien) — pas de poll en plus.
+  // ------------------------------------------------------------------------
+  const diveQueue = { name: null, depth: -1, entries: [], loading: false, error: "" };
+
+  async function loadDiveQueue(name) {
+    diveQueue.loading = true;
+    try {
+      const resp = await fetch(`/api/queue/${encodeURIComponent(name)}`, { headers: { Accept: "application/json" } });
+      const data = await resp.json().catch(() => null);
+      if (!resp.ok || !data) throw new Error(data?.error || `HTTP ${resp.status}`);
+      if (diveQueue.name !== name) return;            // l'utilisateur a changé de volet
+      diveQueue.entries = data.entries || [];
+      diveQueue.error = "";
+    } catch (e) {
+      diveQueue.error = e.message || String(e);
+    } finally {
+      diveQueue.loading = false;
+      const el = diveEl();
+      if (el && dive.name === name) paintDiveQueue(el);
+    }
+  }
+
+  function renderDiveQueue(el, r) {
+    const depth = r?.queueDepth ?? 0;
+    if (diveQueue.name !== dive.name) { diveQueue.name = dive.name; diveQueue.depth = -1; diveQueue.entries = []; }
+    if (depth !== diveQueue.depth) {
+      diveQueue.depth = depth;
+      if (depth > 0) loadDiveQueue(dive.name);
+      else diveQueue.entries = [];
+    }
+    paintDiveQueue(el);
+  }
+
+  function paintDiveQueue(el) {
+    const box = $(".dive-queue", el);
+    if (!box) return;
+    const list = diveQueue.entries;
+    if (!list.length && !diveQueue.error) { box.hidden = true; box.innerHTML = ""; return; }
+    box.hidden = false;
+    const rows = list.map(e => {
+      const meta = [
+        e.enqueuedAt ? new Date(e.enqueuedAt).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : null,
+        e.model, e.callback ? `callback ${e.callback}` : null,
+      ].filter(Boolean).join(" · ");
+      return `<div class="dq-item">
+          <span class="dq-n">${e.position}.</span>
+          <span class="dq-head" title="${esc(e.id)}">${esc(e.head)}</span>
+          <span class="dq-meta">${esc(meta)}</span>
+          <button class="dq-rm" data-queue-rm="${esc(e.id)}">Retirer</button>
+        </div>`;
+    }).join("");
+    box.innerHTML =
+      `<div class="dq-title">⏸ En file derrière son tour (${list.length})</div>` +
+      (diveQueue.error ? `<div class="dq-err">file illisible : ${esc(diveQueue.error)}</div>` : "") +
+      rows;
+  }
+
+  async function removeQueued(id) {
+    const name = dive.name;
+    const e = diveQueue.entries.find(x => x.id === id);
+    if (!name || !confirm(`Retirer cette tâche de la file de ${name} ?\n\n« ${e ? e.head.slice(0, 160) : id} »\n\nElle ne sera pas lancée.`)) return;
+    try {
+      const resp = await fetch(`/api/queue/${encodeURIComponent(name)}/${encodeURIComponent(id)}`, { method: "DELETE" });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+    } catch (err) {
+      diveQueue.error = err.message || String(err);
+    }
+    diveQueue.depth = -1;                 // force le rechargement
+    await loadDiveQueue(name);
+    App.pollPupitre?.();
   }
 
   function findMission(name) {
@@ -949,6 +1026,10 @@
     if (!el || el._wired) return;
     el._wired = true;
     $(".dive-back", el).addEventListener("click", () => goBack());
+    $(".dive-queue", el).addEventListener("click", (e) => {
+      const b = e.target.closest("[data-queue-rm]");
+      if (b) removeQueued(b.dataset.queueRm);
+    });
     $$(".dive-tab", el).forEach(b => b.addEventListener("click", () => {
       dive.tab = b.dataset.tab;
       renderDive();

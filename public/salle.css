@@ -472,6 +472,18 @@
 .dive-result .dr-v { color: var(--fg-1); font-size: 13px; padding-bottom: 10px; }
 .dive-result .dr-v.md { line-height: 1.55; }
 .dive-notice { padding: 0 14px; font-size: 10px; color: var(--fg-3); font-family: var(--font-mono); }
+
+/* File du musicien (0.24.0). `display:flex` écraserait [hidden] : règle explicite. */
+.dive-queue { padding: 8px 14px; border-top: 1px solid var(--card-border); display: flex; flex-direction: column; gap: 6px; max-height: 32vh; overflow-y: auto; }
+.dive-queue[hidden] { display: none; }
+.dq-title { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--st-think); }
+.dq-err { font-size: 11px; color: var(--st-error); }
+.dq-item { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 8px; border: 1px solid var(--card-border); border-radius: 7px; background: var(--bg-1); font-size: 12px; }
+.dq-n { font-family: var(--font-mono); color: var(--fg-2); flex-shrink: 0; }
+.dq-head { color: var(--fg-0); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dq-meta { font-family: var(--font-mono); font-size: 10px; color: var(--fg-2); flex-shrink: 0; }
+.dq-rm { font-family: var(--font-mono); font-size: 10px; padding: 3px 8px; border-radius: 5px; border: 1px solid var(--card-border); color: var(--fg-1); flex-shrink: 0; }
+.dq-rm:hover { background: var(--card-bg-hover); color: var(--st-error); border-color: var(--st-error); }
 .dive-foot {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 14px 12px;
