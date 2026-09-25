@@ -124,7 +124,7 @@ if (argv.includes('--test-failover')) {
   await runFailoverSelfTest();   // never returns — exits with the test result
 }
 
-if (argv.length < 1) die('usage: node scripts/dispatch.mjs <project> "<prompt>" | --prompt-stdin [--callback <project>] [--source <project>] [--model <id>] [--provider claude|codex] [--queue-if-busy|--no-queue-if-busy] | --test-failover');
+if (argv.length < 1) die('usage: node scripts/dispatch.mjs <project> "<prompt>" | --prompt-stdin [--callback <project>] [--source <project>] [--model <id>] [--provider claude|codex] [--queue-if-busy|--no-queue-if-busy] [--pool-assign] | --test-failover');
 
 const projectName = argv[0];
 
@@ -179,6 +179,16 @@ if (providerOverride && !['claude', 'codex'].includes(providerOverride)) {
 // active, on POSTe au serveur qui range dans la file par musicien.
 // Par défaut ACTIF quand DISPATCH_SLOT est défini (c'est un chef qui parle) ;
 // inactif sinon, pour ne rien changer aux appels manuels/outillés.
+// Qui lance ce dispatch ? `DISPATCH_SLOT` ne le dit PAS : le serveur le stampe
+// sur le tour de chef qu'il lance LUI-MÊME pour remplir un slot, et le `claude`
+// du chef le transmet ensuite à son outil Bash. Les deux cas ont donc le même
+// env ; seul un argv les sépare, parce qu'un flag ne s'hérite pas. Sans cette
+// distinction, les gardes ci-dessous tuaient le tour de chef que le pool venait
+// d'assigner — sortie 65 instantanée, file bloquée (24/09/2026).
+const poolAssignIdx = argv.indexOf('--pool-assign');
+if (poolAssignIdx !== -1) argv.splice(poolAssignIdx, 1);
+const POOL_ASSIGN = poolAssignIdx !== -1;
+
 const noQueueIdx = argv.indexOf('--no-queue-if-busy');
 if (noQueueIdx !== -1) argv.splice(noQueueIdx, 1);
 const queueIdx = argv.indexOf('--queue-if-busy');
@@ -226,12 +236,13 @@ const CONDUCTOR = config.conductor || 'chef';
 // Un chef ne cible jamais un slot par son nom : le pool s'adresse par son nom
 // logique, et c'est le serveur qui choisit le slot. (Les alias `chef-2`/
 // `chef-3` arrivent en P0-B ; les refuser dès maintenant évite l'habitude.)
-if (CHEF_SLOT != null && new RegExp(`^${CONDUCTOR}-\\d+$`).test(projectName)) {
+const CHEF_SPEAKING = CHEF_SLOT != null && !POOL_ASSIGN;
+if (CHEF_SPEAKING && new RegExp(`^${CONDUCTOR}-\\d+$`).test(projectName)) {
   die(`un chef ne cible jamais un slot (« ${projectName} ») — écris « ${CONDUCTOR} », le serveur choisit`, 65);
 }
 // Délégation chef → chef : c'est P0-B. Refuser explicitement vaut mieux que
 // spawner un second `--resume` sur la session du chef (suicide de tour).
-if (CHEF_SLOT != null && projectName === CONDUCTOR) {
+if (CHEF_SPEAKING && projectName === CONDUCTOR) {
   die('délégation chef → chef non disponible (P0-B) — route vers un musicien ou réponds toi-même', 65);
 }
 

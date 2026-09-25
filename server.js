@@ -320,6 +320,13 @@ function loadQueuesFromDisk() {
   for (const fname of entries) {
     if (!fname.endsWith('.json')) continue;
     const name = fname.slice(0, -5);
+    // `logs/queue/` n'héberge pas que des files par musicien : `chef.pool.json`
+    // et `chef.wake.json` y vivent aussi, et leur basename (`chef.pool`) n'est
+    // évidemment aucun projet. Le point est donc réservé : ce balayage ne
+    // touche qu'à `<projet>.json`. Sans cette garde il détruisait les deux
+    // sidecars à chaque boot — avant même que leurs loaders ne les lisent, donc
+    // sans une ligne de journal (24/09/2026 : un ticket en vol évaporé).
+    if (name.includes('.')) continue;
     if (!config.projects.find(p => p.name === name)) {
       // Project no longer in config — stale sidecar, drop it.
       try { fs.unlinkSync(path.join(QUEUE_DIR, fname)); } catch {}
@@ -589,6 +596,11 @@ function spawnDirectDispatch(name, prompt, attachmentPaths = [], videoPaths = []
   if (typeof opts.callback === 'string' && opts.callback) args.push('--callback', opts.callback);
   if (typeof opts.model === 'string' && opts.model) args.push('--model', opts.model);
   if (typeof opts.provider === 'string' && opts.provider) args.push('--provider', opts.provider);
+  // Le slot voyage aussi par l'env (le `claude` du chef le transmet à son outil
+  // Bash, c'est ce qui fait revenir le point au bon chef). Un fils ne peut donc
+  // pas distinguer « le serveur me lance pour remplir le slot » de « un chef me
+  // lance depuis son tour » sur l'env seul : le flag, lui, ne s'hérite pas.
+  if (opts.poolAssign) args.push('--pool-assign');
 
   const child = spawn(process.execPath, args, {
     cwd: __dirname,
@@ -904,6 +916,7 @@ function poolAssign(s, t) {
     ticket: t.id,
     slot: s.slot,
     traceId: t.traceId,
+    poolAssign: true,
   });
   t.pid = pid || null;
 }

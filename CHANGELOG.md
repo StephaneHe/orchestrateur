@@ -11,6 +11,53 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.22.2] - 2026-09-24
+
+### Fixed
+
+- **(server) La file de direction et le lot de réveil étaient détruits à chaque
+  démarrage.** `loadQueuesFromDisk()` balaie `logs/queue/*.json` et supprime
+  tout sidecar dont le basename n'est pas un projet de `config.json` — règle
+  saine pour une file par musicien, fatale pour `chef.pool.json` et
+  `chef.wake.json`, dont le basename (`chef.pool`, `chef.wake`) n'est aucun
+  projet. Le balayage tourne ligne 340, bien avant `loadWakeFromDisk()` (553) et
+  `loadPoolFromDisk()` (4879) : les deux loaders ne trouvaient jamais rien et se
+  taisaient. Un ticket en vol au redémarrage disparaissait donc sans laisser de
+  trace au journal du pool. Le point est désormais réservé : le balayage ne
+  touche plus qu'à `<projet>.json`.
+
+### Added
+
+- **(server) `scripts/_test_queue_sidecar_sweep.mjs`** — charge le vrai bloc de
+  `server.js` dans un bac à sable et vérifie qu'un balayage de boot épargne les
+  sidecars à point tout en supprimant encore celui d'un projet retiré de la
+  config.
+
+## [0.22.1] - 2026-09-24
+
+### Fixed
+
+- **(server) Tout message au chef mourait en sortie 65 depuis 0.22.0.** Les
+  garde-fous de `scripts/dispatch.mjs` (« un chef ne délègue pas à un chef »,
+  « un chef ne cible jamais un slot ») lisaient `DISPATCH_SLOT` comme preuve que
+  l'appelant est un chef. Or le serveur stampe cette variable sur le tour de chef
+  qu'il lance **lui-même** pour remplir le slot : chaque ticket assigné était
+  refusé avant d'avoir commencé, `poolReapLost` le remettait en file, puis
+  l'abandonnait au 2ᵉ essai (« processus perdu 2× — abandonné »). Le tour
+  interrompu par le redémarrage restait affiché tel quel, d'où le
+  `turn interrupted (orchestrator restarted or child crashed)` visible au
+  dashboard. L'appelant est désormais identifié par un drapeau argv
+  `--pool-assign`, que l'héritage d'environnement ne peut pas contrefaire ; les
+  deux gardes ne s'appliquent plus qu'à un chef qui parle vraiment.
+
+### Added
+
+- **(server) `scripts/_test_pool_chef_dispatch.mjs`** — recette de la couture
+  pool → `dispatch.mjs`. `_test_pool_p0a.mjs` double `spawnDirectDispatch` et ne
+  voit donc jamais ce que le fils fait de ses arguments : ce harnais lance le
+  vrai `dispatch.mjs` avec l'argv et l'env du serveur, et vérifie aussi que
+  `server.js` passe encore le drapeau.
+
 ## [0.22.0] - 2026-09-24
 
 **P0-A du pool de chefs : la file devant un chef unique.** Spec :
