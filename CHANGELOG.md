@@ -11,6 +11,16 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.22.3] - 2026-09-25
+
+### Added
+
+- **(server) TranslateOverlay sur `/downloads`.** Ajout à `DOWNLOAD_APPS`
+  (form-factor `phone` par défaut) ; version lue dans
+  `I:\Dev\TranslateOverlay\app\build.gradle.kts` via `APP_VERSION_SOURCES`
+  (`versionName`, 1.1.0 à ce jour). APK servi depuis
+  `builds/TranslateOverlay/latest.apk`.
+
 ## [0.22.2] - 2026-09-24
 
 ### Fixed

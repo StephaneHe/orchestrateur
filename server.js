@@ -1298,6 +1298,7 @@ const DOWNLOAD_APPS = [
   'RemotePad', 'BookHaven',
   'DeskZen', 'vuBox', 'firstAidOffline', 'frenchradio',
   'immo-share', 'meetingScribe', 'photoLab', 'SncfOptimizer', 'sommeil',
+  'TranslateOverlay',
 ];
 
 // Form-factor badge shown on the download card. Anything not listed → 'phone'.
@@ -1379,6 +1380,7 @@ const APP_VERSION_SOURCES = {
   photoLab:        { file: 'I:\\Dev\\photoLab\\app\\build.gradle.kts' },
   SncfOptimizer:   { file: 'I:\\Dev\\SncfOptimizer\\app\\build.gradle.kts' },
   sommeil:         { file: 'I:\\Dev\\sommeil\\app\\build.gradle.kts' },
+  TranslateOverlay: { file: 'I:\\Dev\\TranslateOverlay\\app\\build.gradle.kts' },
 };
 
 // Kotlin DSL: `versionName = "x"` · Groovy: `versionName "x"`. Case-insensitive
