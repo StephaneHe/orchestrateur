@@ -1,0 +1,32 @@
+{
+  "$comment": "Registre de la page /downloads, relu à chaud (aucun redémarrage). Voir la section « Page /downloads » de CLAUDE.md. apps[] : name (= dossier builds/<name>/latest.apk), label?, platform? (défaut phone), description?, version? { file (absolu), regex?, flags? } — sans regex, versionName du gradle. docs[] : project, id, title, file (sous builds/<project>/), fallbacks? (chemins absolus).",
+  "apps": [
+    { "name": "orchestrateur",   "version": { "file": "I:\\orchestrateur\\android\\app\\build.gradle.kts" } },
+    { "name": "RemotePad",       "version": { "file": "I:\\Dev\\RemotePad\\server\\__init__.py", "regex": "__version__\\s*=\\s*[\"']([^\"']+)[\"']" } },
+    { "name": "BookHaven",       "version": { "file": "I:\\Dev\\BookHaven\\android\\app\\build.gradle.kts" } },
+    { "name": "DeskZen",         "version": { "file": "I:\\Dev\\DeskZen\\app\\build.gradle.kts" } },
+    { "name": "vuBox",           "platform": "TV", "version": { "file": "I:\\Dev\\vuBox\\androidtv\\app\\build.gradle.kts" } },
+    { "name": "firstAidOffline", "version": { "file": "I:\\Dev\\firstAidOffline\\app\\build.gradle.kts" } },
+    { "name": "frenchradio",     "version": { "file": "I:\\Dev\\frenchradio\\app\\build.gradle.kts" } },
+    { "name": "immo-share",      "platform": "mobile", "version": { "file": "I:\\Dev\\immo-share\\apps\\mobile\\android\\app\\build.gradle" } },
+    { "name": "meetingScribe",   "version": { "file": "I:\\Dev\\meetingScribe\\app\\build.gradle.kts" } },
+    { "name": "photoLab",        "version": { "file": "I:\\Dev\\photoLab\\app\\build.gradle.kts" } },
+    { "name": "SncfOptimizer",   "version": { "file": "I:\\Dev\\SncfOptimizer\\app\\build.gradle.kts" } },
+    { "name": "sommeil",         "version": { "file": "I:\\Dev\\sommeil\\app\\build.gradle.kts" } },
+    {
+      "name": "TranslateOverlay",
+      "description": "Bulle flottante qui traduit le texte de l'écran en overlay, langue détectée automatiquement, sur l'appareil",
+      "version": { "file": "I:\\Dev\\TranslateOverlay\\app\\build.gradle.kts" }
+    }
+  ],
+  "docs": [
+    {
+      "project": "TradeBot", "id": "proposal", "title": "Proposition de conception",
+      "file": "PROPOSAL.md", "fallbacks": ["I:\\Dev\\TradeBot\\docs\\PROPOSAL.md"]
+    },
+    {
+      "project": "TradeBot", "id": "review", "title": "TradeBot — Revue critique (Fable)",
+      "file": "REVIEW.md", "fallbacks": ["I:\\Dev\\TradeBot\\docs\\REVIEW.md"]
+    }
+  ]
+}

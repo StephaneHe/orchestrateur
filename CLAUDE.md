@@ -112,6 +112,45 @@ Full context: `docs/project-brief.md`. Design system: PHOSPHOR/03,
 
 ---
 
+## Page /downloads — ajouter une app (à chaud, sans redémarrage)
+
+Le registre de `/downloads` vit dans **`downloads.json`** à la racine
+(versionné ; ce n'est PAS `config.json`). Le serveur le relit dès que son
+mtime change : **aucun redémarrage** pour ajouter/retirer une app ou un doc,
+changer un libellé, une plateforme, une description ou une source de version.
+Le reste de la carte est déjà calculé à chaque requête (version lue dans le
+gradle, présence de `builds/<app>/latest.apk`, HTML).
+
+Ajouter une app Android :
+
+1. Publier l'APK : `node scripts/copy-build.mjs <Projet>` → `builds/<Projet>/latest.apk`.
+2. Ajouter une entrée dans `apps[]` (l'ordre du tableau = l'ordre des cartes) :
+
+       { "name": "<Projet>",
+         "description": "Une phrase affichée sous le titre",
+         "version": { "file": "I:\Dev\<Projet>\app\build.gradle.kts" } }
+
+   - `name` (requis) : nom du dossier sous `builds/`, lettres/chiffres/`_.-`.
+   - `label` : titre affiché (défaut : `name`).
+   - `platform` : badge (`phone` par défaut, `TV`, `mobile`…).
+   - `description` : texte sous le titre.
+   - `version.file` : chemin **absolu** ; sans `regex`, c'est le `versionName`
+     du gradle (Kotlin ou Groovy). Autre source : `"regex"` avec **un** groupe
+     capturant, `"flags"` parmi `i m s u` (voir l'entrée RemotePad).
+3. Recharger `/downloads`. Vérifier : `node scripts/_test_downloads_hot.mjs`
+   (valide aussi le `downloads.json` du dépôt).
+
+Un doc : entrée dans `docs[]` avec `project`, `id` (slug), `title`, `file`
+(nom simple sous `builds/<project>/`) et `fallbacks` (chemins absolus).
+
+**Tout ou rien.** JSON cassé ou une seule entrée invalide ⇒ le fichier entier
+est refusé, la dernière version valide reste servie (jamais de 500) et la
+raison est journalisée une fois dans la console et `logs/server-debug.log`.
+Si une modification « ne prend pas », c'est là qu'il faut regarder. Une app
+sans `latest.apk` s'affiche « APK pas encore publié » au lieu d'un bouton mort.
+
+---
+
 ## Attachments
 
 Images uploaded via the dashboard (paste / drag-drop / file picker) land in

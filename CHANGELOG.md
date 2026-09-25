@@ -11,6 +11,37 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-09-25
+
+La page `/downloads` se modifie **sans redémarrer le serveur**.
+
+### Added
+- (server) **`downloads.json`** (racine, versionné, distinct de `config.json`) :
+  registre des apps et des docs de `/downloads`, relu à chaud dès que son mtime
+  change (un `stat` par requête, pas de watcher). Nouveau module
+  `scripts/downloads-registry.mjs` (validation, cache, repli).
+- (server) Champs optionnels par app : **`description`** (affichée sous le titre
+  de la carte), `label` (titre affiché), `platform`, `version.{file,regex,flags}`.
+  TranslateOverlay porte sa description.
+- (server) Une app sans `builds/<app>/latest.apk` affiche « APK pas encore
+  publié » au lieu d'un bouton menant à une 404.
+- (tests) `scripts/_test_downloads_hot.mjs` — 26 assertions : réécrit un
+  registre temporaire et constate le changement de la page (rendue par le vrai
+  `downloadsPageHtml` extrait de `server.js`) sans redémarrage ; repli sur JSON
+  cassé, entrée invalide, fichier supprimé ; validité du `downloads.json` du dépôt.
+- (docs) `CLAUDE.md` : section « Page /downloads — ajouter une app ».
+
+### Changed
+- (server) `DOWNLOAD_APPS`, `APP_PLATFORM`, `APP_VERSION_SOURCES` et
+  `DOWNLOAD_DOCS` quittent `server.js` pour `downloads.json`, migrés à
+  l'identique (13 apps dans le même ordre, mêmes versions lues, mêmes
+  plateformes, 2 docs — vérifié par comparaison avec l'ancien rendu).
+- (server) Validation **tout ou rien** : JSON illisible ou une seule entrée
+  invalide ⇒ la dernière version valide reste servie (jamais de 500) et la
+  raison est journalisée une fois par version du fichier. Les noms qui entrent
+  dans une URL ou sous `builds/` sont contraints (pas de traversée), les regex
+  de version doivent avoir un groupe capturant et n'accepter que `i m s u`.
+
 ## [0.22.3] - 2026-09-25
 
 ### Added

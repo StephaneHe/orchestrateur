@@ -49,6 +49,8 @@ import { detectOverride } from './src/message_router.mjs';
 // (scripts/fleet-status.mjs) uses, so the live desk view (/api/pupitre) can
 // never diverge from `node scripts/fleet-status.mjs`.
 import { scanProject as scanFleetMember } from './scripts/fleet-status-core.mjs';
+// Registre /downloads relu à chaud depuis downloads.json (0.23.0).
+import { createDownloadsRegistry } from './scripts/downloads-registry.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -1289,49 +1291,18 @@ _expressWsInstance.getWss().on('error', () => {});
 
 // ---------- Public routes (no token gate) ------------------------------------
 
-// Fleet Android apps exposed on /downloads. Each needs a builds/<name>/latest.apk
-// (served by /downloads/:app/apk). RemotePad/BookHaven stay first (existing
-// cards); the rest were added from the chef's APK survey. Version source and
-// form-factor for each are declared in APP_VERSION_SOURCES / APP_PLATFORM below.
-const DOWNLOAD_APPS = [
-  'orchestrateur',
-  'RemotePad', 'BookHaven',
-  'DeskZen', 'vuBox', 'firstAidOffline', 'frenchradio',
-  'immo-share', 'meetingScribe', 'photoLab', 'SncfOptimizer', 'sommeil',
-  'TranslateOverlay',
-];
-
-// Form-factor badge shown on the download card. Anything not listed → 'phone'.
-const APP_PLATFORM = { vuBox: 'TV', 'immo-share': 'mobile' };
-
-// Readable docs exposed on /downloads. A project may expose 1..n docs; this is
-// a small generic registry, not a TradeBot special-case. Each entry:
-//   project   — must own the doc (also namespaces the URL and builds/ folder)
-//   id        — stable slug used in the URL (/downloads/<project>/doc/<id>)
-//   title     — shown on the card and as the page heading
-//   file      — filename under builds/<project>/ (canonical, APK-pattern)
-//   fallbacks — absolute paths tried if the builds/ copy is missing, so the
-//               render still works (or 404s cleanly) if the file moves.
-const DOWNLOAD_DOCS = [
-  {
-    project: 'TradeBot',
-    id: 'proposal',
-    title: 'Proposition de conception',
-    file: 'PROPOSAL.md',
-    fallbacks: ['I:\\Dev\\TradeBot\\docs\\PROPOSAL.md'],
-  },
-  {
-    project: 'TradeBot',
-    id: 'review',
-    title: 'TradeBot — Revue critique (Fable)',
-    file: 'REVIEW.md',
-    fallbacks: ['I:\\Dev\\TradeBot\\docs\\REVIEW.md'],
-  },
-];
-
-function findDoc(project, id) {
-  return DOWNLOAD_DOCS.find(d => d.project === project && d.id === id) || null;
-}
+// Registre de la page /downloads — relu À CHAUD depuis downloads.json (0.23.0).
+// Ajouter/retirer une app ou un doc, changer libellé, plateforme, description
+// ou source de version ne demande plus de redémarrage : le fichier est relu
+// dès que son mtime change, validé, et en cas d'erreur la dernière version
+// valide est conservée (journalisée, jamais de 500). Voir CLAUDE.md.
+// Tout le reste de la page est déjà calculé à chaque requête : version lue
+// dans le gradle, présence de builds/<app>/latest.apk, HTML de la carte.
+const downloadsRegistry = createDownloadsRegistry({
+  file: path.join(__dirname, 'downloads.json'),
+  buildsDir: BUILDS_DIR,
+  log: (msg) => { console.log(msg); debugLog(msg); },
+});
 
 // Read a registered doc's Markdown. Tries the builds/ copy first (canonical,
 // same pattern as the APKs) then the project-path fallbacks. Returns null when
@@ -1345,59 +1316,6 @@ function readDocMarkdown(doc) {
   return null;
 }
 
-// Unified card model for the /downloads page: an app (APK), a doc-only project,
-// or both. Apps keep their config order first, doc-only projects follow.
-function buildDownloadEntries() {
-  const byProject = new Map();
-  const ensure = (name) => {
-    if (!byProject.has(name)) byProject.set(name, { name, version: null, apk: false, platform: null, docs: [] });
-    return byProject.get(name);
-  };
-  for (const name of DOWNLOAD_APPS) {
-    const e = ensure(name);
-    e.version = readAppVersion(name);
-    e.apk = true;
-    e.platform = APP_PLATFORM[name] || 'phone';
-  }
-  for (const d of DOWNLOAD_DOCS) ensure(d.project).docs.push({ id: d.id, title: d.title });
-  return [...byProject.values()];
-}
-
-// Where each app's displayed version is read from. Most are Android gradle
-// files; RemotePad is a Python package. `re` overrides the default matcher
-// (RemotePad's __version__). vuBox is the Android-TV module. Paths are literals
-// here (never from the request), so there is no traversal surface.
-const APP_VERSION_SOURCES = {
-  orchestrateur:   { file: 'I:\\orchestrateur\\android\\app\\build.gradle.kts' },
-  RemotePad:       { file: 'I:\\Dev\\RemotePad\\server\\__init__.py', re: /__version__\s*=\s*["']([^"']+)["']/ },
-  BookHaven:       { file: 'I:\\Dev\\BookHaven\\android\\app\\build.gradle.kts' },
-  DeskZen:         { file: 'I:\\Dev\\DeskZen\\app\\build.gradle.kts' },
-  vuBox:           { file: 'I:\\Dev\\vuBox\\androidtv\\app\\build.gradle.kts' },
-  firstAidOffline: { file: 'I:\\Dev\\firstAidOffline\\app\\build.gradle.kts' },
-  frenchradio:     { file: 'I:\\Dev\\frenchradio\\app\\build.gradle.kts' },
-  'immo-share':    { file: 'I:\\Dev\\immo-share\\apps\\mobile\\android\\app\\build.gradle' },
-  meetingScribe:   { file: 'I:\\Dev\\meetingScribe\\app\\build.gradle.kts' },
-  photoLab:        { file: 'I:\\Dev\\photoLab\\app\\build.gradle.kts' },
-  SncfOptimizer:   { file: 'I:\\Dev\\SncfOptimizer\\app\\build.gradle.kts' },
-  sommeil:         { file: 'I:\\Dev\\sommeil\\app\\build.gradle.kts' },
-  TranslateOverlay: { file: 'I:\\Dev\\TranslateOverlay\\app\\build.gradle.kts' },
-};
-
-// Kotlin DSL: `versionName = "x"` · Groovy: `versionName "x"`. Case-insensitive
-// (one project writes `VersionName`); the negative lookahead avoids matching
-// `versionNameSuffix`. Falls back to 'unknown' rather than blocking a card.
-const VERSION_NAME_RE = /versionName(?![A-Za-z])\s*=?\s*["']([^"']+)["']/i;
-
-function readAppVersion(appName) {
-  const src = APP_VERSION_SOURCES[appName];
-  if (!src) return 'unknown';
-  try {
-    const text = fs.readFileSync(src.file, 'utf8');
-    const m = (src.re || VERSION_NAME_RE).exec(text);
-    return m ? m[1] : 'unknown';
-  } catch { return 'unknown'; }
-}
-
 const ANDROID_ICON_SVG = `<svg class="app-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.523 15.341a.75.75 0 1 1 0 1.5.75.75 0 0 1 0-1.5Zm-11.046 0a.75.75 0 1 1 0 1.5.75.75 0 0 1 0-1.5ZM6.38 8.25h11.24c.456 0 .83.358.83.8v6.4c0 .442-.374.8-.83.8H6.38c-.456 0-.83-.358-.83-.8V9.05c0-.442.374-.8.83-.8ZM3.75 9.3a.75.75 0 0 1 .75.75v4.9a.75.75 0 0 1-1.5 0V10.05a.75.75 0 0 1 .75-.75Zm16.5 0a.75.75 0 0 1 .75.75v4.9a.75.75 0 0 1-1.5 0V10.05a.75.75 0 0 1 .75-.75ZM8.5 5.29 7.22 3.47a.375.375 0 0 1 .61-.438L9.2 4.9A7.013 7.013 0 0 1 12 4.25c.993 0 1.937.203 2.8.65l1.37-1.87a.375.375 0 1 1 .61.44L15.5 5.29A7.001 7.001 0 0 1 18 8.25H6A7.001 7.001 0 0 1 8.5 5.29Z"/></svg>`;
 const DOC_ICON_SVG = `<svg class="app-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 2.75A2.25 2.25 0 0 0 3.75 5v14A2.25 2.25 0 0 0 6 21.25h12A2.25 2.25 0 0 0 20.25 19V8.31c0-.3-.12-.585-.33-.795l-4.435-4.435a1.125 1.125 0 0 0-.795-.33H6Zm8.25 1.94 3.56 3.56H15a.75.75 0 0 1-.75-.75V4.69ZM7.5 11.5h9a.75.75 0 0 1 0 1.5h-9a.75.75 0 0 1 0-1.5Zm0 3.5h9a.75.75 0 0 1 0 1.5h-9a.75.75 0 0 1 0-1.5Zm0-7h3a.75.75 0 0 1 0 1.5h-3a.75.75 0 0 1 0-1.5Z"/></svg>`;
 
@@ -1406,9 +1324,12 @@ function downloadsPageHtml(entries) {
     const icon = e.apk ? ANDROID_ICON_SVG : DOC_ICON_SVG;
     const platform = e.platform ? `<span class="app-plat">${escHtml(e.platform)}</span>` : '';
     const version = e.version ? `<p class="app-version">v${escHtml(e.version)}</p>` : '';
-    const apkBtn = e.apk
-      ? `<a class="dl-btn" href="/downloads/${escHtml(e.name)}/apk">↓ Télécharger APK</a>`
-      : '';
+    const description = e.description ? `<p class="app-desc">${escHtml(e.description)}</p>` : '';
+    // Un APK absent n'est plus un bouton qui mène à une 404 : on le dit.
+    const apkBtn = !e.apk ? ''
+      : e.apkAvailable
+        ? `<a class="dl-btn" href="/downloads/${escHtml(e.name)}/apk">↓ Télécharger APK</a>`
+        : `<p class="dl-missing">APK pas encore publié</p>`;
     const docBtns = e.docs.map(d =>
       `<a class="dl-btn dl-btn--doc" href="/downloads/${escHtml(e.name)}/doc/${escHtml(d.id)}">📄 ${escHtml(d.title)}</a>`
     ).join('');
@@ -1417,11 +1338,11 @@ function downloadsPageHtml(entries) {
       <div class="app-header">
         ${icon}
         <div>
-          <h2 class="app-name">${escHtml(e.name)}${platform}</h2>
+          <h2 class="app-name">${escHtml(e.label || e.name)}${platform}</h2>
           ${version}
         </div>
       </div>
-      ${apkBtn}${docBtns}
+      ${description}${apkBtn}${docBtns}
     </div>`;
   }).join('');
 
@@ -1511,6 +1432,19 @@ function downloadsPageHtml(entries) {
       border: 1px solid #3a2f66;
       border-radius: 999px;
       vertical-align: middle;
+    }
+    .app-desc {
+      font-size: 14px;
+      line-height: 1.45;
+      color: #a8a8a8;
+    }
+    .dl-missing {
+      text-align: center;
+      padding: 12px 20px;
+      font-size: 12px;
+      color: #666;
+      border: 1px dashed #333;
+      border-radius: 8px;
     }
     .dl-btn {
       display: block;
@@ -2034,20 +1968,20 @@ function docPageHtml({ project, id, title, bodyHtml }) {
 }
 
 app.get('/downloads', (req, res) => {
-  res.type('html').send(downloadsPageHtml(buildDownloadEntries()));
+  res.type('html').send(downloadsPageHtml(downloadsRegistry.entries()));
 });
 
 app.get('/downloads/:app/apk', (req, res) => {
   const appName = req.params.app;
-  if (!DOWNLOAD_APPS.includes(appName)) return res.status(404).type('text/plain').end('Not found');
-  const apkPath = path.join(BUILDS_DIR, appName, 'latest.apk');
+  if (!downloadsRegistry.findApp(appName)) return res.status(404).type('text/plain').end('Not found');
+  const apkPath = downloadsRegistry.apkPath(appName);
   if (!fs.existsSync(apkPath)) return res.status(404).type('text/plain').end('APK not available');
   res.download(apkPath, `${appName}-latest.apk`);
 });
 
 // Rendered, mobile-readable view of a registered doc. Public (pre-token-gate).
 app.get('/downloads/:project/doc/:id', (req, res) => {
-  const doc = findDoc(req.params.project, req.params.id);
+  const doc = downloadsRegistry.findDoc(req.params.project, req.params.id);
   if (!doc) return res.status(404).type('text/plain').end('Document introuvable');
   const found = readDocMarkdown(doc);
   if (!found) return res.status(404).type('text/plain').end('Document indisponible (fichier source absent)');
@@ -2057,7 +1991,7 @@ app.get('/downloads/:project/doc/:id', (req, res) => {
 
 // Raw Markdown download of a registered doc.
 app.get('/downloads/:project/doc/:id/raw', (req, res) => {
-  const doc = findDoc(req.params.project, req.params.id);
+  const doc = downloadsRegistry.findDoc(req.params.project, req.params.id);
   if (!doc) return res.status(404).type('text/plain').end('Document introuvable');
   const found = readDocMarkdown(doc);
   if (!found) return res.status(404).type('text/plain').end('Document indisponible (fichier source absent)');
