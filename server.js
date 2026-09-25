@@ -377,7 +377,12 @@ const WAKE_COALESCE_MS    = 10_000;   // quiet window after the last result
 const WAKE_LOT_MAX_MS     = 90_000;   // hard cap on how long a batch may gather
 const WAKE_MIN_INTERVAL_MS = 60_000;  // floor between two wakes
 const WAKE_MAX_PER_HOUR   = 6;
-const WAKE_MAX_GEN        = 2;        // user → wake 1 → wake 2 → stop
+// user → wake 1 → wake 2 → wake 3 (assez pour crash → fix → feature → push),
+// puis un DERNIER réveil en mode « rapport seul » (voir wakeIsReportOnly).
+// Au-delà de cette borne on ne coupe plus la chaîne en silence : jusqu'à 0.23.0
+// un résultat attendu né d'un tour gen=MAX était jeté, et l'utilisateur ne le
+// voyait qu'en relançant le chef à la main (TranslateOverlay, 25/09/2026).
+const WAKE_MAX_GEN        = 3;
 const WAKE_INFLIGHT_MAX_MS = 15 * 60_000;  // safety release if no chef result
 const WAKE_ITEM_TTL_MS    = 6 * 60 * 60_000;  // a promise older than this is moot
 const WAKE_PENDING_MAX    = 20;
@@ -491,7 +496,14 @@ function fmtWakeAge(ms) {
   return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}`;
 }
 
-function buildWakePrompt(items, gen) {
+/** Un réveil dont la génération dépasse WAKE_MAX_GEN est en « rapport seul » :
+ *  le chef parle (le résultat attendu n'est jamais perdu) mais ne peut plus
+ *  rien lancer — `dispatch.mjs` refuse tout dispatch venu de ce tour
+ *  (DISPATCH_REPORT_ONLY). Aucun musicien ⇒ aucun résultat ⇒ aucun réveil :
+ *  c'est ce qui rend la chaîne finie par construction, et non plus par abandon. */
+function wakeIsReportOnly(gen) { return gen > WAKE_MAX_GEN; }
+
+function buildWakePrompt(items, gen, reportOnly = false) {
   const lines = items.map(it => {
     const mark = it.outcome === 'failed' ? '✕' : (it.awaitingChef ? '⇄' : '✓');
     const meta = [fmtWakeAge(it.durationMs), Number.isFinite(it.costUsd) ? `$${it.costUsd.toFixed(2)}` : '']
@@ -500,6 +512,17 @@ function buildWakePrompt(items, gen) {
     const body = (it.summary || '').trim();
     return body ? `${head}\n  ${body}` : head;
   }).join('\n');
+  if (reportOnly) {
+    return (
+      `[CALLBACK_WAKE lot=${items.length} gen=${gen} mode=rapport-seul]\n` +
+      `Les résultats que tu attendais sont arrivés. Fais le point à l'utilisateur ` +
+      `(2–5 puces par musicien, ce qu'il a EFFECTIVEMENT fait ; restitue verbatim toute question).\n` +
+      `MODE RAPPORT SEUL : la chaîne de réveils a atteint sa limite (${WAKE_MAX_GEN} relances ` +
+      `automatiques). Ne redispatche PAS — tout dispatch.mjs lancé depuis ce tour sera refusé. ` +
+      `S'il reste une étape, décris-la et demande à l'utilisateur de la lancer ; puis termine ton tour.\n\n` +
+      lines
+    );
+  }
   return (
     `[CALLBACK_WAKE lot=${items.length} gen=${gen}]\n` +
     `Les résultats que tu attendais sont arrivés. Fais le point à l'utilisateur ` +
@@ -542,18 +565,25 @@ function tryFireWake() {
   wake.fireTimes.push(wake.lastFireAt);
   persistWake();
 
-  const prompt = buildWakePrompt(items, gen);
+  // Un lot mêle parfois des générations : la plus haute l'emporte, donc un seul
+  // résultat en bout de chaîne suffit à passer tout le lot en rapport seul.
+  const reportOnly = wakeIsReportOnly(gen);
+  const prompt = buildWakePrompt(items, gen, reportOnly);
   try {
     fs.appendFileSync(WAKE_JOURNAL, JSON.stringify({
-      ts: new Date().toISOString(), gen, lot: items.length,
+      ts: new Date().toISOString(), gen, lot: items.length, reportOnly,
       sources: items.map(it => `${it.source}:${it.outcome}`),
     }) + '\n');
   } catch {}
-  console.log(`[wake] firing chef synthesis — lot=${items.length} gen=${gen}`);
+  const fireMsg = `[wake] firing chef synthesis — lot=${items.length} gen=${gen}` +
+    (reportOnly ? ` reportOnly (gen > WAKE_MAX_GEN=${WAKE_MAX_GEN} : dispatch interdit à ce tour)` : '') +
+    ` sources=${items.map(it => it.source).join(',')}`;
+  console.log(fireMsg);
+  debugLog(fireMsg);
   // Le lot n'est plus spawné ici : il entre dans la file comme ticket `point`,
   // servi après les tickets `user`/`decision` (§2.4 du design).
   poolEnqueue({
-    class: 'point', text: prompt, source: 'wake', wakeGen: gen,
+    class: 'point', text: prompt, source: 'wake', wakeGen: gen, reportOnly,
     displayText: `point sur ${items.length} résultat${items.length > 1 ? 's' : ''} : ` +
       items.map(it => it.source).join(', '),
   });
@@ -615,6 +645,10 @@ function spawnDirectDispatch(name, prompt, attachmentPaths = [], videoPaths = []
       DISPATCH_REQUEST_IN_TS: String(requestInTs),
       // Inherited by the agent's Bash tool → stamped on every dispatch it makes.
       DISPATCH_WAKE_GEN: Number.isFinite(opts.wakeGen) && opts.wakeGen > 0 ? String(opts.wakeGen) : '',
+      // Réveil en rapport seul : hérité par l'outil Bash du chef, il fait
+      // refuser par dispatch.mjs tout dispatch lancé depuis ce tour. Toujours
+      // écrit (vide sinon) pour qu'aucun env parent ne le fasse fuir.
+      DISPATCH_REPORT_ONLY: opts.reportOnly ? '1' : '',
       // Pool stamping (0.22.0). Also inherited by the chef's Bash tool, which
       // is how a musician's turn learns WHICH conductor turn is awaiting it.
       DISPATCH_TICKET: typeof opts.ticket === 'string' ? opts.ticket : '',
@@ -915,6 +949,7 @@ function poolAssign(s, t) {
   const pid = spawnDirectDispatch(s.name, t.text, t.attachmentPaths || [], t.videoPaths || [], {
     source: t.source || undefined,
     wakeGen: t.wakeGen,
+    reportOnly: !!t.reportOnly,
     ticket: t.id,
     slot: s.slot,
     traceId: t.traceId,
@@ -4636,23 +4671,23 @@ function startBackgroundNotifyWatchers() {
             // Excluded on purpose: `input` (the musician is asking the USER — the
             // question bubble already jumps the thread, so a relayed synthesis
             // would duplicate it), synthetic results (guarded above), and any turn
-            // nobody awaited. A wake-born chain stops at WAKE_MAX_GEN.
+            // nobody awaited. A result that WAS awaited is never dropped any more:
+            // past WAKE_MAX_GEN the wake fires in report-only mode instead.
             if (expectCallback === conductorName() &&
                 name !== conductorName() &&
                 (newState === 'unread' || newState === 'error')) {
               const gen = Number(wakeGen) || 0;
-              if (gen < WAKE_MAX_GEN) {
-                scheduleConductorWake({
-                  key: `${name}:${ev.session_id || ''}:${ev.timestamp || ev.duration_ms || ''}`,
-                  source: name,
-                  outcome: newState === 'error' ? 'failed' : (awaitingChef ? 'ask_chef' : 'done'),
-                  summary: summarizeResult(ev) || lastLine || '',
-                  durationMs, costUsd, awaitingChef, wakeGen: gen,
-                  ts: Date.now(),
-                });
-              } else {
-                console.log(`[wake] ${name} awaited but gen=${gen} ≥ ${WAKE_MAX_GEN} — not waking (loop guard)`);
+              if (wakeIsReportOnly(gen + 1)) {
+                debugLog(`[wake] ${name} awaited, gen=${gen} ≥ WAKE_MAX_GEN=${WAKE_MAX_GEN} — réveil en rapport seul (dispatch interdit)`);
               }
+              scheduleConductorWake({
+                key: `${name}:${ev.session_id || ''}:${ev.timestamp || ev.duration_ms || ''}`,
+                source: name,
+                outcome: newState === 'error' ? 'failed' : (awaitingChef ? 'ask_chef' : 'done'),
+                summary: summarizeResult(ev) || lastLine || '',
+                durationMs, costUsd, awaitingChef, wakeGen: gen,
+                ts: Date.now(),
+              });
             }
           }
           // Drain the per-musician queue on any turn completion (unread/idle/error).

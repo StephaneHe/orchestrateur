@@ -11,6 +11,47 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-09-25
+
+### Fixed
+- (server) **Un résultat attendu n'est plus jamais jeté par le garde-fou
+  anti-boucle.** Un musicien dispatché avec `--callback chef` depuis un tour de
+  réveil `gen=2` (TranslateOverlay, 25/09) finissait sans que le chef soit
+  réveillé : `WAKE_MAX_GEN = 2` faisait jeter le résultat en silence
+  (« awaited but gen ≥ MAX — not waking »), et l'utilisateur devait relancer le
+  chef à la main. Désormais, au-delà de la borne, le chef est réveillé en
+  **rapport seul** : prompt `[CALLBACK_WAKE … mode=rapport-seul]` qui lui dit de
+  faire le point sans redispatcher.
+
+### Changed
+- (server) **`WAKE_MAX_GEN` passe de 2 à 3** : trois relances automatiques
+  (crash → fix → feature → push). Ça ne rouvre pas de risque de boucle, car le
+  réveil suivant est en rapport seul, donc terminal, et le budget
+  (60 s d'intervalle, 6 réveils/h) s'applique toujours.
+- (dispatch) **Le rapport seul est imposé, pas seulement demandé.** Le tour de
+  chef concerné tourne avec `DISPATCH_REPORT_ONLY=1`, hérité par son outil Bash.
+  `dispatch.mjs` refuse alors tout dispatch avec la sortie 65 et un message qui
+  nomme la cible, avant la moindre écriture. Le tour lui-même, lancé par le
+  serveur avec `--pool-assign`, n'est pas concerné. On refuse plutôt que de
+  lancer sans `--callback` : les deux coupent la boucle, mais la seconde option
+  laisserait tourner une 4ᵉ génération de travail autonome (commits, push)
+  dont personne ne ferait le point. Aucun musicien lancé ⇒ aucun résultat ⇒
+  aucun réveil : la chaîne est finie par construction.
+- (server) **Diagnostic en une ligne.** Le champ `reportOnly` est ajouté à
+  chaque ligne de `logs/chef.wake-log.ndjson`. `logs/server-debug.log` trace
+  la décision au pump et au tir (génération, borne, sources), et le
+  `user_prompt` du tour de chef porte `reportOnly: true`.
+- (chef) La section CALLBACK_WAKE de `I:\Dev\Chef\CLAUDE.md` décrit le nouveau
+  contrat : 3 relances, puis rapport seul, où dispatcher est refusé.
+
+### Added
+- (tests) `scripts/_test_wake_report_only.mjs` : 18 assertions sur le bloc de
+  réveil réel extrait de `server.js` (chaîne légitime gen 1-3, rapport seul
+  au-delà, lot mixte, journaux, disparition de la branche qui jetait le
+  résultat). `scripts/_test_pool_chef_dispatch.mjs` étendu (15 assertions) :
+  refus en rapport seul par le vrai `dispatch.mjs`, tour du chef lui-même
+  autorisé, câblage de `DISPATCH_REPORT_ONLY` côté serveur.
+
 ## [0.23.0] - 2026-09-25
 
 La page `/downloads` se modifie **sans redémarrer le serveur**.

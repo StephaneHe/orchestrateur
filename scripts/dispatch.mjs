@@ -189,6 +189,25 @@ const poolAssignIdx = argv.indexOf('--pool-assign');
 if (poolAssignIdx !== -1) argv.splice(poolAssignIdx, 1);
 const POOL_ASSIGN = poolAssignIdx !== -1;
 
+// ---------------------------------------------------------------------------
+// Réveil en RAPPORT SEUL (0.23.1)
+// ---------------------------------------------------------------------------
+// Passé WAKE_MAX_GEN, le serveur réveille quand même le chef (un résultat
+// attendu n'est plus jamais perdu) mais avec DISPATCH_REPORT_ONLY=1. Tout
+// dispatch lancé depuis ce tour est REFUSÉ, avant la moindre écriture.
+//
+// Pourquoi refuser plutôt qu'accepter sans --callback : les deux coupent la
+// boucle de réveils, mais le second lancerait encore une 4ᵉ génération de
+// travail autonome (commits, push, builds…) dont personne ne ferait le point.
+// Refuser rend la fin de chaîne nette : le chef rend compte, l'utilisateur
+// décide de la suite. Le tour de chef lui-même (lancé par le serveur avec
+// --pool-assign) n'est évidemment pas concerné.
+if (process.env.DISPATCH_REPORT_ONLY === '1' && !POOL_ASSIGN) {
+  die(`dispatch refusé : ce tour de chef est un réveil en RAPPORT SEUL (chaîne de réveils ` +
+    `au maximum). Fais le point à l'utilisateur et propose-lui l'étape suivante — c'est lui ` +
+    `qui la lancera (cible demandée : « ${argv[0]} »).`, 65);
+}
+
 const noQueueIdx = argv.indexOf('--no-queue-if-busy');
 if (noQueueIdx !== -1) argv.splice(noQueueIdx, 1);
 const queueIdx = argv.indexOf('--queue-if-busy');
@@ -788,12 +807,14 @@ if (callbackProject) userPromptEvent.callback = callbackProject;
 // Wake generation of the turn that spawned us. A chef turn started BY a wake
 // runs with DISPATCH_WAKE_GEN=n in its environment; its Bash tool inherits it,
 // so any dispatch.mjs the chef launches from that turn stamps the same n here.
-// The watcher refuses to wake again past WAKE_MAX_GEN — that is the anti-loop
-// bound, and it is carried by the data rather than guessed.
+// Past WAKE_MAX_GEN the watcher wakes in report-only mode, whose dispatches
+// are refused above — that is the anti-loop bound, carried by the data.
 const inheritedWakeGen = Number(process.env.DISPATCH_WAKE_GEN || 0);
 if (Number.isFinite(inheritedWakeGen) && inheritedWakeGen > 0) {
   userPromptEvent.wakeGen = inheritedWakeGen;
 }
+// Diagnostic en une ligne : le tour de chef dit lui-même qu'il est en rapport seul.
+if (POOL_ASSIGN && process.env.DISPATCH_REPORT_ONLY === '1') userPromptEvent.reportOnly = true;
 // POOL (0.22.0) — stampage d'origine, même mécanisme que wakeGen.
 //
 // Deux cas, distingués par la CIBLE et non par une seconde variable :

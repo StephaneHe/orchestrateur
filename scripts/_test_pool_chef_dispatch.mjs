@@ -97,5 +97,31 @@ scenario('server.js passe bien le flag');
   ok(/poolAssign:\s*true/.test(SRC), 'poolAssign() passe poolAssign: true');
 }
 
+// ── 6. Réveil en rapport seul (0.23.1) ─────────────────────────────────────
+// Le tour de chef né d'un réveil au-delà de WAKE_MAX_GEN tourne avec
+// DISPATCH_REPORT_ONLY=1, hérité par son outil Bash : tout dispatch qu'il
+// tente doit mourir AVANT d'écrire quoi que ce soit — c'est ce qui rend la
+// chaîne de réveils finie. Le tour lui-même (--pool-assign) doit vivre.
+scenario('Réveil en rapport seul : le chef parle, ne dispatche pas');
+{
+  const self = runDispatch(CONDUCTOR, ['--pool-assign'], { DISPATCH_SLOT: '1', DISPATCH_REPORT_ONLY: '1', DISPATCH_WAKE_GEN: '4' });
+  ok(self.code !== GUARD_EXIT && /unknown project "__nope__"/.test(self.err),
+     'le tour de chef en rapport seul, lancé par le serveur, démarre');
+
+  const r = runDispatch('orchestrateur', [], { DISPATCH_SLOT: '1', DISPATCH_REPORT_ONLY: '1', DISPATCH_WAKE_GEN: '4' });
+  ok(r.code === GUARD_EXIT, `un dispatch depuis ce tour sort en ${GUARD_EXIT} (obtenu ${r.code})`);
+  ok(/RAPPORT SEUL/.test(r.err) && /orchestrateur/.test(r.err), 'message explicite, qui nomme la cible refusée');
+
+  const plain = runDispatch('orchestrateur', [], { DISPATCH_SLOT: '1', DISPATCH_REPORT_ONLY: '', DISPATCH_WAKE_GEN: '3' });
+  // Sentinelle __nope__ : meurt en 64 AVANT le POST de file vers le serveur.
+  ok(plain.code === 64 && /unknown project "__nope__"/.test(plain.err),
+     'hors rapport seul (gen 3), le dispatch passe les gardes (et s’arrête à la sentinelle)');
+
+  const SRC = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  ok(/DISPATCH_REPORT_ONLY:\s*opts\.reportOnly \? '1' : ''/.test(SRC),
+     'spawnDirectDispatch écrit toujours DISPATCH_REPORT_ONLY (vide hors rapport seul)');
+  ok(/reportOnly:\s*!!t\.reportOnly/.test(SRC), 'poolAssign() transmet reportOnly du ticket');
+}
+
 console.log(`\n${fail === 0 ? '✓' : '✗'} ${pass} réussis, ${fail} échoués`);
 process.exit(fail === 0 ? 0 : 1);
