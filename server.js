@@ -48,7 +48,7 @@ import { detectOverride } from './src/message_router.mjs';
 // Shared fleet state/silence/stall derivation — same module the CLI supervisor
 // (scripts/fleet-status.mjs) uses, so the live desk view (/api/pupitre) can
 // never diverge from `node scripts/fleet-status.mjs`.
-import { scanProject as scanFleetMember } from './scripts/fleet-status-core.mjs';
+import { scanProject as scanFleetMember, isPhantomResult } from './scripts/fleet-status-core.mjs';
 // Registre /downloads relu à chaud depuis downloads.json (0.23.0).
 import { createDownloadsRegistry } from './scripts/downloads-registry.mjs';
 import os from 'node:os';
@@ -692,6 +692,10 @@ function spawnDirectDispatch(name, prompt, attachmentPaths = [], videoPaths = []
   // pas distinguer « le serveur me lance pour remplir le slot » de « un chef me
   // lance depuis son tour » sur l'env seul : le flag, lui, ne s'hérite pas.
   if (opts.poolAssign) args.push('--pool-assign');
+  // Lancement DEPUIS la file : le serveur vient de vérifier que le musicien est
+  // libre. Sans ce flag, un `slot` hérité réactive --queue-if-busy dans le fils,
+  // qui se re-postait en file (voir drainAttempt).
+  if (opts.noQueueIfBusy) args.push('--no-queue-if-busy');
 
   const child = spawn(process.execPath, args, {
     cwd: __dirname,
@@ -742,17 +746,81 @@ function spawnDirectDispatch(name, prompt, attachmentPaths = [], videoPaths = []
 // its `--callback chef`: the chef kept waiting for a report the musician was
 // never told to send. Old entries rehydrated from disk simply have the fields
 // undefined and behave exactly as before.
-function drainQueue(name) {
+function drainQueue(name, reason = 'result') {
+  if (drainPending.has(name)) return;       // un drain attend déjà la fin du processus
   const q = dispatchQueue.get(name);
   if (!q || q.length === 0) { dispatchQueue.delete(name); persistQueue(name); return; }
-  const { prompt, attachmentPaths, videoPaths, callback, source, model, provider, slot, ticket } = q.shift();
+  drainPending.set(name, Date.now());
+  setImmediate(() => drainAttempt(name, reason));
+}
+
+// 0.24.1 — POURQUOI ATTENDRE LA MORT DU PROCESSUS. Le drain part sur l'événement
+// `result`, qui est écrit AVANT que le `claude` du tour ne se termine : son
+// `.pid` est encore vivant. Or une entrée issue d'un chef porte `slot`, donc le
+// dispatch.mjs relancé avait DISPATCH_SLOT ⇒ --queue-if-busy actif ⇒ il voyait
+// ce PID encore vivant et se RE-POSTAIT en queue de file, avec un nouvel id. La
+// tâche tournait en rond sans jamais partir (TranslateOverlay, vuBox, 25/09 :
+// « auto-dispatch » immédiatement suivi de « occupé — mis en file »). Désormais
+// on attend que le processus soit réellement mort, puis on lance avec
+// --no-queue-if-busy : c'est le serveur qui possède la file et qui vient de
+// vérifier ; le fils n'a pas à la re-décider.
+function drainAttempt(name, reason) {
+  const since = drainPending.get(name) ?? Date.now();
+  const q = dispatchQueue.get(name);
+  if (!q || !q.length) { drainPending.delete(name); return; }    // retirée entre-temps
+  if (dispatchPidAlive(name)) {
+    if (Date.now() - since < DRAIN_WAIT_MAX_MS) { setTimeout(() => drainAttempt(name, reason), DRAIN_WAIT_STEP_MS).unref?.(); return; }
+    drainPending.delete(name);
+    const msg = `[queue] ${name} : processus toujours vivant après ${DRAIN_WAIT_MAX_MS / 1000} s — ` +
+      `un tour tourne, son result drainera (ou le balayage)`;
+    console.log(msg); debugLog(msg);
+    return;
+  }
+  drainPending.delete(name);
+  const { id, prompt, attachmentPaths, videoPaths, callback, source, model, provider, slot, ticket } = q.shift();
   if (q.length === 0) dispatchQueue.delete(name);
   persistQueue(name);
-  console.log(`[queue] auto-dispatch to ${name} (${dispatchQueue.get(name)?.length ?? 0} remaining)` +
-    (callback ? ` callback=${callback}` : ''));
-  setImmediate(() => spawnDirectDispatch(name, prompt, attachmentPaths, videoPaths,
-    { callback, source, model, provider, slot, ticket }));
+  drainLaunchedAt.set(name, Date.now());
+  const msg = `[queue] auto-dispatch to ${name} (${dispatchQueue.get(name)?.length ?? 0} remaining) ` +
+    `id=${id || '—'} via=${reason}` + (callback ? ` callback=${callback}` : '') +
+    ` attente-pid=${Date.now() - since}ms`;
+  console.log(msg); debugLog(msg);
+  spawnDirectDispatch(name, prompt, attachmentPaths, videoPaths,
+    { callback, source, model, provider, slot, ticket, noQueueIfBusy: true });
 }
+
+const DRAIN_WAIT_STEP_MS = 1000;
+const DRAIN_WAIT_MAX_MS  = 120_000;
+const drainPending   = new Map();   // nom → début de l'attente de la mort du processus
+const drainLaunchedAt = new Map();  // nom → dernier lancement depuis la file
+
+// Filet de sécurité : une file non vide devant un musicien libre, sans processus,
+// depuis plus d'une minute, est drainée. Couvre ce qu'aucun `result` ne
+// déclenchera jamais : la file rehydratée au redémarrage, un tour lancé hors
+// serveur dont le result a été manqué, un drain abandonné. Jamais sous limite
+// Claude (même raison que la garde B1 sur les result synthétiques).
+const QUEUE_SWEEP_MS = 30_000;
+const QUEUE_STALL_MS = 60_000;
+const queueStalledSince = new Map();
+function sweepQueues() {
+  if (readLimitedUntil()) return;
+  const now = Date.now();
+  for (const [name, q] of dispatchQueue) {
+    const st = musicianAutoStates.get(name)?.state ?? 'idle';
+    const blocked = !q?.length || drainPending.has(name) ||
+      now - (drainLaunchedAt.get(name) || 0) < QUEUE_STALL_MS ||
+      st === 'live' || st === 'think' || dispatchPidAlive(name);
+    if (blocked) { queueStalledSince.delete(name); continue; }
+    if (!queueStalledSince.has(name)) { queueStalledSince.set(name, now); continue; }
+    if (now - queueStalledSince.get(name) < QUEUE_STALL_MS) continue;
+    queueStalledSince.delete(name);
+    const msg = `[queue-sweep] ${name} : libre (${st}), aucun processus, ${q.length} en file ` +
+      `depuis ≥ ${QUEUE_STALL_MS / 1000} s — drain de secours`;
+    console.log(msg); debugLog(msg);
+    drainQueue(name, 'sweep');
+  }
+}
+setInterval(sweepQueues, QUEUE_SWEEP_MS).unref();
 
 // ---------- File de direction (pool P0-A, 0.22.0) ---------------------------
 //
@@ -1236,6 +1304,7 @@ function lastNonPartialType(filePath) {
           const ev = JSON.parse(line);
           if (!ev || typeof ev.type !== 'string') continue;
           if (ev.type === 'notification') continue;                 // coordination, not a turn
+          if (isPhantomResult(ev)) continue;                        // mid-turn replay, not a turn end
           if (ev.type === 'user_prompt' && ev.source) continue;     // callback / @shortcut / notify
           return ev.type;
         } catch { /* partial line at the head; keep widening */ }
@@ -2191,6 +2260,7 @@ function scanProjectState(name) {
   for (const ln of lines) {
     if (!ln) continue;
     let ev; try { ev = JSON.parse(ln); } catch { continue; }
+    if (isPhantomResult(ev)) continue;   // mini-tour rejoué par le CLI, pas une fin de tour
     const t = ev?.type;
     // A SOURCED user_prompt (musician callback, @shortcut, /api/notify) is not a
     // turn start — only a source-less prompt or a system/init is. A real dispatch
@@ -2795,6 +2865,8 @@ app.get('/api/project/:name/events', (req, res) => {
   for (const line of lines) {
     if (!line.trim()) continue;
     let ev; try { ev = JSON.parse(line); } catch { continue; }
+    // Jamais rendu : un result fantôme fermerait une mission en plein tour.
+    if (isPhantomResult(ev)) continue;
     if (ev?.type === 'stream_event') {
       const evt = ev.event || {};
       const idx = typeof evt.index === 'number' ? evt.index : 0;
@@ -2906,7 +2978,7 @@ app.get('/api/conductor-chat', (req, res) => {
       for (const b of content) {
         if (b?.type === 'text' && b.text?.trim()) lastAssistantText = b.text.trim();
       }
-    } else if (ev.type === 'result' && !ev.is_error && lastAssistantText) {
+    } else if (ev.type === 'result' && !ev.is_error && lastAssistantText && !isPhantomResult(ev)) {
       // A chef reply that ENDS with NEEDS_USER_INPUT used to be dropped here, so
       // the chef's own question vanished from the thread on every reload. Keep
       // it, flagged, so the client can render it as a question bubble.
@@ -2968,6 +3040,12 @@ function reduceMusician(name, ev) {
   const t = ev?.type;
   // stream_event lines are very frequent token-level deltas — skip.
   if (t === 'stream_event') return { prevState: state, newState: state, lastLine, awaitingChef, expectCallback, wakeGen };
+  // Result fantôme (voir isPhantomResult) : AUCUN effet. Surtout, l'attente
+  // `--callback` du tour en cours n'est pas consommée — c'est le vrai result,
+  // plus loin, qui doit réveiller le chef.
+  if (isPhantomResult(ev)) {
+    return { prevState: state, newState: state, lastLine, awaitingChef, expectCallback: null, wakeGen, phantom: true };
+  }
   // Sourced user_prompt (callback / @shortcut / notify) is not a turn start.
   if ((t === 'user_prompt' && !ev.source) || (t === 'system' && ev.subtype === 'init')) {
     if (state === 'idle' || state === 'unread') state = 'live';
@@ -3168,7 +3246,10 @@ function fleetEnsureProject(name) {
           if (line.includes('NEEDS_CHEF_INPUT:') || (name === conductorName() && line.includes('"type":"result"'))) {
             try { parsedEv = JSON.parse(line); } catch {}
           }
-          if (parsedEv) {
+          // Un result fantôme porte le texte du tour PRÉCÉDENT : le relayer
+          // renverrait une réponse du chef déjà transmise (sa clé de dédupe
+          // `sid:0` est neuve) ou redemanderait une décision déjà prise.
+          if (parsedEv && !isPhantomResult(parsedEv)) {
             if (name !== conductorName()) {
               const q = extractNeedsChefInput(parsedEv);
               if (q) maybeDispatchChefQuestion(name, q);
@@ -4718,8 +4799,16 @@ function startBackgroundNotifyWatchers() {
         if (!line) continue;
         try {
           const ev = JSON.parse(line);
-          const { prevState, newState, lastLine, awaitingChef, expectCallback, wakeGen } =
+          const { prevState, newState, lastLine, awaitingChef, expectCallback, wakeGen, phantom } =
             reduceMusician(name, ev);
+          if (phantom) {
+            // Ni réveil, ni notification, ni drain, ni clôture de ticket de chef.
+            const msg = `[result-fantôme] ${name} : result ignoré (num_turns=0, duration_api_ms=0, ` +
+              `session=${String(ev.session_id || '').slice(0, 8)}) — mini-tour rejoué par le CLI, pas une fin de tour`;
+            console.log(msg);
+            debugLog(msg);
+            continue;
+          }
           if (ev.type === 'result') {
             console.log(`[notify-bg] ${name} result: prevState=${prevState} newState=${newState}`);
           }
@@ -4798,8 +4887,16 @@ function startBackgroundNotifyWatchers() {
           // `error_limited` synthetic when Claude is limited — draining then would
           // launch the next queued item, which hits the same limit, synthesises
           // another result, and burns the whole queue with zero work done.
+          //
+          // 0.24.1 : on draine AUSSI quand le tour finit en `input` (question à
+          // l'utilisateur). Les entrées en file sont presque toujours des
+          // précisions de l'utilisateur envoyées pendant le tour — souvent la
+          // réponse même à la question. Bloquer la file sur une question non
+          // lue a laissé TranslateOverlay « libre avec 1 tâche en file » des
+          // heures (25/09). La question reste affichée (fil du chef + bande
+          // d'attention) ; le tour suivant la verra dans sa propre session.
           if (ev.type === 'result' && !ev.synthetic &&
-              (newState === 'unread' || newState === 'idle' || newState === 'error') &&
+              (newState === 'unread' || newState === 'idle' || newState === 'error' || newState === 'input') &&
               (prevState === 'live' || prevState === 'think')) {
             drainQueue(name);
           }

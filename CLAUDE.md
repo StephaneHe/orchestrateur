@@ -151,6 +151,42 @@ sans `latest.apk` s'affiche « APK pas encore publié » au lieu d'un bouton mor
 
 ---
 
+## Fin de tour, file par musicien, results fantômes (0.24.1)
+
+- **Un tour `claude -p` s'arrête à son `result`, et ses tâches d'arrière-plan
+  meurent avec lui** (`system/task_notification` status `stopped`).
+  `dispatch.mjs` ajoute donc à tout prompt de musicien (pas au chef) une
+  « RÈGLE DE FIN DE TOUR » : ne jamais finir un tour en comptant sur un process
+  d'arrière-plan. Il faut soit l'exécuter en avant-plan, soit le lancer
+  réellement détaché (`Win32_Process Create`) avec un `notify.mjs` vers le chef
+  à la fin. La consigne va dans le prompt envoyé à claude, pas dans
+  `promptForLog` : le fil ne l'affiche pas.
+- **Result fantôme.** Au `--resume` suivant, le CLI rejoue la notification de
+  la tâche tuée sous forme d'un mini-tour vide, au milieu du nouveau tour :
+  `result` avec `num_turns: 0`, `duration_api_ms: 0`, `stop_reason: null` et le
+  même coût. `isPhantomResult()` (`scripts/fleet-status-core.mjs`) le reconnaît
+  partout où un result est interprété :
+  - le pump (aucun réveil, aucune notification, aucun drain, le ticket du chef
+    n'est pas clos, et l'attente `--callback` du tour n'est pas consommée) ;
+  - `scanProjectState`, `fleet-status` et `/api/pupitre` ;
+  - `/api/conductor-chat` et `/api/project/:name/events` ;
+  - le relais `NEEDS_CHEF_INPUT` ;
+  - le client.
+
+  Chaque fantôme ignoré est journalisé dans `logs/server-debug.log`
+  (`[result-fantôme]`).
+- **File par musicien.** Le drain part au `result`, mais attend que le
+  processus du tour qui finit soit mort avant de lancer la tête avec
+  `--no-queue-if-busy`. Sans cette attente, le fils voyait encore le PID et se
+  re-postait en fin de file, sans fin. Le drain a lieu aussi quand le tour
+  finit en `input` : la question reste affichée. Un balayage toutes les 30 s
+  draine une file non vide devant un musicien libre, sans processus, depuis
+  au moins 60 s (après un redémarrage, un result manqué…), jamais sous limite
+  Claude. Il est journalisé `[queue-sweep]`. La file se gère avec
+  `scripts/queue.mjs`, jamais en éditant `logs/queue/*.json`.
+
+---
+
 ## Attachments
 
 Images uploaded via the dashboard (paste / drag-drop / file picker) land in

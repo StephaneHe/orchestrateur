@@ -123,5 +123,28 @@ scenario('Réveil en rapport seul : le chef parle, ne dispatche pas');
   ok(/reportOnly:\s*!!t\.reportOnly/.test(SRC), 'poolAssign() transmet reportOnly du ticket');
 }
 
+// ── 7. Règle de fin de tour : pas d'attente sur l'arrière-plan (0.24.1) ────
+// La consigne est injectée dans le prompt envoyé à claude, jamais dans le
+// texte affiché (promptForLog). On évalue la vraie fonction extraite du script.
+scenario("Règle de fin de tour injectée aux musiciens");
+{
+  const D = fs.readFileSync(DISPATCH, 'utf8');
+  const a = D.indexOf('function backgroundRule(');
+  const b = D.indexOf('\n}\n', a) + 2;
+  // eslint-disable-next-line no-new-func
+  const backgroundRule = new Function('path', 'ROOT', 'projectName', `${D.slice(a, b)}\nreturn backgroundRule;`)(
+    path, ROOT, 'vuBox');
+  const txt = backgroundRule('chef');
+  ok(/TUÉE/.test(txt) && /JAMAIS un tour en comptant sur un process d'arrière-plan/.test(txt), 'interdit de finir un tour en comptant sur l’arrière-plan');
+  ok(/avant-plan/.test(txt) && /Win32_Process -MethodName Create/.test(txt), 'donne les deux issues : avant-plan, ou vraiment détaché (Win32_Process Create)');
+  ok(/notify\.mjs" chef /.test(txt) && /--source vuBox/.test(txt), 'le process détaché prévient lui-même le chef via notify.mjs');
+  ok(/if \(projectName !== CONDUCTOR\) prompt = prompt \+ backgroundRule\(callbackProject \|\| CONDUCTOR\)/.test(D),
+     'injectée pour tout musicien (pas le chef), adressée au callback ou au chef');
+  const logIdx = D.indexOf('const promptForLog = prompt;');
+  const ruleIdx = D.indexOf('prompt = prompt + backgroundRule(');
+  ok(logIdx > 0 && ruleIdx > logIdx, 'le texte affiché (promptForLog) est figé AVANT : le fil ne montre pas la consigne');
+  ok(/noQueueIdx !== -1 \? false/.test(D), '--no-queue-if-busy l’emporte sur DISPATCH_SLOT (lancement depuis la file)');
+}
+
 console.log(`\n${fail === 0 ? '✓' : '✗'} ${pass} réussis, ${fail} échoués`);
 process.exit(fail === 0 ? 0 : 1);

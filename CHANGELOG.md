@@ -11,6 +11,75 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-09-26
+
+Trois défauts observés le 25/09 (TranslateOverlay, vuBox), causes établies
+depuis `logs/*.jsonl` et `logs/server.out`.
+
+### Fixed
+- (server) **Réveils en double sur un « result fantôme ».** Au `--resume`, le
+  CLI rejoue la notification d'une tâche d'arrière-plan tuée au tour précédent
+  en émettant un `result` vide : `num_turns: 0`, `duration_api_ms: 0`,
+  `stop_reason: null`, même session et même coût. Ce result arrive **au milieu
+  du nouveau tour**, après son `user_prompt` et son `system/init`. Pris pour une
+  fin de tour, il avait quatre effets :
+  - il réveillait le chef avec le texte du tour précédent (« ✓ 0s ») ;
+  - il **consommait l'attente `--callback` du vrai tour**, dont la fin ne
+    réveillait plus personne ;
+  - il drainait la file en plein tour ;
+  - côté chef (181 fantômes dans `chef.jsonl`), il fermait le ticket de pool en
+    cours.
+
+  `isPhantomResult()` (`scripts/fleet-status-core.mjs`) le reconnaît. Le pump,
+  les scanners d'état (`scanProjectState`, `fleet-status`, `/api/pupitre`),
+  `/api/conductor-chat`, `/api/project/:name/events`, le relais
+  `NEEDS_CHEF_INPUT`, `healOrphanedLogs` et le client l'ignorent. Chaque
+  fantôme ignoré est journalisé `[result-fantôme]` dans `logs/server-debug.log`.
+  Les result synthétiques (`num_turns: 1` / `synthetic`) ne sont jamais
+  concernés.
+- (server) **La file d'un musicien tournait en rond sans jamais partir.** Cause
+  exacte : le drain part au `result`, avant que le `claude` du tour ne sorte,
+  donc son `.pid` est encore vivant. L'entrée drainée porte `slot` (depuis
+  0.22.0), donc le `dispatch.mjs` relancé héritait `DISPATCH_SLOT` et activait
+  `--queue-if-busy`. Il voyait alors ce PID et se re-postait en fin de file
+  sous un nouvel id. `server.out` montre « auto-dispatch » immédiatement suivi
+  de « occupé — mis en file » une douzaine de fois ; c'est une régression
+  introduite en 0.22.0. Le drain attend maintenant la mort du processus (pas de
+  1 s, 120 s maximum) puis lance avec `--no-queue-if-busy`. Une seule attente
+  à la fois par musicien, et une tâche retirée pendant l'attente ne part pas.
+- (server) **Drain aussi quand le tour finit en `input`.** Les entrées en file
+  sont presque toujours des précisions de l'utilisateur, souvent la réponse à
+  la question. La question reste affichée.
+
+### Added
+- (server) **Balayage de secours toutes les 30 s.** Une file non vide devant un
+  musicien libre (ni `live` ni `think`), sans processus, depuis au moins 60 s,
+  est drainée. Cela couvre la file rehydratée au redémarrage, qui n'était
+  jamais drainée faute de `result`, ainsi qu'un result manqué. Le balayage ne
+  s'applique jamais sous limite Claude ni dans la minute qui suit un lancement
+  depuis la file. Il est journalisé `[queue-sweep]`. Chaque lancement depuis la
+  file trace aussi son id, sa cause (`result`/`sweep`) et l'attente du PID.
+- (dispatch) **Règle de fin de tour** injectée à tout prompt de musicien (pas
+  au chef) : ne jamais finir un tour en comptant sur un process d'arrière-plan,
+  qui meurt avec le tour. Il faut soit l'exécuter en avant-plan, soit le lancer
+  réellement détaché (`Win32_Process Create`) avec un `notify.mjs` vers le chef
+  à la fin. La règle n'apparaît pas dans le fil (`promptForLog` inchangé).
+- (tests) Tests étendus :
+  - `_test_wake_report_only.mjs` (30) : séquence réelle vuBox rejouée dans le
+    vrai `reduceMusician` et `deriveState` ; le vrai result garde son
+    `--callback`.
+  - `_test_queue_api.mjs` (36) : bloc réel du drain et du balayage avec un PID
+    pilotable (pas de rebouclage, `--no-queue-if-busy`, retrait pendant
+    l'attente, cinq cas où le balayage s'abstient).
+  - `_test_pool_chef_dispatch.mjs` (21) : règle de fin de tour.
+- (docs) `CLAUDE.md` : section « Fin de tour, file par musicien, results
+  fantômes ». Le contrat du chef est inchangé.
+
+### Changed
+- (cli) `scripts/fleet-status.mjs` délègue au module partagé
+  `fleet-status-core.mjs`. Ce refactor était présent mais jamais committé ; il
+  est adopté ici parce que le filtre des fantômes vit dans ce module.
+
 ## [0.24.0] - 2026-09-25
 
 On peut retirer une tâche de la file d'un musicien **sans redémarrer le serveur**.

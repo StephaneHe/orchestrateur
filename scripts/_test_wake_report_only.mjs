@@ -130,6 +130,67 @@ scenario('pump : plus aucune branche qui jette un résultat attendu');
   ok(!/not waking/.test(pumpSite) && !/gen < WAKE_MAX_GEN/.test(pumpSite), 'l’ancienne branche « not waking (loop guard) » a disparu');
 }
 
+// ---------- 5. result fantôme (0.24.1) ---------------------------------------
+//
+// Séquence RÉELLE de logs/vuBox.jsonl (l. 410578-410600, 25/09) réduite à ses
+// champs utiles : vrai result → notification de tâche tuée → NOUVEAU tour
+// (user_prompt avec --callback chef) → la notification rejouée → system/init →
+// result FANTÔME (0 tour, 0 ms d'API, même coût) → le vrai travail → vrai result.
+
+const { isPhantomResult, deriveState } = await import('./fleet-status-core.mjs');
+const SID = 'b443cd4d-0000';
+const SEQ = [
+  { type: 'assistant', message: { content: [{ type: 'text', text: 'Phase précédente terminée.' }] } },
+  { type: 'result', subtype: 'success', num_turns: 22, duration_api_ms: 1841972, duration_ms: 180591, stop_reason: 'end_turn', total_cost_usd: 56.62, session_id: SID, result: 'Phase précédente terminée.' },
+  { type: 'system', subtype: 'task_notification', status: 'stopped', session_id: SID },
+  { type: 'user_prompt', text: 'RENDRE LES GELS/COUPURES DIAGNOSTICABLES', callback: 'chef', timestamp: '2026-09-25T10:49:38.900Z' },
+  { type: 'system', subtype: 'task_notification', status: 'stopped', session_id: SID },
+  { type: 'system', subtype: 'init', session_id: SID },
+  { type: 'result', subtype: 'success', num_turns: 0, duration_api_ms: 0, duration_ms: 27, stop_reason: null, total_cost_usd: 56.62, session_id: SID, result: 'Phase précédente terminée.' },
+  { type: 'system', subtype: 'init', session_id: SID },
+  { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'adb logcat' } }] } },
+  { type: 'assistant', message: { content: [{ type: 'text', text: 'Instrumentation livrée.' }] } },
+  { type: 'result', subtype: 'success', num_turns: 31, duration_api_ms: 900000, duration_ms: 950000, stop_reason: 'end_turn', total_cost_usd: 70.1, session_id: SID, result: 'Instrumentation livrée.' },
+];
+
+scenario('result fantôme : reconnu, et SEULEMENT lui');
+{
+  ok(isPhantomResult(SEQ[6]) === true, 'le result à 0 tour / 0 ms est un fantôme');
+  ok(!isPhantomResult(SEQ[1]) && !isPhantomResult(SEQ[10]), 'les vrais result ne le sont pas');
+  ok(!isPhantomResult({ type: 'result', num_turns: 0, duration_api_ms: 0, synthetic: true }), 'un result synthétique (serveur/dispatch) n’en est jamais un');
+  ok(!isPhantomResult({ type: 'result', is_error: true }), 'un result sans ces champs reste un vrai (codex, anciens logs)');
+}
+
+scenario('reduceMusician réel : le fantôme n’a AUCUN effet, le vrai result réveille');
+{
+  const start = SRC.indexOf('function reduceMusician(');
+  const end = SRC.indexOf('\n}\n', start) + 2;
+  const musicianAutoStates = new Map();
+  // eslint-disable-next-line no-new-func
+  const reduceMusician = new Function('musicianAutoStates', 'isPhantomResult', 'NEEDS_CHEF_RE',
+    `${SRC.slice(start, end)}\nreturn reduceMusician;`)(musicianAutoStates, isPhantomResult, /NEEDS_CHEF_INPUT:\s*([^\n]+)/i);
+  const out = SEQ.map(ev => reduceMusician('vuBox', ev));
+  const phantom = out[6];
+  ok(phantom.phantom === true, 'le fantôme est signalé au pump');
+  ok(phantom.prevState === 'live' && phantom.newState === 'live', 'pas de changement d’état (le musicien reste en cours)');
+  ok(phantom.expectCallback === null, 'le pump ne voit aucune attente à honorer sur le fantôme (pas de réveil)');
+  const real = out[10];
+  ok(real.newState === 'unread' && real.expectCallback === 'chef',
+     'le VRAI result porte encore --callback chef : c’est lui qui réveille (avant : consommé par le fantôme)');
+  ok(real.lastLine === 'Instrumentation livrée.', 'et avec le texte du tour courant, pas l’ancien');
+
+  const pump = SRC.slice(SRC.indexOf('reduceMusician(name, ev);'), SRC.indexOf('// ---- Callback-wake bookkeeping'));
+  ok(/if \(phantom\)[\s\S]*debugLog\(msg\)[\s\S]*continue;/.test(pump),
+     'le pump sort AVANT réveil/notification/drain/ticket de chef, et journalise dans server-debug.log');
+}
+
+scenario('fleet-status (deriveState partagé) ignore le fantôme');
+{
+  const lines = SEQ.map(e => JSON.stringify(e));
+  ok(deriveState(lines.slice(0, 7)).state === 'live', 'juste après le fantôme : toujours « en cours »');
+  ok(deriveState(lines).state === 'unread', 'après le vrai result : terminé');
+}
+
 try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {}
 console.log(`\n${fail === 0 ? '✓' : '✗'} ${pass} réussis, ${fail} échoués`);
 process.exit(fail ? 1 : 0);

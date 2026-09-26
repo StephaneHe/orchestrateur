@@ -730,6 +730,26 @@ if (queueIfBusy && projectName !== CONDUCTOR) {
   }
 }
 
+// ---------- règle de fin de tour : pas d'attente sur l'arrière-plan (0.24.1) --
+//
+// Un tour `claude -p` se termine au `result` et ses tâches d'arrière-plan sont
+// TUÉES avec lui (`system/task_notification` status "stopped"). Deux musiciens
+// ont fini leur tour sur « je reprends dès que le banc/le déploiement se
+// termine » (TranslateOverlay, vuBox, 25/09) : le process est mort, personne
+// n'a repris, et la notification résiduelle a en plus produit un result
+// fantôme au tour suivant. La consigne s'ajoute à tout dispatch de musicien
+// (pas au chef : c'est un routeur, il ne lance pas ce genre de process).
+function backgroundRule(notifyTo) {
+  const notifyPath = path.join(ROOT, 'scripts', 'notify.mjs');
+  return `\n\n---\nRÈGLE DE FIN DE TOUR : ton tour s'arrête à ta dernière réponse et toute tâche d'arrière-plan ` +
+    `(run_in_background, « & », Start-Job) est alors TUÉE — personne ne reprendra « quand elle aura fini ». ` +
+    `Ne termine donc JAMAIS un tour en comptant sur un process d'arrière-plan. Soit tu l'exécutes en ` +
+    `avant-plan et tu attends son résultat dans ce tour ; soit, s'il est trop long, tu le lances réellement ` +
+    `DÉTACHÉ (PowerShell : Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments ` +
+    `@{CommandLine='cmd /c <ta commande> > <log> 2>&1 & node "${notifyPath}" ${notifyTo} "<projet> : <tâche> terminée, voir <log>" --source ${projectName}'}) ` +
+    `pour qu'il prévienne lui-même « ${notifyTo} » à la fin — et tu le dis explicitement dans ta réponse.`;
+}
+
 // ---------- callback injection ----------------------------------------------
 
 // promptForLog = original prompt shown in the viewer (no boilerplate).
@@ -741,6 +761,9 @@ if (callbackProject) {
   // markdown-rich text (pipes, quotes, newlines break argv on Windows).
   prompt = prompt + `\n\n---\nUne fois ta tâche terminée — ou si tu as un point important à signaler en cours de route — envoie un résumé au projet « ${callbackProject} » via cette commande Bash (utilise IMPÉRATIVEMENT la forme stdin pour éviter la troncature shell) :\n\n  printf '%s' "ton résumé complet ici" | node "${notifyPath}" ${callbackProject} --stdin --source ${projectName}\n\nSi le résumé contient des sauts de ligne ou du markdown, écris-le dans une variable bash d'abord :\n\n  RESUME="ligne 1\nligne 2\nligne 3"\n  printf '%s' "$RESUME" | node "${notifyPath}" ${callbackProject} --stdin --source ${projectName}\n\nAdapte le contenu au contexte : ce que tu as accompli, découvert, ou la question que tu poses.`;
 }
+// Seul `prompt` (ce que reçoit claude) porte la règle ; `promptForLog` reste le
+// texte d'origine, donc le fil et le panneau n'affichent pas ce bloc.
+if (projectName !== CONDUCTOR) prompt = prompt + backgroundRule(callbackProject || CONDUCTOR);
 
 // ---------- env scrub -------------------------------------------------------
 

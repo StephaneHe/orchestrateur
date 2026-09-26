@@ -25,6 +25,29 @@ const DEFAULT_LOGS = path.join(ROOT, 'logs');
 export const STALL_SILENCE_MS = 60_000;   // live/think without progress → suspect
 const TAIL_BYTES = 256 * 1024;            // only scan the last 256 KB
 
+/**
+ * « Result fantôme » : un `result` à 0 tour et 0 ms d'API n'est PAS une fin de
+ * tour. Le CLI claude en émet un au `--resume` quand la session précédente a
+ * laissé une notification de tâche d'arrière-plan tuée (`system/
+ * task_notification` status "stopped") : il « rejoue » cette notification en
+ * mini-tour vide, AU MILIEU du nouveau tour — après son user_prompt et son
+ * system/init — puis traite le vrai prompt. Même session_id, même coût cumulé
+ * que le result précédent, `stop_reason: null`.
+ *
+ * Le prendre pour une fin de tour réveillait le chef avec l'ancien texte,
+ * consommait l'attente `--callback` du vrai tour (dont la fin ne réveillait
+ * donc plus personne), vidait la file en plein tour et fermait le ticket de
+ * chef en cours (25/09/2026, TranslateOverlay et vuBox ; 181 dans chef.jsonl).
+ *
+ * Les result synthétiques écrits par dispatch.mjs / le serveur portent
+ * `num_turns: 1` ou `synthetic: true` : ils ne tombent jamais ici. On exige les
+ * DEUX champs à 0 exactement, pour qu'un result sans ces champs reste un vrai.
+ */
+export function isPhantomResult(ev) {
+  return ev?.type === 'result' && !ev.synthetic &&
+    ev.num_turns === 0 && ev.duration_api_ms === 0;
+}
+
 /** Read the last TAIL_BYTES of a file and split into full JSON lines (dropping
  *  a partial head line that may be cut mid-object). */
 export function tailLines(filePath) {
@@ -48,6 +71,7 @@ export function lastMeaningful(lines) {
       const ev = JSON.parse(lines[i]);
       if (!ev || typeof ev !== 'object') continue;
       if (ev.type === 'stream_event') continue; // partials are not "progress"
+      if (isPhantomResult(ev)) continue;        // not a turn end (see above)
       return ev;
     } catch { /* skip corrupt */ }
   }
@@ -79,6 +103,7 @@ export function deriveState(lines) {
 
   for (const ln of lines) {
     let ev; try { ev = JSON.parse(ln); } catch { continue; }
+    if (isPhantomResult(ev)) continue;   // mini-tour rejoué par le CLI, pas une fin de tour
     const t = ev?.type;
 
     // Track model/provider as they appear (init, assistant, result all carry them).

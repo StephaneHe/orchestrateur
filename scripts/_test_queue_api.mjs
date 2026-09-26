@@ -154,6 +154,101 @@ scenario('garde-fous du CLI');
 }
 
 server.close();
+
+// ---------- 3. drain : la tâche part, et ne revient pas en file (0.24.1) ------
+//
+// Cause exacte du 25/09 : le drain partait au `result`, le `claude` du tour
+// était encore vivant, et le dispatch.mjs relancé (DISPATCH_SLOT hérité ⇒
+// --queue-if-busy) se RE-POSTAIT en queue de file sous un nouvel id. On charge
+// le bloc réel (drainQueue → sweepQueues) avec un PID pilotable.
+
+const DRAIN_SRC = slice('function drainQueue(name, reason', '// ---------- File de direction (pool P0-A');
+function drainSandbox() {
+  const dq = new Map();
+  const spawned = [];
+  const pid = { alive: false };
+  const states = new Map();
+  let limited = null;
+  const intervals = [];
+  const api = new Function(
+    'dispatchQueue', 'persistQueue', 'dispatchPidAlive', 'spawnDirectDispatch', 'readLimitedUntil',
+    'musicianAutoStates', 'debugLog', 'console', 'setInterval',
+    `${DRAIN_SRC}\nreturn { drainQueue, sweepQueues, queueStalledSince, drainLaunchedAt, drainPending };`)(
+    dq, () => {}, () => (pid.alive ? 4242 : null),
+    (name, prompt, a, v, opts) => { spawned.push({ name, prompt, opts }); return 1; },
+    () => limited, states, () => {}, { log: () => {} }, (fn, ms) => { intervals.push(ms); return { unref() {} }; });
+  return { api, dq, spawned, pid, states, setLimited: (v) => { limited = v; }, intervals };
+}
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const entry = (id, extra = {}) => ({ id, enqueuedAt: new Date().toISOString(), prompt: `tâche ${id}`, attachmentPaths: [], videoPaths: [], callback: 'chef', slot: 1, ticket: 'm-1-aaaa', ...extra });
+
+scenario('drain au result : attend la mort du processus, puis lance SANS se re-poster');
+{
+  const s = drainSandbox();
+  s.dq.set('Alpha', [entry('q-1'), entry('q-2')]);
+  s.pid.alive = true;                       // le claude du tour qui finit n'est pas encore sorti
+  s.api.drainQueue('Alpha');
+  s.api.drainQueue('Alpha');                // second result (ou fantôme) pendant l'attente
+  await sleep(1300);
+  ok(s.spawned.length === 0 && s.dq.get('Alpha').length === 2, 'tant que le processus vit : rien ne part, rien ne tourne en rond');
+  s.pid.alive = false;
+  await sleep(1300);
+  ok(s.spawned.length === 1 && s.spawned[0].prompt === 'tâche q-1', 'dès sa mort : la tête part, une seule fois');
+  ok(s.spawned[0].opts.noQueueIfBusy === true, 'lancée avec --no-queue-if-busy (le fils ne re-décide pas de la file)');
+  ok(s.spawned[0].opts.callback === 'chef' && s.spawned[0].opts.slot === 1, 'callback et slot conservés');
+  ok(s.dq.get('Alpha').length === 1 && s.dq.get('Alpha')[0].id === 'q-2', 'la suivante attend, avec son id d’origine');
+  const SRCd = SRC.slice(SRC.indexOf('function spawnDirectDispatch('), SRC.indexOf('function drainQueue('));
+  ok(/opts\.noQueueIfBusy\) args\.push\('--no-queue-if-busy'\)/.test(SRCd), 'spawnDirectDispatch transmet bien --no-queue-if-busy');
+}
+
+scenario('drain : une tâche retirée pendant l’attente ne part pas');
+{
+  const s = drainSandbox();
+  s.dq.set('Alpha', [entry('q-1')]);
+  s.pid.alive = true;
+  s.api.drainQueue('Alpha');
+  s.dq.delete('Alpha');                     // queue.mjs --remove pendant l'attente
+  s.pid.alive = false;
+  await sleep(1300);
+  ok(s.spawned.length === 0, 'rien n’est lancé');
+}
+
+scenario('balayage de secours : libre + aucun processus + file ≥ 60 s ⇒ drain');
+{
+  const s = drainSandbox();
+  ok(s.intervals.includes(30_000), 'le balayage est armé toutes les 30 s');
+  s.dq.set('Alpha', [entry('q-1')]);
+  s.states.set('Alpha', { state: 'input' });
+  s.api.sweepQueues();
+  ok(s.api.queueStalledSince.has('Alpha') && s.spawned.length === 0, '1er passage : la file est notée, rien ne part encore');
+  s.api.queueStalledSince.set('Alpha', Date.now() - 61_000);
+  s.api.sweepQueues();
+  await sleep(50);
+  ok(s.spawned.length === 1, 'après 60 s : drain de secours (y compris en « input »)');
+
+  for (const [label, setup] of [
+    ['musicien en cours (live)', (x) => x.states.set('B', { state: 'live' })],
+    ['processus vivant', (x) => { x.pid.alive = true; }],
+    ['limite Claude active', (x) => x.setLimited('2099-01-01T00:00:00Z')],
+    ['lancé il y a moins d’une minute', (x) => x.api.drainLaunchedAt.set('B', Date.now())],
+  ]) {
+    const x = drainSandbox();
+    x.dq.set('B', [entry('q-9')]);
+    setup(x);
+    x.api.sweepQueues();
+    x.api.queueStalledSince.set('B', Date.now() - 61_000);
+    x.api.sweepQueues();
+    await sleep(30);
+    ok(x.spawned.length === 0, `pas de drain de secours si ${label}`);
+  }
+}
+
+scenario('fin de tour en « input » : la file est drainée');
+{
+  const cond = SRC.slice(SRC.indexOf('// Drain the per-musician queue on any turn completion'), SRC.indexOf('drainQueue(name);', SRC.indexOf('// Drain the per-musician queue on any turn completion')));
+  ok(/newState === 'input'/.test(cond), 'la condition de drain du pump inclut newState === "input"');
+}
+
 try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {}
 console.log(`\n${fail === 0 ? '✓' : '✗'} ${pass} réussis, ${fail} échoués`);
 process.exit(fail ? 1 : 0);

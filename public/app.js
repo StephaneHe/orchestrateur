@@ -894,6 +894,11 @@ class FleetStream {
       const m = App.musicians.get(env.project);
       if (!m) return;
       let raw; try { raw = JSON.parse(env.line); } catch { return; }
+      // « Result fantôme » (même règle que isPhantomResult, fleet-status-core) :
+      // mini-tour à 0 tour/0 ms rejoué par le CLI au milieu du tour suivant. Le
+      // traiter terminerait le panneau en plein travail et, pour le chef,
+      // couperait « le chef répond… » avant sa vraie réponse.
+      if (raw?.type === "result" && !raw.synthetic && raw.num_turns === 0 && raw.duration_api_ms === 0) return;
       const prevDenials = m.pendingDenials.length;
       m.transition(raw);
       if (m.pendingDenials.length > prevDenials && App.focused !== m) {
