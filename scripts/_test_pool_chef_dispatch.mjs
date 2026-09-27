@@ -146,5 +146,63 @@ scenario("Règle de fin de tour injectée aux musiciens");
   ok(/noQueueIdx !== -1 \? false/.test(D), '--no-queue-if-busy l’emporte sur DISPATCH_SLOT (lancement depuis la file)');
 }
 
+// ── 8. codex : le --model est respecté, plus de gpt-4o codé en dur (0.25.1) ─
+scenario('codex : choix du model (flag > projet > défaut config > config.toml de codex)');
+{
+  const D = fs.readFileSync(DISPATCH, 'utf8');
+  // Refus AVANT toute écriture : un vrai projet est ciblé, mais le script meurt
+  // à la validation des flags (aucun log, aucun claude, aucun codex lancé).
+  const plain = (args) => spawnSync(process.execPath, [DISPATCH, ...args], {
+    cwd: ROOT, encoding: 'utf8', env: { ...process.env, ANTHROPIC_API_KEY: '', DISPATCH_SLOT: '' },
+  });
+  const logBefore = fs.statSync(path.join(ROOT, 'logs', 'orchestrateur.jsonl')).size;
+  let r = plain(['orchestrateur', '--provider', 'codex', '--model', 'claude-opus-5', 'bonjour']);
+  ok(r.status === 64 && /model Claude/.test(r.stderr) && /gpt-6-astra/.test(r.stderr), 'model Claude + --provider codex ⇒ refus clair (exit 64)');
+  r = plain(['orchestrateur', '--model', 'gpt-6-astra', 'bonjour']);
+  ok(r.status === 64 && /--provider codex/.test(r.stderr), 'model OpenAI sans --provider codex ⇒ refus clair (exit 64)');
+  // Le log de ce projet grossit tout seul (c'est le musicien en cours) : on ne
+  // vérifie pas son égalité, seulement qu'aucune ligne « bonjour » n'y est née.
+  const tail = fs.readFileSync(path.join(ROOT, 'logs', 'orchestrateur.jsonl'), 'utf8').slice(logBefore);
+  ok(!/"text":"bonjour"/.test(tail), 'aucune écriture de log pour un dispatch refusé');
+
+  // Résolution : on évalue l'expression RÉELLE de runCodex avec des entrées pilotées.
+  const a = D.indexOf('const { model: codexModel, source: codexModelSource } = isFailover');
+  const b = D.indexOf(';', D.indexOf("{ model: null, source: 'codex-config' }", a)) + 1;
+  const resolve = (isFailover, modelOverride, project, config) =>
+    new Function('isFailover', 'modelOverride', 'project', 'config', 'FAILOVER_CODEX_MODEL',
+      `${D.slice(a, b)}\nreturn { codexModel, codexModelSource };`)(isFailover, modelOverride, project, config, 'gpt-5.6-sol');
+  let x = resolve(false, 'gpt-6-astra', {}, { defaults: {} });
+  ok(x.codexModel === 'gpt-6-astra' && x.codexModelSource === 'flag', '--model explicite gagne');
+  x = resolve(false, 'gpt-6-astra', { codexModel: 'gpt-5.5' }, { defaults: { codexModel: 'gpt-5.6-luna' } });
+  ok(x.codexModel === 'gpt-6-astra', '… même devant codexModel du projet et du défaut');
+  x = resolve(false, null, { codexModel: 'gpt-5.5' }, { defaults: { codexModel: 'gpt-5.6-luna' } });
+  ok(x.codexModel === 'gpt-5.5' && x.codexModelSource === 'project', 'puis codexModel du projet');
+  x = resolve(false, null, {}, { defaults: { codexModel: 'gpt-5.6-luna' } });
+  ok(x.codexModel === 'gpt-5.6-luna' && x.codexModelSource === 'defaults', 'puis defaults.codexModel');
+  x = resolve(false, null, {}, { defaults: {} });
+  ok(x.codexModel === null && x.codexModelSource === 'codex-config', 'rien de configuré ⇒ pas de --model, codex lit son config.toml (le cas du poste)');
+  x = resolve(true, 'claude-opus-5', {}, { defaults: {} });
+  ok(x.codexModel === 'gpt-5.6-sol' && x.codexModelSource === 'failover', 'failover : inchangé, et le --model Claude du dispatch n’atteint jamais codex');
+  x = resolve(true, null, { codexModel: 'gpt-5.5' }, { defaults: {} });
+  ok(x.codexModel === 'gpt-5.5', 'failover : le codexModel configuré garde la priorité (comme avant)');
+  ok(!D.split('\n').some(l => /'gpt-4o'/.test(l) && !/^\s*\/\//.test(l)), "plus aucun 'gpt-4o' codé en dur (hors commentaires)");
+  ok(/\.\.\.\(codexModel \? \['--model', codexModel\] : \[\]\)/.test(D), '--model n’est passé à codex que s’il est résolu');
+
+  // Trace : le model que codex utilisera, lu dans SON config.toml.
+  const c0 = D.indexOf('function readCodexConfigModel(');
+  const c1 = D.indexOf('\n}\n', c0) + 2;
+  const home = fs.mkdtempSync(path.join((await import('node:os')).tmpdir(), 'codex-home-'));
+  fs.writeFileSync(path.join(home, 'config.toml'), 'model = "gpt-5.6-sol"\nmodel_reasoning_effort = "high"\n\n[profiles.x]\nmodel = "gpt-5.5"\n');
+  const prev = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = home;
+  const readCfg = new Function('fs', 'path', 'process', `${D.slice(c0, c1)}\nreturn readCodexConfigModel;`)(fs, path, process);
+  ok(readCfg() === 'gpt-5.6-sol', 'config.toml : la clé model de premier niveau (pas celle d’un [profil])');
+  process.env.CODEX_HOME = path.join(home, 'absent');
+  ok(readCfg() === null, 'config.toml illisible ⇒ null (la trace le dit, le tour part quand même)');
+  if (prev === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = prev;
+  fs.rmSync(home, { recursive: true, force: true });
+  ok(/model: loggedCodexModel, modelSource: codexModelSource/.test(D), 'le system/init trace model + modelSource');
+}
+
 console.log(`\n${fail === 0 ? '✓' : '✗'} ${pass} réussis, ${fail} échoués`);
 process.exit(fail === 0 ? 0 : 1);

@@ -215,6 +215,34 @@ pour une question acquittée ou dépassée).
 
 ---
 
+## Provider et model d'un dispatch (`dispatch.mjs`)
+
+- `--provider claude|codex` et `--model <id>` choisissent le provider et le
+  model pour un seul dispatch, sans écrire `config.json`. Un chef n'écrit
+  jamais ce fichier.
+- **codex, hors failover** (0.25.1) : le model est choisi dans cet ordre :
+  1. `--model` ;
+  2. `codexModel` du projet ;
+  3. `defaults.codexModel` ;
+  4. sinon, aucun `--model` n'est passé et codex applique son propre
+     `~/.codex/config.toml` (`CODEX_HOME` respecté).
+
+  Le `'gpt-4o'` codé en dur a disparu. Models vus dans le models_cache de
+  codex : `gpt-6-astra`, `gpt-reserve`, `gpt-5.6-sol`, `gpt-5.6-terra`,
+  `gpt-5.6-luna`, `gpt-5.5`.
+- **Leg de failover codex** (limite Claude) : inchangé. C'est le `codexModel`
+  configuré, sinon `FAILOVER_CODEX_MODEL`. Le `--model` d'un dispatch Claude
+  qui bascule n'atteint jamais codex.
+- **Refus avant toute écriture (exit 64)** : un model Claude
+  (`claude|opus|sonnet|haiku|fable…`) avec `--provider codex`, et un model
+  OpenAI (`gpt|o<n>|codex…`) sans lui.
+- **Traçabilité** : le `system/init` et le `result` codex du log portent
+  `model`, c'est-à-dire le model passé, ou celui que désigne `config.toml`
+  quand on laisse codex choisir. Le `system/init` porte en plus `modelSource`
+  (`flag|project|defaults|codex-config|failover`).
+
+---
+
 ## Attachments
 
 Images uploaded via the dashboard (paste / drag-drop / file picker) land in

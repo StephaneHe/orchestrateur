@@ -11,6 +11,48 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.25.1] - 2026-09-27
+
+### Fixed
+- (dispatch) **Avec `--provider codex`, `--model <id>` était ignoré.**
+  `runCodex` retombait sur `'gpt-4o'` codé en dur dès qu'aucun `codexModel`
+  n'était configuré, ce qui est le cas du poste. Le `--model` demandé par le
+  chef et le défaut de `~/.codex/config.toml` (`gpt-5.6-sol`) étaient donc
+  ignorés, alors que le chef n'a pas le droit d'écrire `config.json`. L'ordre
+  de choix, hors failover, est désormais :
+  1. `--model` ;
+  2. `codexModel` du projet ;
+  3. `defaults.codexModel` ;
+  4. sinon, aucun `--model` n'est passé et codex applique son `config.toml`.
+
+  Le `'gpt-4o'` codé en dur a disparu.
+
+### Changed
+- (dispatch) **Le leg de failover codex ne change pas** : c'est le
+  `codexModel` configuré, sinon `FAILOVER_CODEX_MODEL`. Le `--model` d'un
+  dispatch Claude qui bascule en failover n'atteint jamais codex.
+- (dispatch) **Refus avant toute écriture (exit 64)** d'un model Claude
+  (`claude|opus|sonnet|haiku|fable…`) avec `--provider codex`, et d'un model
+  OpenAI (`gpt|o<n>|codex…`) sans lui, avec un message qui dit quoi faire.
+- (dispatch) **Traçabilité** : le `system/init` codex porte `model`, soit le
+  model passé, soit celui que désigne `config.toml` quand on laisse codex
+  choisir. Il porte aussi `modelSource` (`flag|project|defaults|codex-config|
+  failover`). Le `result` codex porte le même `model`.
+
+### Added
+- (tests) `_test_pool_chef_dispatch.mjs` (36) : refus réels par
+  `dispatch.mjs` sans écriture de log ; ordre de choix évalué sur
+  l'expression réelle de `runCodex` (dont le failover inchangé) ; lecture du
+  `config.toml` (clé de premier niveau, `CODEX_HOME`, fichier illisible) ;
+  plus de `gpt-4o`.
+- (docs) `CLAUDE.md` : section « Provider et model d'un dispatch ».
+  `I:\Dev\Chef\CLAUDE.md` : « Models OpenAI (via codex) », avec
+  `--provider codex --model <id>`, l'ordre de choix, les models disponibles et
+  où vérifier le model utilisé.
+
+`server.js` n'est pas touché et `dispatch.mjs` est lu à chaque exécution :
+aucun redémarrage n'est nécessaire.
+
 ## [0.25.0] - 2026-09-27
 
 On peut acquitter la question d'un musicien **sans le relancer**. Signalement :

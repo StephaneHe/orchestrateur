@@ -281,6 +281,20 @@ const model    = modelOverride    || project.model    || config.defaults?.model 
 const tools    = project.tools    || config.defaults?.allowedTools || 'Read,Edit,Write,Bash';
 const provider = providerOverride || project.provider || config.defaults?.provider     || 'claude';
 
+// Un `--model` doit appartenir à la famille du provider qui va le recevoir.
+// Transmis tel quel, un `claude-*` fait échouer codex (et un `gpt-*` le CLI
+// claude) après le démarrage du tour : mieux vaut un refus clair ici, avant la
+// moindre écriture de log.
+const CLAUDE_MODEL_RE = /^(claude|opus|sonnet|haiku|fable)\b/i;
+const OPENAI_MODEL_RE = /^(gpt|o\d|codex)\b/i;
+if (modelOverride && provider === 'codex' && CLAUDE_MODEL_RE.test(modelOverride)) {
+  die(`--model ${modelOverride} est un model Claude : avec --provider codex, passe un model OpenAI ` +
+    `(ex. gpt-6-astra, gpt-5.6-sol) ou omets --model pour le défaut de codex (config.toml)`);
+}
+if (modelOverride && provider === 'claude' && OPENAI_MODEL_RE.test(modelOverride)) {
+  die(`--model ${modelOverride} est un model OpenAI : ajoute --provider codex`);
+}
+
 // ---------- paths -----------------------------------------------------------
 
 const LOGS = path.join(ROOT, 'logs');
@@ -444,6 +458,20 @@ function clearClaudeLimitFlag() {
  *  does, so the log line never disagrees with what actually runs. */
 function failoverCodexModel() {
   return project.codexModel || config.defaults?.codexModel || FAILOVER_CODEX_MODEL;
+}
+
+/** Model par défaut de codex, tel que son config.toml le déclare (clé `model`
+ *  de premier niveau, avant toute section `[…]`). Sert UNIQUEMENT à tracer dans
+ *  le log le model qu'utilisera codex quand on ne lui en passe pas ; null si
+ *  illisible. `CODEX_HOME` est respecté comme le fait codex lui-même. */
+function readCodexConfigModel() {
+  const home = process.env.CODEX_HOME || path.join(process.env.USERPROFILE || process.env.HOME || '', '.codex');
+  try {
+    const text = fs.readFileSync(path.join(home, 'config.toml'), 'utf8');
+    const top = text.split(/^\s*\[/m)[0];
+    const m = /^\s*model\s*=\s*["']([^"']+)["']/m.exec(top);
+    return m ? m[1] : null;
+  } catch { return null; }
 }
 
 // ---------------------------------------------------------------------------
@@ -968,17 +996,31 @@ function runCodex(isFailover = false) {
   }
 
   const codexBinInfo = resolveCodexBin();
-  // On the failover leg the fleet spec pins a specific model; an explicit
-  // project/config setting still wins so per-project choices are honoured.
-  const codexModel = project.codexModel
-    || config.defaults?.codexModel
-    || (isFailover ? FAILOVER_CODEX_MODEL : 'gpt-4o');
+  // Choix du model (0.25.1). Avant : `… || 'gpt-4o'` codé en dur — sans
+  // codexModel configuré (le cas du poste), tout dispatch codex partait sur
+  // gpt-4o, en ignorant `--model` ET le défaut de ~/.codex/config.toml.
+  //   · tour codex demandé : --model > project.codexModel > defaults.codexModel
+  //     > rien (codex lit alors SON config.toml) ;
+  //   · leg de failover : INCHANGÉ — codexModel configuré > FAILOVER_CODEX_MODEL.
+  //     Le `--model` d'un dispatch Claude qui bascule en failover est un model
+  //     Claude : il ne doit jamais atteindre codex.
+  const { model: codexModel, source: codexModelSource } = isFailover
+    ? (project.codexModel || config.defaults?.codexModel
+        ? { model: project.codexModel || config.defaults.codexModel, source: project.codexModel ? 'project' : 'defaults' }
+        : { model: FAILOVER_CODEX_MODEL, source: 'failover' })
+    : modelOverride          ? { model: modelOverride,              source: 'flag' }
+    : project.codexModel     ? { model: project.codexModel,         source: 'project' }
+    : config.defaults?.codexModel ? { model: config.defaults.codexModel, source: 'defaults' }
+    : { model: null, source: 'codex-config' };
+  // Pour la trace seulement : quand on laisse codex choisir, on écrit dans le
+  // log ce que son config.toml désigne, pour que le chef puisse le vérifier.
+  const loggedCodexModel = codexModel || readCodexConfigModel() || 'défaut codex (config.toml illisible)';
   const fakeSid    = `codex-${crypto.randomUUID()}`;
 
   logStream.write(JSON.stringify({
     type: 'system', subtype: 'init', session_id: fakeSid,
     provider: 'codex', failover: isFailover || undefined,
-    model: codexModel, timestamp: new Date().toISOString(),
+    model: loggedCodexModel, modelSource: codexModelSource, timestamp: new Date().toISOString(),
   }) + '\n');
 
   // Where codex writes its final assistant message. Authoritative source for
@@ -1007,7 +1049,7 @@ function runCodex(isFailover = false) {
   //     limit, and nothing in the prompt can ever reach a command line.
   const codexArgs = [
     'exec',
-    '--model', codexModel,
+    ...(codexModel ? ['--model', codexModel] : []),   // absent ⇒ codex applique son config.toml
     '--approve-for-me',
     '--skip-git-repo-check',
     '--json',
@@ -1255,7 +1297,7 @@ function runCodex(isFailover = false) {
         ? { input_tokens: codexUsage.input_tokens ?? 0, output_tokens: codexUsage.output_tokens ?? 0 }
         : {},
       provider: 'codex',
-      model: codexModel,
+      model: loggedCodexModel,
       failover: isFailover || undefined,
       timestamp: new Date().toISOString(),
     }) + '\n');
@@ -1264,7 +1306,7 @@ function runCodex(isFailover = false) {
     // here, we exit. A retry loop would pound a dead account unattended.
     if (isFailover) {
       if (isErr) console.error(`[FAILOVER] codex fallback FAILED for ${projectName} (code=${code} signal=${signal || 'none'}) — turn lost, giving up (no retry loop)`);
-      else       console.error(`[FAILOVER] codex fallback completed ${projectName} via ${codexModel}`);
+      else       console.error(`[FAILOVER] codex fallback completed ${projectName} via ${loggedCodexModel}`);
     }
     if (signal) { console.error(`[dispatch/codex] killed by ${signal}`); endLogAndExit(128); return; }
     endLogAndExit(code ?? 1);
