@@ -240,6 +240,34 @@ pour une question acquittée ou dépassée).
   `model`, c'est-à-dire le model passé, ou celui que désigne `config.toml`
   quand on laisse codex choisir. Le `system/init` porte en plus `modelSource`
   (`flag|project|defaults|codex-config|failover`).
+- **Model explicite = aucun fallback** (0.26.0, règle utilisateur : « si un
+  modèle est précisément demandé, aucun fallback n'est toléré »). Un model est
+  explicite dès qu'il arrive par `--model`, y compris via la file, le pool ou
+  l'API, qui repassent `--model` tel quel. Le tour tourne alors sur ce model
+  et seulement lui :
+  - pas de failover NVIDIA, pas de repli codex, pas de défaut projet ou flotte ;
+  - vérification du model réellement servi :
+    - claude : `system/init.model`, puis chaque `assistant.message.model`
+      (`<synthetic>` exclu). Pas `modelUsage`, qui est cumulé sur la session
+      et inclut des appels annexes. Un écart arrête le tour dès l'`init`,
+      avant tout travail.
+    - codex : la rollout `~/.codex/sessions/…-<thread_id>.jsonl`, relue après
+      le tour. Si elle est introuvable, `system/model_unverified` est
+      journalisé sans faire échouer le tour.
+  - Si le model est indisponible (limite, substitution, CLI mort sans
+    result), le tour échoue : `system/fallback_refused` suivi d'un `result`
+    `is_error`, `subtype: error_model_unavailable`, cause
+    « model demandé X indisponible : … — aucun fallback (règle utilisateur) ».
+    Ce result n'est **pas** synthétique : le chef reçoit le ✕ et son réveil.
+  - Le drapeau de limite de flotte est tout de même posé : les dispatches
+    sans model explicite continuent de basculer.
+  - Le serveur trace `[fallback-refusé]` et ne draine pas la file
+    immédiatement derrière ; le balayage de secours s'en charge, jamais sous
+    limite.
+
+  Sans `--model`, rien ne change. Recette de bout en bout, isolée par
+  `DISPATCH_ROOT_FOR_TESTS` (le drapeau de limite est à l'échelle de la
+  flotte) : `node scripts/_test_explicit_model.mjs`.
 
 ---
 

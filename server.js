@@ -4871,6 +4871,13 @@ function startBackgroundNotifyWatchers() {
           if (ev.type === 'result') {
             console.log(`[notify-bg] ${name} result: prevState=${prevState} newState=${newState}`);
           }
+          // Règle « model explicite = aucun fallback » (0.26.0) : dispatch.mjs a
+          // refusé de basculer. Le result est un échec ordinaire (notification
+          // ✕ et réveil du chef comme tout échec) ; on trace juste la décision.
+          if (ev.type === 'result' && ev.model_unavailable) {
+            const msg = `[fallback-refusé] ${name} : model explicite ${ev.model_requested || '?'} — ${String(ev.result || '').slice(0, 200)}`;
+            console.log(msg); debugLog(msg);
+          }
           // ---- Callback-wake bookkeeping on the CHEF's own log ----------------
           if (name === conductorName()) {
             // The user is talking to the chef: its turn will show the results
@@ -4954,7 +4961,12 @@ function startBackgroundNotifyWatchers() {
           // lue a laissé TranslateOverlay « libre avec 1 tâche en file » des
           // heures (25/09). La question reste affichée (fil du chef + bande
           // d'attention) ; le tour suivant la verra dans sa propre session.
-          if (ev.type === 'result' && !ev.synthetic &&
+          //
+          // 0.26.0 : pas de drain immédiat derrière un échec « model explicite
+          // indisponible ». Sous limite Claude, l'entrée suivante échouerait
+          // pareil (ou basculerait) sans rien produire — même raison que la
+          // garde B1. Le balayage de secours la reprendra (jamais sous limite).
+          if (ev.type === 'result' && !ev.synthetic && !ev.model_unavailable &&
               (newState === 'unread' || newState === 'idle' || newState === 'error' || newState === 'input') &&
               (prevState === 'live' || prevState === 'think')) {
             drainQueue(name);

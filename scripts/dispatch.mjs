@@ -107,7 +107,15 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, '..');
+// DISPATCH_ROOT_FOR_TESTS : racine alternative (config.json, logs/, .env)
+// pour les recettes de bout en bout. Le drapeau de limite Claude
+// (logs/claude-limited.until) est à l'échelle de la FLOTTE : le simuler dans le
+// vrai logs/ ferait basculer tous les musiciens vivants. Jamais posé en
+// production ; il ne donne aucun droit de plus (il ne fait que déplacer des
+// fichiers que le processus lit déjà).
+const ROOT = process.env.DISPATCH_ROOT_FOR_TESTS
+  ? path.resolve(process.env.DISPATCH_ROOT_FOR_TESTS)
+  : path.resolve(__dirname, '..');
 
 function die(msg, code = 64) { console.error(`[dispatch] ${msg}`); process.exit(code); }
 
@@ -293,6 +301,35 @@ if (modelOverride && provider === 'codex' && CLAUDE_MODEL_RE.test(modelOverride)
 }
 if (modelOverride && provider === 'claude' && OPENAI_MODEL_RE.test(modelOverride)) {
   die(`--model ${modelOverride} est un model OpenAI : ajoute --provider codex`);
+}
+
+// ---------------------------------------------------------------------------
+// MODEL EXPLICITE = AUCUN FALLBACK (0.26.0, règle utilisateur)
+// ---------------------------------------------------------------------------
+// « Si un modèle est précisément demandé, aucun fallback n'est toléré. »
+// Un model est explicite quand il arrive par `--model` — y compris depuis une
+// file, le pool ou l'API, qui relancent tous dispatch.mjs avec `--model`.
+// Dans ce cas : pas de failover NVIDIA, pas de repli codex, pas de défaut
+// projet/fleet, et on VÉRIFIE que le CLI sert bien ce model. Indisponible ou
+// substitué ⇒ le tour échoue proprement (result is_error, cause explicite), le
+// chef est notifié ✕, et rien n'est exécuté par un autre model.
+// Sans --model, rien ne change : défauts et failover sur limite comme avant.
+const EXPLICIT_MODEL = modelOverride || null;
+
+/** Le model servi est-il bien celui demandé ? Tolère un suffixe de DATE
+ *  (`claude-haiku-4-5` ↔ `claude-haiku-4-5-20251001`), un suffixe entre
+ *  crochets (`[1m]`) et un alias nu (`opus`). Surtout PAS un préfixe
+ *  quelconque : `claude-opus-5-5` n'est pas `claude-opus-5`. `<synthetic>` =
+ *  message fabriqué par le CLI lui-même (notice d'erreur), pas un model. */
+function modelMatches(requested, actual) {
+  if (!actual || actual === '<synthetic>') return true;
+  const norm = (s) => String(s).toLowerCase().replace(/\[.*?\]$/, '').trim();
+  const r = norm(requested), a = norm(actual);
+  if (a === r) return true;
+  const dated = (long, short) => long.startsWith(short) && /^-\d{8}$/.test(long.slice(short.length));
+  if (dated(a, r) || dated(r, a)) return true;
+  if (/^(opus|sonnet|haiku|fable)$/.test(r)) return a.startsWith(`claude-${r}-`);
+  return false;
 }
 
 // ---------- paths -----------------------------------------------------------
@@ -887,6 +924,86 @@ if (CHEF_SLOT != null) {
 }
 logStream.write(JSON.stringify(userPromptEvent) + '\n');
 
+/**
+ * Échec d'un tour à model EXPLICITE (règle « aucun fallback »). Écrit la
+ * décision (system/fallback_refused) puis un result is_error qui clôt le tour.
+ * Volontairement PAS `synthetic` : un result synthétique est traité comme
+ * « clos par le système » et n'émet ni notification ni réveil — or le chef
+ * DOIT recevoir ce ✕. `model_unavailable` sert au serveur à ne pas drainer la
+ * file tout de suite derrière (le balayage de secours le fera, jamais sous
+ * limite). `duration_api_ms` est omis exprès : ce result ne doit jamais
+ * ressembler à un « result fantôme » (0 tour / 0 ms).
+ */
+let explicitFailed = false;
+function failExplicitModel(reason, extra = {}) {
+  if (explicitFailed) return;
+  explicitFailed = true;
+  const cause = `model demandé ${EXPLICIT_MODEL} indisponible : ${reason} — aucun fallback (règle utilisateur)`;
+  console.error(`[dispatch] fallback refusé : model explicite ${EXPLICIT_MODEL} — ${reason}`);
+  try {
+    logStream.write(JSON.stringify({
+      type: 'system', subtype: 'fallback_refused',
+      model_requested: EXPLICIT_MODEL, provider, reason, ...extra,
+      text: `fallback refusé : model explicite ${EXPLICIT_MODEL}`,
+      timestamp: new Date().toISOString(),
+    }) + '\n');
+    logStream.write(JSON.stringify({
+      type: 'result', subtype: 'error_model_unavailable', is_error: true,
+      model_unavailable: true, model_requested: EXPLICIT_MODEL, provider,
+      result: cause, num_turns: 0,
+      ...(sessionId ? { session_id: sessionId } : {}),
+      timestamp: new Date().toISOString(),
+    }) + '\n');
+  } catch {}
+  try { fs.unlinkSync(pidPath); } catch {}
+  endLogAndExit(1);
+}
+
+/**
+ * codex ne dit PAS dans son flux --json quel model il a servi. Sa « rollout »
+ * (~/.codex/sessions/AAAA/MM/JJ/rollout-…-<thread_id>.jsonl) le consigne : on
+ * la relit après le tour. Résultat : ok=true (que le model demandé), ok=false
+ * + served (un autre model a servi), ok=null + why (introuvable / pas de champ
+ * model — rien n'est prouvé, on le journalise sans faire échouer le tour).
+ * Les sous-threads (ex. `guardian` en codex-auto-review) ont leur propre
+ * fichier : ils ne sont pas confondus avec le thread principal.
+ */
+function verifyCodexRollout(threadId, requested, codexHome) {
+  if (!threadId) return { ok: null, why: 'thread_id inconnu (codex n’a pas émis thread.started)' };
+  const home = codexHome || process.env.CODEX_HOME || path.join(process.env.USERPROFILE || process.env.HOME || '', '.codex');
+  const days = new Set();
+  for (const back of [0, 1]) {
+    const d = new Date(Date.now() - back * 86_400_000);
+    for (const [y, m, dd] of [[d.getFullYear(), d.getMonth() + 1, d.getDate()], [d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate()]]) {
+      days.add(path.join(home, 'sessions', String(y), String(m).padStart(2, '0'), String(dd).padStart(2, '0')));
+    }
+  }
+  let file = null;
+  for (const dir of days) {
+    try {
+      const hit = fs.readdirSync(dir).find(f => f.endsWith(`-${threadId}.jsonl`));
+      if (hit) { file = path.join(dir, hit); break; }
+    } catch { /* jour absent */ }
+  }
+  if (!file) return { ok: null, why: `rollout du thread ${threadId} introuvable` };
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch (e) { return { ok: null, why: `rollout illisible : ${e.message}` }; }
+  const served = [...new Set([...text.matchAll(/"model"\s*:\s*"([^"]+)"/g)].map(m => m[1]))];
+  if (!served.length) return { ok: null, why: 'aucun champ model dans la rollout', file };
+  const other = served.find(s => !modelMatches(requested, s));
+  return other ? { ok: false, served: other, file } : { ok: true, served: served[0], file };
+}
+
+/** Tue l'arbre d'un processus fils (Windows : taskkill /T /F, comme le serveur). */
+function killTree(child) {
+  if (!child?.pid) return;
+  if (process.platform === 'win32') {
+    try { spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); } catch {}
+  } else {
+    try { child.kill('SIGKILL'); } catch {}
+  }
+}
+
 // ============================================================================
 // PROVIDER BRANCH
 // ============================================================================
@@ -1281,6 +1398,24 @@ function runCodex(isFailover = false) {
 
     if (isErr && !finalText) finalText = codexErrorMsg || `codex exited with code ${code}${signal ? ` (signal ${signal})` : ''}`;
 
+    // Model EXPLICITE (hors failover) : codex a-t-il servi CE model ?
+    if (!isFailover && EXPLICIT_MODEL) {
+      const v = verifyCodexRollout(codexThreadId, EXPLICIT_MODEL);
+      if (v.ok === false) {
+        failExplicitModel(`codex a servi « ${v.served} » au lieu du model demandé (rollout ${path.basename(v.file)})`,
+          { model_served: v.served, thread_id: codexThreadId });
+        return;
+      }
+      try {
+        logStream.write(JSON.stringify({
+          type: 'system', subtype: v.ok ? 'model_verified' : 'model_unverified',
+          model_requested: EXPLICIT_MODEL, provider: 'codex',
+          ...(v.ok ? { model_served: v.served } : { reason: v.why }),
+          timestamp: new Date().toISOString(),
+        }) + '\n');
+      } catch {}
+    }
+
     // THE event everything downstream keys on: server.js's reducer, the
     // viewer's panel state, fleet-status.mjs and the chef's callback all
     // look for a Claude-shaped `result`. Without it the panel never leaves
@@ -1449,6 +1584,7 @@ function runClaude() {
   let limitResetAt  = null;
   let limitEvidence = '';
   let resultIsError = false;
+  let modelMismatch = null;   // { actual, where } si le CLI sert un autre model que le --model explicite
   let stderrTail    = '';
 
   /** Record the first credible limit sighting; later ones can't override it. */
@@ -1483,6 +1619,19 @@ function runClaude() {
       if (!newSessionId && typeof ev.session_id === 'string' && ev.session_id.length > 0) {
         newSessionId = ev.session_id;
         try { fs.writeFileSync(sessionPath, newSessionId); } catch {}
+      }
+      // Model EXPLICITE : on vérifie ce que le CLI sert VRAIMENT. system/init
+      // arrive avant tout travail — une substitution y est arrêtée net ; chaque
+      // message assistant porte aussi son model (`<synthetic>` exclu). Pas
+      // `modelUsage` du result : il est cumulé sur toute la session reprise et
+      // liste aussi les appels annexes (Haiku), il ne prouve rien pour CE tour.
+      if (EXPLICIT_MODEL && !modelMismatch) {
+        const served = ev.type === 'system' && ev.subtype === 'init' ? ev.model
+          : ev.type === 'assistant' ? ev.message?.model : null;
+        if (served && !modelMatches(EXPLICIT_MODEL, served)) {
+          modelMismatch = { actual: served, where: ev.type === 'assistant' ? 'message assistant' : 'system/init' };
+          killTree(child);
+        }
       }
       if (ev.type === 'result') {
         resultAtMs = Date.now();
@@ -1581,6 +1730,29 @@ function runClaude() {
       fs.appendFileSync(instrPath, JSON.stringify(record) + '\n');
     } catch {}
 
+    // ---------- MODEL EXPLICITE : jamais de repli (0.26.0) -------------------
+    if (EXPLICIT_MODEL) {
+      if (modelMismatch) {
+        failExplicitModel(`le CLI a servi « ${modelMismatch.actual} » (${modelMismatch.where}) au lieu du model demandé — tour arrêté`,
+          { model_served: modelMismatch.actual });
+        return;
+      }
+      if (doFailover) {
+        // Le compte EST limité : on pose quand même le drapeau de flotte, pour
+        // que les dispatches SANS model explicite continuent de basculer.
+        const until = writeClaudeLimitFlag(limitResetAt);
+        failExplicitModel(`limite de session Claude jusqu'à ${until.toISOString()}`, { limited_until: until.toISOString(), evidence: limitEvidence });
+        return;
+      }
+      if (turnFailed && resultAtMs == null && !signal) {
+        // Le CLI est mort sans result (ex. model inconnu refusé au démarrage) :
+        // on clôt le tour avec la cause plutôt que de laisser le panneau figé.
+        const why = (stderrTail || '').replace(/\s+/g, ' ').trim().slice(-300) || `code ${code}`;
+        failExplicitModel(`le CLI claude a échoué sans result (${why})`);
+        return;
+      }
+    }
+
     // ---------- FAILOVER HANDOFF -------------------------------------------
     //
     // Claude is out of budget. Persist the fleet-wide flag so every OTHER
@@ -1672,7 +1844,11 @@ if (provider === 'codex') {
   runCodex(false);
 } else {
   const limitedUntil = readClaudeLimitFlag();
-  if (limitedUntil && NO_FAILOVER) {
+  if (limitedUntil && EXPLICIT_MODEL) {
+    // Model demandé explicitement et Claude limité : ni NVIDIA ni codex.
+    failExplicitModel(`limite de session Claude active jusqu'à ${limitedUntil.toISOString()}`,
+      { limited_until: limitedUntil.toISOString() });
+  } else if (limitedUntil && NO_FAILOVER) {
     console.error(`[NO-FAILOVER] Claude limited until ${limitedUntil.toISOString()} — skipping dispatch (no model switch).`);
     try { logStream.write(JSON.stringify({ type:'system', subtype:'limited-no-failover', reason:'claude_session_limit_active', limited_until: limitedUntil.toISOString(), timestamp:new Date().toISOString() }) + '\n'); } catch {}
     // Close the turn (see lifecycleEnd guard above) so a prompt received during

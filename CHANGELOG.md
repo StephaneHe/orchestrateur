@@ -11,6 +11,67 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-09-27
+
+Règle utilisateur : « si un modèle est précisément demandé, aucun fallback
+n'est toléré ».
+
+### Added
+- (dispatch) **Model explicite = aucun fallback.** Un model est explicite dès
+  qu'il arrive par `--model`, y compris depuis la file, le pool ou l'API, qui
+  repassent tous `--model` tel quel. Le tour tourne alors sur ce model ou
+  échoue. Ce qui est désormais refusé :
+  - le failover Claude → NVIDIA, au démarrage sous limite comme en cours de
+    tour ;
+  - le repli codex (`FAILOVER_CODEX_MODEL`) ;
+  - le repli sur le défaut du projet ou de la flotte.
+
+  Échec propre : `system/fallback_refused` (model demandé, raison), puis un
+  `result` `is_error`, `subtype: error_model_unavailable`, avec la cause
+  « model demandé X indisponible : <raison> — aucun fallback (règle
+  utilisateur) ». Ce result n'est **pas** `synthetic` : le chef est notifié et
+  réveillé en ✕. Il omet `duration_api_ms`, donc n'est jamais pris pour un
+  result fantôme. Le drapeau de limite de flotte reste posé pour que les
+  dispatches sans model explicite continuent de basculer.
+- (dispatch) **Détection de substitution.**
+  - claude : `system/init.model` et chaque `assistant.message.model`
+    (`<synthetic>` exclu). Un écart tue l'arbre du CLI dès l'`init`, avant
+    tout travail. `modelUsage` n'est pas utilisé : dans les logs réels, il est
+    cumulé sur la session reprise (jusqu'à trois models listés) et inclut des
+    appels annexes Haiku, il ne prouve rien pour un tour.
+  - codex : son flux `--json` ne donne pas le model, donc la rollout
+    `~/.codex/sessions/…-<thread_id>.jsonl` est relue après le tour. Si elle
+    est introuvable, `system/model_unverified` est journalisé sans faire
+    échouer le tour.
+
+  La correspondance tolère un suffixe de date et un alias nu, mais jamais un
+  préfixe : `claude-opus-5-5` ≠ `claude-opus-5`.
+- (dispatch) Un tour à model explicite dont le CLI meurt sans `result` (model
+  inconnu, par exemple) est clos avec sa cause au lieu de laisser le panneau
+  figé.
+- (dispatch) `DISPATCH_ROOT_FOR_TESTS` : racine alternative (`config.json`,
+  `logs/`) réservée aux recettes. Le drapeau de limite étant à l'échelle de la
+  flotte, le simuler dans le vrai `logs/` ferait basculer tous les musiciens.
+- (tests) `scripts/_test_explicit_model.mjs` (31) : le vrai `dispatch.mjs` de
+  bout en bout avec des doublures `claude`/`codex`, sans réseau. Il couvre :
+  - la limite au démarrage et pendant le tour, avec et sans `--model` (le
+    failover sans `--model` est inchangé) ;
+  - la substitution arrêtée dès l'`init` ;
+  - le suffixe de date toléré ;
+  - la rollout codex conforme, différente ou introuvable ;
+  - le model conservé par la file ;
+  - le ✕ et le réveil via le vrai `reduceMusician`.
+- (docs) `CLAUDE.md` ; `I:\Dev\Chef\CLAUDE.md`, section models : un
+  `--model` explicite ne connaît aucun fallback ; le chef doit rapporter le ✕,
+  sans redispatcher sur un autre model sans l'accord de l'utilisateur.
+
+### Changed
+- (server) `[fallback-refusé]` est tracé dans `logs/server-debug.log`. Il n'y
+  a plus de drain immédiat de la file derrière un ✕ « model indisponible » :
+  sous limite, l'entrée suivante échouerait ou basculerait sans rien produire.
+  Le balayage de secours s'en charge, jamais sous limite. **`server.js`
+  modifié : redémarrage requis** (par le chef).
+
 ## [0.25.1] - 2026-09-27
 
 ### Fixed
