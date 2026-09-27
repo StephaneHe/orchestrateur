@@ -270,29 +270,31 @@ reset();
 r = run(['--provider', 'codex']);
 ok(fs.existsSync(CODEX_MARK) && !/web_search/.test(fs.readFileSync(CODEX_MARK, 'utf8')), 'projet sans outils web ⇒ rien de passé (défaut de codex)');
 
-scenario('new-project.mjs --web');
+scenario('new-project.mjs hérite du défaut (web + lecture pour tous, 0.28.0)');
 {
   fs.cpSync(path.join(ROOT, 'templates'), path.join(T, 'templates'), { recursive: true });
+  const FULL = 'Read,Edit,Write,Bash,WebFetch,WebSearch,Grep,Glob';
+  const cfg0 = JSON.parse(fs.readFileSync(path.join(T, 'config.json'), 'utf8'));
+  cfg0.defaults.allowedTools = FULL;             // le défaut réel de la flotte
+  fs.writeFileSync(path.join(T, 'config.json'), JSON.stringify(cfg0, null, 2) + '\n');
   const NP = path.join(ROOT, 'scripts', 'new-project.mjs');
   const np = (...args) => spawnSync(process.execPath, [NP, ...args], { cwd: ROOT, encoding: 'utf8', env: { ...process.env, DISPATCH_ROOT_FOR_TESTS: T } });
   const cfg = () => JSON.parse(fs.readFileSync(path.join(T, 'config.json'), 'utf8'));
   const entry = (n) => cfg().projects.find(p => p.name === n);
 
-  let o = np('Alpha', '--path', path.join(T, 'dev', 'Alpha'), '--web');
-  ok(o.status === 0 && entry('Alpha')?.tools === 'Read,WebFetch,WebSearch', '--web ⇒ tools = défaut de la flotte + WebFetch,WebSearch');
-  o = np('Beta', '--path', path.join(T, 'dev', 'Beta'));
-  ok(o.status === 0 && entry('Beta') && !entry('Beta').tools, 'sans --web : pas de tools (défaut hérité, comportement inchangé)');
-  ok(/AUCUN accès web/.test(o.stdout), '… mais le piège est affiché : « AUCUN accès web »');
-  o = np('Gamma', '--path', path.join(T, 'dev', 'Gamma'), '--tools', 'Read,Bash,Grep', '--web');
-  ok(entry('Gamma')?.tools === 'Read,Bash,Grep,WebFetch,WebSearch', '--tools + --web ⇒ les deux combinés');
-  o = np('Beta', '--web');
-  ok(o.status === 0 && entry('Beta')?.tools === 'Read,WebFetch,WebSearch' && /web tools added/.test(o.stdout), 'projet déjà enregistré + --web ⇒ outils web AJOUTÉS');
-  o = np('Beta', '--web');
-  ok(o.status === 0 && /exists, skipped/.test(o.stdout) && entry('Beta').tools === 'Read,WebFetch,WebSearch', 'relancé : idempotent, rien ne change');
-  const others = cfg().projects.filter(p => !['Alpha', 'Beta', 'Gamma'].includes(p.name));
-  ok(JSON.stringify(others) === JSON.stringify([{ name: 'chef', path: PROJ }, { name: 'M', path: PROJ }, { name: 'W', path: PROJ, tools: 'Read,Edit,Write,Bash,WebFetch,WebSearch' }]),
-     'aucune autre entrée n’est touchée');
+  let o = np('Alpha', '--path', path.join(T, 'dev', 'Alpha'));
+  ok(o.status === 0 && entry('Alpha') && !entry('Alpha').tools, 'nouveau projet : pas d’override, il HÉRITE du défaut (web + lecture)');
+  ok(o.stdout.includes(`: ${FULL}`) && !/AUCUN accès web/.test(o.stdout), 'le résumé montre les outils hérités, sans alerte');
+  o = np('Beta', '--path', path.join(T, 'dev', 'Beta'), '--tools', 'Read,Bash');
+  ok(o.status === 0 && !entry('Beta').tools, '--tools plus étroit que le défaut : ignoré, jamais moins que le défaut');
+  o = np('Gamma', '--path', path.join(T, 'dev', 'Gamma'), '--tools', 'Read,Agent');
+  ok(entry('Gamma')?.tools === `${FULL},Agent`, '--tools avec un outil en plus : défaut + cet outil');
+  o = np('Delta', '--path', path.join(T, 'dev', 'Delta'), '--web');
+  ok(o.status === 0 && !entry('Delta').tools && /--web est obsolète/.test(o.stderr), '--web : accepté, obsolète, sans effet (le web est déjà là)');
+  const others = cfg().projects.filter(p => !['Alpha', 'Beta', 'Gamma', 'Delta'].includes(p.name));
+  ok(JSON.stringify(others) === JSON.stringify(cfg0.projects), 'aucune autre entrée n’est touchée');
 }
+
 
 fs.rmSync(T, { recursive: true, force: true });
 console.log(`\n${fail === 0 ? '✓' : '✗'} ${pass} réussis, ${fail} échoués`);

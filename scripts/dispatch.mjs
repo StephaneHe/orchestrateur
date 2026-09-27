@@ -295,7 +295,7 @@ if (callbackProject && !config.projects.find(p => p.name === callbackProject)) {
 
 // Le flag gagne sur la config ; sans flag, le comportement historique.
 const model    = modelOverride    || project.model    || config.defaults?.model        || 'claude-sonnet-4-6';
-const tools    = project.tools    || config.defaults?.allowedTools || 'Read,Edit,Write,Bash';
+const tools    = project.tools    || config.defaults?.allowedTools || 'Read,Edit,Write,Bash,WebFetch,WebSearch,Grep,Glob';
 const provider = providerOverride || project.provider || config.defaults?.provider     || 'claude';
 
 // Un `--model` doit appartenir à la famille du provider qui va le recevoir.

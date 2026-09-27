@@ -11,6 +11,46 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-09-27
+
+Règle utilisateur : « tous les projets doivent avoir droit au web et à la
+lecture ». Elle remplace le « web en opt-in » de 0.27.0.
+
+### Changed
+- (config, non versionné) `defaults.allowedTools` =
+  `Read,Edit,Write,Bash,WebFetch,WebSearch,Grep,Glob`. Les 16 overrides
+  `tools` ont été complétés avec les outils manquants de cette liste, sans
+  rien retirer : BookHaven, par exemple, garde son `Agent`. L'écriture est
+  atomique, avec deux contrôles : seuls `defaults.allowedTools` et
+  `projects[].tools` ont bougé, et aucun outil n'a été retiré. C'est effectif
+  immédiatement pour les dispatches, car `dispatch.mjs` relit `config.json`.
+  Aucun autre outil de lecture n'a été ajouté : `Read` couvre fichiers,
+  images, PDF et notebooks, `Grep`/`Glob` la recherche, et l'ancien `LS`
+  n'existe plus.
+- (dispatch, server, cli) Les replis codés en dur, utilisés si `config.json`
+  n'a pas de défaut, ont la même liste : `dispatch.mjs`, `new-project.mjs`, et
+  `FALLBACK_TOOLS` de `server.js`, qui remplace six occurrences.
+- (cli) **`new-project.mjs` fait hériter le défaut** : pas d'entrée `tools`.
+  `--tools` est fusionné avec le défaut et ne sert qu'à ajouter (par exemple
+  `Agent`) ; un `--tools` plus étroit ne crée pas d'override. `--web` est
+  obsolète : accepté, sans effet, avec un avertissement.
+- (codex) Conséquence directe de 0.27.0 : tous les dispatches codex ont la
+  recherche web live, car tous les projets ont désormais le web.
+
+### Added
+- (tests) `scripts/_test_tools_resolution.mjs` évalue la vraie expression de
+  `dispatch.mjs` et le vrai `allowedToolsFor` de `server.js` sur le vrai
+  `config.json`. Les 32 projets sont conformes, et les deux résolutions sont
+  identiques. `_test_explicit_model.mjs` (55) couvre le nouveau
+  comportement de `new-project`.
+- (docs) `CLAUDE.md`, puce « Web et lecture pour tous les projets ». Dans
+  `I:\Dev\Chef\CLAUDE.md` : section Escalation (web et lecture par défaut),
+  et remplacement du paragraphe 0.27.0 « un projet sans `tools` n'a pas le
+  web ».
+
+`server.js` est modifié (constante de repli) : redémarrage requis, mais sans
+urgence. `config.json` ayant ses défauts, le repli ne sert pas.
+
 ## [0.27.0] - 2026-09-27
 
 Contexte : BtLocator doit avoir accès à internet, et trois models doivent

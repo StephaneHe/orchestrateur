@@ -283,17 +283,20 @@ pour une question acquittée ou dépassée).
     pour ne pas faire repartir à zéro le tour claude suivant.
   - Traçabilité : le `user_prompt` porte `newSession: true` et
     `archivedSession`.
-- **Accès web = opt-in par projet.** Un projet sans `tools` hérite de
-  `defaults.allowedTools` (`Read,Edit,Write,Bash`), donc **pas** de
-  WebFetch/WebSearch. BtLocator a dû marquer sa synthèse « non vérifié »
-  pour cette raison.
-  - `node scripts/new-project.mjs <nom> --web` ajoute les deux outils,
-    combinable avec `--tools`. Sur un projet déjà enregistré, `--web` les
-    ajoute seulement, sans rien retirer.
-  - Sans `--web`, le script affiche « AUCUN accès web ».
-  - Pas de web par défaut : la règle dure veut que tout scope plus large que
-    `Read,Edit,Write,Bash` soit un opt-in, et le web ouvre l'injection de
-    prompt et l'exfiltration.
+- **Web et lecture pour tous les projets** (0.28.0). Règle utilisateur :
+  « tous les projets doivent avoir droit au web et à la lecture ».
+  - `defaults.allowedTools` vaut
+    `Read,Edit,Write,Bash,WebFetch,WebSearch,Grep,Glob`. Les replis codés en
+    dur (`dispatch.mjs`, `FALLBACK_TOOLS` de `server.js`, `new-project.mjs`)
+    ont la même liste.
+  - Chaque override `tools` a été complété, sans jamais rien retirer : aucun
+    projet n'a moins que le défaut.
+  - `new-project.mjs` fait hériter le défaut ; `--tools` ne sert qu'à ajouter
+    (par exemple `Agent`), et `--web` est obsolète, accepté sans effet.
+  - Pas d'autre outil de lecture : `Read` couvre fichiers, images, PDF et
+    notebooks, `Grep`/`Glob` la recherche. L'ancien `LS` n'existe plus.
+  - Vérifier : `node scripts/_test_tools_resolution.mjs` évalue la vraie
+    résolution de `dispatch.mjs` et de `server.js` sur le vrai `config.json`.
 - **Web pour codex** (codex-cli 0.154.0) : `codex exec` n'a pas de `--search`
   (drapeau de la TUI uniquement). C'est la clé `web_search`
   (`disabled|cached|indexed|live`) qui l'active. `dispatch.mjs` passe

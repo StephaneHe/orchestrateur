@@ -11,16 +11,14 @@
 //   node scripts/new-project.mjs <name> --path I:\Dev\<name>
 //   node scripts/new-project.mjs <name> --tools "Read,Edit,Write,Bash"
 //   node scripts/new-project.mjs <name> --model claude-sonnet-4-6
-//   node scripts/new-project.mjs <name> --web     # + WebFetch,WebSearch
 //
-// ACCÈS WEB = OPT-IN (--web). Un projet sans `tools` hérite de
-// defaults.allowedTools (Read,Edit,Write,Bash) : PAS de WebFetch/WebSearch —
-// BtLocator l'a découvert en rendant une synthèse pleine de « non vérifié ».
-// On ne l'active pas par défaut : la règle dure du projet veut que tout scope
-// plus large que Read,Edit,Write,Bash soit un opt-in par projet (le web ouvre
-// l'injection de prompt et l'exfiltration). À la place, le piège est rendu
-// visible : le résumé dit explicitement « pas d'accès web ». `--web` sur un
-// projet DÉJÀ enregistré ajoute seulement les deux outils (jamais de retrait).
+// OUTILS (0.28.0) — règle utilisateur : « tous les projets doivent avoir droit
+// au web et à la lecture ». defaults.allowedTools vaut désormais
+// Read,Edit,Write,Bash,WebFetch,WebSearch,Grep,Glob et un nouveau projet en
+// HÉRITE (pas d'entrée `tools`). `--tools` ne sert plus qu'à AJOUTER des
+// outils : il est fusionné avec le défaut, un projet n'a jamais moins que lui.
+// `--web` (0.27.0) est obsolète : accepté sans effet, pour ne pas casser de
+// commande existante.
 //
 // DESIGN — deterministic + idempotent:
 //   • No LLM in the loop. Pure mechanics, like restart-orchestrateur.mjs.
@@ -168,36 +166,29 @@ for (const rel of listTemplateFiles(TEMPLATE_DIR)) {
 
 let configChanged = false;
 let finalTools = null;
-const WEB_TOOLS = ['WebFetch', 'WebSearch'];
-function hasWeb(tools) { const t = String(tools).split(',').map(s => s.trim()); return WEB_TOOLS.every(w => t.includes(w)); }
-function withWeb(tools) {
-  const t = String(tools).split(',').map(s => s.trim()).filter(Boolean);
-  for (const w of WEB_TOOLS) if (!t.includes(w)) t.push(w);
-  return t.join(',');
+const splitTools = (s) => String(s || '').split(',').map(x => x.trim()).filter(Boolean);
+/** Défaut + outils demandés, défaut en tête ; null si rien de plus que le défaut
+ *  (l'entrée hérite alors, et suivra toute évolution future du défaut). */
+function toolsBeyondDefault(base, requested) {
+  const b = splitTools(base);
+  const extra = splitTools(requested).filter(t => !b.includes(t));
+  return extra.length ? [...b, ...extra].join(',') : null;
 }
 try {
   const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
   if (!Array.isArray(config.projects)) die('config.projects is not an array — refusing to write', 66);
 
-  const baseTools = config.defaults?.allowedTools || 'Read,Edit,Write,Bash';
+  const baseTools = config.defaults?.allowedTools || 'Read,Edit,Write,Bash,WebFetch,WebSearch,Grep,Glob';
   const existing = config.projects.find(p => p.name === name);
-  if (existing && web && !hasWeb(existing.tools || baseTools)) {
-    // Seul cas où une entrée existante est modifiée : --web, en AJOUT.
-    existing.tools = withWeb(existing.tools || baseTools);
-    const tmp = CONFIG_PATH + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(config, null, 2) + '\n');
-    fs.renameSync(tmp, CONFIG_PATH);
-    configChanged = true;
-    finalTools = existing.tools;
-    log(`config.json entry "${name}" — exists, web tools added (${existing.tools})`);
-    created.push('web tools');
-  } else if (existing) {
+  if (web) warn('--web est obsolète depuis 0.28.0 : le web est dans le défaut de tous les projets (sans effet)');
+  if (existing) {
     finalTools = existing.tools || baseTools;
     log(`config.json entry "${name}" — exists, skipped`);
     skipped.push('config.json entry');
   } else {
     const entry = { name, path: projectPath };
-    if (opts.tools || web) entry.tools = web ? withWeb(opts.tools || baseTools) : opts.tools;
+    const merged = opts.tools ? toolsBeyondDefault(baseTools, opts.tools) : null;
+    if (merged) entry.tools = merged;
     if (opts.model) entry.model = opts.model;
     finalTools = entry.tools || baseTools;
     config.projects.push(entry);
@@ -222,8 +213,9 @@ log(`project : ${name}`);
 log(`path    : ${projectPath}`);
 if (finalTools) log(`tools   : ${finalTools}`);
 if (opts.model) log(`model   : ${opts.model}`);
-if (finalTools && !hasWeb(finalTools)) {
-  log('web     : AUCUN accès web (pas de WebFetch/WebSearch) — relance avec --web si ce projet doit chercher en ligne');
+// Garde-fou si quelqu'un réduit un jour le défaut : on le dit plutôt que de le taire.
+if (finalTools && !['WebFetch', 'WebSearch'].every(t => splitTools(finalTools).includes(t))) {
+  log('web     : AUCUN accès web (WebFetch/WebSearch absents du défaut et de ce projet)');
 }
 log(`created : ${created.length ? created.join(', ') : '(nothing — already fully scaffolded)'}`);
 log(`skipped : ${skipped.length ? skipped.join(', ') : '(none)'}`);

@@ -74,6 +74,10 @@ const ATTACHMENTS_DIR = path.join(__dirname, 'attachments');
 const BUILDS_DIR      = path.join(__dirname, 'builds');
 const SECRETS_DIR     = path.join(__dirname, 'secrets');
 const PKG_VERSION     = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version;
+// Outils d'un musicien quand config.json n'a pas de defaults.allowedTools.
+// Règle utilisateur (0.28.0) : « tous les projets doivent avoir droit au web et
+// à la lecture » — même liste que defaults.allowedTools et dispatch.mjs.
+const FALLBACK_TOOLS  = 'Read,Edit,Write,Bash,WebFetch,WebSearch,Grep,Glob';
 
 fs.mkdirSync(LOGS_DIR,        { recursive: true });
 fs.mkdirSync(ATTACHMENTS_DIR, { recursive: true });
@@ -2317,7 +2321,7 @@ app.get('/api/config', (req, res) => {
     conductor: config.conductor || 'chef',
     defaults: {
       model: defaults.model ?? null,
-      allowedTools: defaults.allowedTools ?? 'Read,Edit,Write,Bash',
+      allowedTools: defaults.allowedTools ?? FALLBACK_TOOLS,
       provider: defaults.provider ?? 'claude',
     },
     projects: config.projects.map(p => {
@@ -2326,7 +2330,7 @@ app.get('/api/config', (req, res) => {
         name: p.name,
         path: p.path || null,
         model: p.model ?? defaults.model ?? null,
-        tools: p.tools ?? defaults.allowedTools ?? 'Read,Edit,Write,Bash',
+        tools: p.tools ?? defaults.allowedTools ?? FALLBACK_TOOLS,
         provider: p.provider ?? defaults.provider ?? 'claude',
         parked: p.parked ?? false,
         attachedSession: sessions.get(p.name) || null,
@@ -2814,7 +2818,7 @@ function maybeRelayChefAnswer(parsedEv) {
 function allowedToolsFor(name) {
   const project = config.projects.find(p => p.name === name);
   if (!project) return null;
-  return project.tools || config.defaults?.allowedTools || 'Read,Edit,Write,Bash';
+  return project.tools || config.defaults?.allowedTools || FALLBACK_TOOLS;
 }
 
 const TOOL_AUDIT_DIR = path.join(LOGS_DIR, 'tool-audit');
@@ -4535,7 +4539,7 @@ app.post('/api/projects', express.json({ limit: '4kb' }), (req, res) => {
         project: {
           name: existing.name,
           model: existing.model ?? config.defaults?.model ?? null,
-          tools: existing.tools ?? config.defaults?.allowedTools ?? 'Read,Edit,Write,Bash',
+          tools: existing.tools ?? config.defaults?.allowedTools ?? FALLBACK_TOOLS,
           attachedSession: sessions.get(existing.name) || null,
         },
         conductor: config.conductor,
@@ -4563,7 +4567,7 @@ app.post('/api/projects', express.json({ limit: '4kb' }), (req, res) => {
   const effective = {
     name,
     model: entry.model ?? config.defaults?.model ?? null,
-    tools: entry.tools ?? config.defaults?.allowedTools ?? 'Read,Edit,Write,Bash',
+    tools: entry.tools ?? config.defaults?.allowedTools ?? FALLBACK_TOOLS,
     attachedSession: null,
   };
   res.status(201).json({
@@ -4582,7 +4586,7 @@ app.patch('/api/projects/:name/tools', express.json({ limit: '1kb' }), (req, res
   const tool = req.body?.tool;
   if (typeof tool !== 'string' || !tool.trim()) return res.status(400).json({ error: 'missing tool' });
   const toolName = tool.trim();
-  const defaults = config.defaults?.allowedTools || 'Read,Edit,Write,Bash';
+  const defaults = config.defaults?.allowedTools || FALLBACK_TOOLS;
   const current = (project.tools ?? defaults).split(',').map(t => t.trim()).filter(Boolean);
   if (!current.includes(toolName)) {
     current.push(toolName);
