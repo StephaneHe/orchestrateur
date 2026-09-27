@@ -92,6 +92,10 @@ class Musician {
     // on page load. SSE only streams NEW events, so without this every
     // musician would start at `idle` after reload regardless of actual state.
     this.state = project.currentState || "idle";
+    // Dernier acquittement de question (« répondue via le chef »), 0.25.0.
+    this.questionResolved = project.questionResolved
+      ? { ts: Date.parse(project.questionResolved.ts) || 0, note: project.questionResolved.note || "" }
+      : null;
     this.lastLine = project.lastLine || "";
     this.lastAssistantText = "";         // last assistant text (for NEEDS_USER_INPUT detection)
     this.unreadCount = project.unreadCount || 0;
@@ -164,6 +168,12 @@ class Musician {
         this.turnStartMs = Date.parse(raw.timestamp) || Date.now();
         this.setState(this.state === "idle" || this.state === "unread" ? "live" : this.state);
       }
+    } else if (t === "notification" && raw.subtype === "question_resolved") {
+      // Question acquittée sans relancer le musicien (même règle que les
+      // réducteurs serveur) : seul `input` bascule, vers « prêt ».
+      if (this.state === "input") this.setState("idle");
+      this.questionResolved = { ts: Date.parse(raw.timestamp) || Date.now(), note: raw.note || "" };
+      this.lastLine = String(raw.text || "✓ question marquée répondue").slice(0, 140);
     } else if (t === "stream_event") {
       // Partial message deltas — just bump activity timestamp so the heartbeat
       // moves. Rendering the deltas would require reassembling content blocks
@@ -1980,12 +1990,28 @@ const App = {
     // explicite — et sans `--callback`, donc sans réveil ni point.
     if (b.role === "question") {
       const who = esc(b.source || "musicien");
+      // 0.25.0 — une question déjà traitée ne réclame plus d'action. Acquittée
+      // APRÈS cette bulle ⇒ « ✓ répondue » ; c'est la plus récente question de
+      // ce musicien et il attend encore ⇒ on propose aussi de l'acquitter.
+      const m = this.musicians.get(b.source || "");
+      const res = m?.questionResolved;
+      const resolved = res && res.ts && b.ts && res.ts >= b.ts;
+      const latest = !this.chat.some(e => e.role === "question" && e.source === b.source && e.ts > b.ts);
+      if (resolved) {
+        return `<div class="cv-bubble is-question is-resolved">
+            <div class="cv-byline">Question de ${who} · ✓ marquée répondue${tsChip}</div>
+            <div class="cv-body md">${mdToHtml(b.text || "")}</div>
+            ${res.note ? `<div class="cv-q-resolved">${esc(res.note)}</div>` : ""}
+          </div>`;
+      }
+      const canResolve = latest && m?.state === "input";
       return `<div class="cv-bubble is-question">
           <div class="cv-byline">Question de ${who} · votre décision${tsChip}</div>
           <div class="cv-body md">${mdToHtml(b.text || "")}</div>
           <div class="cv-q-actions">
             <button class="cv-q-primary" data-via-chef="${who}">Répondre via le chef</button>
             <button class="cv-q-secondary" data-direct-to="${who}">Répondre directement à ${who}</button>
+            ${canResolve ? `<button class="cv-q-secondary" data-resolve-question="${who}" title="Déjà répondue ailleurs ou sans objet — aucun tour relancé">✓ Marquer comme répondue</button>` : ""}
             <span class="cv-q-note">mis en file si ${who} est occupé · pas de retour au chef</span>
           </div>
         </div>`;
@@ -2123,6 +2149,8 @@ const App = {
         }
         return;
       }
+      const rq = e.target.closest("[data-resolve-question]");
+      if (rq) { e.stopPropagation(); this.resolveQuestion(rq.dataset.resolveQuestion); return; }
       // Question d'un musicien : défaut = via le chef.
       const viaBtn = e.target.closest("[data-via-chef]");
       if (viaBtn) { e.stopPropagation(); this.answerViaChef(viaBtn.dataset.viaChef); return; }
@@ -2977,6 +3005,25 @@ const App = {
       this.renderChat();
     } catch (err) {
       this.showComposerError("Retrait impossible : " + (err.message || err));
+    }
+  },
+
+  /** Acquitter la question d'un musicien SANS le relancer (0.25.0) : réponse
+   *  déjà donnée via le chef, ou question devenue sans objet. Le serveur écrit
+   *  l'événement dans le log du musicien ; son écho SSE fait basculer la carte. */
+  async resolveQuestion(name) {
+    const note = prompt(`Marquer la question de ${name} comme répondue.\n\nNote (facultative, visible dans son panneau) :`, "répondu via le chef");
+    if (note === null) return;                      // annulé
+    try {
+      const resp = await fetch(`/api/question/${encodeURIComponent(name)}/resolve`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note, by: "utilisateur" }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+      this.pollPupitre();
+    } catch (err) {
+      alert("Acquittement impossible : " + (err.message || err));
     }
   },
 

@@ -48,7 +48,7 @@ import { detectOverride } from './src/message_router.mjs';
 // Shared fleet state/silence/stall derivation — same module the CLI supervisor
 // (scripts/fleet-status.mjs) uses, so the live desk view (/api/pupitre) can
 // never diverge from `node scripts/fleet-status.mjs`.
-import { scanProject as scanFleetMember, isPhantomResult } from './scripts/fleet-status-core.mjs';
+import { scanProject as scanFleetMember, isPhantomResult, isQuestionResolved } from './scripts/fleet-status-core.mjs';
 // Registre /downloads relu à chaud depuis downloads.json (0.23.0).
 import { createDownloadsRegistry } from './scripts/downloads-registry.mjs';
 import os from 'node:os';
@@ -2257,10 +2257,16 @@ function scanProjectState(name) {
   let lastAssistantText = '';
   let lastLine = '';
   let unreadCount = 0;
+  let questionResolved = null;
   for (const ln of lines) {
     if (!ln) continue;
     let ev; try { ev = JSON.parse(ln); } catch { continue; }
     if (isPhantomResult(ev)) continue;   // mini-tour rejoué par le CLI, pas une fin de tour
+    // Question acquittée (0.25.0) : `input` → `idle`, rien d'autre.
+    if (isQuestionResolved(ev)) {
+      if (state === 'input') { state = 'idle'; questionResolved = { ts: ev.timestamp || null, note: ev.note || '' }; }
+      continue;
+    }
     const t = ev?.type;
     // A SOURCED user_prompt (musician callback, @shortcut, /api/notify) is not a
     // turn start — only a source-less prompt or a system/init is. A real dispatch
@@ -2295,7 +2301,7 @@ function scanProjectState(name) {
       }
     }
   }
-  return { state, lastLine, unreadCount };
+  return { state, lastLine, unreadCount, questionResolved };
 }
 
 app.get('/api/version', (req, res) => {
@@ -2325,6 +2331,7 @@ app.get('/api/config', (req, res) => {
         currentState: snap.state,
         lastLine: snap.lastLine,
         unreadCount: snap.unreadCount,
+        questionResolved: snap.questionResolved || null,
       };
     }),
   });
@@ -2516,6 +2523,45 @@ app.post('/api/mark-read', express.json({ limit: '2kb' }), (req, res) => {
   } catch (e) {
     res.status(500).json({ error: `write failed: ${e.message}` });
   }
+});
+
+// ---------- Acquitter une question sans relancer le musicien (0.25.0) --------
+//
+// L'état `input` ne s'effaçait qu'au tour suivant du musicien. Quand
+// l'utilisateur répond via le chef — ou que la question devient sans objet (la
+// décision a été prise ailleurs) — la carte restait « question » indéfiniment,
+// et /api/mark-read n'y changeait rien (il ne touche que unread/idle). Cette
+// route AJOUTE un événement `notification/question_resolved` au log du musicien
+// (voir isQuestionResolved) : aucun tour, aucun coût. Refusée (409) s'il n'y a
+// pas de question ouverte ou si un tour tourne — dans ce cas la question est de
+// toute façon en train d'être dépassée.
+app.post('/api/question/:project/resolve', express.json({ limit: '4kb' }), async (req, res) => {
+  const name = String(req.params.project || '');
+  if (!config.projects.find(p => p.name === name)) return res.status(404).json({ error: `unknown project "${name}"` });
+  // Lecture fraîche du log (pas le cache /api/pupitre) : on décide sur l'état réel.
+  const snap = scanFleetMember(name);
+  if (snap.state !== 'input') {
+    return res.status(409).json({ error: `aucune question en attente pour ${name} (état : ${snap.state})`, state: snap.state });
+  }
+  if ((await dispatchPidAliveAsync(name)) != null) {
+    return res.status(409).json({ error: `${name} a un tour en cours — la question est déjà en train d'être traitée`, state: 'live' });
+  }
+  const note = typeof req.body?.note === 'string' ? req.body.note.replace(/\s+/g, ' ').trim().slice(0, 500) : '';
+  const by = typeof req.body?.by === 'string' && /^[A-Za-z0-9_.\-]{1,32}$/.test(req.body.by) ? req.body.by : 'utilisateur';
+  const ev = {
+    type: 'notification', subtype: 'question_resolved',
+    question: snap.needsInput || '', note, by,
+    text: `✓ question marquée répondue${by ? ` (${by})` : ''}${note ? ` : ${note}` : ''}`,
+    timestamp: new Date().toISOString(),
+  };
+  try {
+    fs.appendFileSync(path.join(LOGS_DIR, `${name}.jsonl`), JSON.stringify(ev) + '\n');
+  } catch (e) {
+    return res.status(500).json({ error: `écriture impossible : ${e.message}` });
+  }
+  const msg = `[question] ${name} : acquittement écrit par ${by} — « ${ev.question.slice(0, 80)} »`;
+  console.log(msg); debugLog(msg);
+  res.json({ ok: true, project: name, question: ev.question, note, by, resolvedAt: ev.timestamp });
 });
 
 // Register an Android device's SSH public key for SFTP access.
@@ -3045,6 +3091,13 @@ function reduceMusician(name, ev) {
   // plus loin, qui doit réveiller le chef.
   if (isPhantomResult(ev)) {
     return { prevState: state, newState: state, lastLine, awaitingChef, expectCallback: null, wakeGen, phantom: true };
+  }
+  // Question acquittée (0.25.0) : `input` → `idle`, et c'est tout. Pas une fin
+  // de tour : le pump n'en tire ni notification, ni réveil, ni drain.
+  if (isQuestionResolved(ev)) {
+    if (state === 'input') state = 'idle';
+    musicianAutoStates.set(name, { ...prev, state });
+    return { prevState: prev.state, newState: state, lastLine, awaitingChef, expectCallback: null, wakeGen, resolved: true };
   }
   // Sourced user_prompt (callback / @shortcut / notify) is not a turn start.
   if ((t === 'user_prompt' && !ev.source) || (t === 'system' && ev.subtype === 'init')) {
@@ -4799,8 +4852,14 @@ function startBackgroundNotifyWatchers() {
         if (!line) continue;
         try {
           const ev = JSON.parse(line);
-          const { prevState, newState, lastLine, awaitingChef, expectCallback, wakeGen, phantom } =
+          const { prevState, newState, lastLine, awaitingChef, expectCallback, wakeGen, phantom, resolved } =
             reduceMusician(name, ev);
+          if (resolved) {
+            const msg = `[question] ${name} : question acquittée (${prevState} → ${newState})` +
+              (ev.note ? ` — ${String(ev.note).slice(0, 120)}` : '');
+            console.log(msg); debugLog(msg);
+            continue;
+          }
           if (phantom) {
             // Ni réveil, ni notification, ni drain, ni clôture de ticket de chef.
             const msg = `[result-fantôme] ${name} : result ignoré (num_turns=0, duration_api_ms=0, ` +

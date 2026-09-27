@@ -48,6 +48,21 @@ export function isPhantomResult(ev) {
     ev.num_turns === 0 && ev.duration_api_ms === 0;
 }
 
+/**
+ * Acquittement d'une question (0.25.0). Écrit par POST /api/question/:p/resolve
+ * dans le log DU MUSICIEN, juste après le result qui a posé la question.
+ * Pourquoi un événement de log plutôt qu'un sidecar : tous les réducteurs lisent
+ * déjà ce log dans l'ordre, donc « ignoré si un nouveau tour a démarré depuis »
+ * est gratuit (un user_prompt/init postérieur reprend la main), l'acquittement
+ * survit au redémarrage, part au dashboard par le SSE existant et reste visible
+ * dans le journal du panneau — sans rapprocher des horodatages que les
+ * événements du CLI ne portent pas.
+ * Règle unique pour tous les réducteurs : il ne fait passer que `input` → `idle`.
+ */
+export function isQuestionResolved(ev) {
+  return ev?.type === 'notification' && ev.subtype === 'question_resolved';
+}
+
 /** Read the last TAIL_BYTES of a file and split into full JSON lines (dropping
  *  a partial head line that may be cut mid-object). */
 export function tailLines(filePath) {
@@ -100,10 +115,16 @@ export function deriveState(lines) {
   // `unread` — the vocabulary is locked — so this additive flag is what lets a
   // card say "attend le chef" instead of the misleading "terminé".
   let awaitingChef = false;
+  // Dernier acquittement de question vu dans la fenêtre (null sinon).
+  let resolution = null;
 
   for (const ln of lines) {
     let ev; try { ev = JSON.parse(ln); } catch { continue; }
     if (isPhantomResult(ev)) continue;   // mini-tour rejoué par le CLI, pas une fin de tour
+    if (isQuestionResolved(ev)) {
+      if (state === 'input') { state = 'idle'; resolution = { ts: ev.timestamp || null, note: ev.note || '', question: ev.question || '' }; }
+      continue;
+    }
     const t = ev?.type;
 
     // Track model/provider as they appear (init, assistant, result all carry them).
@@ -142,7 +163,7 @@ export function deriveState(lines) {
       turnStartTs = null;                                  // turn is over
     }
   }
-  return { state, lastAssistantText, turnStartTs, model, provider, awaitingChef };
+  return { state, lastAssistantText, turnStartTs, model, provider, awaitingChef, resolution };
 }
 
 export function readPid(project, logsDir = DEFAULT_LOGS) {
@@ -220,7 +241,7 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
   const { lines, mtimeMs, size } = tailLines(logPath);
   const last = lastMeaningful(lines);
   const tail = lastAny(lines);
-  const { state, lastAssistantText, turnStartTs, model, provider, awaitingChef } = deriveState(lines);
+  const { state, lastAssistantText, turnStartTs, model, provider, awaitingChef, resolution } = deriveState(lines);
   const now = Date.now();
   const lastMeaningfulTs = last?.timestamp ? Date.parse(last.timestamp) : (mtimeMs || 0);
   const silentMs = now - (lastMeaningfulTs || now);
@@ -230,7 +251,10 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
   const pid = readPid(name, logsDir);
   const alive = pid ? pidAlive(pid) : null;
   const lastKind = lastKindOf(last, tail);
-  const needs = /^NEEDS_USER_INPUT:\s*(.*)$/m.exec(lastAssistantText || '');
+  // Seulement si la question est ENCORE ouverte : avant 0.25.0 le texte de la
+  // dernière question restait remonté pendant le tour suivant et après un
+  // acquittement (fleet-status affichait « needs: … » indéfiniment).
+  const needs = state === 'input' ? /^NEEDS_USER_INPUT:\s*(.*)$/m.exec(lastAssistantText || '') : null;
   const turnElapsedMs = inFlight && turnStartTs ? (now - turnStartTs) : null;
 
   return {
@@ -253,5 +277,7 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
     model: model || null,
     provider: provider || null,
     needsInput: needs ? needs[1].trim().slice(0, 160) : null,
+    // Additif : dernier acquittement (« répondue via le chef »), pour l'UI.
+    questionResolved: resolution,
   };
 }

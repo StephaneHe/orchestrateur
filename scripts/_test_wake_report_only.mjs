@@ -137,7 +137,7 @@ scenario('pump : plus aucune branche qui jette un résultat attendu');
 // (user_prompt avec --callback chef) → la notification rejouée → system/init →
 // result FANTÔME (0 tour, 0 ms d'API, même coût) → le vrai travail → vrai result.
 
-const { isPhantomResult, deriveState } = await import('./fleet-status-core.mjs');
+const { isPhantomResult, isQuestionResolved, deriveState, scanProject } = await import('./fleet-status-core.mjs');
 const SID = 'b443cd4d-0000';
 const SEQ = [
   { type: 'assistant', message: { content: [{ type: 'text', text: 'Phase précédente terminée.' }] } },
@@ -167,8 +167,8 @@ scenario('reduceMusician réel : le fantôme n’a AUCUN effet, le vrai result r
   const end = SRC.indexOf('\n}\n', start) + 2;
   const musicianAutoStates = new Map();
   // eslint-disable-next-line no-new-func
-  const reduceMusician = new Function('musicianAutoStates', 'isPhantomResult', 'NEEDS_CHEF_RE',
-    `${SRC.slice(start, end)}\nreturn reduceMusician;`)(musicianAutoStates, isPhantomResult, /NEEDS_CHEF_INPUT:\s*([^\n]+)/i);
+  const reduceMusician = new Function('musicianAutoStates', 'isPhantomResult', 'isQuestionResolved', 'NEEDS_CHEF_RE',
+    `${SRC.slice(start, end)}\nreturn reduceMusician;`)(musicianAutoStates, isPhantomResult, isQuestionResolved, /NEEDS_CHEF_INPUT:\s*([^\n]+)/i);
   const out = SEQ.map(ev => reduceMusician('vuBox', ev));
   const phantom = out[6];
   ok(phantom.phantom === true, 'le fantôme est signalé au pump');
@@ -189,6 +189,76 @@ scenario('fleet-status (deriveState partagé) ignore le fantôme');
   const lines = SEQ.map(e => JSON.stringify(e));
   ok(deriveState(lines.slice(0, 7)).state === 'live', 'juste après le fantôme : toujours « en cours »');
   ok(deriveState(lines).state === 'unread', 'après le vrai result : terminé');
+}
+
+// ---------- 6. question acquittée sans relancer le musicien (0.25.0) ---------
+//
+// Cas du 27/09 : TranslateOverlay restait « question » alors que l'utilisateur
+// avait répondu via le chef (la décision avait même été traitée par un autre
+// musicien). L'acquittement est un événement du log du musicien : tous les
+// réducteurs le lisent dans l'ordre, et il ne fait passer que `input` → `idle`.
+
+const ASK = [
+  { type: 'user_prompt', text: 'Ajoute la langue cible', timestamp: '2026-09-26T09:00:00.000Z' },
+  { type: 'system', subtype: 'init', session_id: 's1' },
+  { type: 'assistant', message: { content: [{ type: 'text', text: 'Plusieurs options.\nNEEDS_USER_INPUT: Quelle langue par défaut ?' }] } },
+  { type: 'result', subtype: 'success', num_turns: 4, duration_api_ms: 9000, session_id: 's1', result: 'NEEDS_USER_INPUT: Quelle langue par défaut ?' },
+];
+const RESOLVED = { type: 'notification', subtype: 'question_resolved', question: 'Quelle langue par défaut ?', note: 'répondu via le chef : hébreu', by: 'chef', text: '✓ question marquée répondue (chef) : répondu via le chef : hébreu', timestamp: '2026-09-26T10:00:00.000Z' };
+const NEXT = [
+  { type: 'user_prompt', text: 'Autre tâche', timestamp: '2026-09-26T11:00:00.000Z' },
+  { type: 'system', subtype: 'init', session_id: 's1' },
+  { type: 'assistant', message: { content: [{ type: 'text', text: 'NEEDS_USER_INPUT: Et le thème ?' }] } },
+  { type: 'result', subtype: 'success', num_turns: 2, duration_api_ms: 3000, session_id: 's1', result: 'NEEDS_USER_INPUT: Et le thème ?' },
+];
+
+scenario('question acquittée : fleet-status (deriveState + scanProject)');
+{
+  const L = (evs) => evs.map(e => JSON.stringify(e));
+  ok(deriveState(L(ASK)).state === 'input', 'avant : la question est ouverte');
+  const d = deriveState(L([...ASK, RESOLVED]));
+  ok(d.state === 'idle' && d.resolution?.note === 'répondu via le chef : hébreu', 'après acquittement : « prêt », la note est conservée');
+  ok(deriveState(L([...ASK, RESOLVED, ...NEXT])).state === 'input', 'une NOUVELLE question posée ensuite reste bien ouverte');
+  ok(deriveState(L([...ASK, NEXT[0], NEXT[1], RESOLVED])).state === 'live',
+     'un acquittement arrivé après le début d’un nouveau tour est ignoré (le tour garde la main)');
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'q-res-'));
+  fs.writeFileSync(path.join(dir, 'TO.jsonl'), L(ASK).join('\n') + '\n');
+  ok(scanProject('TO', dir).needsInput === 'Quelle langue par défaut ?', 'scanProject : needsInput tant que la question est ouverte');
+  fs.appendFileSync(path.join(dir, 'TO.jsonl'), JSON.stringify(RESOLVED) + '\n');
+  const s = scanProject('TO', dir);
+  ok(s.state === 'idle' && s.needsInput === null, 'scanProject : plus de « needs: … » après acquittement (fleet-status, /api/pupitre)');
+  fs.appendFileSync(path.join(dir, 'TO.jsonl'), L(NEXT.slice(0, 2)).join('\n') + '\n');
+  ok(scanProject('TO', dir).needsInput === null, 'ni pendant le tour suivant (avant : l’ancienne question restait affichée)');
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+scenario('question acquittée : reduceMusician réel (pump) et scanProjectState (/api/config)');
+{
+  const start = SRC.indexOf('function reduceMusician(');
+  const end = SRC.indexOf('\n}\n', start) + 2;
+  const states = new Map();
+  // eslint-disable-next-line no-new-func
+  const reduce = new Function('musicianAutoStates', 'isPhantomResult', 'isQuestionResolved', 'NEEDS_CHEF_RE',
+    `${SRC.slice(start, end)}\nreturn reduceMusician;`)(states, isPhantomResult, isQuestionResolved, /NEEDS_CHEF_INPUT:\s*([^\n]+)/i);
+  ASK.forEach(e => reduce('TO', e));
+  const r = reduce('TO', RESOLVED);
+  ok(r.resolved === true && r.prevState === 'input' && r.newState === 'idle', 'input → idle, signalé au pump');
+  ok(r.expectCallback === null, 'aucune attente à honorer : ni réveil ni notification');
+  const pump = SRC.slice(SRC.indexOf('reduceMusician(name, ev);'), SRC.indexOf('// ---- Callback-wake bookkeeping'));
+  ok(/if \(resolved\)[\s\S]*debugLog\(msg\)[\s\S]*continue;/.test(pump), 'le pump journalise et s’arrête là (pas de drain, pas de réveil)');
+
+  const s0 = SRC.indexOf('function scanProjectState(');
+  const s1 = SRC.indexOf('\n}\n', s0) + 2;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'q-sps-'));
+  fs.writeFileSync(path.join(dir, 'TO.jsonl'), [...ASK, RESOLVED].map(e => JSON.stringify(e)).join('\n') + '\n');
+  // eslint-disable-next-line no-new-func
+  const sps = new Function('fs', 'path', 'LOGS_DIR', 'SCAN_TAIL_BYTES', 'readMarker', 'isPhantomResult', 'isQuestionResolved',
+    `${SRC.slice(s0, s1)}\nreturn scanProjectState;`)(fs, path, dir, 256 * 1024, () => null, isPhantomResult, isQuestionResolved);
+  const snap = sps('TO');
+  ok(snap.state === 'idle' && snap.questionResolved?.note === 'répondu via le chef : hébreu',
+     '/api/config : la carte se recharge « prête », avec la note (survit au redémarrage)');
+  fs.rmSync(dir, { recursive: true, force: true });
 }
 
 try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {}

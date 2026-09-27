@@ -380,6 +380,14 @@
 .cv-q-secondary:hover { color: var(--fg-0); }
 .cv-q-note { font-size: 10px; color: var(--fg-3); font-family: var(--font-mono); }
 
+/* Question acquittée sans relancer le musicien (0.25.0) : grisée, jamais rouge. */
+.cv-bubble.is-question.is-resolved { opacity: 0.72; }
+.cv-bubble.is-question.is-resolved .cv-byline { color: var(--fg-2); }
+.cv-q-resolved { font-family: var(--font-mono); font-size: 11px; color: var(--fg-2); margin-top: 4px; }
+.ds-resolve { font-family: var(--font-mono); font-size: 10px; padding: 2px 8px; margin-left: 6px; border-radius: 5px; border: 1px solid var(--card-border); color: var(--fg-1); }
+.ds-resolve:hover { background: var(--card-bg-hover); color: var(--fg-0); }
+.ds-resolved { color: var(--fg-2); font-size: 11px; }
+
 /* ---------- Composer : cible + contexte de réponse ---------- */
 .composer-target {
   font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.14em;

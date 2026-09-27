@@ -334,6 +334,7 @@
     const itemHtml = (it) => {
       const acts = it.kind === "question"
         ? `<button class="ai-act is-primary" data-via-chef="${esc(it.name)}">Répondre via le chef</button>` +
+          `<button class="ai-act" data-resolve-question="${esc(it.name)}" title="Déjà répondue ailleurs ou sans objet — aucun tour relancé">✓ Marquer comme répondue</button>` +
           `<button class="ai-act" data-open-musician="${esc(it.name)}">Ouvrir</button>`
         : `<button class="ai-act" data-open-musician="${esc(it.name)}">Ouvrir</button>` +
           `<button class="ai-act" data-talk-chef="${esc(it.name)}">En parler au chef</button>`;
@@ -369,6 +370,8 @@
       if (open) { App.openMusician(open.dataset.openMusician); return; }
       const via = e.target.closest("[data-via-chef]");
       if (via) { App.answerViaChef(via.dataset.viaChef); return; }
+      const rq = e.target.closest("[data-resolve-question]");
+      if (rq) { App.resolveQuestion(rq.dataset.resolveQuestion); return; }
       const talk = e.target.closest("[data-talk-chef]");
       if (talk) { App.talkToChefAbout(talk.dataset.talkChef); return; }
     });
@@ -829,6 +832,13 @@
     st.innerHTML = m
       ? `${esc(glyph(m))} ${esc(label(m))}` + (h ? ` · <span style="color:var(--st-error)">${esc(h.text)}</span>` : "")
       : "—";
+    // Question en attente : on peut l'acquitter d'ici. Déjà acquittée : on
+    // garde la trace (note) tant que le musicien n'a pas repris la main.
+    if (m && m.state === "input") {
+      st.innerHTML += ` <button class="ds-resolve" data-resolve-question="${esc(m.name)}" title="Déjà répondue ailleurs ou sans objet — aucun tour relancé">✓ Marquer comme répondue</button>`;
+    } else if (m && m.state === "idle" && m.questionResolved) {
+      st.innerHTML += ` · <span class="ds-resolved">✓ question marquée répondue${m.questionResolved.note ? " — " + esc(m.questionResolved.note) : ""}</span>`;
+    }
 
     const meta = $(".dive-meta", el);
     if (m && m.parked) {
@@ -1014,6 +1024,7 @@
              : String(b.text || "").slice(0, 90);
       } else if (e?.type === "user_prompt") prev = String(e.text || "").slice(0, 90);
       else if (e?.type === "result") prev = (e.is_error ? "is_error " : "") + (e.subtype || "");
+      else if (e?.type === "notification") prev = String(e.text || "").slice(0, 120);
       return `<div class="dj-line"><span class="dj-ts">${esc(t)}</span><span class="dj-type">${esc(kind)}</span>${esc(prev)}</div>`;
     }).join("");
     pane.innerHTML =
@@ -1026,6 +1037,10 @@
     if (!el || el._wired) return;
     el._wired = true;
     $(".dive-back", el).addEventListener("click", () => goBack());
+    $(".dive-state", el).addEventListener("click", (e) => {
+      const b = e.target.closest("[data-resolve-question]");
+      if (b) App.resolveQuestion(b.dataset.resolveQuestion);
+    });
     $(".dive-queue", el).addEventListener("click", (e) => {
       const b = e.target.closest("[data-queue-rm]");
       if (b) removeQueued(b.dataset.queueRm);

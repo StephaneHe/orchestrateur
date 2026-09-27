@@ -11,6 +11,54 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-09-27
+
+On peut acquitter la question d'un musicien **sans le relancer**. Signalement :
+« l'affichage montre toujours une question de TranslateOverlay à laquelle j'ai
+déjà répondu ».
+
+### Added
+- (server) **`POST /api/question/:project/resolve {note?, by?}`**, derrière le
+  token gate. La route ajoute au log du musicien un événement
+  `notification/question_resolved` (question, note, auteur, horodatage) et ne
+  lance aucun tour. Elle renvoie 409 si aucune question n'est ouverte ou si un
+  tour tourne. La décision se prend sur une lecture fraîche du log.
+- (cli) **`scripts/resolve-question.mjs <projet> [--note "…"]`**, qui lit
+  `.token` comme `queue.mjs`. Sortie lisible. Codes : 0 acquittée, 2 rien à
+  acquitter ou tour en cours, 3 serveur antérieur à 0.25.0, 1 erreur.
+- (web) **« ✓ Marquer comme répondue »** sur la bulle de question du fil (la
+  plus récente de ce musicien, s'il attend encore), sur la bande d'attention et
+  sur la ligne d'état du panneau. Une bulle acquittée est grisée « ✓ marquée
+  répondue » avec la note. La note apparaît aussi dans le journal du panneau
+  et dans son état.
+- (server) `/api/config` expose `questionResolved` (dernier acquittement), ce
+  qui permet de reconstruire la bulle au rechargement.
+- (tests) Tests étendus :
+  - `_test_wake_report_only.mjs` (41) : `deriveState`/`scanProject`,
+    `reduceMusician` et `scanProjectState` réels. Couvre l'acquittement, la
+    nouvelle question ensuite, et l'acquittement ignoré quand un tour a démarré.
+  - `_test_queue_api.mjs` (43) : route réelle sur express éphémère et vrai
+    CLI (refus pendant un tour sans écriture, écriture, codes de sortie).
+- (docs) `CLAUDE.md` ; `I:\Dev\Chef\CLAUDE.md` (§4 « Rapporter à
+  l'utilisateur » : acquitter quand la réponse passe par le chef ou que la
+  question devient sans objet).
+
+### Fixed
+- (server) **La carte d'un musicien restait « question » indéfiniment** après
+  une réponse donnée via le chef, ou quand la décision avait été prise ailleurs
+  (ici par SmartKeyGuard). `/api/mark-read` n'y pouvait rien, puisqu'il ne
+  touche que unread/idle.
+- (cli) **`fleet-status` affichait « needs: … » hors de l'état `input`.**
+  `scanProject` remontait la dernière question pendant le tour suivant, et
+  après un acquittement. `needsInput` n'est plus renvoyé que si la question
+  est ouverte ; même correctif pour `/api/pupitre`.
+
+### Changed
+- (server, web, cli) Tous les réducteurs lisent l'événement `question_resolved`
+  avec une règle unique : `input` → `idle`, rien d'autre. Ce ne sont pas une
+  fin de tour ni un début de tour : ni notification, ni réveil, ni drain. Le
+  pump le journalise `[question]` dans `logs/server-debug.log`.
+
 ## [0.24.1] - 2026-09-26
 
 Trois défauts observés le 25/09 (TranslateOverlay, vuBox), causes établies

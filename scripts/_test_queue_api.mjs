@@ -243,6 +243,63 @@ scenario('balayage de secours : libre + aucun processus + file ≥ 60 s ⇒ drai
   }
 }
 
+// ---------- 4. acquitter une question : route + CLI réels (0.25.0) ------------
+
+scenario('POST /api/question/:p/resolve et resolve-question.mjs');
+{
+  const { scanProject } = await import('./fleet-status-core.mjs');
+  const QLOGS = fs.mkdtempSync(path.join(os.tmpdir(), 'q-api-'));
+  const qlog = path.join(QLOGS, 'Alpha.jsonl');
+  const ask = [
+    { type: 'user_prompt', text: 'go', timestamp: '2026-09-26T09:00:00.000Z' },
+    { type: 'system', subtype: 'init' },
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'NEEDS_USER_INPUT: Quelle langue ?' }] } },
+    { type: 'result', subtype: 'success', num_turns: 3, duration_api_ms: 5000, result: 'NEEDS_USER_INPUT: Quelle langue ?' },
+  ];
+  fs.writeFileSync(qlog, ask.map(e => JSON.stringify(e)).join('\n') + '\n');
+  const pidState = { alive: false };
+  const qapp = express();
+  const ROUTE = slice("app.post('/api/question/:project/resolve'", '// Register an Android device');
+  // eslint-disable-next-line no-new-func
+  new Function('app', 'express', 'config', 'scanFleetMember', 'dispatchPidAliveAsync', 'fs', 'path', 'LOGS_DIR', 'console', 'debugLog', ROUTE)(
+    qapp, express, config, (n) => scanProject(n, QLOGS), async () => (pidState.alive ? 99 : null),
+    fs, path, QLOGS, { log: () => {} }, () => {});
+  const qsrv = await new Promise(r => { const s = qapp.listen(0, '127.0.0.1', () => r(s)); });
+  const QPORT = qsrv.address().port;
+  const rq = (...args) => new Promise((resolve) => {
+    const c = spawn(process.execPath, [path.join(ROOT, 'scripts', 'resolve-question.mjs'), ...args], {
+      cwd: ROOT, env: { ...process.env, ORCH_PORT: String(QPORT) },
+    });
+    let out = '', err = '';
+    c.stdout.on('data', d => { out += d; });
+    c.stderr.on('data', d => { err += d; });
+    c.on('close', (code) => resolve({ code, out, err }));
+  });
+
+  pidState.alive = true;
+  let r = await rq('Alpha');
+  ok(r.code === 2 && /tour en cours/.test(r.out) && fs.readFileSync(qlog, 'utf8').trim().split('\n').length === ask.length,
+     'tour en cours ⇒ refus (409), exit 2, rien d’écrit');
+  pidState.alive = false;
+
+  r = await rq('Alpha', '--note', 'répondu via le chef : hébreu');
+  ok(r.code === 0 && /acquittée/.test(r.out) && /Quelle langue/.test(r.out), 'acquittée : sortie lisible (question + note)');
+  const last = JSON.parse(fs.readFileSync(qlog, 'utf8').trim().split('\n').pop());
+  ok(last.type === 'notification' && last.subtype === 'question_resolved' && last.note === 'répondu via le chef : hébreu' && last.by === 'chef',
+     'l’événement est ajouté au log du musicien (par « chef »), avec la note');
+  ok(scanProject('Alpha', QLOGS).state === 'idle', 'le musicien repasse « prêt » — sans aucun tour');
+
+  r = await rq('Alpha');
+  ok(r.code === 2 && /aucune question en attente/.test(r.out), 'plus de question ⇒ exit 2 (non nul), comme demandé');
+  r = await rq('Inconnu');
+  ok(r.code === 1 && /unknown project/.test(r.err), 'projet hors config ⇒ 404, exit 1');
+  r = await rq('Alpha', '--note');
+  ok(r.code === 64, '--note sans texte ⇒ usage');
+
+  qsrv.close();
+  fs.rmSync(QLOGS, { recursive: true, force: true });
+}
+
 scenario('fin de tour en « input » : la file est drainée');
 {
   const cond = SRC.slice(SRC.indexOf('// Drain the per-musician queue on any turn completion'), SRC.indexOf('drainQueue(name);', SRC.indexOf('// Drain the per-musician queue on any turn completion')));

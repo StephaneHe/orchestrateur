@@ -187,6 +187,34 @@ sans `latest.apk` s'affiche « APK pas encore publié » au lieu d'un bouton mor
 
 ---
 
+## Questions acquittées sans relancer le musicien (0.25.0)
+
+L'état `input` (question `NEEDS_USER_INPUT` du dernier tour) ne s'efface
+normalement qu'au tour suivant du musicien. Quand l'utilisateur répond via le
+chef, ou que la question devient sans objet, on l'**acquitte** sans rien
+relancer :
+
+- `POST /api/question/:project/resolve {note?, by?}` (token-gated) ajoute au
+  log du musicien un événement `notification/question_resolved` (question,
+  note, auteur, horodatage). La route renvoie 409 si aucune question n'est
+  ouverte ou si un tour tourne.
+- CLI : `node scripts/resolve-question.mjs <projet> [--note "…"]`. Codes de
+  sortie : 0 acquittée, 2 rien à acquitter, 3 serveur < 0.25.0.
+- UI : bouton « ✓ Marquer comme répondue » sur la bulle de question du fil, la
+  ligne de la bande d'attention et l'état du panneau. Une bulle acquittée est
+  grisée « ✓ marquée répondue » avec la note.
+
+Pourquoi un événement de log et pas un sidecar : tous les réducteurs
+(`reduceMusician`, `scanProjectState`, `deriveState` via `isQuestionResolved`,
+le client) lisent déjà le log dans l'ordre. La règle est unique : seul `input`
+passe à `idle`. Un nouveau tour qui démarre reprend donc naturellement la
+main, l'acquittement survit au redémarrage, part au dashboard par le SSE et
+reste lisible dans le journal du panneau. `scanProject` ne remonte plus
+`needsInput` hors de l'état `input` (fleet-status n'affiche plus « needs: … »
+pour une question acquittée ou dépassée).
+
+---
+
 ## Attachments
 
 Images uploaded via the dashboard (paste / drag-drop / file picker) land in
