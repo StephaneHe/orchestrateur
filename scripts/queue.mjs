@@ -101,6 +101,7 @@ if (removeId) {
       e.model ? `model ${e.model}` : null,
       e.provider ? `provider ${e.provider}` : null,
       e.callback ? `callback ${e.callback}` : 'sans callback',
+      e.newSession ? 'SESSION NEUVE (--new-session)' : null,
       e.attachments ? `${e.attachments} pièce(s) jointe(s)` : null,
     ].filter(Boolean).join(' · ');
     console.log(`\n  ${e.position}. ${e.id}`);

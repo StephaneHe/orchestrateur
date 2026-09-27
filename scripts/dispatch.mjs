@@ -193,6 +193,15 @@ if (providerOverride && !['claude', 'codex'].includes(providerOverride)) {
 // env ; seul un argv les sépare, parce qu'un flag ne s'hérite pas. Sans cette
 // distinction, les gardes ci-dessous tuaient le tour de chef que le pool venait
 // d'assigner — sortie 65 instantanée, file bloquée (24/09/2026).
+// --new-session (0.27.0) : ce tour démarre SANS --resume. L'ancienne session
+// n'est pas effacée : son sidecar est archivé (.session.bak-<horodatage>), puis
+// le session_id du nouveau tour devient le courant. Usages : études
+// indépendantes par des models différents sur un même musicien, ou repartir
+// d'un contexte court quand une session est devenue trop longue (et chère).
+const newSessionIdx = argv.indexOf('--new-session');
+if (newSessionIdx !== -1) argv.splice(newSessionIdx, 1);
+const NEW_SESSION = newSessionIdx !== -1;
+
 const poolAssignIdx = argv.indexOf('--pool-assign');
 if (poolAssignIdx !== -1) argv.splice(poolAssignIdx, 1);
 const POOL_ASSIGN = poolAssignIdx !== -1;
@@ -750,6 +759,8 @@ function postQueueIfBusy() {
     if (sourceProject)     payload.source   = sourceProject;
     if (modelOverride)     payload.model    = modelOverride;
     if (providerOverride)  payload.provider = providerOverride;
+    // --new-session voyage avec l'entrée de file : il prendra effet au lancement.
+    if (NEW_SESSION)       payload.newSession = true;
     // L'origine (quel tour de chef attend ce résultat) voyage avec l'entrée de
     // file : une demande qui patiente ne doit pas perdre à qui elle répond.
     if (CHEF_SLOT != null) payload.slot   = CHEF_SLOT;
@@ -793,6 +804,29 @@ if (queueIfBusy && projectName !== CONDUCTOR) {
     }
     console.error(`[dispatch] ATTENTION : ${projectName} a un tour en cours (pid=${busyPid}) et le serveur est injoignable — dispatch direct malgré tout`);
   }
+}
+
+// ---------- --new-session : archivage de la session courante -----------------
+// ICI et pas plus tôt : si le musicien était occupé, la demande vient de
+// partir en file (avec newSession) et ce processus est déjà sorti — rien ne
+// doit être archivé avant que le tour ne tourne vraiment. Seulement pour
+// claude : codex n'a pas de session, archiver ferait repartir à zéro le
+// PROCHAIN tour claude sans que personne ne l'ait demandé.
+let archivedSession = null;
+if (NEW_SESSION && provider === 'claude') {
+  if (sessionId) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    archivedSession = `${sessionPath}.bak-${stamp}`;
+    try {
+      fs.renameSync(sessionPath, archivedSession);
+      console.log(`[dispatch] --new-session : session ${sessionId} archivée → ${path.basename(archivedSession)}`);
+    } catch (e) {
+      die(`--new-session : archivage de ${sessionPath} impossible (${e.message}) — tour annulé plutôt que de reprendre l'ancienne session`, 66);
+    }
+  }
+  sessionId = null;          // ⇒ pas de --resume : le CLI ouvre une session neuve
+} else if (NEW_SESSION) {
+  console.log(`[dispatch] --new-session ignoré avec --provider ${provider} (pas de session à reprendre)`);
 }
 
 // ---------- règle de fin de tour : pas d'attente sur l'arrière-plan (0.24.1) --
@@ -903,6 +937,11 @@ if (Number.isFinite(inheritedWakeGen) && inheritedWakeGen > 0) {
 }
 // Diagnostic en une ligne : le tour de chef dit lui-même qu'il est en rapport seul.
 if (POOL_ASSIGN && process.env.DISPATCH_REPORT_ONLY === '1') userPromptEvent.reportOnly = true;
+// Trace du --new-session : ce tour ne reprend PAS la session précédente.
+if (NEW_SESSION && provider === 'claude') {
+  userPromptEvent.newSession = true;
+  if (archivedSession) userPromptEvent.archivedSession = path.basename(archivedSession);
+}
 // POOL (0.22.0) — stampage d'origine, même mécanisme que wakeGen.
 //
 // Deux cas, distingués par la CIBLE et non par une seconde variable :
@@ -1137,7 +1176,9 @@ function runCodex(isFailover = false) {
   logStream.write(JSON.stringify({
     type: 'system', subtype: 'init', session_id: fakeSid,
     provider: 'codex', failover: isFailover || undefined,
-    model: loggedCodexModel, modelSource: codexModelSource, timestamp: new Date().toISOString(),
+    model: loggedCodexModel, modelSource: codexModelSource,
+    webSearch: /\b(WebSearch|WebFetch)\b/.test(tools) ? 'live' : 'défaut codex (projet sans outils web)',
+    timestamp: new Date().toISOString(),
   }) + '\n');
 
   // Where codex writes its final assistant message. Authoritative source for
@@ -1164,9 +1205,18 @@ function runCodex(isFailover = false) {
   //   • `--json` emits JSONL events (mapped to the Claude schema below).
   //   • Prompt goes through STDIN with the `-` placeholder: no argv length
   //     limit, and nothing in the prompt can ever reach a command line.
+  // RECHERCHE WEB (0.27.0). `codex exec` n'a pas de --search (drapeau de la
+  // TUI seulement) ; la clé de config `web_search` (disabled|cached|indexed|
+  // live, vérifiée sur codex-cli 0.154.0) l'active. On suit le même opt-in par
+  // projet que côté Claude : un projet dont les `tools` accordent le web
+  // (WebFetch/WebSearch) a la recherche live ; sinon on ne passe rien et codex
+  // garde son défaut. La recherche est un outil côté serveur OpenAI : le bac à
+  // sable workspace-write ne la bloque pas, et aucune clé n'est transmise.
+  const codexWeb = /\b(WebSearch|WebFetch)\b/.test(tools);
   const codexArgs = [
     'exec',
     ...(codexModel ? ['--model', codexModel] : []),   // absent ⇒ codex applique son config.toml
+    ...(codexWeb ? ['-c', 'web_search=live'] : []),
     '--approve-for-me',
     '--skip-git-repo-check',
     '--json',

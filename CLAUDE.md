@@ -268,6 +268,41 @@ pour une question acquittée ou dépassée).
   Sans `--model`, rien ne change. Recette de bout en bout, isolée par
   `DISPATCH_ROOT_FOR_TESTS` (le drapeau de limite est à l'échelle de la
   flotte) : `node scripts/_test_explicit_model.mjs`.
+- **`--new-session`** (0.27.0) démarre le tour **sans `--resume`**.
+  L'ancienne session n'est pas effacée : `logs/<p>.session` est renommé en
+  `.session.bak-<horodatage ISO>`, puis le `session_id` du nouveau tour
+  devient le courant. Usages : études indépendantes par des models
+  différents sur un même musicien, ou repartir d'un contexte court quand une
+  session est devenue trop longue.
+  - L'archivage a lieu **après** la décision de file : une demande mise en
+    file n'archive rien. Le flag voyage avec l'entrée (`newSession`), le
+    drain le repasse en `--new-session`, et `queue.mjs` affiche « SESSION
+    NEUVE ».
+  - API : `POST /api/dispatch {…, newSession: true}`.
+  - Claude uniquement : avec `--provider codex`, le flag est ignoré et le dit,
+    pour ne pas faire repartir à zéro le tour claude suivant.
+  - Traçabilité : le `user_prompt` porte `newSession: true` et
+    `archivedSession`.
+- **Accès web = opt-in par projet.** Un projet sans `tools` hérite de
+  `defaults.allowedTools` (`Read,Edit,Write,Bash`), donc **pas** de
+  WebFetch/WebSearch. BtLocator a dû marquer sa synthèse « non vérifié »
+  pour cette raison.
+  - `node scripts/new-project.mjs <nom> --web` ajoute les deux outils,
+    combinable avec `--tools`. Sur un projet déjà enregistré, `--web` les
+    ajoute seulement, sans rien retirer.
+  - Sans `--web`, le script affiche « AUCUN accès web ».
+  - Pas de web par défaut : la règle dure veut que tout scope plus large que
+    `Read,Edit,Write,Bash` soit un opt-in, et le web ouvre l'injection de
+    prompt et l'exfiltration.
+- **Web pour codex** (codex-cli 0.154.0) : `codex exec` n'a pas de `--search`
+  (drapeau de la TUI uniquement). C'est la clé `web_search`
+  (`disabled|cached|indexed|live`) qui l'active. `dispatch.mjs` passe
+  `-c web_search=live` quand les `tools` du projet accordent le web, et ne
+  passe rien sinon.
+  - C'est un outil côté serveur OpenAI : aucune clé transmise, pas bloqué par
+    le bac à sable.
+  - Vérifier : `system/init.webSearch` dans le log du musicien, puis des
+    `tool_use` nommés `web_search` pendant le tour.
 
 ---
 

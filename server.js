@@ -343,6 +343,7 @@ function queueEntryView(e, i) {
     model: e.model || null, provider: e.provider || null,
     callback: e.callback || null, source: e.source || null,
     attachments: (e.attachmentPaths?.length || 0) + (e.videoPaths?.length || 0),
+    newSession: !!e.newSession,
   };
 }
 
@@ -696,6 +697,8 @@ function spawnDirectDispatch(name, prompt, attachmentPaths = [], videoPaths = []
   // libre. Sans ce flag, un `slot` hérité réactive --queue-if-busy dans le fils,
   // qui se re-postait en file (voir drainAttempt).
   if (opts.noQueueIfBusy) args.push('--no-queue-if-busy');
+  // Session neuve demandée (0.27.0) : le flag a voyagé avec l'entrée de file.
+  if (opts.newSession) args.push('--new-session');
 
   const child = spawn(process.execPath, args, {
     cwd: __dirname,
@@ -777,7 +780,7 @@ function drainAttempt(name, reason) {
     return;
   }
   drainPending.delete(name);
-  const { id, prompt, attachmentPaths, videoPaths, callback, source, model, provider, slot, ticket } = q.shift();
+  const { id, prompt, attachmentPaths, videoPaths, callback, source, model, provider, slot, ticket, newSession } = q.shift();
   if (q.length === 0) dispatchQueue.delete(name);
   persistQueue(name);
   drainLaunchedAt.set(name, Date.now());
@@ -786,7 +789,7 @@ function drainAttempt(name, reason) {
     ` attente-pid=${Date.now() - since}ms`;
   console.log(msg); debugLog(msg);
   spawnDirectDispatch(name, prompt, attachmentPaths, videoPaths,
-    { callback, source, model, provider, slot, ticket, noQueueIfBusy: true });
+    { callback, source, model, provider, slot, ticket, newSession, noQueueIfBusy: true });
 }
 
 const DRAIN_WAIT_STEP_MS = 1000;
@@ -4192,6 +4195,8 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
       // en P0-B : une entrée qui a patienté ne doit rien perdre de son origine.
       slot:     Number.isFinite(Number(req.body?.slot)) && Number(req.body.slot) > 0 ? Number(req.body.slot) : undefined,
       ticket:   typeof req.body?.ticket   === 'string' ? req.body.ticket   : undefined,
+      // --new-session : ne prend effet qu'au LANCEMENT de l'entrée (0.27.0).
+      newSession: req.body?.newSession === true ? true : undefined,
     };
     if (busy) {
       const len = queuePush(name, entry);
@@ -4383,7 +4388,10 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
   lastDispatchAt.set(name, requestInTs);
 
   const spawnStartTs = Date.now();
-  const child = spawn(process.execPath, [dispatchScript, name, '--prompt-stdin'], {
+  // `newSession: true` dans le corps = --new-session (0.27.0) ; argv en tableau.
+  const dispatchArgs = [dispatchScript, name, '--prompt-stdin'];
+  if (req.body?.newSession === true) dispatchArgs.push('--new-session');
+  const child = spawn(process.execPath, dispatchArgs, {
     cwd: __dirname,
     env: {
       ...process.env,

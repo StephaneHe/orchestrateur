@@ -36,7 +36,8 @@ fs.mkdirSync(PROJ, { recursive: true });
 fs.writeFileSync(path.join(T, 'config.json'), JSON.stringify({
   conductor: 'chef',
   defaults: { model: 'claude-opus-4-8', allowedTools: 'Read', provider: 'claude' },
-  projects: [{ name: 'chef', path: PROJ }, { name: 'M', path: PROJ }],
+  projects: [{ name: 'chef', path: PROJ }, { name: 'M', path: PROJ },
+    { name: 'W', path: PROJ, tools: 'Read,Edit,Write,Bash,WebFetch,WebSearch' }],
 }));
 
 // Doublure claude : sert le model demandé (--model), ou STUB_SERVE si posé ;
@@ -47,6 +48,7 @@ fs.writeFileSync(path.join(T, 'config.json'), JSON.stringify({
 const CLAUDE_STUB = path.join(T, 'claude-stub.mjs');
 fs.writeFileSync(CLAUDE_STUB, `
 const a = process.argv.slice(2);
+if (process.env.STUB_ARGS) (await import('node:fs')).default.writeFileSync(process.env.STUB_ARGS, JSON.stringify(a));
 const asked = a[a.indexOf('--model') + 1];
 const served = process.env.STUB_SERVE || asked;
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
@@ -78,8 +80,10 @@ const LIMIT = path.join(T, 'logs', 'claude-limited.until');
 function reset() {
   for (const f of [LOG, LIMIT, CODEX_MARK, path.join(T, 'logs', 'M.session')]) { try { fs.rmSync(f); } catch {} }
 }
-function run(args, env = {}) {
-  const r = spawnSync(process.execPath, [DISPATCH, 'M', ...args, 'fais la tâche'], {
+function run(args, env = {}, project = 'M') {
+  const LOG = path.join(T, 'logs', `${project}.jsonl`);
+  if (project !== 'M') { try { fs.rmSync(LOG); } catch {} }
+  const r = spawnSync(process.execPath, [DISPATCH, project, ...args, 'fais la tâche'], {
     cwd: ROOT, encoding: 'utf8', timeout: 60_000,
     env: {
       ...process.env,
@@ -93,7 +97,7 @@ function run(args, env = {}) {
     ? fs.readFileSync(LOG, 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean)
     : [];
   const results = events.filter(e => e.type === 'result');
-  return { code: r.status, err: r.stderr || '', events, last: results[results.length - 1] || null, results };
+  return { code: r.status, err: r.stderr || '', out: r.stdout || '', events, last: results[results.length - 1] || null, results };
 }
 const futureIso = () => new Date(Date.now() + 3600_000).toISOString();
 
@@ -186,7 +190,7 @@ scenario('file et API : le model demandé n’est jamais réécrit');
 {
   const SRV = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
   ok(/model:\s+typeof req\.body\?\.model\s+=== 'string' \? req\.body\.model/.test(SRV), 'l’entrée de file garde le model du --model d’origine');
-  ok(/\{ callback, source, model, provider, slot, ticket, noQueueIfBusy: true \}/.test(SRV), 'le drain le repasse tel quel (spawnDirectDispatch → --model)');
+  ok(/\{ callback, source, model, provider, slot, ticket, newSession, noQueueIfBusy: true \}/.test(SRV), 'le drain le repasse tel quel (spawnDirectDispatch → --model)');
   ok(/opts\.model === 'string' && opts\.model\) args\.push\('--model', opts\.model\)/.test(SRV), 'spawnDirectDispatch le transmet en --model ⇒ explicite côté dispatch.mjs');
   ok(/!ev\.synthetic && !ev\.model_unavailable &&/.test(SRV), 'pas de drain immédiat derrière un ✕ « model indisponible »');
   ok(/\[fallback-refusé\]/.test(SRV) && /debugLog\(msg\)/.test(SRV), 'le serveur trace [fallback-refusé] dans server-debug.log');
@@ -206,6 +210,88 @@ scenario('côté serveur : le ✕ part bien au chef');
   ok(!isPhantomResult(rr.last), 'le result d’échec n’est jamais pris pour un « result fantôme »');
   ok(out.prevState === 'live' && out.newState === 'error', 'le musicien passe en « échec » (rouge), pas en « prêt »');
   ok(out.expectCallback === 'chef', 'l’attente --callback chef est honorée ⇒ notification ✕ + réveil du chef');
+}
+
+// ============================================================================
+// 0.27.0 — --new-session, web pour codex, new-project --web
+// ============================================================================
+
+const SESS = path.join(T, 'logs', 'M.session');
+const ARGS = path.join(T, 'stub-args.json');
+const stubArgs = () => JSON.parse(fs.readFileSync(ARGS, 'utf8'));
+const backups = () => fs.readdirSync(path.join(T, 'logs')).filter(f => f.startsWith('M.session.bak-'));
+const clearBackups = () => backups().forEach(f => fs.rmSync(path.join(T, 'logs', f)));
+
+scenario('--new-session : session neuve, ancienne archivée (jamais effacée)');
+reset(); clearBackups(); fs.writeFileSync(SESS, 'old-sid');
+r = run([], { STUB_ARGS: ARGS });
+ok(stubArgs().includes('--resume') && stubArgs()[stubArgs().indexOf('--resume') + 1] === 'old-sid', 'sans le flag : --resume old-sid (inchangé)');
+ok(backups().length === 0, '… et aucune archive');
+
+reset(); fs.writeFileSync(SESS, 'old-sid');
+r = run(['--new-session'], { STUB_ARGS: ARGS });
+ok(!stubArgs().includes('--resume'), 'avec --new-session : le CLI est lancé SANS --resume');
+const bk = backups();
+ok(bk.length === 1 && fs.readFileSync(path.join(T, 'logs', bk[0]), 'utf8') === 'old-sid', 'l’ancien sidecar est archivé en .session.bak-<horodatage>, intact');
+ok(fs.readFileSync(SESS, 'utf8') === 'sid-1', 'le session_id du nouveau tour devient le courant');
+const up = r.events.find(e => e.type === 'user_prompt');
+ok(up?.newSession === true && up.archivedSession === bk[0], 'le user_prompt trace newSession + archive (vérifiable dans le log)');
+ok(r.last?.subtype === 'success', 'le tour se déroule normalement');
+
+reset(); clearBackups();
+r = run(['--new-session'], { STUB_ARGS: ARGS });
+ok(!stubArgs().includes('--resume') && backups().length === 0 && r.last?.subtype === 'success', 'sans session existante : démarre à neuf, rien à archiver, pas d’erreur');
+
+reset(); clearBackups(); fs.writeFileSync(SESS, 'old-sid');
+r = run(['--new-session', '--provider', 'codex']);
+ok(fs.readFileSync(SESS, 'utf8') === 'old-sid' && backups().length === 0, 'avec codex : ignoré, la session claude n’est PAS archivée (le prochain tour claude la reprend)');
+ok(/--new-session ignoré avec --provider codex/.test(r.out), '… et c’est dit');
+
+scenario('--new-session voyage avec l’entrée de file');
+{
+  const D = fs.readFileSync(DISPATCH, 'utf8');
+  const SRV = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  const qIdx = D.indexOf('if (queueIfBusy && projectName !== CONDUCTOR)');
+  const archIdx = D.indexOf('if (NEW_SESSION && provider === \'claude\')');
+  ok(qIdx > 0 && archIdx > qIdx, 'l’archivage n’a lieu qu’APRÈS la décision de file (une demande mise en file n’archive rien)');
+  ok(/if \(NEW_SESSION\)\s+payload\.newSession = true;/.test(D), 'dispatch.mjs met newSession dans l’entrée postée au serveur');
+  ok(/newSession: req\.body\?\.newSession === true \? true : undefined/.test(SRV), 'le serveur la conserve dans l’entrée de file');
+  ok(/if \(opts\.newSession\) args\.push\('--new-session'\)/.test(SRV), 'et la repasse en --new-session au drain');
+  ok(/if \(req\.body\?\.newSession === true\) dispatchArgs\.push\('--new-session'\)/.test(SRV), 'API : POST /api/dispatch {newSession:true} ⇒ --new-session');
+}
+
+scenario('codex : recherche web live pour un projet qui a le web');
+reset();
+r = run(['--provider', 'codex'], {}, 'W');
+ok(fs.existsSync(CODEX_MARK) && / -c web_search=live /.test(' ' + fs.readFileSync(CODEX_MARK, 'utf8') + ' '),
+   'projet avec WebFetch/WebSearch ⇒ codex exec -c web_search=live');
+ok(r.events.find(e => e.type === 'system' && e.subtype === 'init')?.webSearch === 'live', 'tracé dans le system/init (webSearch: live)');
+reset();
+r = run(['--provider', 'codex']);
+ok(fs.existsSync(CODEX_MARK) && !/web_search/.test(fs.readFileSync(CODEX_MARK, 'utf8')), 'projet sans outils web ⇒ rien de passé (défaut de codex)');
+
+scenario('new-project.mjs --web');
+{
+  fs.cpSync(path.join(ROOT, 'templates'), path.join(T, 'templates'), { recursive: true });
+  const NP = path.join(ROOT, 'scripts', 'new-project.mjs');
+  const np = (...args) => spawnSync(process.execPath, [NP, ...args], { cwd: ROOT, encoding: 'utf8', env: { ...process.env, DISPATCH_ROOT_FOR_TESTS: T } });
+  const cfg = () => JSON.parse(fs.readFileSync(path.join(T, 'config.json'), 'utf8'));
+  const entry = (n) => cfg().projects.find(p => p.name === n);
+
+  let o = np('Alpha', '--path', path.join(T, 'dev', 'Alpha'), '--web');
+  ok(o.status === 0 && entry('Alpha')?.tools === 'Read,WebFetch,WebSearch', '--web ⇒ tools = défaut de la flotte + WebFetch,WebSearch');
+  o = np('Beta', '--path', path.join(T, 'dev', 'Beta'));
+  ok(o.status === 0 && entry('Beta') && !entry('Beta').tools, 'sans --web : pas de tools (défaut hérité, comportement inchangé)');
+  ok(/AUCUN accès web/.test(o.stdout), '… mais le piège est affiché : « AUCUN accès web »');
+  o = np('Gamma', '--path', path.join(T, 'dev', 'Gamma'), '--tools', 'Read,Bash,Grep', '--web');
+  ok(entry('Gamma')?.tools === 'Read,Bash,Grep,WebFetch,WebSearch', '--tools + --web ⇒ les deux combinés');
+  o = np('Beta', '--web');
+  ok(o.status === 0 && entry('Beta')?.tools === 'Read,WebFetch,WebSearch' && /web tools added/.test(o.stdout), 'projet déjà enregistré + --web ⇒ outils web AJOUTÉS');
+  o = np('Beta', '--web');
+  ok(o.status === 0 && /exists, skipped/.test(o.stdout) && entry('Beta').tools === 'Read,WebFetch,WebSearch', 'relancé : idempotent, rien ne change');
+  const others = cfg().projects.filter(p => !['Alpha', 'Beta', 'Gamma'].includes(p.name));
+  ok(JSON.stringify(others) === JSON.stringify([{ name: 'chef', path: PROJ }, { name: 'M', path: PROJ }, { name: 'W', path: PROJ, tools: 'Read,Edit,Write,Bash,WebFetch,WebSearch' }]),
+     'aucune autre entrée n’est touchée');
 }
 
 fs.rmSync(T, { recursive: true, force: true });

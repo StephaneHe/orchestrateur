@@ -201,6 +201,20 @@ scenario('drain au result : attend la mort du processus, puis lance SANS se re-p
   ok(/opts\.noQueueIfBusy\) args\.push\('--no-queue-if-busy'\)/.test(SRCd), 'spawnDirectDispatch transmet bien --no-queue-if-busy');
 }
 
+scenario('drain : --new-session voyage avec l’entrée (0.27.0)');
+{
+  const s = drainSandbox();
+  s.dq.set('Alpha', [entry('q-ns', { newSession: true })]);
+  s.api.drainQueue('Alpha');
+  await sleep(100);
+  ok(s.spawned.length === 1 && s.spawned[0].opts.newSession === true, 'l’entrée lancée garde newSession ⇒ --new-session au lancement');
+  const s2 = drainSandbox();
+  s2.dq.set('Alpha', [entry('q-plain')]);
+  s2.api.drainQueue('Alpha');
+  await sleep(100);
+  ok(!s2.spawned[0].opts.newSession, 'une entrée ordinaire reprend la session (inchangé)');
+}
+
 scenario('drain : une tâche retirée pendant l’attente ne part pas');
 {
   const s = drainSandbox();

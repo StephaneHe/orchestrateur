@@ -11,6 +11,68 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-09-27
+
+Contexte : BtLocator doit avoir accès à internet, et trois models doivent
+produire chacun un état de l'art indépendant.
+
+### Added
+- (dispatch) **`--new-session`** démarre le tour sans `--resume`. L'ancienne
+  session n'est jamais effacée : `logs/<p>.session` est archivé en
+  `.session.bak-<horodatage ISO>`, et le `session_id` du nouveau tour devient
+  le courant. Si l'archivage échoue, le tour est annulé plutôt que de
+  reprendre l'ancienne session.
+  - L'archivage n'a lieu qu'après la décision de file : une demande mise en
+    file n'archive rien. Le flag voyage avec l'entrée (`newSession`), et le
+    drain le repasse.
+  - API : `POST /api/dispatch {newSession: true}`. `queue.mjs` affiche
+    « SESSION NEUVE ».
+  - Claude uniquement : ignoré avec `--provider codex`, sans toucher à la
+    session claude.
+  - Traçabilité : le `user_prompt` porte `newSession` et `archivedSession`.
+- (dispatch) **Recherche web pour codex.** `codex exec` n'a pas de `--search`
+  (c'est un drapeau de la TUI). La clé de config `web_search`
+  (`disabled|cached|indexed|live`) a été vérifiée hors ligne sur codex-cli
+  0.154.0 : `live` est accepté, une valeur invalide est rejetée au chargement.
+  - `-c web_search=live` est passé quand les `tools` du projet accordent le
+    web, rien sinon. C'est le même opt-in que côté Claude.
+  - Aucune clé n'est transmise et l'auth OAuth est inchangée. C'est un outil
+    côté serveur OpenAI, que le bac à sable ne bloque pas.
+  - `system/init.webSearch` le trace. Les recherches apparaissent en
+    `tool_use` `web_search` : le mapping existait déjà.
+- (cli) **`new-project.mjs --web`** ajoute WebFetch,WebSearch, combinable
+  avec `--tools`. Sur un projet déjà enregistré, `--web` ajoute seulement ces
+  deux outils, sans jamais rien retirer. Sans `--web`, le script affiche
+  « AUCUN accès web ». Le web n'est pas activé par défaut : la règle dure veut
+  que tout scope plus large que `Read,Edit,Write,Bash` soit un opt-in par
+  projet, car le web ouvre l'injection de prompt et l'exfiltration.
+- (tests) `_test_explicit_model.mjs` (56), recette dispatch de bout en bout,
+  isolée, sans réseau. Elle couvre :
+  - `--new-session` : sans `--resume`, archive intacte, nouveau sid courant,
+    trace ; sans session existante ; ignoré avec codex ;
+  - le chemin de file ;
+  - codex `web_search=live` avec ou sans outils web ;
+  - `new-project --web` : nouveau projet, combinaison avec `--tools`, ajout
+    sur une entrée existante, idempotence, aucune autre entrée touchée.
+
+  `_test_queue_api.mjs` (45) : `newSession` survit au drain.
+  `new-project.mjs` accepte aussi `DISPATCH_ROOT_FOR_TESTS`.
+- (docs) `CLAUDE.md`. Dans `I:\Dev\Chef\CLAUDE.md`, section dispatch :
+  `--new-session` avec l'exemple des trois études, et « un projet sans `tools`
+  n'a pas le web ».
+
+### Changed
+- (config, non versionné) `config.json` : `"tools":
+  "Read,Edit,Write,Bash,WebFetch,WebSearch"` pour **BtLocator** et
+  **SmartKeyGuard**. L'écriture est atomique, et un contrôle a vérifié que
+  rien d'autre ne changeait. C'est effectif immédiatement, car `dispatch.mjs`
+  relit `config.json` à chaque dispatch.
+- (server) `spawnDirectDispatch`, l'entrée de file, le drain et
+  `POST /api/dispatch` transportent `newSession`. **`server.js` modifié :
+  redémarrage requis** (par le chef) pour `--new-session` via la file et
+  l'API. Un `--new-session` passé directement à `dispatch.mjs` fonctionne dès
+  maintenant.
+
 ## [0.26.0] - 2026-09-27
 
 Règle utilisateur : « si un modèle est précisément demandé, aucun fallback
