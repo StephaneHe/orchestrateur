@@ -357,7 +357,7 @@ arrière ».
   `/?projets=0` (`?projets=1` rétablit). Défaut : activée.
 - **Retour arrière complet**, exécuté par le chef :
 
-      git -C I:\orchestrateur revert --no-edit <commit 0.29.0>
+      git -C I:\orchestrateur revert --no-edit 2ce24c2 7b80962   # les deux commits 0.29.0, du plus récent au plus ancien
       # ou : git -C I:\orchestrateur checkout pre-status-view-v0.28.0 -- server.js public scripts/fleet-status-core.mjs package.json
       node I:\orchestrateur\scripts\restart-orchestrateur.mjs
       node I:\orchestrateur\scripts\regression.mjs
