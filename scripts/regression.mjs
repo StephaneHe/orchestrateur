@@ -62,7 +62,10 @@ if (flag('--compare')) {
   for (const id of ids) {
     const x = A.get(id), y = B.get(id);
     const sa = x?.status || '—', sb = y?.status || '—';
-    const gap = sa === 'OK' && sb !== 'OK' ? '**RÉGRESSION**' : sa !== 'OK' && sb === 'OK' ? 'corrigé / nouveau' : '';
+    // Une ligne absente d'un côté = parcours non exécuté (ex. captures sans --shots), pas une régression.
+    const gap = !x || !y ? 'non exécuté d\'un côté'
+      : sa === 'OK' && sb !== 'OK' ? '**RÉGRESSION**'
+      : sa !== 'OK' && sb === 'OK' ? 'corrigé / nouveau' : '';
     if (gap.startsWith('**')) regressions++;
     lines.push(`| ${(y || x).stage} | ${(y || x).name.replace(/\|/g, '/')} | ${sa} | ${sb} | ${gap} |`);
   }
@@ -137,6 +140,11 @@ async function runSuites() {
     extractCode(source, codeRoot);
     // Les suites de config valident la VRAIE configuration de la flotte.
     for (const f of ['config.json']) fs.copyFileSync(path.join(REPO, f), path.join(codeRoot, f));
+    // _test_pool_chef_dispatch mesure logs/orchestrateur.jsonl (présent dans
+    // une archive de tag, où des logs sont versionnés, absent d'un dossier).
+    fs.mkdirSync(path.join(codeRoot, 'logs'), { recursive: true });
+    const probeLog = path.join(codeRoot, 'logs', 'orchestrateur.jsonl');
+    if (!fs.existsSync(probeLog)) fs.writeFileSync(probeLog, '');
     // Jeton propre à cette copie (le vrai .token n'est jamais recopié).
     fs.writeFileSync(path.join(codeRoot, '.token'), (await import('node:crypto')).randomBytes(32).toString('hex'));
     for (const f of HERMETIC_OVERLAY) {

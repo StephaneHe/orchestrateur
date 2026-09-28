@@ -62,6 +62,9 @@ toute modification : tag `pre-status-view-v0.28.0` (`17c0899`).
     `_regression_browser.mjs`) sur tout le dashboard ;
   - rapports JSON et comparaison avant/après (`--compare`) ;
   - code de sortie non nul au moindre échec.
+- (docs) `docs/dashboard-status/SYNTHESE.md` (conception) et
+  `NON-REGRESSION.md` : tableau avant/après, 0 régression, retour arrière
+  testé (revert → identique au tag), captures `captures/{avant,apres}/`.
 - (tests) `scripts/_test_projects_view.mjs` (31) : champs du cœur, classement
   réel de `projets.js` en VM, contrats de `/api/pupitre`.
 - (dev) `playwright-core` en devDependency (pilote l'Edge installé ; aucun

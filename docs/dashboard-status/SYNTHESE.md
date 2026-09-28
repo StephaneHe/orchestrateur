@@ -233,8 +233,11 @@ Le chef suit les mêmes règles et porte le badge CHEF.
   node I:\orchestrateur\scripts\regression.mjs              # la batterie doit repasser au vert
   ```
 
-  Les deux voies ont été rejouées sur l'instance de test
-  (`regression.mjs --ref pre-status-view-v0.28.0`, cf. rapport).
+  Les deux voies ont été rejouées sur l'instance de test. Le code du tag
+  donne 48 OK · 1 KO préexistant. Un `git revert` du commit 0.29.0 (`7b80962`)
+  dans un worktree jetable, redémarré par `restart-orchestrateur.mjs`, donne
+  un résultat **identique au tag**, sans aucune régression. Détail dans
+  `NON-REGRESSION.md`.
 - **Attention, dette constatée** : `server.js` importe `./ssh-server.js` et
   `./src/message_router.mjs`, qui **ne sont pas versionnés**. Un checkout
   propre du tag sur une autre machine ne démarrerait pas. Sur cette machine,
