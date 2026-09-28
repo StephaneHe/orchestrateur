@@ -139,3 +139,22 @@ qui écoute sur `0.0.0.0:7777`, accepte donc toute requête du LAN sans jeton,
 `/api/dispatch` compris. Cela contredit la règle dure « Token gate is
 mandatory » du `CLAUDE.md`. Le comportement est identique avant et après
 0.29.0 ; la batterie le signale à chaque passage.
+
+## 0.29.1 — faux panneau d'autorisation (28/09/2026)
+
+Point de retour : tag `pre-denial-fix-v0.29.0`. Retour arrière :
+`git revert --no-edit pre-denial-fix-v0.29.0..v0.29.1`.
+
+| | OK | KO | NA |
+|---|---|---|---|
+| Avant (tag `pre-denial-fix-v0.29.0`) | 62 | 1 | 5 |
+| Après (0.29.1) | 65 | 0 | 3 |
+| **Régressions** | **0** | | |
+
+Sur l'ancien code, le KO « avant » est le bug signalé, reproduit par le test :
+un Read dont le contenu contient « requires approval » faisait apparaître un
+panneau d'autorisation. Nouveaux parcours :
+
+- `_test_permission_denial.mjs` (27) ;
+- « un Read piégé ne déclenche rien » (KO → OK) ;
+- « vrai refus → panneau complet, toast + volet » (NA → OK).

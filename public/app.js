@@ -123,8 +123,9 @@ class Musician {
     this.el = null;                      // the DOM card, built lazily
     this.pos = { x: 0, y: 0, w: CARD_MAX_W, row: 0 };
 
-    this.pendingDenials = [];            // [{toolName,toolId}] — cleared on result/init
+    this.pendingDenials = [];            // [{toolName,toolId,preview,reason}] — VRAIS refus seulement (permission-denial.js)
     this._toolIdToName  = {};            // tool_use_id → name within current turn
+    this._toolUses      = {};            // tool_use_id → {name, input} : l'aperçu d'un refus en dépend
 
     this.parked   = project.parked   || false;
     this.provider = project.provider || 'claude';
@@ -164,6 +165,7 @@ class Musician {
       if (raw.subtype === "init") {
         this.pendingDenials = [];
         this._toolIdToName  = {};
+        this._toolUses      = {};
         this.turnCount++;
         this.turnStartMs = Date.parse(raw.timestamp) || Date.now();
         this.setState(this.state === "idle" || this.state === "unread" ? "live" : this.state);
@@ -188,7 +190,7 @@ class Musician {
         if (b?.type === "tool_use") {
           hasTool = true;
           this.lastLine = `${(b.name || "TOOL").toLowerCase()} · ${toolArgPreview(b)}`;
-          if (b.id && b.name) this._toolIdToName[b.id] = b.name;
+          if (b.id && b.name) { this._toolIdToName[b.id] = b.name; this._toolUses[b.id] = { name: b.name, input: b.input }; }
         }
       }
       if (gotText) {
@@ -197,20 +199,15 @@ class Musician {
       }
       this.setState(hasTool ? "live" : (hasThink ? "think" : "live"));
     } else if (t === "user") {
-      // Detect permission denials (tool_result with "requires approval")
-      for (const b of raw.message?.content || []) {
-        if (b?.type !== "tool_result") continue;
-        const c = typeof b.content === "string" ? b.content
-          : Array.isArray(b.content) ? b.content.map(x => x?.text ?? "").join("\n") : "";
-        if (!c.includes("requires approval")) continue;
-        const toolName = b.tool_use_id ? (this._toolIdToName[b.tool_use_id] || null) : null;
-        if (!this.pendingDenials.some(d => d.toolId === b.tool_use_id)) {
-          this.pendingDenials.push({ toolName, toolId: b.tool_use_id });
-        }
+      // Refus d'autorisation : UNIQUEMENT un vrai refus du CLI (is_error + libellé
+      // réel), jamais la chaîne « requires approval » dans un fichier lu (0.29.1).
+      for (const d of (window.PermissionDenial?.denialsFromUserEvent(raw, this._toolUses) || [])) {
+        if (!this.pendingDenials.some(x => x.toolId === d.toolId)) this.pendingDenials.push(d);
       }
     } else if (t === "result") {
       this.pendingDenials = [];
       this._toolIdToName  = {};
+      this._toolUses      = {};
       const isErr = !!raw.is_error || (typeof raw.subtype === "string" && raw.subtype.startsWith("error"));
       // Harvest token/cost numbers from the terminal result event.
       const u = raw.usage || {};
@@ -404,19 +401,12 @@ function toolArgPreview(block) {
 // Build the last N meaningful feed items from a musician's ring as HTML.
 function buildFeedHtml(ring, max = 3) {
   const items = [];
-  const tmap = buildToolNameMap(ring);
+  const uses = buildToolUseMap(ring);
   for (let i = ring.length - 1; i >= 0 && items.length < max * 2; i--) {
     const ev = ring[i];
     if (ev.type === "user") {
-      for (const b of ev.message?.content || []) {
-        if (b?.type !== "tool_result") continue;
-        const c = typeof b.content === "string" ? b.content
-          : Array.isArray(b.content) ? b.content.map(x => x?.text ?? "").join("\n") : "";
-        if (!c.includes("requires approval")) continue;
-        const tn = b.tool_use_id ? (tmap[b.tool_use_id] || "outil") : "outil";
-        items.push({ cls: "mf-denied", text: `🚫 ${tn} bloqué` });
-        break;
-      }
+      const d = (window.PermissionDenial?.denialsFromUserEvent(ev, uses) || [])[0];
+      if (d) items.push({ cls: "mf-denied", text: `🚫 ${d.toolName} bloqué · ${d.preview}` });
     } else if (ev.type === "assistant") {
       const content = ev.message?.content || [];
       for (const b of content) {
@@ -912,8 +902,7 @@ class FleetStream {
       const prevDenials = m.pendingDenials.length;
       m.transition(raw);
       if (m.pendingDenials.length > prevDenials && App.focused !== m) {
-        const d = m.pendingDenials[m.pendingDenials.length - 1];
-        App.showPermDenialToast(m, d.toolName);
+        App.showPermDenialToast(m, m.pendingDenials[m.pendingDenials.length - 1]);
       }
       // Volet musicien ouvert : la ligne live est ajoutée EXACTEMENT comme
       // dans /pupitre (onLive) — pas de reconstruction complète.
@@ -2755,16 +2744,27 @@ const App = {
     }, 7000);
   },
 
-  showPermDenialToast(m, toolName) {
+  /** Panneau de refus : toujours QUI (musicien), QUEL outil, QUEL appel, et
+   *  QUOI FAIRE. Un refus incomplet n'est jamais annoncé (permission-denial.js). */
+  showPermDenialToast(m, d) {
+    if (!window.PermissionDenial?.isComplete(d)) return;
     const toast = document.createElement("div");
     toast.className = "callback-toast perm-denial-toast";
-    const tLabel = toolName ? esc(toolName) : "outil inconnu";
+    const tLabel = esc(d.toolName);
+    // Outil absent de ses --allowed-tools : l'ajouter règle le cas. Outil déjà
+    // autorisé : c'est CET appel (commande, chemin sensible) que le CLI refuse.
+    const toolMissing = !window.PermissionDenial.toolAllowed(m.tools, d.toolName);
+    const todo = toolMissing
+      ? `Pour l'autoriser aux prochains tours : ajouter <code>${tLabel}</code> à ses outils.`
+      : `<code>${tLabel}</code> est déjà dans ses outils : le CLI refuse cet appel précis (commande composée ou chemin protégé). À régler via le chef ou les réglages de permission du projet.`;
     toast.innerHTML =
-      `<span class="ct-source">🚫 ${esc(m.name)} — outil bloqué</span>` +
-      `<span class="ct-text"><code>${tLabel}</code> requiert une approbation.</span>` +
+      `<span class="ct-source">🚫 ${esc(m.name)} — autorisation refusée : ${tLabel}</span>` +
+      `<span class="ct-text">Appel bloqué : <code>${esc(d.preview)}</code>` +
+      (d.reason ? `<br><small>${esc(d.reason)}</small>` : "") +
+      `<br>Le musicien continue sans cet appel. ${todo}</span>` +
       `<div class="ct-actions">` +
-      `<button class="ct-open-btn">Ouvrir le panneau →</button>` +
-      (toolName ? `<button class="ct-add-btn" data-project="${esc(m.name)}" data-tool="${esc(toolName)}">+ Autoriser ${tLabel}</button>` : "") +
+      `<button class="ct-open-btn">Ouvrir ${esc(m.name)} →</button>` +
+      (toolMissing ? `<button class="ct-add-btn" data-project="${esc(m.name)}" data-tool="${esc(d.toolName)}">+ Autoriser ${tLabel}</button>` : "") +
       `</div>`;
     const dismiss = () => {
       toast.classList.remove("callback-toast--show");
@@ -3650,6 +3650,18 @@ const App = {
 
 // Main zone: user-facing content — prompts, assistant prose, turn summaries.
 // Build a map of tool_use_id → tool_name from the assistant events in a ring.
+/** tool_use_id → {name, input} sur l'anneau : l'aperçu d'un refus en a besoin. */
+function buildToolUseMap(ring) {
+  const map = {};
+  for (const ev of ring || []) {
+    if (ev?.type !== "assistant") continue;
+    for (const b of ev.message?.content || []) {
+      if (b?.type === "tool_use" && b.id && b.name) map[b.id] = { name: b.name, input: b.input };
+    }
+  }
+  return map;
+}
+
 function buildToolNameMap(ring) {
   const m = {};
   for (const ev of ring) {
@@ -3674,23 +3686,15 @@ function renderFocusedEventMain(raw, projectName, toolNames) {
     case "result":
       return renderResult(raw, ts);
     case "user": {
-      // Surface blocked tool calls so they're visible without opening the tech pane.
-      // "This command requires approval" is returned by Claude Code when a tool
-      // isn't in the project's --allowed-tools list.
-      const denied = (raw.message?.content || []).find(b => {
-        if (b?.type !== "tool_result") return false;
-        const c = typeof b.content === "string" ? b.content
-          : Array.isArray(b.content) ? b.content.map(x => x?.text ?? "").join("\n")
-          : "";
-        return c.includes("requires approval");
-      });
-      if (!denied) return "";
-      const toolId = denied.tool_use_id;
-      const toolName = toolNames && toolId ? (toolNames[toolId] || null) : null;
-      const btn = toolName && projectName
-        ? `<br><button class="ev-perm-add-btn" data-project="${esc(projectName)}" data-tool="${esc(toolName)}">+ Ajouter ${esc(toolName)} aux outils</button>`
+      // Refus d'autorisation : vrai refus du CLI seulement (permission-denial.js).
+      // `toolNames` : id → {name, input} (buildToolUseMap).
+      const uses = toolNames && typeof toolNames === "object" ? toolNames : {};
+      const d = (window.PermissionDenial?.denialsFromUserEvent(raw, uses) || [])[0];
+      if (!d) return "";
+      const btn = projectName
+        ? `<br><button class="ev-perm-add-btn" data-project="${esc(projectName)}" data-tool="${esc(d.toolName)}">+ Ajouter ${esc(d.toolName)} aux outils</button>`
         : "";
-      return `<div class="ev ev-perm-denied"><span class="ev-ts">${ts}</span>🚫 <strong>Outil bloqué</strong> — <code>${esc(toolName || "outil inconnu")}</code> non autorisé. Mets à jour <code>config.json</code> ou clique ci-dessous.${btn}</div>`;
+      return `<div class="ev ev-perm-denied"><span class="ev-ts">${ts}</span>🚫 <strong>Autorisation refusée</strong> — <code>${esc(d.toolName)}</code> : <code>${esc(d.preview)}</code>${btn}</div>`;
     }
     default:
       return "";

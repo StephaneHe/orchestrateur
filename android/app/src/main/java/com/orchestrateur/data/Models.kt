@@ -118,6 +118,8 @@ data class RawEvent(
         // tool_result: content is a string or array; stored as raw JSON for flexibility
         val content: JsonElement? = null,
         @SerialName("tool_use_id") val toolUseId: String? = null,
+        // tool_result : vrai si l'appel a échoué — condition nécessaire d'un refus.
+        @SerialName("is_error") val isError: Boolean? = null,
     )
 
     @Serializable

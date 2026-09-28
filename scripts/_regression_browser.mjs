@@ -164,6 +164,42 @@ export async function browserChecks(sb, t) {
       return `${before} → ${after}`;
     });
 
+    // ------------- Refus d'autorisation (incident du 28/09, 0.29.1) -------------
+    const appendLog = (name, evs) => fs.appendFileSync(path.join(sb.root, 'logs', `${name}.jsonl`),
+      evs.map(e => JSON.stringify({ timestamp: new Date().toISOString(), ...e })).join('\n') + '\n');
+    const toolUse = (id, name, input) => ({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input }] } });
+    const toolRes = (id, content, is_error) => ({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content, ...(is_error ? { is_error: true } : {}) }] } });
+    await check(B, 'denial-false', 'Refus d\'autorisation : un Read dont le contenu contient « requires approval » ne déclenche RIEN', async () => {
+      appendLog('eps', [toolUse('toolu_fp1', 'Read', { file_path: 'public/app.js' }),
+        toolRes('toolu_fp1', '// Detect permission denials (tool_result with "requires approval")\nif (!c.includes("requires approval")) continue;', false),
+        toolUse('toolu_fp2', 'Bash', { command: 'grep -n "requires approval" public/app.js' }),
+        toolRes('toolu_fp2', 'Exit code 1\n  if (!c.includes("requires approval")) continue;', true)]);
+      await until(async () => (await page.evaluate(() => App.musicians.get('eps').ring.some(e => JSON.stringify(e).includes('toolu_fp2')))), 8000);
+      await sleep(500);
+      assert(await page.locator('.perm-denial-toast').count() === 0, 'un panneau d\'autorisation est apparu');
+      assert(await page.evaluate(() => App.musicians.get('eps').pendingDenials.length) === 0, 'pendingDenials non vide');
+    });
+    await check(B, 'denial-true', 'Refus d\'autorisation réel : panneau complet (musicien, outil, appel, quoi faire), aussi dans le volet', async () => {
+      if (!(await page.evaluate(() => !!window.PermissionDenial))) NA('détecteur absent de cet état du code');
+      appendLog('eps', [toolUse('toolu_d1', 'Bash', { command: 'rm -rf build && git push origin main' }),
+        toolRes('toolu_d1', 'This command requires approval', true)]);
+      const toast = page.locator('.perm-denial-toast').last();
+      assert(await until(async () => (await page.locator('.perm-denial-toast').count()) > 0, 8000), 'aucun panneau');
+      const t = await toast.textContent();
+      for (const want of ['eps', 'Bash', 'rm -rf build && git push origin main', 'déjà dans ses outils']) assert(t.includes(want), `panneau sans « ${want} » : ${t}`);
+      assert(await toast.locator('.ct-add-btn').count() === 0, 'bouton « Autoriser Bash » proposé alors que Bash est déjà autorisé');
+      appendLog('eps', [toolUse('toolu_d2', 'Agent', { description: 'explorer le module natif', prompt: '…' }),
+        toolRes('toolu_d2', "Claude requested permissions to use Agent, but you haven't granted it yet.", true)]);
+      assert(await until(async () => (await page.locator('.perm-denial-toast .ct-add-btn[data-tool="Agent"]').count()) > 0, 8000), 'pas de bouton « Autoriser Agent »');
+      await setHash(page, '#/m/eps');
+      assert(await until(async () => visible(page, '#dive .dive-denials'), 5000), 'volet : refus non affichés');
+      const d = await page.textContent('#dive .dive-denials');
+      assert(d.includes('rm -rf build') && d.includes('Agent') && d.includes('explorer le module natif'), `volet : ${d}`);
+      assert(await page.locator('#dive .dive-denials .ev-perm-add-btn[data-tool="Agent"]').count() === 1, 'volet : bouton Agent');
+      await page.click('#dive .dive-back');
+      await page.evaluate(() => document.querySelectorAll('.perm-denial-toast').forEach(t => t.remove()));
+    });
+
     // ---------------------- Vue « Projets » ----------------------
     const hasProjects = (await page.locator('#btn-projects').count()) > 0;
     const pv = (id, name, fn) => check(B, 'projets-' + id, 'Projets · ' + name, async () => { if (!hasProjects) NA('vue absente de cet état du code'); return fn(); });

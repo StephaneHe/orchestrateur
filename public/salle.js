@@ -885,6 +885,41 @@
       ? `⚠ ${notices.length} notice${notices.length > 1 ? "s" : ""} de transport — du contenu n'est pas passé par le flux (il reste sur disque)`
       : "";
     renderDiveQueue(el, r);
+    renderDiveDenials(el, m);
+  }
+
+  // ------------------------------------------------------------------------
+  // Refus d'autorisation (0.29.1) : ceux du tour en cours (réducteur client),
+  // sinon ceux listés par le dernier `result` (`permission_denials` du CLI).
+  // Toujours : outil, appel bloqué, et quoi faire. Rien si l'info manque.
+  // ------------------------------------------------------------------------
+  function renderDiveDenials(el, m) {
+    const box = $(".dive-denials", el);
+    const PD = global.PermissionDenial;
+    if (!box || !PD) return;
+    let list = (m && m.pendingDenials || []).filter(PD.isComplete);
+    let when = "pendant ce tour";
+    if (!list.length) {
+      for (let i = dive.events.length - 1; i >= 0; i--) {
+        const e = dive.events[i];
+        if (e?.type !== "result") continue;
+        list = PD.denialsFromResult(e);
+        when = "au dernier tour";
+        break;
+      }
+    }
+    const html = list.map(d => {
+      const missing = !PD.toolAllowed(m && m.tools, d.toolName);
+      const todo = missing
+        ? `<button class="ev-perm-add-btn" data-project="${esc(m.name)}" data-tool="${esc(d.toolName)}">+ Ajouter ${esc(d.toolName)} à ses outils</button>`
+        : `<span class="dd-todo">${esc(d.toolName)} est déjà autorisé : c'est cet appel précis que le CLI a refusé — à régler via le chef.</span>`;
+      return `<div class="dd-item">🚫 <strong>${esc(d.toolName)}</strong> refusé ${esc(when)} : <code>${esc(d.preview)}</code>` +
+        (d.reason ? `<div class="dd-reason">${esc(d.reason)}</div>` : "") + `<div class="dd-act">${todo}</div></div>`;
+    }).join("");
+    if (box._html === html) return;
+    box._html = html;
+    box.innerHTML = html ? `<div class="dd-title">Autorisations refusées à ${esc(m.name)}</div>${html}` : "";
+    box.hidden = !html;
   }
 
   // ------------------------------------------------------------------------

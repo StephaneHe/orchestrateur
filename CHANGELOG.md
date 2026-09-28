@@ -11,6 +11,58 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.29.1] - 2026-09-28
+
+Signalement utilisateur : « un petit panneau me demande une autorisation mais
+sans me dire laquelle ; une fois le musicien ouvert, je ne vois pas quelle
+autorisation a été demandée, et le musicien continue ». C'était un **faux
+positif** : le tour de la vue Projets avait lu `public/app.js`, dont le texte
+contient « requires approval ». Or toute `tool_result` contenant cette chaîne
+était prise pour un refus.
+
+### Fixed
+- (server, viewer) **Un refus d'autorisation n'est détecté que s'il est réel.**
+  Il faut une `tool_result` avec `is_error: true`, dont le texte **commence**
+  par un libellé réel du CLI claude, relevé dans les logs de la flotte :
+  - « This command requires approval » ;
+  - « Claude requested permissions to use|write to|edit … but you haven't
+    granted it yet » ;
+  - « This Bash|PowerShell command contains multiple operations. The following
+    part(s) require(s) approval » ;
+  - « Permission to use X … has been denied » ;
+  - « …denied by your permission settings ».
+
+  Un Read, ou une sortie de grep, qui contient la chaîne ne déclenche plus
+  rien. Nouveau module partagé : `public/permission-denial.js`. Il remplace
+  les quatre détections par sous-chaîne d'`app.js` : réducteur `Musician`,
+  fil des cartes, toast, rendu d'événement.
+- (android) Même règle dans `Musician.kt`, avec des motifs identiques au web
+  (vérifié par test) ; `is_error` ajouté au modèle `Block`. versionName
+  **0.6.1**, versionCode **16**. Compilé (`compileDebugKotlin`), mais **APK
+  non reconstruit ni publié**.
+
+### Changed
+- (viewer) **Le panneau de refus dit toujours** quel musicien, quel outil,
+  quel appel (commande, fichier, requête…), le motif du CLI, et quoi faire.
+  - Le bouton « + Autoriser X » n'apparaît que si X manque aux outils du
+    musicien.
+  - Si l'outil est déjà autorisé, le panneau explique que c'est cet appel
+    précis que le CLI refuse.
+  - Un refus sans outil ou sans appel connu n'est **jamais** annoncé : plus
+    de panneau vague.
+- (viewer) Le volet musicien affiche les refus (zone `.dive-denials`) : ceux
+  du tour en cours, sinon les `permission_denials` du dernier résultat.
+- (server, cli) Aucune détection de refus n'existait dans `server.js`,
+  `/api/pupitre` ou `fleet-status` : rien à y changer.
+
+### Added
+- (tests) `scripts/_test_permission_denial.mjs` (27) : chaque libellé réel,
+  les faux positifs de l'incident, les refus complets, la pertinence du
+  bouton, les motifs identiques web / Android.
+- (tests) Deux parcours navigateur dans la batterie de non-régression : un
+  Read piégé ne déclenche rien, et un vrai refus produit un panneau complet
+  (toast + volet).
+
 ## [0.29.0] - 2026-09-28
 
 Demande utilisateur : « je veux voir en un coup d'œil le statut de chacun des

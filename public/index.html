@@ -9,13 +9,13 @@
      CSS/JS à chaque release sans Ctrl+F5 (le HTML est servi du disque à chaque
      requête, donc la nouvelle URL est prise immédiatement). Bump à chaque MàJ. -->
 <link rel="stylesheet" href="./fonts/fonts.css">
-<link rel="stylesheet" href="./styles.css?v=0.29.0">
-<link rel="stylesheet" href="./pupitre-row.css?v=0.29.0">
-<link rel="stylesheet" href="./pupitre-detail.css?v=0.29.0">
+<link rel="stylesheet" href="./styles.css?v=0.29.1">
+<link rel="stylesheet" href="./pupitre-row.css?v=0.29.1">
+<link rel="stylesheet" href="./pupitre-detail.css?v=0.29.1">
 <!-- v0.21.0 — chargé APRÈS styles.css : complète et surcharge, ne remplace rien -->
-<link rel="stylesheet" href="./salle.css?v=0.29.0">
+<link rel="stylesheet" href="./salle.css?v=0.29.1">
 <!-- v0.29.0 — vue « Projets » (désactivable : config.json ui.projectsView=false ou ?projets=0) -->
-<link rel="stylesheet" href="./projets.css?v=0.29.0">
+<link rel="stylesheet" href="./projets.css?v=0.29.1">
 </head>
 <body data-theme="cinematic">
 
@@ -177,6 +177,8 @@
         <div class="dive-pane dive-journal" hidden></div>
       </div>
       <div class="dive-notice"></div>
+      <!-- Refus d'autorisation (0.29.1) : outil, appel, quoi faire — jamais vague -->
+      <div class="dive-denials" hidden></div>
       <!-- File du musicien (0.24.0) — visible seulement si des tâches attendent -->
       <div class="dive-queue" hidden></div>
       <footer class="dive-foot">
@@ -311,12 +313,13 @@
 <!-- Server version — règle standing du CLAUDE.md (pied de page) ------ -->
 <div id="app-version" class="app-version" aria-hidden="true"></div>
 
-<script src="./pupitre-row.js?v=0.29.0"></script>
-<script src="./pupitre-detail.js?v=0.29.0"></script>
+<script src="./permission-denial.js?v=0.29.1"></script>
+<script src="./pupitre-row.js?v=0.29.1"></script>
+<script src="./pupitre-detail.js?v=0.29.1"></script>
 <!-- salle.js est chargé AVANT app.js : ses fonctions sont donc définies quand
      app.js les appelle, et `App` est résolu au moment de l'appel. -->
-<script src="./salle.js?v=0.29.0"></script>
-<script src="./projets.js?v=0.29.0"></script>
-<script src="./app.js?v=0.29.0"></script>
+<script src="./salle.js?v=0.29.1"></script>
+<script src="./projets.js?v=0.29.1"></script>
+<script src="./app.js?v=0.29.1"></script>
 </body>
 </html>

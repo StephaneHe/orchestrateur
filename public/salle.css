@@ -619,3 +619,15 @@
   .sysbanner { padding: 6px 12px; }
   .app-version { display: none; }
 }
+
+/* ---------- Refus d'autorisation dans le volet (0.29.1) ---------- */
+.dive-denials[hidden] { display: none; }
+.dive-denials {
+  margin: 6px 14px; padding: 8px 10px; border-left: 2px solid var(--st-error);
+  background: color-mix(in srgb, var(--st-error) 8%, transparent); border-radius: 0 6px 6px 0;
+  font-family: var(--font-mono); font-size: 11px; color: var(--fg-1);
+}
+.dive-denials .dd-title { color: var(--st-error); letter-spacing: 0.08em; text-transform: uppercase; font-size: 10px; margin-bottom: 4px; }
+.dive-denials .dd-item { padding: 3px 0; }
+.dive-denials .dd-item code { color: var(--fg-0); word-break: break-all; }
+.dive-denials .dd-reason, .dive-denials .dd-todo { color: var(--fg-2); }

@@ -251,10 +251,12 @@ class Musician(
                 lastTurnUsage = TurnUsage(inTok, outTok, cacheRead, cacheCreate, cost, ctxUsed, ctxMax)
             }
             "user" -> {
-                // Live mid-turn denial: "This command requires approval".
-                // Tool name comes from lastToolUseName set by the preceding assistant event.
+                // Refus en cours de tour : VRAI refus du CLI seulement (is_error + libellé
+                // réel en tête), jamais « requires approval » dans un fichier lu (0.29.1,
+                // même règle que public/permission-denial.js).
                 val isBlocked = raw.message?.content.orEmpty().any { b ->
-                    b.type == "tool_result" && blockText(b).contains("requires approval", ignoreCase = true)
+                    b.type == "tool_result" && b.isError == true &&
+                        DENIAL_PATTERNS.any { it.containsMatchIn(blockText(b).trim()) }
                 }
                 if (isBlocked) {
                     val tool = lastToolUseName
@@ -380,6 +382,15 @@ class Musician(
             subtype.contains("interrupted") -> "interrompu"
             else -> subtype
         }
+
+        /** Libellés réels d'un refus de permission du CLI claude, ancrés en tête. */
+        val DENIAL_PATTERNS = listOf(
+            Regex("^Claude requested permissions? to .+ but you haven't granted it yet\\.?", RegexOption.DOT_MATCHES_ALL),
+            Regex("^This command requires approval\\b"),
+            Regex("^This (?:Bash|PowerShell) command contains multiple operations\\. The following parts? requires? approval\\b"),
+            Regex("^Permission to use \\S+ .*has been denied\\.?\\s*$", RegexOption.DOT_MATCHES_ALL),
+            Regex("^<tool_use_error>[^<]*denied by your permission settings"),
+        )
 
         fun blockText(b: RawEvent.Block): String = when (val c = b.content) {
             is JsonPrimitive -> c.contentOrNull ?: ""
