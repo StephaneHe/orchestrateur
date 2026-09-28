@@ -1064,6 +1064,7 @@ const App = {
     this.wireTweaks();
     this.wireOverlays();
     window.Salle?.init();
+    window.Projets?.init();
     window.addEventListener("resize", () => { this.relayout(); this.renderChat(); });
 
     await this.loadConfig();
@@ -1077,6 +1078,7 @@ const App = {
     await this.loadChatHistory();
     // Le hash est appliqué APRÈS le chargement de la flotte : #/m/<X> est un
     // lien direct partageable, il doit ouvrir le bon volet au chargement.
+    window.Projets?.restoreLevel();
     window.Salle?.router();
     this.stream = new FleetStream();
 
@@ -1125,6 +1127,7 @@ const App = {
       this.syncChefCard(this.musicians.get(this.composer.CONDUCTOR) || null);
       window.Salle?.renderRail();
       window.Salle?.renderAttention();
+      window.Projets?.render();
     }, 5000);
   },
 
@@ -1150,6 +1153,7 @@ const App = {
         }
       }
       this.renderFleet(cfg.projects || []);
+      window.Projets?.applyUi(cfg.ui);
     } catch (err) {
       console.error("[app] config fetch failed", err);
       $("#empty-hint").hidden = false;
@@ -1169,6 +1173,7 @@ const App = {
       if (!resp.ok) return;
       cfg = await resp.json();
     } catch { return; }
+    window.Projets?.applyUi(cfg.ui);   // `ui` rechargé à chaud (config.json)
     const projects = cfg.projects || [];
     const wanted = new Set(projects.map(p => p.name));
     let changed = false;
@@ -1485,6 +1490,7 @@ const App = {
     }
     S?.renderRail();
     S?.renderAttention();
+    window.Projets?.render();
     if (diveNeedsRender) S.renderDive();
   },
 
@@ -1546,6 +1552,7 @@ const App = {
       btn.setAttribute("aria-expanded", "false");
       if (act === "add")      this.openAdd();
       if (act === "briefing") this.openBriefing();
+      if (act === "projects") window.Projets?.open();
     });
     document.addEventListener("click", (e) => {
       if (menu.hidden) return;
@@ -3271,6 +3278,8 @@ const App = {
     const snap = this.pupitreSnapshot;
     if (!snap || !Array.isArray(snap.fleet)) return;
     const S = window.Salle;
+    window.Projets?.applyUi(snap.ui);
+    window.Projets?.render();
     S?.renderRail();
     S?.renderAttention();
     S?.renderPoolBand();
@@ -3345,6 +3354,7 @@ const App = {
       // cadence que /pupitre (setInterval(render, 1000)).
       this.renderPupitreStrip();
       window.Salle?.renderChefStatus(this.musicians.get(this.composer.CONDUCTOR) || null);
+      window.Projets?.tick();
     }, 1000);
   },
 

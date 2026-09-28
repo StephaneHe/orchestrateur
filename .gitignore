@@ -48,3 +48,6 @@ attachments/
 # APK build artifacts — rebuilt from sources in android/
 docs/*.apk
 *.apk
+
+# Instances de test de scripts/regression.mjs (jetables)
+.regress/

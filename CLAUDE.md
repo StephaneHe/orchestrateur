@@ -309,6 +309,63 @@ pour une question acquittée ou dépassée).
 
 ---
 
+## Non-régression — à rejouer à CHAQUE modification (0.29.0)
+
+Exigence utilisateur : « faire des tests de non-régression pour être sûr que
+toutes les fonctionnalités marchent toujours, et être capable de revenir en
+arrière ».
+
+- **Avant** de modifier : poser un tag annoté de retour
+  (`git tag -a pre-<sujet>-v<X.Y.Z> -m …`), puis lancer
+  `node scripts/regression.mjs --ref <ce tag> --out .regress/report-avant.json`.
+- **Après** : lancer `node scripts/regression.mjs --out .regress/report-apres.json`,
+  puis `node scripts/regression.mjs --compare .regress/report-avant.json
+  .regress/report-apres.json --md <rapport.md>`. La comparaison sort en code
+  non nul si une ligne passe de OK à autre chose.
+- `regression.mjs` sort en code non nul au moindre KO. Il enchaîne trois
+  étages :
+  1. toutes les suites `scripts/_test_*.mjs` (sauf `_test_phase2*`, qui
+     écrivent dans les vrais `logs/`) ;
+  2. une **instance de test isolée** (`.regress/`, port libre, 14 projets de
+     fixtures, faux `claude` = `tests/fake_claude`) et ses parcours HTTP ;
+  3. les parcours navigateur (Edge headless via `playwright-core`) : fil et
+     saisie, rail, attention, « Marquer comme répondue », volet et onglets,
+     file + Retirer, recherche, briefing, pool, pièce jointe, temps réel,
+     mobile, vue Projets.
+- **Sécurité de l'instance de test** : `7777` est réécrit dans sa copie de
+  `server.js` et des scripts, puis **vérifié absent** (sinon abandon). La
+  production n'est jamais contactée ni redémarrée. `--restart-check` rejoue
+  `restart-orchestrateur.mjs` sur la copie. `--no-browser`, `--no-suites`,
+  `--keep` (garder l'instance) et `--shots <dossier>` (captures) sont aussi
+  disponibles.
+- Toute nouvelle route ou fonctionnalité ajoute son parcours dans
+  `regression.mjs` (HTTP) et/ou `_regression_browser.mjs` (navigateur). Une
+  fonctionnalité absente d'un ancien ref y est notée NA, pas KO.
+- Le contrôle du token gate suit le mode **réel** de `server.js`. Depuis le
+  2026-09-07, `TOKEN_GATE_ENABLED = false` (décision utilisateur, commit
+  `3bc33bc`) : le rapport le signale au lieu de le masquer.
+
+## Vue « Projets » et retour arrière (0.29.0)
+
+- `#/projets` (`public/projets.js` + `projets.css`) : le statut de chaque
+  projet en un coup d'œil. Conception : `docs/dashboard-status/SYNTHESE.md`.
+  Elle lit `App.musicians` (l'état) et `/api/pupitre` (la santé et les champs
+  additifs). Aucun poll supplémentaire.
+- **Désactiver sans redéploiement** : `config.json` →
+  `"ui": { "projectsView": false }`, relu à chaud. Les dashboards ouverts
+  perdent la pill et `#/projets` renvoie au fil. Pour un seul navigateur :
+  `/?projets=0` (`?projets=1` rétablit). Défaut : activée.
+- **Retour arrière complet**, exécuté par le chef :
+
+      git -C I:\orchestrateur revert --no-edit <commit 0.29.0>
+      # ou : git -C I:\orchestrateur checkout pre-status-view-v0.28.0 -- server.js public scripts/fleet-status-core.mjs package.json
+      node I:\orchestrateur\scripts\restart-orchestrateur.mjs
+      node I:\orchestrateur\scripts\regression.mjs
+
+- Dette : `server.js` importe `ssh-server.js` et `src/*.mjs`, **non
+  versionnés**. Un checkout propre ailleurs ne démarrerait pas ; ici, ils
+  restent en place.
+
 ## Attachments
 
 Images uploaded via the dashboard (paste / drag-drop / file picker) land in

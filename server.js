@@ -50,7 +50,7 @@ import { detectOverride } from './src/message_router.mjs';
 // never diverge from `node scripts/fleet-status.mjs`.
 import { scanProject as scanFleetMember, isPhantomResult, isQuestionResolved } from './scripts/fleet-status-core.mjs';
 // Registre /downloads relu à chaud depuis downloads.json (0.23.0).
-import { createDownloadsRegistry } from './scripts/downloads-registry.mjs';
+import { createDownloadsRegistry, VERSION_NAME_RE } from './scripts/downloads-registry.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -2256,7 +2256,7 @@ function scanProjectState(name) {
   try { fs.readSync(fd, buf, 0, want, size - want); } finally { fs.closeSync(fd); }
   const text = buf.toString('utf8').replace(/\u0000+/g, '');
   const lines = text.split('\n');
-  if (lines.length > 1) lines.shift();
+  if (want < size && lines.length > 1) lines.shift();   // ligne partielle seulement si la fenêtre commence en cours de fichier
   const readAt = readMarker(name);
   const readTs = readAt ? Date.parse(readAt) : 0;
 
@@ -2319,6 +2319,7 @@ app.get('/api/config', (req, res) => {
   const defaults = config.defaults ?? {};
   res.json({
     conductor: config.conductor || 'chef',
+    ui: uiFlags(),
     defaults: {
       model: defaults.model ?? null,
       allowedTools: defaults.allowedTools ?? FALLBACK_TOOLS,
@@ -2357,15 +2358,82 @@ app.get('/api/config', (req, res) => {
 // (silence, PID liveness) fresh: a static log still rescans on the next poll.
 const pupitreCache = new Map();   // name → { key, at, snap }
 const PUPITRE_CACHE_MS = 2500;
-function scanFleetMemberCached(name) {
+// Parqués (0.29.0) : scannés quand même — sinon /api/pupitre les disait « idle »,
+// ce qui masquait un tour lancé sur un parqué — mais au plus une fois par minute
+// quand leur log ne bouge pas. Un log qui change est relu aussitôt.
+const PUPITRE_PARKED_CACHE_MS = 60_000;
+function scanFleetMemberCached(name, maxAgeMs = PUPITRE_CACHE_MS) {
   const logPath = path.join(LOGS_DIR, `${name}.jsonl`);
   let key = '0:0';
   try { const st = fs.statSync(logPath); key = st.mtimeMs + ':' + st.size; } catch {}
   const hit = pupitreCache.get(name);
-  if (hit && hit.key === key && (Date.now() - hit.at) < PUPITRE_CACHE_MS) return hit.snap;
+  if (hit && hit.key === key && (Date.now() - hit.at) < maxAgeMs) return hit.snap;
   const snap = scanFleetMember(name);
   pupitreCache.set(name, { key, at: Date.now(), snap });
   return snap;
+}
+
+// ---------- Métadonnées de livrable (vue « Projets », 0.29.0) ---------------
+//
+// Version SOURCE du code et date du dernier APK copié. Jamais lues dans une
+// route : les projets vivent sur I:\ (disque USB) et une I/O synchrone lente
+// fait tuer le serveur par le watchdog. Un rafraîchissement asynchrone, au plus
+// toutes les 60 s, sur une liste FIXE de fichiers (jamais d'exploration
+// récursive, jamais de spawn) ; /api/pupitre ne lit que ce cache.
+const PROJECT_META_TTL_MS = 60_000;
+const projectMeta = new Map();   // name → { version: {value, source}|null, build: {apkAt}|null }
+let projectMetaAt = 0;
+let projectMetaBusy = false;
+const VERSION_PROBES = [
+  { rel: 'package.json',                   read: (t) => { try { return JSON.parse(t).version || null; } catch { return null; } } },
+  { rel: 'app/build.gradle.kts',           read: (t) => VERSION_NAME_RE.exec(t)?.[1] || null },
+  { rel: 'android/app/build.gradle.kts',   read: (t) => VERSION_NAME_RE.exec(t)?.[1] || null },
+  { rel: 'app/build.gradle',               read: (t) => VERSION_NAME_RE.exec(t)?.[1] || null },
+  { rel: 'pyproject.toml',                 read: (t) => /^version\s*=\s*["']([^"']+)["']/m.exec(t)?.[1] || null },
+];
+async function readProjectVersion(p) {
+  const reg = downloadsRegistry.findApp(p.name);
+  if (reg?.version) {
+    try {
+      const m = reg.version.re.exec(await fsp.readFile(reg.version.file, 'utf8'));
+      if (m) return { value: m[1], source: path.basename(reg.version.file) };
+    } catch { /* on tente les sondes du projet */ }
+  }
+  if (!p.path) return null;
+  for (const probe of VERSION_PROBES) {
+    let text;
+    try { text = await fsp.readFile(path.join(p.path, probe.rel), 'utf8'); } catch { continue; }
+    const v = probe.read(text);
+    if (v) return { value: String(v).slice(0, 40), source: probe.rel };
+  }
+  return null;
+}
+async function refreshProjectMeta() {
+  if (projectMetaBusy) return;
+  projectMetaBusy = true;
+  try {
+    for (const p of [...config.projects]) {
+      let build = null;
+      try { build = { apkAt: (await fsp.stat(path.join(BUILDS_DIR, p.name, 'latest.apk'))).mtimeMs }; } catch {}
+      let version = null;
+      try { version = await readProjectVersion(p); } catch {}
+      projectMeta.set(p.name, { version, build });
+    }
+  } finally {
+    projectMetaAt = Date.now();
+    projectMetaBusy = false;
+  }
+}
+function projectMetaFor(name) {
+  if (Date.now() - projectMetaAt > PROJECT_META_TTL_MS) refreshProjectMeta().catch(() => {});
+  return projectMeta.get(name) || { version: null, build: null };
+}
+
+/** Drapeaux d'interface relus à chaud depuis config.json (`ui`). Défaut : tout
+ *  activé — `"ui": { "projectsView": false }` retire la vue « Projets » des
+ *  dashboards ouverts sans redémarrage ni redéploiement. */
+function uiFlags() {
+  return { projectsView: config.ui?.projectsView !== false };
 }
 
 // Fleet-global provider availability, read cheaply per request.
@@ -2384,12 +2452,17 @@ app.get('/api/pupitre', (req, res) => {
   const conductor = config.conductor || 'chef';
   const fleet = config.projects.map(p => {
     const parked = p.parked ?? false;
-    // Skip scanning parked projects: their log need not be read every poll (B2).
+    // Parqués : état RÉEL (cache 60 s), mais santé non suivie — pas de stall ni
+    // de « processus perdu » annoncés pour eux (même contrat qu'avant 0.29.0).
     const snap = parked
-      ? { name: p.name, state: 'idle' }
+      ? { ...scanFleetMemberCached(p.name, PUPITRE_PARKED_CACHE_MS), stalled: false, deadInFlight: false }
       : scanFleetMemberCached(p.name);   // state, silence, stall, pid, model…
+    const meta = projectMetaFor(p.name);
     return {
       ...snap,
+      healthTracked: !parked,
+      version: meta.version,
+      build: meta.build,
       isConductor: p.name === conductor,
       parked,
       queueDepth: dispatchQueue.get(p.name)?.length ?? 0,
@@ -2411,6 +2484,7 @@ app.get('/api/pupitre', (req, res) => {
     limitedUntil: readLimitedUntil(),
     fleet,
     pool: poolSnapshot(stateOf),
+    ui: uiFlags(),
   });
 });
 
@@ -3380,6 +3454,9 @@ function reloadConfigFromDisk() {
   const added   = [...after].filter(n => !before.has(n));
   const removed = [...before].filter(n => !after.has(n));
   const conductorChanged = typeof parsed.conductor === 'string' && parsed.conductor !== config.conductor;
+  const uiBefore = JSON.stringify(uiFlags());
+  config.ui = parsed.ui && typeof parsed.ui === 'object' ? parsed.ui : undefined;
+  const uiChanged = JSON.stringify(uiFlags()) !== uiBefore;
 
   // Refresh the in-memory config IN PLACE (config is a shared const object;
   // routes and handlers hold it by reference). Also keep PROJECT_NAMES in sync.
@@ -3408,8 +3485,8 @@ function reloadConfigFromDisk() {
   // Free per-project in-memory state for removed projects.
   for (const name of removed) { musicianAutoStates.delete(name); dispatchQueue.delete(name); }
 
-  if (added.length || removed.length || conductorChanged) {
-    console.log(`[config-reload] hot: +[${added.join(', ')}] -[${removed.join(', ')}]${conductorChanged ? ` conductor=${config.conductor}` : ''}`);
+  if (added.length || removed.length || conductorChanged || uiChanged) {
+    console.log(`[config-reload] hot: +[${added.join(', ')}] -[${removed.join(', ')}]${conductorChanged ? ` conductor=${config.conductor}` : ''}${uiChanged ? ` ui=${JSON.stringify(uiFlags())}` : ''}`);
     broadcastFleetConfigChanged();
   }
 }

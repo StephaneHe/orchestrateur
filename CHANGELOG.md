@@ -11,6 +11,81 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-09-28
+
+Demande utilisateur : « je veux voir en un coup d'œil le statut de chacun des
+projets ». Conception : synthèse des propositions de Fable 5.1 et de GPT-6
+Astra, dans `docs/dashboard-status/SYNTHESE.md`. Point de retour posé avant
+toute modification : tag `pre-status-view-v0.28.0` (`17c0899`).
+
+### Added
+- (server, viewer) **Vue « Projets »** (`#/projets`) : tous les projets d'un
+  coup d'œil.
+  - Entrées : pill « ▦ Projets » de la topbar, avec des compteurs toujours
+    visibles (⚠ attention · ● en cours) ; menu ⋮ ; touches `g` puis `p`.
+  - Quatre groupes disjoints, dans cet ordre : À votre attention, Actifs et en
+    attente, Au repos, Parqués. Un parqué qui travaille ou pose une question
+    remonte dans le bon groupe avec son badge.
+  - Tuile en deux lignes : glyphe + **mot** d'état (jamais la couleur seule),
+    ligne d'activité ou de question, âge, et chips (file, rapport promis au
+    chef, model, CHEF, PARQUÉ). Une ligne « détails » facultative ajoute :
+    - version **source** du code ;
+    - date de copie de l'APK ;
+    - coût et durée **rapportés** du dernier tour.
+  - Outils : filtre texte (`/`), compteurs qui isolent un groupe, clavier
+    (flèches, Échap).
+  - Temps réel par le flux SSE et l'instantané existants, sans aucun poll
+    supplémentaire. Réordonnancement stable, jamais sous le pointeur ni sous
+    le focus.
+  - Mobile sur une colonne, cibles ≥ 44 px ; annonce `aria-live` des
+    nouvelles questions.
+- (server) `/api/pupitre`, champs additifs :
+  - par ligne : `lastActivityAt`, `lastActivitySource`, `lastTurn`,
+    `mission`, `callbackTo`, `healthTracked`, `version`, `build` ;
+  - au niveau flotte : `ui`.
+
+  `/api/config` expose aussi `ui`. Versions et APK sont relus en **tâche de
+  fond asynchrone** (60 s, liste fixe de fichiers, jamais d'I/O synchrone sur
+  `I:\Dev` dans une route).
+- (server) **Désactivation sans redéploiement** :
+  - `config.json` → `"ui": { "projectsView": false }`, relu à chaud :
+    signal `fleet_config_changed`, la vue disparaît des dashboards ouverts ;
+  - côté navigateur, `?projets=0` / `?projets=1`.
+
+  Défaut : activée.
+- (tests) **Batterie de non-régression `scripts/regression.mjs`** :
+  - toutes les suites node ;
+  - une **instance de test isolée**, construite depuis n'importe quel ref git
+    ou dossier (`_regression_sandbox.mjs`) : port libre, flotte de 14
+    fixtures, faux `claude`, 7777 réécrit puis vérifié absent ;
+  - 18 parcours HTTP et 33 parcours navigateur (Edge / Playwright,
+    `_regression_browser.mjs`) sur tout le dashboard ;
+  - rapports JSON et comparaison avant/après (`--compare`) ;
+  - code de sortie non nul au moindre échec.
+- (tests) `scripts/_test_projects_view.mjs` (31) : champs du cœur, classement
+  réel de `projets.js` en VM, contrats de `/api/pupitre`.
+- (dev) `playwright-core` en devDependency (pilote l'Edge installé ; aucun
+  navigateur téléchargé).
+
+### Changed
+- (server) `/api/pupitre` renvoie l'**état réel des parqués** (scan avec cache
+  de 60 s) au lieu d'un `idle` forcé. La santé reste non suivie pour eux
+  (`stalled`/`deadInFlight` à `false`, `healthTracked: false`) ; `/pupitre`
+  n'affiche donc plus « PRÊT » pour un parqué en plein tour.
+
+### Fixed
+- (server, cli) `tailLines` (`fleet-status-core`) et `scanProjectState`
+  jetaient **toujours** la première ligne du log, même quand le fichier
+  entier tenait dans la fenêtre de 256 Kio. Un petit log perdait ainsi son
+  premier événement (`user_prompt` d'ouverture, question…). La ligne n'est
+  plus jetée que si la fenêtre commence en cours de fichier.
+- (tests) `_test_queue_sidecar_sweep.mjs` était rouge depuis 0.24.0 : son bac
+  à sable n'avait pas `newQueueEntryId`, la ReferenceError était avalée, et le
+  test annonçait à tort une file perdue. Le serveur n'était pas en cause.
+
+`server.js` est modifié : **redémarrage requis** (par le chef, via
+`restart-orchestrateur.mjs`). La nouvelle vue n'apparaît qu'après.
+
 ## [0.28.0] - 2026-09-27
 
 Règle utilisateur : « tous les projets doivent avoir droit au web et à la

@@ -19,6 +19,7 @@
 //   node scripts/_test_queue_sidecar_sweep.mjs
 // ============================================================================
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -44,10 +45,17 @@ const config = { projects: [{ name: 'chef' }, { name: 'vuBox' }] };
 const dispatchQueue = new Map();
 const debugLog = () => {};
 
+// La migration 0.24.0 appelle newQueueEntryId(), défini HORS du bloc : sans lui
+// le bac à sable levait une ReferenceError avalée par le try/catch de la
+// réhydratation, et la file de vuBox « disparaissait » (faux échec du test).
+const ID_START = SRC.indexOf('function newQueueEntryId(');
+const ID_FN = ID_START < 0 ? '' : SRC.slice(ID_START, SRC.indexOf('\n}\n', ID_START) + 2);
+if (!ID_FN) { console.error('[test-sweep] newQueueEntryId introuvable dans server.js'); process.exit(2); }
+
 const sandbox = new Function(
-  'fs', 'path', 'QUEUE_DIR', 'config', 'dispatchQueue', 'debugLog',
-  `${BLOCK}\n return { loadQueuesFromDisk, persistQueue, queueSidecarPath };`,
-)(fs, path, QUEUE_DIR, config, dispatchQueue, debugLog);
+  'fs', 'path', 'crypto', 'QUEUE_DIR', 'config', 'dispatchQueue', 'debugLog',
+  `${ID_FN}\n${BLOCK}\n return { loadQueuesFromDisk, persistQueue, queueSidecarPath };`,
+)(fs, path, crypto, QUEUE_DIR, config, dispatchQueue, debugLog);
 
 let pass = 0, fail = 0;
 const ok = (c, l) => { if (c) { pass++; console.log(`  [ok]   ${l}`); } else { fail++; console.log(`  [FAIL] ${l}`); } };

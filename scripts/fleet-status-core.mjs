@@ -75,7 +75,9 @@ export function tailLines(filePath) {
   // Filter NUL bytes that crashed writes can leave behind on Windows.
   const text = buf.toString('utf8').replace(/\u0000+/g, '');
   const raw = text.split('\n');
-  if (raw.length > 1) raw.shift(); // drop the potentially-partial first slice
+  // Only a window that STARTS mid-file can begin with a partial line: a log that
+  // fits entirely keeps its first event (before 0.29.0 it was always dropped).
+  if (want < size && raw.length > 1) raw.shift();
   return { lines: raw.filter(Boolean), mtimeMs: st.mtimeMs, size };
 }
 
@@ -231,6 +233,37 @@ function activityPreview(meaningful, lastAssistantText) {
   return '';
 }
 
+/** Le dernier vrai `result` de la fenêtre (fantômes exclus), réduit à ce que la
+ *  vue « Projets » affiche. `costUsd` est le `total_cost_usd` RAPPORTÉ tel quel :
+ *  il suit la session Claude, il ne se somme pas d'un tour à l'autre. */
+function lastTurnOf(lines) {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let ev; try { ev = JSON.parse(lines[i]); } catch { continue; }
+    if (ev?.type !== 'result' || isPhantomResult(ev)) continue;
+    const endedAt = ev.timestamp ? Date.parse(ev.timestamp) : NaN;
+    return {
+      endedAt: Number.isFinite(endedAt) ? endedAt : null,
+      durationMs: Number.isFinite(ev.duration_ms) ? ev.duration_ms : null,
+      costUsd: Number.isFinite(ev.total_cost_usd) ? ev.total_cost_usd : null,
+      isError: !!ev.is_error || (typeof ev.subtype === 'string' && ev.subtype.startsWith('error')),
+      subtype: typeof ev.subtype === 'string' ? ev.subtype : null,
+      synthetic: !!ev.synthetic,
+    };
+  }
+  return null;
+}
+
+/** Le dernier `user_prompt` SANS source (= une vraie demande de tour ; un prompt
+ *  sourcé est un callback / @raccourci / notify). null si la fenêtre de 256 Kio
+ *  ne le contient pas : on ne l'invente pas. */
+function lastMissionPrompt(lines) {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let ev; try { ev = JSON.parse(lines[i]); } catch { continue; }
+    if (ev?.type === 'user_prompt' && !ev.source) return ev;
+  }
+  return null;
+}
+
 /**
  * Full snapshot for one project. Used by the CLI table and the live desk view.
  * Includes state, current activity, turn-elapsed, silence, PID liveness,
@@ -256,6 +289,17 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
   // acquittement (fleet-status affichait « needs: … » indéfiniment).
   const needs = state === 'input' ? /^NEEDS_USER_INPUT:\s*(.*)$/m.exec(lastAssistantText || '') : null;
   const turnElapsedMs = inFlight && turnStartTs ? (now - turnStartTs) : null;
+  const lastTurn = lastTurnOf(lines);
+  // Le `result` du CLI n'est pas horodaté : s'il est le dernier événement, sa
+  // fin est l'écriture du log (approximation, signalée par endedAtApprox).
+  if (lastTurn && lastTurn.endedAt == null && last?.type === 'result' && mtimeMs) {
+    lastTurn.endedAt = mtimeMs;
+    lastTurn.endedAtApprox = true;
+  }
+  const missionEv = lastMissionPrompt(lines);
+  const mission = missionEv
+    ? (String(missionEv.text || '').split('\n').map(s => s.trim()).find(Boolean) || '').slice(0, 120) || null
+    : null;
 
   return {
     name,
@@ -279,5 +323,13 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
     needsInput: needs ? needs[1].trim().slice(0, 160) : null,
     // Additif : dernier acquittement (« répondue via le chef »), pour l'UI.
     questionResolved: resolution,
+    // Additifs 0.29.0 (vue « Projets »). `lastActivitySource: 'mtime'` = l'âge
+    // n'est qu'une approximation (aucun événement horodaté dans la fenêtre).
+    lastActivityAt: lines.length ? (lastMeaningfulTs || null) : null,
+    lastActivitySource: !lines.length ? null : (last?.timestamp ? 'event' : 'mtime'),
+    lastTurn,
+    mission,
+    // Rapport promis : seulement pendant le tour qui l'a demandé.
+    callbackTo: inFlight && typeof missionEv?.callback === 'string' ? missionEv.callback : null,
   };
 }

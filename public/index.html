@@ -9,11 +9,13 @@
      CSS/JS à chaque release sans Ctrl+F5 (le HTML est servi du disque à chaque
      requête, donc la nouvelle URL est prise immédiatement). Bump à chaque MàJ. -->
 <link rel="stylesheet" href="./fonts/fonts.css">
-<link rel="stylesheet" href="./styles.css?v=0.25.0">
-<link rel="stylesheet" href="./pupitre-row.css?v=0.25.0">
-<link rel="stylesheet" href="./pupitre-detail.css?v=0.25.0">
+<link rel="stylesheet" href="./styles.css?v=0.29.0">
+<link rel="stylesheet" href="./pupitre-row.css?v=0.29.0">
+<link rel="stylesheet" href="./pupitre-detail.css?v=0.29.0">
 <!-- v0.21.0 — chargé APRÈS styles.css : complète et surcharge, ne remplace rien -->
-<link rel="stylesheet" href="./salle.css?v=0.25.0">
+<link rel="stylesheet" href="./salle.css?v=0.29.0">
+<!-- v0.29.0 — vue « Projets » (désactivable : config.json ui.projectsView=false ou ?projets=0) -->
+<link rel="stylesheet" href="./projets.css?v=0.29.0">
 </head>
 <body data-theme="cinematic">
 
@@ -37,6 +39,8 @@
     </div>
 
     <div class="topbar-actions">
+      <button id="btn-projects" class="pill pill-projects" type="button" aria-pressed="false"
+              title="Statut de chacun des projets (g puis p)"><span class="pp-k">▦ Projets</span></button>
       <button id="btn-search" class="pill" title="Chercher un musicien (parkés inclus)">Musiciens / chercher</button>
       <span id="conn-status" class="pill conn-ok" title="État du flux temps réel">
         <span class="conn-dot"></span><span class="conn-text">connexion…</span>
@@ -49,6 +53,7 @@
   <!-- Dropdown for the ⋮ menu (secondary routes / admin, out of the thread) -->
   <div id="topmenu" class="topmenu" hidden>
     <button class="tm-item" data-act="add">+ Projet</button>
+    <button class="tm-item" data-act="projects">Projets — statut de chacun</button>
     <button class="tm-item" data-act="briefing">Briefing de l'orchestre</button>
     <a class="tm-item" href="/pupitre">Pupitre (tableau de santé)</a>
     <a class="tm-item" href="/downloads">Téléchargements</a>
@@ -112,6 +117,42 @@
       <div class="rail-title">PILOTAGE</div>
       <div id="rail-body" class="rail-body"></div>
     </aside>
+
+    <!-- Vue « Projets » (#/projets, 0.29.0) — remplace fil + rail ------- -->
+    <section id="projects" class="projects" hidden aria-labelledby="pv-title">
+      <div class="pv-bar">
+        <button class="pv-back" type="button" title="Retour au fil du chef (Échap)">‹ Salle</button>
+        <h1 id="pv-title" class="pv-title">Projets</h1>
+        <input class="pv-filter" type="search" placeholder="Filtrer : nom, état, activité…  ( / )"
+               aria-label="Filtrer les projets" autocomplete="off">
+        <div class="pv-counts" role="group" aria-label="Isoler un groupe"></div>
+        <label class="pv-details"><input type="checkbox"> détails</label>
+        <span class="pv-sync" aria-live="off"></span>
+      </div>
+      <div class="pv-body">
+        <section class="pv-section" data-group="attention" aria-labelledby="pv-h-attention">
+          <h2 id="pv-h-attention" class="pv-head"></h2>
+          <div class="pv-grid" role="list"></div>
+          <div class="pv-empty">Rien ne vous attend.</div>
+        </section>
+        <section class="pv-section" data-group="active" aria-labelledby="pv-h-active">
+          <h2 id="pv-h-active" class="pv-head"></h2>
+          <div class="pv-grid" role="list"></div>
+          <div class="pv-empty">Aucun projet en cours ni en attente.</div>
+        </section>
+        <section class="pv-section" data-group="rest" aria-labelledby="pv-h-rest">
+          <h2 id="pv-h-rest" class="pv-head"></h2>
+          <div class="pv-grid" role="list"></div>
+          <div class="pv-empty">Aucun projet au repos.</div>
+        </section>
+        <section class="pv-section" data-group="parked" aria-labelledby="pv-h-parked">
+          <h2 id="pv-h-parked" class="pv-head"><button class="pv-fold" type="button" aria-expanded="true"></button></h2>
+          <div class="pv-grid" role="list"></div>
+          <div class="pv-empty">Aucun projet parqué.</div>
+        </section>
+      </div>
+      <div class="pv-live sr-only" aria-live="polite"></div>
+    </section>
 
     <!-- Level 2 — musician dive, routed by hash (#/m/<name>) ----------- -->
     <section id="dive" class="dive" hidden aria-label="Détail du musicien">
@@ -270,11 +311,12 @@
 <!-- Server version — règle standing du CLAUDE.md (pied de page) ------ -->
 <div id="app-version" class="app-version" aria-hidden="true"></div>
 
-<script src="./pupitre-row.js?v=0.25.0"></script>
-<script src="./pupitre-detail.js?v=0.25.0"></script>
+<script src="./pupitre-row.js?v=0.29.0"></script>
+<script src="./pupitre-detail.js?v=0.29.0"></script>
 <!-- salle.js est chargé AVANT app.js : ses fonctions sont donc définies quand
      app.js les appelle, et `App` est résolu au moment de l'appel. -->
-<script src="./salle.js?v=0.25.0"></script>
-<script src="./app.js?v=0.25.0"></script>
+<script src="./salle.js?v=0.29.0"></script>
+<script src="./projets.js?v=0.29.0"></script>
+<script src="./app.js?v=0.29.0"></script>
 </body>
 </html>

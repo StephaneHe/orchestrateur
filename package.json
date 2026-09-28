@@ -1,6 +1,6 @@
 {
   "name": "claude-code-orchestrator",
-  "version": "0.28.0",
+  "version": "0.29.0",
   "private": true,
   "description": "Local Windows dashboard that pilots a fleet of headless Claude Code sub-agents from one central interactive session.",
   "type": "module",
@@ -22,5 +22,8 @@
     "node-pty": "^1.0.0",
     "nodemailer": "^8.0.7",
     "ssh2": "^1.17.0"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.63.0"
   }
 }
