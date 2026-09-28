@@ -115,7 +115,7 @@ Avant : 48 OK · 1 KO · 17 NA — Après : 64 OK · 0 KO · 3 NA — Régressio
 
 En production, le retour arrière est exécuté par le chef :
 
-    git -C I:\orchestrateur revert --no-edit 2ce24c2 7b80962   # vérifié : arbre identique au tag
+    git -C I:\orchestrateur revert --no-edit pre-status-view-v0.28.0..v0.29.0   # vérifié : arbre identique au tag
     node I:\orchestrateur\scripts\restart-orchestrateur.mjs
     node I:\orchestrateur\scripts\regression.mjs
 

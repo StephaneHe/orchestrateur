@@ -227,7 +227,7 @@ Le chef suit les mêmes règles et porte le badge CHEF.
 - **Retour complet au code d'avant** (serveur + client), exécuté par le chef :
 
   ```
-  git -C I:\orchestrateur revert --no-edit 2ce24c2 7b80962   # les deux commits 0.29.0 — ou :
+  git -C I:\orchestrateur revert --no-edit pre-status-view-v0.28.0..v0.29.0   # tous les commits 0.29.0 — ou :
   git -C I:\orchestrateur checkout pre-status-view-v0.28.0 -- server.js public scripts/fleet-status-core.mjs package.json
   node I:\orchestrateur\scripts\restart-orchestrateur.mjs
   node I:\orchestrateur\scripts\regression.mjs              # la batterie doit repasser au vert
