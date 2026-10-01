@@ -51,3 +51,16 @@ docs/*.apk
 
 # Instances de test de scripts/regression.mjs (jetables)
 .regress/
+
+# Captures d'écran jetables (émulateur, essais UI) — peuvent montrer des données perso
+android/*.png
+/ui-*.png
+
+# APK publiés pour /downloads (scripts/copy-build.mjs) — artefacts
+builds/
+
+# Binaires tiers (nssm) — se retéléchargent
+tools/
+
+# Copies de sauvegarde manuelles de fichiers source
+*.before-*
