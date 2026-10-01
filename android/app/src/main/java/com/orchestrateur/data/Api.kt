@@ -21,9 +21,9 @@ import okio.source
 import java.util.concurrent.TimeUnit
 
 /**
- * Tiny HTTP helper around the orchestrator's REST endpoints. No auth: the fleet
- * is reached only over Tailscale and the server's token gate is disabled, so no
- * token header or query param is ever sent.
+ * Tiny HTTP helper around the orchestrator's REST endpoints. Auth: when a token
+ * is set in [ServerStore], every request (REST and SSE, which share this client)
+ * carries `X-Orchestrator-Token`; otherwise nothing is sent.
  */
 class Api(private val store: ServerStore) {
 
@@ -38,6 +38,12 @@ class Api(private val store: ServerStore) {
             // which previously crashed the server (29 avr.).
             .readTimeout(45, TimeUnit.SECONDS)
             .pingInterval(20, TimeUnit.SECONDS)  // TCP-level keep-alive
+            .addInterceptor { chain ->
+                val token = store.token
+                val request = if (token.isNullOrBlank()) chain.request()
+                    else chain.request().newBuilder().header("X-Orchestrator-Token", token).build()
+                chain.proceed(request)
+            }
             .build()
     }
 

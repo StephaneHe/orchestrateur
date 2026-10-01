@@ -12,12 +12,9 @@ class OrchestreApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Server URL and token are entered in the configure screen — nothing is
+        // preseeded or compiled in.
         serverStore = ServerStore(this)
-        if (BuildConfig.DEBUG && serverStore.serverUrl.isNullOrBlank()) {
-            // Dev convenience only: preseed the server URL on first debug launch.
-            // No token anywhere — access is Tailscale-only.
-            serverStore.serverUrl = "http://myhost:7777"
-        }
         api = Api(serverStore)
     }
 }

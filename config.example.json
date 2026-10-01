@@ -1,0 +1,25 @@
+{
+  "conductor": "chef",
+  "defaults": {
+    "model": "claude-opus-5-5",
+    "allowedTools": "Read,Edit,Write,Bash,WebFetch,WebSearch,Grep,Glob",
+    "provider": "claude"
+  },
+  "projects": [
+    {
+      "name": "chef",
+      "path": "I:\\Dev\\Chef"
+    },
+    {
+      "name": "example-app",
+      "path": "I:\\Dev\\example-app"
+    },
+    {
+      "name": "example-tool",
+      "path": "I:\\Dev\\example-tool",
+      "tools": "Read,Edit,Write,Bash,WebFetch,WebSearch,Grep,Glob,Agent",
+      "parked": false
+    }
+  ],
+  "ui": { "projectsView": true }
+}

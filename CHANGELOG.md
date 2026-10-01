@@ -11,6 +11,27 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.29.2] - 2026-10-01
+
+Passe sécurité git (directive utilisateur : « rien n'apparaisse sur le git, ni
+dans l'historique »). L'historique du dépôt a été réécrit.
+
+### Security
+- **Historique réécrit** (`git filter-repo`) : en sont retirés `logs/`,
+  `attachments/`, `builds/`, `config.json`, les captures d'écran (`docs/*.png`,
+  `docs/**/captures/`, `ui-*.png`, `android/*.png`), l'ancien jeton du
+  dashboard codé en dur dans l'app Android, le nom d'hôte et les IP
+  Tailscale/LAN. Le `.token` a été régénéré.
+- (android, 0.7.0) **Le jeton n'est plus jamais compilé dans l'app.** Il se
+  saisit dans l'écran de configuration (champ masqué, facultatif) et part en
+  `X-Orchestrator-Token` sur toutes les requêtes, SSE comprise, seulement s'il
+  est renseigné. Plus d'adresse serveur préremplie.
+
+### Added
+- `README.md` (avertissement : l'API de dispatch exécute des commandes sur la
+  machine) et `config.example.json` anonymisé. `config.json` reste local et
+  n'est plus versionné : `copy config.example.json config.json`.
+
 ## [0.29.1] - 2026-09-28
 
 Signalement utilisateur : « un petit panneau me demande une autorisation mais

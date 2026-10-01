@@ -64,3 +64,10 @@ tools/
 
 # Copies de sauvegarde manuelles de fichiers source
 *.before-*
+
+# Config locale (chemins et noms de projets privés) — modèle : config.example.json
+config.json
+
+# Captures d'écran de l'UI réelle (conversations, noms de projets)
+docs/*.png
+docs/**/captures/

@@ -13,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -71,7 +72,8 @@ private fun ConfigurePanel(
     store: ServerStore,
     onConfigured: () -> Unit,
 ) {
-    var url by remember { mutableStateOf(store.serverUrl ?: "http://myhost:7777") }
+    var url by remember { mutableStateOf(store.serverUrl ?: "http://") }
+    var token by remember { mutableStateOf(store.token ?: "") }
     var error by remember { mutableStateOf<String?>(null) }
 
     Column(
@@ -95,6 +97,16 @@ private fun ConfigurePanel(
             modifier = Modifier.fillMaxWidth(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
         )
+        Spacer(Modifier.height(12.dp))
+        OutlinedTextField(
+            value = token,
+            onValueChange = { token = it.trim(); error = null },
+            label = { Text("Jeton (vide si le serveur n'en exige pas)", color = Palette.Fg2) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        )
         error?.let {
             Spacer(Modifier.height(8.dp))
             Text(it, color = Palette.StInput, fontSize = 12.sp)
@@ -105,6 +117,7 @@ private fun ConfigurePanel(
                 val u = url.trim().trimEnd('/')
                 if (!u.startsWith("http")) { error = "URL doit commencer par http(s)://" ; return@Button }
                 store.serverUrl = u
+                store.token = token
                 onConfigured()
             },
             modifier = Modifier.fillMaxWidth(),

@@ -38,10 +38,10 @@ gradle wrapper
 
 ## Install on the phone
 
-Tailscale device visible at `100.64.0.20:33611` (memory).
+Tailscale device: `<phone-tailscale-ip>:<adb-port>` (see local notes).
 
 ```bash
-adb connect 100.64.0.20:33611
+adb connect <phone-tailscale-ip>:<adb-port>
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
