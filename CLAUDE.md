@@ -7,6 +7,26 @@ Full context: `docs/project-brief.md`. Design system: PHOSPHOR/03,
 
 ---
 
+## Règles standing du fleet (instaurées 2026-04-30)
+
+Ce projet est hybride : **serveur Node.js** (`server.js` + `public/`) + **app Android compagnon** (`android/`). Les règles s'appliquent aux deux artefacts.
+
+**1 — Versioning.** Toute release/build doit avoir un numéro visible et incrémenté.
+
+- **Node** : champ `version` dans `package.json`. Doit être à la fois :
+  - exposé via `GET /api/version` (token-gated comme le reste), et
+  - affiché dans le footer du dashboard (`public/index.html`, alimenté par `/api/version` au chargement).
+- **Android** : `versionName` (semver) + `versionCode` (entier, **+1 strict** à chaque build poussé) dans `android/app/build.gradle.kts`. `versionName` doit être affiché dans l'UI (actuellement dans le header de `FleetScreen`, via `BuildConfig.VERSION_NAME`).
+- **Bump** : `patch` (fix), `minor` (feature), `major` (breaking change). Démarrage à `1.0.0` pour les nouveaux artefacts ; ce projet a commencé sous `0.x` et n'est pas remis à `1.0.0` rétroactivement.
+
+**2 — Changelog.** `CHANGELOG.md` à la racine, format [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+- Sections : `Added`, `Changed`, `Fixed`, `Removed`, `Deprecated`, `Security`.
+- En-tête entrée : `## [X.Y.Z] - YYYY-MM-DD`.
+- **Couplage strict** : aucune release sans bump de version **ET** entrée changelog correspondante. Les changements Node et Android partagent le même fichier ; préfixer si utile (`(server)`, `(android)`).
+
+---
+
 ## Hard rules (non-negotiable)
 
 - **Never forward `ANTHROPIC_API_KEY` to any child `claude` process.**
@@ -25,9 +45,12 @@ Full context: `docs/project-brief.md`. Design system: PHOSPHOR/03,
   `?token=<hex>` query param or `X-Orchestrator-Token` header.
   Browser-side WS upgrades must use the query param (browsers can't
   set custom headers on WS).
-- **Binding is restricted to 127.0.0.1 + Tailscale IP only.** Server
-  listens on `0.0.0.0` but a first-middleware allowlist rejects any
-  other interface (including LAN adapters). Never disable this check.
+- **Binding is `0.0.0.0` + token gate only** (policy updated 2026-05-13).
+  The interface allowlist middleware has been disabled: trusted home LAN,
+  token gate is the sole authentication layer. Re-enable the middleware
+  (it's commented out in `server.js` near `// [1] Interface allowlist`)
+  if the operating network becomes untrusted (public Wi-Fi, conference,
+  etc.).
 - **Validate project names/paths against the `config.json` allowlist**
   before interpolating into any spawn. Pass argv as an array — never
   shell-concat.
@@ -36,6 +59,76 @@ Full context: `docs/project-brief.md`. Design system: PHOSPHOR/03,
   project explicitly in its dispatch call. If the user's reply is
   ambiguous (multiple panels blocked, or name not stated), the central
   must ask the user to clarify before dispatching — never guess.
+
+---
+
+## Question protocol (musicians → user OR chef)
+
+Musicians can route questions to two addressees. The orchestrator's
+pump detects sentinel prefixes in the musician's final assistant text
+and forwards automatically.
+
+### `NEEDS_USER_INPUT: <question>`
+
+Use when the question requires the user :
+- Personal preference (which technology, design choice, name)
+- Authorization for an irreversible action (deploy, push origin,
+  delete, send email)
+- Choice between options where no option is objectively better
+- Credentials or secrets the musician doesn't have
+- Discovery of an incident the user must know about
+
+The viewer detects this sentinel and shows the project panel in
+`needs_user_input` state. The user replies via the chat ; the central
+relays.
+
+### `NEEDS_CHEF_INPUT: <question>`
+
+Use when the question requires the conductor (chef) :
+- Architectural decision spanning multiple projects / musicians
+- Coordination with another musician (need info outside this project's
+  domain)
+- Application of a transverse policy (security, org-wide convention)
+- A synthesis you cannot make alone (cross-project context)
+
+Routing :
+1. Pump detects `NEEDS_CHEF_INPUT:` in the musician's final assistant
+   text or `result.result` field.
+2. Pump auto-dispatches chef with prompt :
+   `[NEEDS_CHEF_INPUT_FROM:<musician>] <question>` and a brief
+   instruction to answer with `[ANSWER] …` or redirect to user with
+   `NEEDS_USER_INPUT: …`.
+3. Chef's next result event lands ; pump walks back chef's log to find
+   the `[NEEDS_CHEF_INPUT_FROM:` marker, extracts the musician name,
+   strips chef's `[ANSWER]` prefix, dispatches the cleaned response
+   back to the musician with `[CHEF_ANSWER] …`.
+4. The musician resumes via `--resume <session_id>` with the chef's
+   decision in hand.
+
+Dedupe is by `(musician, first-100-chars-of-question)` for
+musician→chef, and by `(chef session_id, num_turns)` for chef→musician.
+In-memory only ; server restart may re-relay the last chef answer at
+most once.
+
+### Tie-breaker
+
+If a musician is uncertain which addressee, default to user. The user
+is the ultimate authority ; the chef is a delegate. Chef receiving a
+question that should have been for the user can redirect by responding
+with `NEEDS_USER_INPUT: <reformulated>` instead of `[ANSWER]`.
+
+### Examples
+
+| Question | Addressee |
+|----------|-----------|
+| `getUserData` vs `fetchUser` for a function name | none (decide yourself) |
+| "Deploy to prod now ?" | user (irreversible) |
+| "Tailwind or MUI ?" | user (preference) |
+| "Where is the API X documented across projects ?" | chef (cross-project) |
+| "Should I follow the org-wide PII logging policy ?" | chef (transverse policy) |
+| "This migration touches project Y, should Y go first ?" | chef (coordination) |
+| "I broke the build, rollback ?" | self if obvious, user otherwise |
+| "You told me approach A but I see it's inefficient. Change ?" | user (revises a prior user decision) |
 
 ---
 
@@ -387,123 +480,17 @@ Purge manually when it grows large, or wire a scheduled task in a future iterati
 
 ---
 
-## If you are the conductor (runtime)
+## Conductor (runtime) — moved
 
-You — project `orchestrateur` — are the **chef d'orchestre**. The user
-talks to you by default from the Orchestre UI's bottom bar. You are
-one of the fleet's projects, but your role is special: you delegate
-work to the other musicians and synthesize their replies for the user.
+The conductor's runtime instructions (routing, dispatch, supervision)
+now live in `I:\Dev\Chef\CLAUDE.md`. The **Chef** is a separate project
+in `config.json` with `cwd = I:\Dev\Chef`, so its Claude session no
+longer accidentally edits this server's code. This file covers the
+dashboard itself; Chef covers how to orchestrate the fleet.
 
-### The conductor's cycle (follow for every turn)
-
-**1. Identify targets (always, first step).** Read the user's message
-and determine which musicians should act. Options:
-
-- **A single explicit target** (e.g. "demande à DeskZen de mettre à
-  jour l'APK") → dispatch to that one.
-- **Multiple explicit targets** (e.g. "DeskZen met à jour l'appli, et
-  firstAidOffline fait un bilan") → fire each dispatch independently,
-  in parallel.
-- **Unclear but narrowable** → ask the user which project(s) before
-  dispatching. Never guess.
-- **A question about the fleet itself** (status, recent activity,
-  architecture of this orchestrator) → answer directly, no dispatch.
-- **A genuinely global task** → pick the most relevant single target
-  or explain the decomposition before acting.
-
-If the user's request is ambiguous (e.g. "continue" with multiple
-panels in `input`), ask them to name the target rather than guessing.
-
-**2. Delegate via `dispatch.mjs`.** Use the Bash tool. `dispatch.mjs`
-reads `config.json`, loads the sidecar, scrubs the env, appends
-stream-json events to `logs/<project>.jsonl`, and updates the sidecar.
-
-    node scripts/dispatch.mjs <projectName> "<prompt>"
-
-For long prompts:
-
-    node scripts/dispatch.mjs <projectName> --prompt-stdin < /tmp/p.txt
-
-**Run dispatches in the background.** Never await a sub-agent's turn
-inline — append `&` (bash) or pipe to `disown` and keep working. The
-sub-agent's panel shows its events live; you can check its log tail
-while other dispatches continue.
-
-**3. Track and digest.** While delegates are running, read
-`logs/<project>.jsonl` tails to follow progress. When a turn emits
-`{"type":"result", "is_error":false}` the sub-agent is done. Extract
-what matters: the sub-agent's `result.result` text, key tool_use
-actions, any `NEEDS_USER_INPUT:` block.
-
-**4. Report to the user.** Give a short synthesis (2–5 bullets per
-delegate). Cite what the sub-agent actually did, not what you told
-it to do. If a sub-agent blocks on a question, surface that
-verbatim — don't paraphrase questions.
-
-### Direct-to-musician messages (exception)
-
-The user can bypass you by selecting a musician in the composer chip
-(or opening a focused panel). When they do, the message goes straight
-to that project — you are not invoked for that turn. Don't worry about
-it: you'll see the log scroll on your next check.
-
-### Fleet awareness
-
-Read `config.json` for the canonical project list. Tail
-`logs/*.jsonl` for state. Do not guess — cite the `tool_use` and
-`tool_result` events you see.
-
-### Fleet supervision (you own it)
-
-You are responsible for the health of every sub-agent you dispatched.
-Sub-agents hang: a `claude.exe` child can freeze mid-stream with
-nothing but `thinking_delta` partials, no `result` ever arrives, and
-the UI shows `EN COMMUNICATION` forever. **Notice this without being
-told.**
-
-**Cadence.** Check at every natural pause — before ending a reply
-while any musician is in `live` or `think`, and between your own long
-tool calls. If a user message arrives after a long silence, check
-first, then answer.
-
-    node scripts/fleet-status.mjs                   # human table
-    node scripts/fleet-status.mjs --json            # machine
-    node scripts/fleet-status.mjs --stalled         # exit 2 if any
-
-The report shows: `state`, last **non-partial** event kind
-(`tool_use:bash`, `text`, `thinking`, `result:ok/error`,
-`stream_event:thinking_delta`, …), silence since last progress, log
-file age, and whether the dispatch PID is still alive. A musician
-marked `STALLED` (state `live`/`think` + silence ≥ 60 s) or one whose
-PID is dead while state is still `live` needs a decision.
-
-**Acting on a stall.** Read the log tail first to understand where
-the turn died (`tail -c 4000 logs/<name>.jsonl | tr -d '\0'`). Then:
-
-- If the turn was nearly done (last event was a real `tool_use` or
-  `text` block), **redispatch a short continuation** — `dispatch.mjs`
-  will `--resume` the same session and Claude picks up where it left
-  off.
-- If it produced only `thinking_delta` partials for minutes (PID alive
-  but frozen) or the PID is already dead while state is still `live`,
-  **kill and clear**:
-
-        node scripts/kill-stalled.mjs <project>
-
-  That force-kills the process tree and appends a synthetic
-  `result` with `is_error:true` so the UI exits `live`. Then
-  dispatch fresh (or with a refined prompt).
-
-**Surface it proactively.** When `fleet-status.mjs --stalled` finds
-anything, mention it in your next reply even if the user didn't ask.
-Example: *"Heads-up — immo-share has been silent 2m14 mid-thinking,
-I'm killing and redispatching."* Don't wait to be asked.
-
-### Escalation
-
-`--allowed-tools` defaults to `Read,Edit,Write,Bash`. If a sub-agent
-needs more (`WebFetch`, `Grep`), edit the project entry in
-`config.json` with a `tools` override, then dispatch.
+If you are a Claude working **on this project** (fixing a server bug,
+touching `public/app.js`, etc.), you are not the conductor. The
+conductor is a separate process running in Chef.
 
 ---
 

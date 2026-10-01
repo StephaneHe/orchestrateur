@@ -30,7 +30,8 @@
       "WebFetch(domain:nodejs.org)",
       "WebFetch(domain:expressjs.com)",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:xtermjs.org)"
+      "WebFetch(domain:xtermjs.org)",
+      "Bash"
     ],
     "deny": [
       "Bash(*ANTHROPIC_API_KEY=*)",
