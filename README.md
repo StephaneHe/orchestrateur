@@ -1,8 +1,12 @@
-# Claude Code Orchestrator (PHOSPHOR/03)
+# orchestrateur (PHOSPHOR/03)
 
-A local Windows dashboard: one interactive "conductor" Claude session pilots
-N headless `claude -p` sub-agents, one per project, with a live web viewer
-(Node.js + vanilla JS) and an Android companion app (`android/`).
+A local Windows dashboard for orchestrating AI coding agents: a "conductor"
+session pilots N headless sub-agents, one per project, with a live web
+viewer (Node.js + vanilla JS) and an Android companion app (`android/`).
+Providers: Claude Code (`claude -p`), OpenAI Codex (`codex exec`), with
+failover to NVIDIA-hosted models when a provider hits its limit.
+
+    git clone https://github.com/StephaneHe/orchestrateur.git
 
 ## ⚠ Security
 

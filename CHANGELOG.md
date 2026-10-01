@@ -11,6 +11,18 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.29.3] - 2026-10-01
+
+### Changed
+- Le dépôt public s'appelle désormais **`StephaneHe/orchestrateur`** : l'outil
+  ne pilote pas que Claude (Codex/OpenAI, repli NVIDIA). Ce dépôt neuf a été
+  créé depuis l'historique nettoyé et ne contient aucun objet antérieur à la
+  réécriture. README neutre côté fournisseurs, avec l'URL de clonage. L'ancien
+  dépôt privé `claudeOrchestrateur` n'est plus le remote `origin`.
+- La licence MIT (`LICENSE`) et l'avertissement du README (dashboard sans
+  authentification, à n'ouvrir que sur un réseau de confiance) sont arrivés
+  avec cette publication.
+
 ## [0.29.2] - 2026-10-01
 
 Passe sécurité git (directive utilisateur : « rien n'apparaisse sur le git, ni
