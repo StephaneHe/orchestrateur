@@ -11,6 +11,15 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.29.4] - 2026-10-01
+
+### Changed
+- README professionnel (en anglais, comme le dépôt public) : présentation,
+  fonctionnalités, statut, prérequis, installation, configuration (fichiers
+  et noms de variables d'environnement, sans valeurs), utilisation,
+  architecture, tests et non-régression, déploiement, versionnage, feuille de
+  route, sécurité et signalement, contribution, licence, auteur.
+
 ## [0.29.3] - 2026-10-01
 
 ### Changed
