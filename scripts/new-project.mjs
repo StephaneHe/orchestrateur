@@ -20,6 +20,12 @@
 // `--web` (0.27.0) est obsolète : accepté sans effet, pour ne pas casser de
 // commande existante.
 //
+// PRÊT À TOURNER (0.30.0) — règle utilisateur : « les autorisations auraient
+// dû être données à la création ». Le projet reçoit un .claude/settings.json
+// (outils standard + PowerShell) et son workspace est marqué de confiance dans
+// ~/.claude.json : sans cela, claude -p ignore les permissions du projet.
+// Voir workspace-trust.mjs.
+//
 // DESIGN — deterministic + idempotent:
 //   • No LLM in the loop. Pure mechanics, like restart-orchestrateur.mjs.
 //   • NEVER overwrites an existing file. Missing → created. Present →
@@ -39,6 +45,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { STANDARD_TOOLS, ensureProjectPermissions, trustWorkspace } from './workspace-trust.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Même racine alternative que dispatch.mjs, pour les recettes (jamais en prod).
@@ -206,7 +213,31 @@ try {
   die(`config.json update failed: ${e.message}`, 66);
 }
 
-// 4. Summary ----------------------------------------------------------------
+// 4. Ready to run without anyone clicking (0.30.0) --------------------------
+//
+// Additive and idempotent like the rest: allow rules are only appended, and
+// the trust flag is only ever set to true. Test roots never touch the real
+// ~/.claude.json unless ORCH_CLAUDE_JSON points at a sandbox copy.
+try {
+  const r = ensureProjectPermissions(projectPath, finalTools || STANDARD_TOOLS);
+  if (r.added.length) { log(`perm .claude/settings.json — allow += ${r.added.join(',')}`); created.push('permissions'); }
+  else { log('perm .claude/settings.json — standard tools already allowed, skipped'); skipped.push('permissions'); }
+} catch (e) {
+  warn(`perm .claude/settings.json — FAILED: ${e.message}`);
+}
+if (process.env.DISPATCH_ROOT_FOR_TESTS && !process.env.ORCH_CLAUDE_JSON) {
+  log('trust skipped (test root, no ORCH_CLAUDE_JSON)');
+} else {
+  try {
+    const t = trustWorkspace(projectPath);
+    if (t.changed) { log(`trust ${t.key} — hasTrustDialogAccepted=true (${t.touched.join(', ')})`); created.push('workspace trust'); }
+    else { log(`trust ${t.key} — already trusted, skipped`); skipped.push('workspace trust'); }
+  } catch (e) {
+    warn(`trust — FAILED: ${e.message}. Run: node scripts/trust-projects.mjs ${name}`);
+  }
+}
+
+// 5. Summary ----------------------------------------------------------------
 
 console.log('');
 log(`project : ${name}`);

@@ -11,6 +11,51 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-10-02
+
+Demande de l'utilisateur : « les autorisations auraient dû être données à la
+création ». Cas constaté sur un projet tout juste créé : trois appels à
+l'outil `PowerShell` ont été refusés en mode headless (`cd …;` composé, chemin
+vu comme UNC).
+L'autorisation accordée ensuite depuis le dashboard (`add-tool`) a été écrite
+dans `.claude/settings.json`, mais sans effet : le workspace n'était pas de
+confiance. Dans ce cas, `claude -p` écarte toutes les règles `permissions.allow`
+du projet (« Ignoring N permissions.allow entries… this workspace has not been
+trusted »). 21 projets de la flotte étaient dans ce cas.
+
+### Added
+- `scripts/workspace-trust.mjs` :
+  - marque un workspace de confiance dans `~/.claude.json`
+    (`projects["I:/Dev/X"].hasTrustDialogAccepted`, plus la forme
+    antislash si elle existe) ;
+  - ajoute à `.claude/settings.json` du projet les outils standard et
+    `PowerShell`.
+
+  Ce fichier est partagé par tous les claude en cours, d'où ces précautions :
+  - sauvegarde `~/.claude.json.orchestrateur-bak` avant écriture ;
+  - lecture, modification et écriture en une seule passe brève ;
+  - fichier temporaire renommé par-dessus, sans rien écraser si le fichier a
+    changé entre-temps ;
+  - relecture de contrôle, avec nouvel essai si une autre instance a écrit
+    une copie périmée ;
+  - seule l'entrée du projet est modifiée.
+- `scripts/trust-projects.mjs [<projet>…] [--dry-run] [--json]` applique la
+  même correction aux projets existants, en n'ajoutant que ce qui manque, et
+  affiche l'état avant/après. Les réglages du chef ne sont pas modifiés.
+  Appliqué à toute la flotte : 33 projets sur 33 sont de confiance (21 ne
+  l'étaient pas avant).
+- `scripts/_test_workspace_trust.mjs` (26 assertions, faux `~/.claude.json`),
+  joué par `regression.mjs`.
+
+### Changed
+- `new-project.mjs` : un projet créé est aussitôt opérationnel, avec ses
+  permissions et son workspace de confiance. Dans une racine de test, le vrai
+  `~/.claude.json` n'est jamais touché sans `ORCH_CLAUDE_JSON`.
+- (server) `POST /api/project/:name/add-tool` marque aussi le workspace de
+  confiance (champ `trusted` dans la réponse). **Prise en compte au prochain
+  redémarrage de 7777.** L'instance de régression pointe `ORCH_CLAUDE_JSON`
+  vers sa propre copie.
+
 ## [0.29.4] - 2026-10-01
 
 ### Changed

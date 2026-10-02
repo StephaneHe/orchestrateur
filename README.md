@@ -4,7 +4,7 @@ A local Windows dashboard where one "conductor" AI session pilots a fleet of
 headless coding agents, one per project, with a live web viewer and an
 Android companion app.
 
-`version 0.29.4` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
+`version 0.30.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
 
 > **Status: active, personal project.** Built and used daily on a single
 > Windows machine. Pre-1.0: internal APIs and file formats can still change
@@ -107,6 +107,9 @@ Environment variables (names and roles only):
 Tool permissions: sub-agents get `defaults.allowedTools`
 (`Read,Edit,Write,Bash,WebFetch,WebSearch,Grep,Glob`); a project can widen
 it with its own `tools`. `--dangerously-skip-permissions` is never used.
+`new-project.mjs` also writes the project's `.claude/settings.json` (standard
+tools plus `PowerShell`) and marks the workspace as trusted in the CLI's user
+config. Without that trust, `claude -p` ignores project-level allow rules.
 
 ## Usage
 
@@ -134,7 +137,8 @@ node scripts/dispatch.mjs <project> "Start over" --new-session
 node scripts/fleet-status.mjs [--json | --stalled]   # fleet state table
 node scripts/queue.mjs <project> [--list | --remove <id> | --clear]
 node scripts/resolve-question.mjs <project> [--note "answered in chat"]
-node scripts/new-project.mjs <name> [--path <dir>]   # register a project
+node scripts/new-project.mjs <name> [--path <dir>]   # register a project, ready to run
+node scripts/trust-projects.mjs [<name>...] [--dry-run]   # trust + permissions retrofit
 node scripts/kill-stalled.mjs <project>              # stop a stalled turn
 node scripts/notify.mjs <project> --stdin --source <from>   # post a callback
 ```

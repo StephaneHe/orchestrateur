@@ -459,6 +459,27 @@ arrière ».
   versionnés**. Un checkout propre ailleurs ne démarrerait pas ; ici, ils
   restent en place.
 
+## Projet prêt à tourner dès sa création (0.30.0)
+
+Règle utilisateur : « les autorisations auraient dû être données à la
+création ». Sans confiance du workspace, `claude -p` **ignore** toutes les
+règles `permissions.allow` du `.claude/settings.json` du projet (« this
+workspace has not been trusted »). Une autorisation accordée depuis le
+dashboard ne servait alors à rien.
+
+- `new-project.mjs` écrit `.claude/settings.json` (outils du projet +
+  `PowerShell`) et pose `hasTrustDialogAccepted: true` dans `~/.claude.json`
+  pour la clé `I:/Dev/X` (la forme lue par le CLI) et sa forme antislash si
+  elle existe.
+- `~/.claude.json` est partagé par tous les claude en cours : on ne l'écrit
+  qu'à travers `scripts/workspace-trust.mjs` (sauvegarde `.orchestrateur-bak`,
+  temp + rename, relecture de contrôle, seule l'entrée du projet change).
+  Pour supprimer un projet : `forgetWorkspace()`.
+- Rétroactif / contrôle : `node scripts/trust-projects.mjs [--dry-run]`.
+- `add-tool` (server) pose aussi la confiance.
+- Recette : `node scripts/_test_workspace_trust.mjs` (faux `~/.claude.json`,
+  `ORCH_CLAUDE_JSON`).
+
 ## Attachments
 
 Images uploaded via the dashboard (paste / drag-drop / file picker) land in

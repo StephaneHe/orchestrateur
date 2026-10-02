@@ -230,6 +230,8 @@ export function serverEnv(root, port) {
     FAKE_CLAUDE_LATENCY_MS: '700',
     FAKE_CLAUDE_TOOL_USES: '2',
     ORCH_PORT: String(port),
+    // add-tool also marks the workspace trusted: never in the real ~/.claude.json.
+    ORCH_CLAUDE_JSON: path.join(root, '.claude.json'),
   });
   return env;
 }

@@ -51,6 +51,7 @@ import { detectOverride } from './src/message_router.mjs';
 import { scanProject as scanFleetMember, isPhantomResult, isQuestionResolved } from './scripts/fleet-status-core.mjs';
 // Registre /downloads relu à chaud depuis downloads.json (0.23.0).
 import { createDownloadsRegistry, VERSION_NAME_RE } from './scripts/downloads-registry.mjs';
+import { trustWorkspace } from './scripts/workspace-trust.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -2698,7 +2699,12 @@ app.post('/api/project/:name/add-tool', express.json({ limit: '1kb' }), (req, re
   } catch (e) {
     return res.status(500).json({ error: `settings write failed: ${e.message}` });
   }
-  res.json({ ok: true, tool });
+  // Without workspace trust, claude -p ignores every project allow rule and
+  // the grant above would silently do nothing (0.30.0).
+  let trusted = null;
+  try { trusted = trustWorkspace(proj.path).key; }
+  catch (e) { debugLog(`[add-tool] trust ${proj.name} failed: ${e.message}`); }
+  res.json({ ok: true, tool, trusted });
 });
 
 // Toggle parked flag for a project (parked cards are hidden in the fleet UI).
