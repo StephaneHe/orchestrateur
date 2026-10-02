@@ -17,6 +17,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import '../public/turn-core.js';   // pose globalThis.TurnCore
+
+const TurnCore = globalThis.TurnCore;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -62,6 +65,13 @@ export function isPhantomResult(ev) {
 export function isQuestionResolved(ev) {
   return ev?.type === 'notification' && ev.subtype === 'question_resolved';
 }
+
+// 0.31.0 — « vu » (acquittement d'un échec / arrêt) et arrêt par le chef. Les
+// définitions vivent dans public/turn-core.js, partagé avec le navigateur.
+export const isAcknowledged  = TurnCore.isAcknowledged;
+export const isConductorStop = TurnCore.isConductorStop;
+export const stopInfo        = TurnCore.stopInfo;
+export const createJournal   = TurnCore.createJournal;
 
 /** Read the last TAIL_BYTES of a file and split into full JSON lines (dropping
  *  a partial head line that may be cut mid-object). */
@@ -119,6 +129,9 @@ export function deriveState(lines) {
   let awaitingChef = false;
   // Dernier acquittement de question vu dans la fenêtre (null sinon).
   let resolution = null;
+  // 0.31.0 : arrêt par le chef du dernier tour (null sinon) et dernier « vu ».
+  let stopped = null;
+  let acknowledged = null;
 
   for (const ln of lines) {
     let ev; try { ev = JSON.parse(ln); } catch { continue; }
@@ -127,6 +140,15 @@ export function deriveState(lines) {
       if (state === 'input') { state = 'idle'; resolution = { ts: ev.timestamp || null, note: ev.note || '', question: ev.question || '' }; }
       continue;
     }
+    if (isAcknowledged(ev)) {
+      if (state === 'error' || state === 'unread') {
+        state = 'idle'; awaitingChef = false;
+        acknowledged = { ts: ev.timestamp || null, by: ev.by || '', note: ev.note || '' };
+      }
+      continue;
+    }
+    // Tout result qui suit un arrêt du chef, avant le tour suivant, est ignoré.
+    if (ev?.type === 'result' && stopped && !isConductorStop(ev)) continue;
     const t = ev?.type;
 
     // Track model/provider as they appear (init, assistant, result all carry them).
@@ -144,6 +166,7 @@ export function deriveState(lines) {
         turnStartTs = ev.timestamp ? Date.parse(ev.timestamp) : Date.now();
       }
       awaitingChef = false;   // a new turn clears the pending chef decision
+      stopped = null;
     } else if (t === 'assistant') {
       const blocks = ev.message?.content || [];
       let hasTool = false, hasThink = false, gotText = null;
@@ -157,6 +180,7 @@ export function deriveState(lines) {
     } else if (t === 'result') {
       const isErr = !!ev.is_error || (typeof ev.subtype === 'string' && ev.subtype.startsWith('error'));
       const needs = /^NEEDS_USER_INPUT:\s*(.*)$/m.exec(lastAssistantText);
+      if (isConductorStop(ev)) stopped = stopInfo(ev);
       if (isErr && ev.synthetic) state = 'idle';          // crash/restart — no question posed
       else state = isErr ? 'error' : (needs ? 'input' : 'unread');
       awaitingChef = !isErr && !needs &&
@@ -165,7 +189,10 @@ export function deriveState(lines) {
       turnStartTs = null;                                  // turn is over
     }
   }
-  return { state, lastAssistantText, turnStartTs, model, provider, awaitingChef, resolution };
+  return {
+    state, lastAssistantText, turnStartTs, model, provider, awaitingChef, resolution,
+    stopped: state === 'error' ? stopped : null, acknowledged,
+  };
 }
 
 export function readPid(project, logsDir = DEFAULT_LOGS) {
@@ -274,7 +301,7 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
   const { lines, mtimeMs, size } = tailLines(logPath);
   const last = lastMeaningful(lines);
   const tail = lastAny(lines);
-  const { state, lastAssistantText, turnStartTs, model, provider, awaitingChef, resolution } = deriveState(lines);
+  const { state, lastAssistantText, turnStartTs, model, provider, awaitingChef, resolution, stopped, acknowledged } = deriveState(lines);
   const now = Date.now();
   const lastMeaningfulTs = last?.timestamp ? Date.parse(last.timestamp) : (mtimeMs || 0);
   const silentMs = now - (lastMeaningfulTs || now);
@@ -323,6 +350,10 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
     needsInput: needs ? needs[1].trim().slice(0, 160) : null,
     // Additif : dernier acquittement (« répondue via le chef »), pour l'UI.
     questionResolved: resolution,
+    // Additifs 0.31.0 : arrêt par le chef ({by, reason, ts}) tant que l'état
+    // est `error`, et dernier « vu » (acquittement d'un échec / arrêt).
+    stopped,
+    acknowledged,
     // Additifs 0.29.0 (vue « Projets »). `lastActivitySource: 'mtime'` = l'âge
     // n'est qu'une approximation (aucun événement horodaté dans la fenêtre).
     lastActivityAt: lines.length ? (lastMeaningfulTs || null) : null,

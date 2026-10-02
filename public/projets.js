@@ -41,6 +41,7 @@
     question: { glyph: "?", word: "Votre réponse attendue", state: "input" },
     dead:     { glyph: "✗", word: "Processus perdu",        state: "error" },
     error:    { glyph: "✕", word: "Échec",                  state: "error" },
+    stopped:  { glyph: "■", word: "Arrêté par le chef",     state: "error" },
     stall:    { glyph: "!", word: "Sans progrès",           state: "live" },
     live:     { glyph: "●", word: "En cours",               state: "live" },
     think:    { glyph: "◐", word: "Réflexion",              state: "think" },
@@ -121,7 +122,7 @@
     const h = !m.parked && global.Salle ? global.Salle.healthFlag(r) : null;
     if (m.state === "input")         return { group: "attention", kind: "question", rank: 0 };
     if (h && h.kind === "dead")      return { group: "attention", kind: "dead",     rank: 1 };
-    if (m.state === "error")         return { group: "attention", kind: "error",    rank: 2 };
+    if (m.state === "error")         return { group: "attention", kind: m.stopped ? "stopped" : "error", rank: 2 };
     if (h && h.kind === "stall")     return { group: "attention", kind: "stall",    rank: 3 };
     if (inFlight)                    return { group: "active",    kind: m.state,    rank: 0 };
     // `awaitingChef` n'est connu du client qu'en direct (SSE) ; après un
@@ -131,6 +132,14 @@
     if (m.parked)                    return { group: "parked",    kind: "parked",   rank: 0 };
     if (m.state === "unread")        return { group: "rest",      kind: "unread",   rank: 0 };
     return { group: "rest", kind: "idle", rank: 1 };
+  }
+
+  /** Sorte, glyphe et mot d'un musicien — partagés avec les cadres du
+   *  Pilotage (salle.js, 0.31.0) pour qu'un état ne se dise qu'une façon. */
+  function describe(m, r) {
+    const c = classify(m, r);
+    const k = KIND[c.kind] || KIND.idle;
+    return { kind: c.kind, group: c.group, glyph: k.glyph, word: k.word };
   }
 
   function recvElapsed() {
@@ -615,6 +624,6 @@
 
   global.Projets = {
     init, applyUi, render, tick, show, hide, open, restoreLevel, enabled, isRoute,
-    classify, get isOpen() { return st.open; },
+    classify, describe, get isOpen() { return st.open; },
   };
 })(window);

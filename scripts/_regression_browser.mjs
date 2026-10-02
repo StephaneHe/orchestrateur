@@ -69,6 +69,14 @@ export async function browserChecks(sb, t) {
       assert(/En cours/.test(txt) && /À examiner/.test(txt), 'groupes absents');
       assert(await page.locator('.rail-row[data-name="eps"][data-state="live"]').count() >= 1, 'eps pas en cours');
       assert(await page.locator('.rail-row[data-name="gamma"][data-state="error"]').count() >= 1, 'gamma pas à examiner');
+      if (await page.locator('[data-fold="cards"]').count()) {
+        // 0.31.0 : 2e partie du Pilotage = un cadre par musicien, visible d'emblée.
+        assert(await page.locator('.rail-card[data-name="kappa"]').count() === 1, 'cadre de kappa absent');
+        await page.click('[data-fold="cards"]');
+        assert(await page.locator('.rail-card').count() === 0, 'les cadres ne se replient pas');
+        await page.click('[data-fold="cards"]');
+        return 'cadres des musiciens';
+      }
       await page.click('[data-fold="all"]');
       assert(await page.locator('.rail-row[data-name="kappa"]').count() >= 1, '« Tous les musiciens » ne se déplie pas');
       await page.click('[data-fold="all"]');
@@ -90,7 +98,7 @@ export async function browserChecks(sb, t) {
     });
     await check(B, 'dive', 'Volet musicien : ouverture depuis le rail, onglets, retour', async () => {
       if (!(await visible(page, '.rail-row[data-name="alpha"]'))) await page.click('[data-fold="all"]');
-      await page.click('.rail-row[data-name="alpha"]');
+      await page.locator('.rail-row[data-name="alpha"]').first().click();
       assert(await until(async () => (await hash(page)) === '#/m/alpha' && await visible(page, '#dive'), 5000), 'volet masqué');
       assert((await page.textContent('#dive .dive-name')) === 'alpha', 'nom');
       await page.click('#dive .dive-tab[data-tab="result"]');
@@ -111,9 +119,9 @@ export async function browserChecks(sb, t) {
     await check(B, 'search', 'Annuaire / recherche : filtrer puis Entrée ouvre le volet', async () => {
       await page.click('#btn-search');
       assert(await visible(page, '#overlay-search'), 'overlay');
-      await page.fill('#overlay-search .psr-input', 'gam');
+      await page.fill('#overlay-search .psr-input', 'lam');
       await page.keyboard.press('Enter');
-      assert(await until(async () => (await hash(page)) === '#/m/gamma' && await visible(page, '#dive'), 5000), 'volet gamma');
+      assert(await until(async () => (await hash(page)) === '#/m/lambda' && await visible(page, '#dive'), 5000), 'volet lambda');
       await page.keyboard.press('Escape');
       assert(await until(async () => !(await visible(page, '#dive')), 5000), 'Échap ne ferme pas');
     });
@@ -302,6 +310,106 @@ export async function browserChecks(sb, t) {
       await page.locator('.brand').waitFor();
       assert(await until(async () => visible(page, '#btn-projects'), 5000), 'pill absente après ?projets=1');
     });
+    // ---------------- « À examiner » acquittable, journal, cadres (0.31.0) ----------------
+    const hasCards = async () => (await page.locator('[data-fold="cards"]').count()) > 0;
+    const v031 = (id, name, fn) => check(B, id, name, async () => {
+      await setHash(page, '#/');
+      await page.locator('.brand').waitFor();
+      if (!(await page.evaluate(() => !!window.Activite))) NA('fonction absente de cet état du code');
+      return fn();
+    });
+    const inExamine = (name) => page.evaluate((n) => {
+      const g = [...document.querySelectorAll('#rail-body .rail-group')].find(x => /À examiner/.test(x.querySelector('.rail-group-head')?.textContent || ''));
+      return !!g && !!g.querySelector(`.rail-row[data-name="${n}"]`);
+    }, name);
+    await v031('examine-stopped', '« À examiner » : arrêt par le chef affiché comme tel, « ✓ Vu » le retire, persistant au rechargement', async () => {
+      const ts = (x) => new Date(Date.now() - x * 1000).toISOString();
+      appendLog('mu', [{ type: 'user_prompt', text: 'Renommer le module', timestamp: ts(90) }, { type: 'system', subtype: 'init', timestamp: ts(89) },
+        { type: 'result', subtype: 'error_killed_by_conductor', is_error: true, stopped_by: 'chef', reason: 'boucle sans progrès', duration_ms: 0 },
+        { type: 'result', subtype: 'error_model_unavailable', is_error: true, num_turns: 0, result: 'model demandé indisponible' }]);
+      assert(await until(() => inExamine('mu'), 8000), 'mu absent de « À examiner »');
+      const row = page.locator('#rail-body .rail-row[data-name="mu"][data-stopped="1"]').first();
+      const txt = await row.textContent();
+      assert(/Arrêté par le chef/.test(txt) && /boucle sans progrès/.test(txt) && !/Échec/.test(txt), `cadre : ${txt}`);
+      assert(/arrêté/.test(await page.textContent('#attention .att-counts')), 'bande d\'attention sans l\'arrêt');
+      await page.locator('#rail-body .rail-item [data-ack="mu"]').click();
+      assert(await until(async () => !(await inExamine('mu')), 8000), 'toujours dans « À examiner »');
+      assert(await until(async () => (await api('/api/config')).projects.find(p => p.name === 'mu').currentState === 'idle', 5000), 'serveur : mu pas idle');
+      await page.reload();
+      await page.locator('.brand').waitFor();
+      await until(async () => (await page.locator('#rail-body .rail-row').count()) > 0, 8000);
+      await sleep(800);
+      assert(!(await inExamine('mu')), 'revenu dans « À examiner » après rechargement');
+    });
+    await v031('examine-seen', 'Règle « vu » : ouvrir le volet d\'un échec l\'acquitte (pas une question)', async () => {
+      assert(await inExamine('gamma'), 'gamma devrait être à examiner');
+      await setHash(page, '#/m/gamma');
+      assert(await until(async () => (await api('/api/config')).projects.find(p => p.name === 'gamma').currentState === 'idle', 8000), 'serveur : gamma pas acquitté');
+      const jt = await until(async () => { const t = await page.textContent('#dive .dive-turns'); return /marqué vu/.test(t || '') ? t : null; }, 8000);
+      assert(jt, 'journal : « ✓ marqué vu » absent');
+      await page.click('#dive .dive-back');
+      assert(await until(async () => !(await inExamine('gamma')), 5000), 'gamma toujours à examiner');
+      assert(await inExamine('eta') || (await api('/api/config')).projects.find(p => p.name === 'eta').currentState === 'input', 'une question ne doit pas être acquittée');
+    });
+    await v031('journal-tab', 'Volet : journal d\'activité par défaut (demande, résultat, coût), log brut à un clic', async () => {
+      if (!(await hasCards())) NA('cadres désactivés');
+      await page.locator('.rail-card[data-name="alpha"]').click();
+      assert(await until(async () => (await hash(page)) === '#/m/alpha' && await visible(page, '#dive .dive-turns'), 5000), 'journal non affiché par défaut');
+      assert(await until(async () => (await page.locator('#dive .jt').count()) > 0, 8000), 'aucun tour');
+      const t = await page.textContent('#dive .jt:first-of-type');
+      for (const want of ['Publier la version 1.2.3', 'Version 1.2.3 publiée', '$0.42', 'v1.2.3']) assert(t.includes(want), `tour sans « ${want} » : ${t}`);
+      await page.click('#dive .jt-link[data-dive-tab="journal"]');
+      assert(await until(async () => (await page.locator('#dive .dj-line').count()) > 0, 5000), 'log brut inaccessible');
+      await page.click('#dive .dive-tab[data-tab="turns"]');
+    });
+    await v031('journal-live', 'Journal en temps réel : un nouveau tour apparaît sans rechargement', async () => {
+      await setHash(page, '#/m/alpha');
+      await until(async () => (await page.locator('#dive .jt').count()) > 0, 8000);
+      const n0 = await page.locator('#dive .jt').count();
+      appendLog('alpha', [{ type: 'user_prompt', text: 'Préparer la version 1.2.4' }, { type: 'system', subtype: 'init', model: 'claude-sonnet-5' }]);
+      assert(await until(async () => (await page.locator('#dive .jt').count()) === n0 + 1
+        && /Préparer la version 1\.2\.4/.test(await page.textContent('#dive .jt:first-of-type')), 8000), 'tour en cours non affiché');
+      appendLog('alpha', [{ type: 'result', subtype: 'success', is_error: false, num_turns: 2, duration_ms: 4000, total_cost_usd: 0.05, result: 'Version 1.2.4 prête, commit 9f8e7d6.' }]);
+      assert(await until(async () => /commit 9f8e7d6/.test(await page.textContent('#dive .jt:first-of-type')), 8000), 'fin de tour non affichée');
+      await page.click('#dive .dive-back');
+    });
+    await v031('cards-order', 'Cadres du Pilotage : du plus récemment actif au plus ancien, clic → journal', async () => {
+      if (!(await hasCards())) NA('cadres désactivés');
+      const rb = await page.locator('#rail').boundingBox();
+      await page.mouse.move(rb && rb.x < 800 ? 1200 : 200, 300);   // hors du rail : l'ordre n'est jamais permuté sous le pointeur
+      await sleep(1800);
+      // L'ordre affiché suit l'instantané avec un différé voulu (1,5 s, jamais
+      // sous le pointeur) : on attend qu'il soit stabilisé, puis on le vérifie.
+      // Un musicien EN COURS écrit sans cesse dans son log (eps, dans le bac à
+      // sable) : il peut légitimement passer devant. alpha, qui vient de finir un
+      // tour, doit précéder tous les autres.
+      const read = () => page.evaluate(() => [...document.querySelectorAll('.rail-card')].map(c => ({ n: c.dataset.name, s: c.dataset.state, t: Number(c.dataset.last) })));
+      const sorted = (o) => o.every((x, i) => i === 0 || o[i - 1].t >= x.t);
+      const firstIdle = (o) => o.find(x => x.s !== 'live' && x.s !== 'think')?.n;
+      let order = await until(async () => { const o = await read(); return o.length && firstIdle(o) === 'alpha' && sorted(o) ? o : null; }, 12_000);
+      if (!order) order = await read();
+      assert(firstIdle(order) === 'alpha', `alpha (le plus récent hors tours en cours) pas en tête : ${order.map(x => x.n).join(' > ')}`);
+      for (let i = 1; i < order.length; i++) assert(order[i - 1].t >= order[i].t, `ordre : ${order[i - 1].n} avant ${order[i].n}`);
+      assert(order[order.length - 1].t === 0 || order.every(x => x.t > 0), 'jamais observé hors de la fin');
+      assert(!order.some(x => x.n === 'zeta' || x.n === 'chef'), 'parqués ou chef dans les cadres');
+      const card = await page.textContent('.rail-card[data-name="alpha"]');
+      assert(/il y a|à l'instant/.test(card), `âge absent : ${card}`);
+      return order.map(x => x.n).join(' > ');
+    });
+    await v031('flags-031', 'Désactivation à chaud : ui.activityJournal / ui.railCards = false puis rétablis', async () => {
+      const fc = path.join(sb.root, 'config.json');
+      const cfg = JSON.parse(fs.readFileSync(fc, 'utf8'));
+      cfg.ui = { ...(cfg.ui || {}), activityJournal: false, railCards: false };
+      fs.writeFileSync(fc, JSON.stringify(cfg, null, 2) + '\n');
+      assert(await until(async () => (await page.locator('.rail-card').count()) === 0 && (await page.locator('[data-fold="all"]').count()) === 1, 15_000), 'cadres toujours là');
+      await setHash(page, '#/m/alpha');
+      assert(await until(async () => visible(page, '#dive .dive-activity'), 5000), 'volet sans journal : onglet Activité attendu');
+      assert(!(await visible(page, '#dive .dive-tab[data-tab="turns"]')), 'onglet journal encore visible');
+      await page.click('#dive .dive-back');
+      cfg.ui = { ...(cfg.ui || {}), activityJournal: true, railCards: true };
+      fs.writeFileSync(fc, JSON.stringify(cfg, null, 2) + '\n');
+      assert(await until(async () => (await page.locator('.rail-card').count()) > 0, 15_000), 'cadres non rétablis');
+    });
     await ctx.close();
 
     // ---------------------- Mobile ----------------------
@@ -315,6 +423,20 @@ export async function browserChecks(sb, t) {
       await m.click('#mobile-pilot');
       assert(await until(async () => visible(m, '#rail'), 5000), 'feuille du rail');
       await m.keyboard.press('Escape');
+    });
+    await check(B, 'mobile-journal', 'Mobile : cadres dans la feuille Pilotage, journal plein écran, aucun débordement', async () => {
+      if (!(await m.evaluate(() => !!window.Activite))) NA('fonction absente de cet état du code');
+      await setHash(m, '#/');
+      await m.click('#mobile-pilot');
+      assert(await until(async () => (await m.locator('#rail .rail-card').count()) > 0, 8000), 'aucun cadre dans la feuille');
+      const minH = await m.evaluate(() => Math.min(...[...document.querySelectorAll('#rail .rail-card')].map(c => c.getBoundingClientRect().height)));
+      assert(minH >= 44, `cadre de ${minH}px`);
+      await m.locator('#rail .rail-card[data-name="alpha"]').click();
+      assert(await until(async () => (await m.locator('#dive .jt').count()) > 0, 8000), 'journal mobile vide');
+      const over = await m.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      assert(over <= 0, `débordement horizontal ${over}px`);
+      await shot(m, 'journal-mobile');
+      await m.click('#dive .dive-back');
     });
     await check(B, 'projets-mobile', 'Projets · mobile : une colonne, aucun défilement horizontal, cibles ≥ 44 px', async () => {
       if (!(await m.locator('#btn-projects').count())) NA('vue absente de cet état du code');
@@ -364,6 +486,20 @@ export async function browserChecks(sb, t) {
           await until(async () => (await pg.textContent('#conn-status .conn-text')) === 'synchronisé' || vp.tag === 'mobile', 15_000);
           await sleep(1500);
           await shot(pg, `salle-${vp.tag}`); made.push(`salle-${vp.tag}`);
+          if (await pg.evaluate(() => !!window.Activite)) {
+            if (vp.tag === 'mobile') {
+              await pg.click('#mobile-pilot');
+              await sleep(600);
+              await shot(pg, 'pilotage-mobile'); made.push('pilotage-mobile');
+              await pg.keyboard.press('Escape');
+            }
+            await setHash(pg, '#/m/alpha');
+            await until(async () => (await pg.locator('#dive .jt').count()) > 0, 8000);
+            await sleep(400);
+            await shot(pg, `journal-${vp.tag}`); made.push(`journal-${vp.tag}`);
+            await setHash(pg, '#/');
+            await sleep(300);
+          }
           if (await pg.locator('#btn-projects').count()) {
             await setHash(pg, '#/projets');
             await until(async () => visible(pg, '#projects'), 5000);

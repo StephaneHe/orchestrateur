@@ -15,10 +15,13 @@
 // ============================================================================
 
 import fs from 'node:fs';
+import '../public/turn-core.js';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+
+const TC = globalThis.TurnCore;   // règles 0.31.0 passées aux fonctions de server.js évaluées
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DISPATCH = path.join(ROOT, 'scripts', 'dispatch.mjs');
@@ -201,8 +204,8 @@ scenario('côté serveur : le ✕ part bien au chef');
   const { isPhantomResult, isQuestionResolved } = await import('./fleet-status-core.mjs');
   const SRV = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
   const a = SRV.indexOf('function reduceMusician(');
-  const reduce = new Function('musicianAutoStates', 'isPhantomResult', 'isQuestionResolved', 'NEEDS_CHEF_RE',
-    `${SRV.slice(a, SRV.indexOf('\n}\n', a) + 2)}\nreturn reduceMusician;`)(new Map(), isPhantomResult, isQuestionResolved, /NEEDS_CHEF_INPUT:\s*([^\n]+)/i);
+  const reduce = new Function('musicianAutoStates', 'isPhantomResult', 'isQuestionResolved', 'NEEDS_CHEF_RE', 'isAcknowledged', 'isConductorStop', 'stopInfo',
+    `${SRV.slice(a, SRV.indexOf('\n}\n', a) + 2)}\nreturn reduceMusician;`)(new Map(), isPhantomResult, isQuestionResolved, /NEEDS_CHEF_INPUT:\s*([^\n]+)/i, TC.isAcknowledged, TC.isConductorStop, TC.stopInfo);
   reset(); fs.writeFileSync(LIMIT, futureIso());
   const rr = run(['--model', 'claude-opus-5', '--callback', 'chef']);
   let out = null;

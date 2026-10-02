@@ -271,6 +271,56 @@ async function apiChecks(sb) {
     const c = await json('/api/config');
     assert(c.projects.find(p => p.name === 'mu').currentState === 'idle', 'mu non repassé idle');
   });
+  // 0.31.0 — arrêt par le chef présenté comme tel, « vu » persistant sans relance.
+  await check(S, 'ack-stopped', 'Arrêt par le chef (motif, result parasite ignoré) puis « vu » : 200, 409, idle, événement dans le log', async () => {
+    const probe = await post('/api/ack/nope', {});
+    if (probe.status === 404 && !/unknown project/.test(await probe.text())) NA('route /api/ack absente de cet état du code');
+    const ts = (s) => new Date(Date.now() - s * 1000).toISOString();
+    fs.appendFileSync(path.join(sb.root, 'logs', 'lambda.jsonl'), [
+      { type: 'user_prompt', text: 'Tâche de recette interminable', timestamp: ts(120) },
+      { type: 'system', subtype: 'init', model: 'claude-opus-5-5', timestamp: ts(119) },
+      { type: 'result', subtype: 'error_killed_by_conductor', is_error: true, stopped_by: 'chef', reason: 'boucle sans progrès', duration_ms: 0, timestamp: ts(10) },
+      { type: 'result', subtype: 'error_model_unavailable', is_error: true, num_turns: 0, result: 'model demandé indisponible', timestamp: ts(10) },
+    ].map(e => JSON.stringify(e)).join('\n') + '\n');
+    let c = await json('/api/config');
+    let l = c.projects.find(p => p.name === 'lambda');
+    assert(l.currentState === 'error' && l.stopped?.reason === 'boucle sans progrès', `config : ${l.currentState} ${JSON.stringify(l.stopped)}`);
+    const pu = await until(async () => { const p = await json('/api/pupitre'); const r = p.fleet.find(x => x.name === 'lambda'); return r?.stopped ? r : null; }, 8000);
+    assert(pu && pu.stopped.by === 'chef', '/api/pupitre : stopped absent');
+    assert((await post('/api/ack/beta', {})).status === 409, 'question : « vu » doit être refusé (409)');
+    const a = await post('/api/ack/lambda', { by: 'regression' });
+    const aj = await a.json();
+    assert(a.status === 200 && aj.kind === 'stopped', `1er « vu » : ${a.status} ${JSON.stringify(aj)}`);
+    assert((await post('/api/ack/lambda', {})).status === 409, '2e « vu » ≠ 409');
+    assert(readLog('lambda').some(e => e.type === 'notification' && e.subtype === 'acknowledged' && e.of === 'stopped'), 'événement absent du log');
+    c = await json('/api/config');
+    l = c.projects.find(p => p.name === 'lambda');
+    assert(l.currentState === 'idle' && !l.stopped, `après « vu » : ${l.currentState}`);
+    assert((await post('/api/ack/nope', {})).status === 404, 'projet inconnu ≠ 404');
+  });
+  await check(S, 'journal', 'Journal d\'activité /api/project/:name/journal : tours, demande, issue, coût, version', async () => {
+    const r = await get('/api/project/alpha/journal');
+    if (r.status === 404) NA('route absente de cet état du code');
+    const jA = await r.json();
+    const t = jA.turns[0];
+    assert(t && t.prompt === "Publier la version 1.2.3 de l'app" && t.outcome === 'ok', `alpha : ${JSON.stringify(t)}`);
+    assert(Math.abs(t.costUsd - 0.42) < 1e-9 && t.versions.includes('1.2.3'), `coût/version : ${t.costUsd} ${t.versions}`);
+    const g = (await json('/api/project/gamma/journal')).turns[0];
+    assert(g.outcome === 'error' && g.subtype === 'error_max_turns', `gamma : ${g.outcome}`);
+    const l = (await json('/api/project/lambda/journal')).turns[0];
+    assert(l.outcome === 'stopped' && l.stop.reason === 'boucle sans progrès' && l.ack, `lambda : ${JSON.stringify(l)}`);
+    // Incrémental : une ligne ajoutée apparaît sans relire tout le log (omega :
+    // sans log jusqu'ici, aucun parcours ne dépend de son dernier tour).
+    assert((await json('/api/project/omega/journal')).turns.length === 0, 'omega : aucun tour attendu');
+    fs.appendFileSync(path.join(sb.root, 'logs', 'omega.jsonl'), JSON.stringify({ type: 'user_prompt', text: 'Tour ajouté', timestamp: new Date().toISOString() }) + '\n');
+    const t2 = (await json('/api/project/omega/journal')).turns[0];
+    assert(t2.prompt === 'Tour ajouté' && t2.outcome === 'running', `incrément : ${JSON.stringify(t2)}`);
+    fs.appendFileSync(path.join(sb.root, 'logs', 'omega.jsonl'), JSON.stringify({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, duration_ms: 1200, result: 'Tour ajouté : fait.', timestamp: new Date().toISOString() }) + '\n');
+    const t3 = await until(async () => { const x = (await json('/api/project/omega/journal')).turns[0]; return x?.outcome === 'ok' ? x : null; }, 3000);
+    assert(t3 && t3.summary[0] === 'Tour ajouté : fait.', 'incrément : fin du tour');
+    assert((await get('/api/project/nope/journal')).status === 404, 'projet inconnu ≠ 404');
+    return `${jA.turns.length} tour(s) pour alpha`;
+  });
   await check(S, 'mark-read', 'Marquer lu (/api/mark-read) persiste le marqueur', async () => {
     const r = await post('/api/mark-read', { project: 'lambda' });
     assert(r.ok, `HTTP ${r.status}`);

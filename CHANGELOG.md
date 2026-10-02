@@ -11,6 +11,67 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-10-02
+
+Retours utilisateur sur le dashboard :
+- un musicien arrêté par le chef s'affichait « ✕ Échec » ;
+- rien ne permettait de le marquer comme vu, et il restait dans « À examiner »
+  même après avoir été consulté ;
+- le volet d'un musicien ne donnait accès qu'à son log, alors qu'il était
+  censé résumer ses actions.
+
+### Added
+- (server, viewer) **« Vu » sans relancer de tour** : `POST /api/ack/:project`.
+  - Un échec ou un arrêt est acquitté par un événement
+    `notification/acknowledged` ajouté au log. Il survit au redémarrage et
+    part par le SSE.
+  - Un résultat en attente l'est par le marqueur de lecture.
+  - Une question ou un tour en cours renvoie 409.
+  - Boutons « ✓ Vu » / « ✓ Répondue » sur chaque ligne de « À examiner »,
+    « ✓ Marquer vu » dans la bande d'attention et dans le volet.
+  - **Ouvrir le volet vaut « vu »** pour un échec, un arrêt ou un résultat,
+    jamais pour une question.
+- (viewer) **Journal d'activité** : le volet s'ouvre sur la liste des tours du
+  musicien. Chaque tour donne :
+  - la demande, sans boilerplate ;
+  - ce qu'il a fait, en 1 à 3 lignes tirées du résultat ;
+  - les commits, versions et URL détectés ;
+  - l'issue, la durée, le coût et le model.
+
+  Le journal se met à jour en temps réel ; le log brut reste dans l'onglet
+  « Log brut ». Il est servi par `GET /api/project/:name/journal` : lecture
+  de la fin du log seulement, en asynchrone, avec un cache incrémental. Aucun
+  appel à un LLM.
+- (viewer) **Cadres des musiciens** dans la 2ᵉ partie verticale du Pilotage :
+  un cadre par musicien, du plus récemment actif au plus ancien, avec son
+  état, sa dernière action et depuis quand. Un clic ouvre son journal. Les
+  états sont ceux de la vue Projets (`Projets.describe`).
+- `public/turn-core.js` réunit les règles « vu », « arrêt par le chef » et le
+  journal, partagées par le navigateur et le serveur. Recette :
+  `scripts/_test_activity_journal.mjs`, qui inclut kill-stalled contre le vrai
+  dispatch.mjs. Nouveaux parcours HTTP et navigateur (desktop et mobile) dans
+  `regression.mjs`.
+- Désactivable sans redéploiement, à chaud : `config.json` →
+  `"ui": { "activityJournal": false, "railCards": false }`. Pour un seul
+  navigateur : `?journal=0` / `?cadres=0`.
+
+### Changed
+- **Arrêt par le chef ≠ échec**. L'état affiché est « ■ Arrêté par le chef »,
+  avec le motif s'il est connu.
+  - `kill-stalled.mjs <projet> [--reason "…"]` écrit `stopped_by` et
+    `reason`.
+  - Le nom de projet est désormais validé.
+
+### Fixed
+- Après un `kill-stalled`, `dispatch.mjs` écrivait un second result (« model
+  demandé indisponible… le CLI a échoué sans result »), qui masquait l'arrêt.
+  - kill-stalled pose maintenant `logs/<projet>.killed` avant de tuer, et
+    dispatch.mjs clôt le tour sans rien ajouter.
+  - Les réducteurs ignorent ce result parasite dans les anciens logs.
+- (viewer, mobile) Le volet plein écran passait sous la barre du haut
+  (contexte d'empilement de `.main-row`), et son bouton « Retour » était
+  intouchable.
+
 ## [0.30.0] - 2026-10-02
 
 Demande de l'utilisateur : « les autorisations auraient dû être données à la

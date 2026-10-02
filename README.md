@@ -4,7 +4,7 @@ A local Windows dashboard where one "conductor" AI session pilots a fleet of
 headless coding agents, one per project, with a live web viewer and an
 Android companion app.
 
-`version 0.30.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
+`version 0.31.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
 
 > **Status: active, personal project.** Built and used daily on a single
 > Windows machine. Pre-1.0: internal APIs and file formats can still change
@@ -51,12 +51,23 @@ one screen to watch the whole fleet.
   conductor). The panel switches to the `input` state and the conductor
   routes the reply. Questions can also be marked answered without
   relaunching the agent.
+- **"To review" you can clear.** Failures, stops by the conductor (shown as
+  such, with their reason) and unread results can each be marked seen from
+  the dashboard. Opening an agent's panel counts as seen, except for an open
+  question. The acknowledgement is written to the log, so it survives a
+  restart and never starts a turn.
 - **Per-agent queue.** A message to a busy agent is queued (FIFO, persisted)
   instead of starting a second concurrent session.
 - **Live web viewer.** Vanilla JS + xterm.js, fed by Server-Sent Events from
   the append-only stream-json logs: thread view, attention band, search,
   briefing, queue management, image attachments, a "Projects" status view,
   four colour palettes (`amber`, `matrix`, `ghost`, `crimson`).
+- **Activity journal per agent.** Each agent's panel opens on a timeline of
+  its turns: the request (without boilerplate), what it did (from its
+  result, plus detected commits, versions and URLs), outcome, duration, cost
+  and model. The journal is built from the logs deterministically, with no
+  LLM call, and updates live. The raw log is one click away. The "Pilotage"
+  column lists every agent as a card, most recently active first.
 - **Android companion app** (Kotlin + Jetpack Compose): fleet overview,
   per-agent detail, chat with the conductor.
 - **`/downloads` page** listing the Android builds of your projects, driven
@@ -139,14 +150,15 @@ node scripts/queue.mjs <project> [--list | --remove <id> | --clear]
 node scripts/resolve-question.mjs <project> [--note "answered in chat"]
 node scripts/new-project.mjs <name> [--path <dir>]   # register a project, ready to run
 node scripts/trust-projects.mjs [<name>...] [--dry-run]   # trust + permissions retrofit
-node scripts/kill-stalled.mjs <project>              # stop a stalled turn
+node scripts/kill-stalled.mjs <project> [--reason "…"]   # stop a stalled turn ("stopped by the conductor")
 node scripts/notify.mjs <project> --stdin --source <from>   # post a callback
 ```
 
 Main HTTP endpoints: `GET /api/version`, `GET /api/config`,
 `GET /api/pupitre` (fleet health snapshot), `GET /api/sse/fleet` (live
 stream), `POST /api/dispatch`, `POST /api/notify`,
-`POST /api/question/:project/resolve`, `GET /downloads`.
+`POST /api/question/:project/resolve`, `POST /api/ack/:project` (mark seen),
+`GET /api/project/:name/journal` (activity journal), `GET /downloads`.
 
 ## Architecture
 

@@ -40,10 +40,12 @@
   };
 
   function label(m) {
+    if (m.state === "error" && m.stopped) return "Arrêté par le chef";
     if (m.state === "unread" && m.awaitingChef) return "Attend le chef";
     return LABEL[m.state] || LABEL.idle;
   }
   function glyph(m) {
+    if (m.state === "error" && m.stopped) return "■";
     if (m.state === "unread" && m.awaitingChef) return "⇄";
     return GLYPH[m.state] || "○";
   }
@@ -288,7 +290,7 @@
   // Bande d'attention — une ligne repliée, l'élément le plus grave lisible
   // sans clic. Priorité : question > processus perdu > échec > sans progrès.
   // ------------------------------------------------------------------------
-  const ATT_RANK = { question: 0, dead: 1, error: 2, stall: 3 };
+  const ATT_RANK = { question: 0, dead: 1, error: 2, stopped: 2, stall: 3 };
 
   function attentionItems() {
     const out = [];
@@ -303,7 +305,9 @@
       }
       const h = healthFlag(r);
       if (h) { out.push({ kind: h.kind, name: m.name, mark: h.kind === "dead" ? "✗" : "!", text: h.text }); continue; }
-      if (m.state === "error") {
+      if (m.state === "error" && m.stopped) {
+        out.push({ kind: "stopped", name: m.name, mark: "■", text: "arrêté par le chef" + (m.stopped.reason ? " — " + m.stopped.reason : "") });
+      } else if (m.state === "error") {
         out.push({ kind: "error", name: m.name, mark: "✕", text: m.lastLine || "échec du tour" });
       }
     }
@@ -325,9 +329,11 @@
     const nd = items.filter(i => i.kind === "dead").length;
     const ne = items.filter(i => i.kind === "error").length;
     const ns = items.filter(i => i.kind === "stall").length;
+    const nk = items.filter(i => i.kind === "stopped").length;
     if (nq) counts.push(`${nq} question${nq > 1 ? "s" : ""}`);
     if (nd) counts.push(`${nd} processus perdu${nd > 1 ? "s" : ""}`);
     if (ne) counts.push(`${ne} échec${ne > 1 ? "s" : ""}`);
+    if (nk) counts.push(`${nk} arrêté${nk > 1 ? "s" : ""} par le chef`);
     if (ns) counts.push(`${ns} sans progrès`);
     const top = items[0];
 
@@ -336,7 +342,9 @@
         ? `<button class="ai-act is-primary" data-via-chef="${esc(it.name)}">Répondre via le chef</button>` +
           `<button class="ai-act" data-resolve-question="${esc(it.name)}" title="Déjà répondue ailleurs ou sans objet — aucun tour relancé">✓ Marquer comme répondue</button>` +
           `<button class="ai-act" data-open-musician="${esc(it.name)}">Ouvrir</button>`
-        : `<button class="ai-act" data-open-musician="${esc(it.name)}">Ouvrir</button>` +
+        : (it.kind === "error" || it.kind === "stopped"
+            ? `<button class="ai-act" data-ack="${esc(it.name)}" title="Vu : retire de « À examiner » — aucun tour relancé">✓ Marquer vu</button>` : "") +
+          `<button class="ai-act" data-open-musician="${esc(it.name)}">Ouvrir</button>` +
           `<button class="ai-act" data-talk-chef="${esc(it.name)}">En parler au chef</button>`;
       return `<div class="att-item" data-kind="${esc(it.kind)}">
         <span class="ai-mark">${esc(it.mark)}</span>
@@ -372,6 +380,8 @@
       if (via) { App.answerViaChef(via.dataset.viaChef); return; }
       const rq = e.target.closest("[data-resolve-question]");
       if (rq) { App.resolveQuestion(rq.dataset.resolveQuestion); return; }
+      const ack = e.target.closest("[data-ack]");
+      if (ack) { App.ackMusician(ack.dataset.ack); return; }
       const talk = e.target.closest("[data-talk-chef]");
       if (talk) { App.talkToChefAbout(talk.dataset.talkChef); return; }
     });
@@ -399,12 +409,14 @@
     hovered: false,
     foldAll: true,        // « Tous les musiciens » replié par défaut
     foldParked: true,
+    foldCards: false,     // cadres des musiciens dépliés par défaut (0.31.0)
     open: false,          // mobile : feuille ouverte ?
   };
 
-  function stableOrder(list, key) {
-    const desired = [...list].sort((a, b) => railRank(a) - railRank(b) || a.name.localeCompare(b.name))
-      .map(m => m.name);
+  const byAttention = (a, b) => railRank(a) - railRank(b) || a.name.localeCompare(b.name);
+
+  function stableOrder(list, key, cmp = byAttention) {
+    const desired = [...list].sort(cmp).map(m => m.name);
     const present = new Set(desired);
     // Les disparus sortent tout de suite ; les nouveaux entrent tout de suite
     // (rien ne bouge pour l'utilisateur) ; une PERMUTATION attend 1,5 s.
@@ -424,7 +436,7 @@
     return current;
   }
 
-  function railRowHtml(m) {
+  function railRowHtml(m, withAck = false) {
     const r = snapRow(m.name);
     const h = healthFlag(r);
     const stale = snapStale();
@@ -440,6 +452,8 @@
       if (turn) bits.push(esc(turn));
     } else if (m.state === "input") {
       bits.push(esc((r?.needsInput || m.lastLine || "").slice(0, 60)));
+    } else if (m.state === "error" && m.stopped) {
+      bits.push(esc(m.stopped.reason ? m.stopped.reason.slice(0, 60) : "motif non précisé"));
     } else if (m.state === "unread") {
       bits.push(m.awaitingChef ? "⇄ attend une décision du chef" : "✓ résultat non lu");
     } else if (m.lastLine) {
@@ -447,12 +461,28 @@
     }
     if (stale && !m.parked) bits.push(`<span class="rr-soft">(données anciennes)</span>`);
     const alert = h ? " is-alert" : "";
-    return `<button class="rail-row${alert}" data-state="${esc(m.state)}" data-name="${esc(m.name)}" type="button">
+    const stoppedAttr = m.stopped && m.state === "error" ? ' data-stopped="1"' : "";
+    const row = `<button class="rail-row${alert}" data-state="${esc(m.state)}" data-name="${esc(m.name)}"${stoppedAttr} type="button">
         <span class="rr-dot"></span>
         <span class="rr-name">${esc(m.name)}</span>
         <span class="rr-state">${esc(glyph(m))} ${esc(label(m))}</span>
         <span class="rr-sub">${bits.join(" · ") || "&nbsp;"}</span>
       </button>`;
+    if (!withAck) return row;
+    // « À examiner » (0.31.0) : chaque élément s'acquitte depuis son cadre.
+    const act = ackAction(m);
+    return act ? `<div class="rail-item">${row}${act}</div>` : row;
+  }
+
+  /** Bouton « vu » d'un élément à examiner, ou "" (en vol : rien à acquitter). */
+  function ackAction(m) {
+    if (m.state === "input") {
+      return `<button class="rr-ack" type="button" data-resolve-question="${esc(m.name)}" title="Déjà répondue ailleurs ou sans objet — aucun tour relancé">✓ Répondue</button>`;
+    }
+    if (m.state === "error" || m.state === "unread") {
+      return `<button class="rr-ack" type="button" data-ack="${esc(m.name)}" title="Vu : retire de « À examiner » — aucun tour relancé">✓ Vu</button>`;
+    }
+    return "";
   }
 
   function railGroups() {
@@ -477,6 +507,64 @@
     return { all, active, parked, running, examine };
   }
 
+  // ------------------------------------------------------------------------
+  // Cadres des musiciens (0.31.0) — 2ᵉ partie du Pilotage : un cadre par
+  // musicien, du plus récemment actif au plus ancien. L'état et son mot
+  // viennent de la vue Projets (Projets.describe) : une seule classification.
+  // Même règle de stabilité que les groupes (permutation différée, jamais sous
+  // le pointeur). Parqués exclus : ils restent dans « Mis de côté ».
+  // ------------------------------------------------------------------------
+  // Source : `lastActivityAt` de /api/pupitre (horodatage du dernier vrai
+  // événement, sinon mtime du log), rafraîchi toutes les 5 s. Pas
+  // `m.lastActivityMs` : c'est l'heure de RÉCEPTION, que le rejeu du SSE au
+  // chargement met à « maintenant » pour tout le monde.
+  function lastActivityMs(m) {
+    return Number(snapRow(m.name)?.lastActivityAt) || 0;
+  }
+  /** À la minute près : un âge à la seconde réécrirait le rail chaque seconde
+   *  (survol, focus et clic perdus sur un cadre recréé). */
+  function coarseAge(ms) {
+    const mn = Math.floor(Math.max(0, ms) / 60000);
+    if (mn < 1) return "à l'instant";
+    if (mn < 60) return `il y a ${mn} min`;
+    const h = Math.floor(mn / 60);
+    if (h < 48) return `il y a ${h} h ${String(mn % 60).padStart(2, "0")}`;
+    return `il y a ${Math.floor(h / 24)} j`;
+  }
+  const byRecency = (a, b) => (lastActivityMs(b) - lastActivityMs(a)) || a.name.localeCompare(b.name);
+
+  function cardHtml(m, now) {
+    const r = snapRow(m.name);
+    const d = global.Projets?.describe ? global.Projets.describe(m, r) : { glyph: glyph(m), word: label(m), kind: m.state };
+    const last = lastActivityMs(m);
+    const age = last ? coarseAge(now - last) : "jamais observé";
+    let line = "";
+    if (m.state === "error" && m.stopped) line = m.stopped.reason || "arrêté par la supervision du chef";
+    else if (m.state === "input") line = r?.needsInput || m.lastLine || "";
+    else if ((m.state === "live" || m.state === "think") && r?.activity) line = r.activity;
+    else line = m.lastLine || r?.activity || r?.mission || "";
+    line = String(line).replace(/\s+/g, " ").slice(0, 90);
+    return `<button class="rail-row rail-card" type="button" data-state="${esc(m.state)}" data-kind="${esc(d.kind)}" data-name="${esc(m.name)}" data-last="${last || 0}">
+        <span class="rc-top"><span class="rr-dot"></span><span class="rr-name">${esc(m.name)}</span><span class="rc-age">${esc(age)}</span></span>
+        <span class="rr-state">${esc(d.glyph)} ${esc(d.word)}</span>
+        <span class="rc-line">${line ? esc(line) : "&nbsp;"}</span>
+      </button>`;
+  }
+
+  function cardsHtml(list) {
+    const now = Date.now();
+    const ordered = stableOrder(list, "cards", byRecency);
+    const byName = new Map(list.map(m => [m.name, m]));
+    const cards = railState.foldCards ? "" : ordered.filter(n => byName.has(n)).map(n => cardHtml(byName.get(n), now)).join("");
+    return `<div class="rail-group rail-cards">
+        <button class="rail-group-head" type="button" data-fold="cards">
+          Musiciens · dernière activité <span class="rg-n">(${list.length})</span>
+          <span class="rg-caret">${railState.foldCards ? "▸" : "▾"}</span>
+        </button>
+        ${cards}
+      </div>`;
+  }
+
   function renderRail() {
     const body = document.getElementById("rail-body");
     if (!body) return;
@@ -485,11 +573,11 @@
     // L'ordre affiché est celui de `stableOrder` (attention d'abord, nom à
     // priorité égale), appliqué au sein de chaque groupe. Une permutation
     // n'est commise qu'après 1,5 s stables et jamais sous le pointeur.
-    const group = (title, list) => {
+    const group = (title, list, withAck = false) => {
       if (!list.length) return "";
       const ordered = stableOrder(list, title);
       const byName = new Map(list.map(m => [m.name, m]));
-      const rows = ordered.filter(n => byName.has(n)).map(n => railRowHtml(byName.get(n))).join("");
+      const rows = ordered.filter(n => byName.has(n)).map(n => railRowHtml(byName.get(n), withAck)).join("");
       return `<div class="rail-group">
           <div class="rail-group-head">${esc(title)} <span class="rg-n">(${list.length})</span></div>
           ${rows}
@@ -497,15 +585,15 @@
     };
 
     const running = group("En cours", g.running);
-    const examine = group("À examiner", g.examine);
+    const examine = group("À examiner", g.examine, true);
 
     const othersList = [...g.active].sort((a, b) => a.name.localeCompare(b.name));
-    const others = `<div class="rail-group">
+    const others = global.Activite?.cardsOn() ? cardsHtml(g.active) : `<div class="rail-group">
         <button class="rail-group-head" type="button" data-fold="all">
           Tous les musiciens <span class="rg-n">(${g.active.length})</span>
           <span class="rg-caret">${railState.foldAll ? "▸" : "▾"}</span>
         </button>
-        ${railState.foldAll ? "" : othersList.map(railRowHtml).join("")}
+        ${railState.foldAll ? "" : othersList.map(m => railRowHtml(m)).join("")}
       </div>`;
 
     const parkedList = [...g.parked].sort((a, b) => a.name.localeCompare(b.name));
@@ -514,7 +602,7 @@
           Mis de côté <span class="rg-n">(${g.parked.length})</span>
           <span class="rg-caret">${railState.foldParked ? "▸" : "▾"}</span>
         </button>
-        ${railState.foldParked ? "" : parkedList.map(railRowHtml).join("")}
+        ${railState.foldParked ? "" : parkedList.map(m => railRowHtml(m)).join("")}
       </div>` : "";
 
     const empty = (!g.running.length && !g.examine.length)
@@ -522,8 +610,26 @@
 
     // Écriture seulement si le contenu a changé : pas de re-mount inutile, pas
     // de scroll qui saute pendant qu'on lit le rail.
-    const html = running + examine + empty + others + parkedBlock;
-    if (body._html !== html) { body.innerHTML = html; body._html = html; }
+    // Deux parties verticales (0.31.0) : en haut ce qui réclame l'attention, en
+    // bas les cadres de tous les musiciens, chacune avec son défilement.
+    const split = !!global.Activite?.cardsOn();
+    body.classList.toggle("is-split", split);
+    if (split) {
+      // Chaque partie a son propre cache : la durée d'un tour en cours (à la
+      // seconde) ne recrée pas les cadres d'en bas sous le pointeur.
+      if (!body.querySelector(":scope > .rail-top")) {
+        body.innerHTML = `<div class="rail-top"></div><div class="rail-bottom"></div>`;
+        body._html = null;
+      }
+      const top = body.querySelector(":scope > .rail-top");
+      const bottom = body.querySelector(":scope > .rail-bottom");
+      const th = running + examine + empty, bh = others + parkedBlock;
+      if (top._html !== th) { top.innerHTML = th; top._html = th; }
+      if (bottom._html !== bh) { bottom.innerHTML = bh; bottom._html = bh; }
+    } else {
+      const html = running + examine + empty + others + parkedBlock;
+      if (body._html !== html) { body.innerHTML = html; body._html = html; }
+    }
     renderMobilePilot(g);
   }
 
@@ -552,10 +658,15 @@
       const fold = e.target.closest("[data-fold]");
       if (fold) {
         if (fold.dataset.fold === "all") railState.foldAll = !railState.foldAll;
+        else if (fold.dataset.fold === "cards") railState.foldCards = !railState.foldCards;
         else railState.foldParked = !railState.foldParked;
         renderRail();
         return;
       }
+      const rq = e.target.closest("[data-resolve-question]");
+      if (rq) { App.resolveQuestion(rq.dataset.resolveQuestion); return; }
+      const ack = e.target.closest("[data-ack]");
+      if (ack) { App.ackMusician(ack.dataset.ack); return; }
       const row = e.target.closest(".rail-row");
       if (row) App.openMusician(row.dataset.name);
     });
@@ -752,14 +863,14 @@
     const el = diveEl();
     if (!el) return;
     dive.name = name;
-    dive.tab = "activity";
+    dive.tab = defaultTab();
     dive.events = [];
     dive.truncated = false;
     dive.fromApp = pendingFromApp;
     pendingFromApp = false;
     el.hidden = false;
     $(".dive-name", el).textContent = name;
-    $$(".dive-tab", el).forEach(b => b.classList.toggle("is-on", b.dataset.tab === "activity"));
+    $$(".dive-tab", el).forEach(b => b.classList.toggle("is-on", b.dataset.tab === dive.tab));
     const act = $(".dive-activity", el);
     act.innerHTML = "";
     dive.detail = global.PupitreDetail
@@ -771,11 +882,19 @@
     if (dive.detail) dive.detail.setPinned(true);
     const m = App.musicians.get(name);
     if (m) m.markRead();
+    // Règle « vu » (0.31.0) : ouvrir le volet vaut lecture. Un résultat non lu
+    // l'était déjà (markRead) ; un échec ou un arrêt par le chef est acquitté de
+    // même. Une QUESTION ne l'est pas : elle attend une réponse ou un « Marquer
+    // comme répondue » explicite.
+    if (m && m.state === "error" && name !== App.composer.CONDUCTOR) App.ackMusician(name, { auto: true });
+    if (global.Activite?.journalOn()) global.Activite.open(name);
     renderDive();
     syncRailVisibility();
     App.ensurePupitrePoll();
     backfillDive(name);
   }
+
+  function defaultTab() { return global.Activite?.journalOn() ? "turns" : "activity"; }
 
   function closeDive() {
     const el = diveEl();
@@ -817,6 +936,7 @@
   /** Un événement live du musicien ouvert est poussé dans le flux du volet. */
   function onLiveEvent(name, raw) {
     if (dive.name !== name) return;
+    global.Activite?.onLiveEvent(name, raw);
     if (dive.detail) dive.detail.onLive(raw);
     dive.events.push(raw);
     if (dive.events.length > 400) dive.events.splice(0, dive.events.length - 400);
@@ -847,6 +967,9 @@
     // garde la trace (note) tant que le musicien n'a pas repris la main.
     if (m && m.state === "input") {
       st.innerHTML += ` <button class="ds-resolve" data-resolve-question="${esc(m.name)}" title="Déjà répondue ailleurs ou sans objet — aucun tour relancé">✓ Marquer comme répondue</button>`;
+    } else if (m && m.state === "error") {
+      if (m.stopped?.reason) st.innerHTML += ` · <span class="ds-reason">${esc(m.stopped.reason)}</span>`;
+      st.innerHTML += ` <button class="ds-resolve" data-ack="${esc(m.name)}" title="Vu : retire de « À examiner » — aucun tour relancé">✓ Marquer vu</button>`;
     } else if (m && m.state === "idle" && m.questionResolved) {
       st.innerHTML += ` · <span class="ds-resolved">✓ question marquée répondue${m.questionResolved.note ? " — " + esc(m.questionResolved.note) : ""}</span>`;
     }
@@ -871,7 +994,14 @@
       ].join(" · ");
     }
 
+    const jOn = !!global.Activite?.journalOn();
+    if (!jOn && dive.tab === "turns") dive.tab = "activity";
+    const tTab = $('.dive-tab[data-tab="turns"]', el);
+    if (tTab) tTab.hidden = !jOn;
     $$(".dive-tab", el).forEach(b => b.classList.toggle("is-on", b.dataset.tab === dive.tab));
+    const turns = $(".dive-turns", el);
+    if (turns) turns.hidden = dive.tab !== "turns";
+    if (dive.tab === "turns") global.Activite.paint();
     $(".dive-activity", el).hidden = dive.tab !== "activity";
     $(".dive-result",   el).hidden = dive.tab !== "result";
     $(".dive-journal",  el).hidden = dive.tab !== "journal";
@@ -1028,7 +1158,8 @@
     const isErr = res && (!!res.is_error || (typeof res.subtype === "string" && res.subtype.startsWith("error")));
     const synthetic = res && res.synthetic;
     let issue;
-    if (synthetic)      issue = `⟲ clos par le système — ${esc(res.subtype || "interrompu")}`;
+    if (res && res.subtype === "error_killed_by_conductor") issue = `■ arrêté par le chef${res.reason ? " — " + esc(res.reason) : ""}`;
+    else if (synthetic) issue = `⟲ clos par le système — ${esc(res.subtype || "interrompu")}`;
     else if (isErr)     issue = `✕ échec — ${esc(res.subtype || "erreur")}`;
     else if (res)       issue = "✓ terminé";
     else                issue = "… tour en cours";
@@ -1086,6 +1217,13 @@
     $(".dive-state", el).addEventListener("click", (e) => {
       const b = e.target.closest("[data-resolve-question]");
       if (b) App.resolveQuestion(b.dataset.resolveQuestion);
+      const a = e.target.closest("[data-ack]");
+      if (a) App.ackMusician(a.dataset.ack);
+    });
+    const turnsPane = $(".dive-turns", el);
+    if (turnsPane) turnsPane.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-dive-tab]");
+      if (b) { dive.tab = b.dataset.diveTab; renderDive(); }
     });
     $(".dive-queue", el).addEventListener("click", (e) => {
       const b = e.target.closest("[data-queue-rm]");

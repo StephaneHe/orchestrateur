@@ -48,7 +48,7 @@ import { detectOverride } from './src/message_router.mjs';
 // Shared fleet state/silence/stall derivation — same module the CLI supervisor
 // (scripts/fleet-status.mjs) uses, so the live desk view (/api/pupitre) can
 // never diverge from `node scripts/fleet-status.mjs`.
-import { scanProject as scanFleetMember, isPhantomResult, isQuestionResolved } from './scripts/fleet-status-core.mjs';
+import { scanProject as scanFleetMember, isPhantomResult, isQuestionResolved, isAcknowledged, isConductorStop, stopInfo, createJournal } from './scripts/fleet-status-core.mjs';
 // Registre /downloads relu à chaud depuis downloads.json (0.23.0).
 import { createDownloadsRegistry, VERSION_NAME_RE } from './scripts/downloads-registry.mjs';
 import { trustWorkspace } from './scripts/workspace-trust.mjs';
@@ -2266,6 +2266,7 @@ function scanProjectState(name) {
   let lastLine = '';
   let unreadCount = 0;
   let questionResolved = null;
+  let stopped = null;        // 0.31.0 : arrêt par le chef du dernier tour
   for (const ln of lines) {
     if (!ln) continue;
     let ev; try { ev = JSON.parse(ln); } catch { continue; }
@@ -2275,11 +2276,18 @@ function scanProjectState(name) {
       if (state === 'input') { state = 'idle'; questionResolved = { ts: ev.timestamp || null, note: ev.note || '' }; }
       continue;
     }
+    // « Vu » (0.31.0) : un échec ou un arrêt acquitté repasse à `idle`.
+    if (isAcknowledged(ev)) {
+      if (state === 'error' || state === 'unread') { state = 'idle'; unreadCount = 0; }
+      continue;
+    }
+    if (ev?.type === 'result' && stopped && !isConductorStop(ev)) continue;   // suite d'un arrêt du chef
     const t = ev?.type;
     // A SOURCED user_prompt (musician callback, @shortcut, /api/notify) is not a
     // turn start — only a source-less prompt or a system/init is. A real dispatch
     // launched with --source still emits system/init, so it's covered.
     if ((t === 'user_prompt' && !ev.source) || (t === 'system' && ev.subtype === 'init')) {
+      stopped = null;
       if (state === 'idle' || state === 'unread') state = 'live';
     } else if (t === 'assistant') {
       const blocks = ev.message?.content || [];
@@ -2294,7 +2302,11 @@ function scanProjectState(name) {
     } else if (t === 'result') {
       const isErr = !!ev.is_error || (typeof ev.subtype === 'string' && ev.subtype.startsWith('error'));
       const needs = /^NEEDS_USER_INPUT:\s*(.*)$/m.exec(lastAssistantText || '');
-      if (isErr && ev.synthetic) {
+      if (isConductorStop(ev)) {
+        stopped = stopInfo(ev);
+        state = 'error';
+        lastLine = stopped.reason || 'arrêté par le chef';
+      } else if (isErr && ev.synthetic) {
         state = 'idle';
       } else if (isErr) {
         state = 'error';
@@ -2309,7 +2321,7 @@ function scanProjectState(name) {
       }
     }
   }
-  return { state, lastLine, unreadCount, questionResolved };
+  return { state, lastLine, unreadCount, questionResolved, stopped: state === 'error' ? stopped : null };
 }
 
 app.get('/api/version', (req, res) => {
@@ -2341,6 +2353,7 @@ app.get('/api/config', (req, res) => {
         lastLine: snap.lastLine,
         unreadCount: snap.unreadCount,
         questionResolved: snap.questionResolved || null,
+        stopped: snap.stopped || null,
       };
     }),
   });
@@ -2434,7 +2447,12 @@ function projectMetaFor(name) {
  *  activé — `"ui": { "projectsView": false }` retire la vue « Projets » des
  *  dashboards ouverts sans redémarrage ni redéploiement. */
 function uiFlags() {
-  return { projectsView: config.ui?.projectsView !== false };
+  return {
+    projectsView: config.ui?.projectsView !== false,
+    // 0.31.0 — journal d'activité du volet et cadres du Pilotage.
+    activityJournal: config.ui?.activityJournal !== false,
+    railCards: config.ui?.railCards !== false,
+  };
 }
 
 // Fleet-global provider availability, read cheaply per request.
@@ -2644,6 +2662,144 @@ app.post('/api/question/:project/resolve', express.json({ limit: '4kb' }), async
   const msg = `[question] ${name} : acquittement écrit par ${by} — « ${ev.question.slice(0, 80)} »`;
   console.log(msg); debugLog(msg);
   res.json({ ok: true, project: name, question: ev.question, note, by, resolvedAt: ev.timestamp });
+});
+
+// ---------- « Vu » : acquitter ce qui attend un regard (0.31.0) ---------------
+//
+// « À examiner » gardait un échec ou un arrêt par le chef indéfiniment : seul un
+// nouveau tour l'effaçait. Cette route l'acquitte sans rien relancer :
+//   · error (échec, arrêt par le chef) → événement `notification/acknowledged`
+//     ajouté au log (même conception que question_resolved : tous les
+//     réducteurs le lisent, il survit au redémarrage, part par le SSE) ;
+//   · unread (résultat non lu, attente du chef) → marqueur de lecture, comme
+//     /api/mark-read ;
+//   · input → 409 : une question se règle par « Marquer comme répondue » ;
+//   · tour en cours ou rien à acquitter → 409.
+// Body : { note?, by?, auto? } — `auto` = acquitté par l'ouverture du volet.
+app.post('/api/ack/:project', express.json({ limit: '4kb' }), async (req, res) => {
+  const name = String(req.params.project || '');
+  if (!config.projects.find(p => p.name === name)) return res.status(404).json({ error: `unknown project "${name}"` });
+  const snap = scanFleetMember(name);
+  const st = scanProjectState(name);   // porte le marqueur de lecture (unread réel)
+  if (snap.state === 'live' || snap.state === 'think' || (await dispatchPidAliveAsync(name)) != null) {
+    return res.status(409).json({ error: `${name} a un tour en cours`, state: 'live' });
+  }
+  if (snap.state === 'input') {
+    return res.status(409).json({ error: `${name} attend une réponse : utiliser « Marquer comme répondue »`, state: 'input' });
+  }
+  const note = typeof req.body?.note === 'string' ? req.body.note.replace(/\s+/g, ' ').trim().slice(0, 500) : '';
+  const by = typeof req.body?.by === 'string' && /^[A-Za-z0-9_.\-]{1,32}$/.test(req.body.by) ? req.body.by : 'utilisateur';
+  const auto = req.body?.auto === true;
+  const now = new Date().toISOString();
+  if (snap.state === 'error') {
+    const of = snap.stopped ? 'stopped' : 'error';
+    const ev = {
+      type: 'notification', subtype: 'acknowledged', of, by, note, auto,
+      text: `✓ ${of === 'stopped' ? 'arrêt' : 'échec'} marqué vu${auto ? ' (volet ouvert)' : ''}${note ? ` : ${note}` : ''}`,
+      timestamp: now,
+    };
+    try { fs.appendFileSync(path.join(LOGS_DIR, `${name}.jsonl`), JSON.stringify(ev) + '\n'); }
+    catch (e) { return res.status(500).json({ error: `écriture impossible : ${e.message}` }); }
+    try { fs.writeFileSync(path.join(LOGS_DIR, `${name}.read`), now); } catch { /* non bloquant */ }
+    const msg = `[vu] ${name} : ${of === 'stopped' ? 'arrêt' : 'échec'} acquitté par ${by}${auto ? ' (volet ouvert)' : ''}`;
+    console.log(msg); debugLog(msg);
+    return res.json({ ok: true, project: name, kind: of, by, auto, acknowledgedAt: now });
+  }
+  if (st.state === 'unread') {
+    try { fs.writeFileSync(path.join(LOGS_DIR, `${name}.read`), now); }
+    catch (e) { return res.status(500).json({ error: `write failed: ${e.message}` }); }
+    return res.json({ ok: true, project: name, kind: snap.awaitingChef ? 'awaiting_chef' : 'unread', by, auto, readAt: now });
+  }
+  return res.status(409).json({ error: `rien à marquer vu pour ${name} (état : ${st.state})`, state: st.state });
+});
+
+// ---------- Journal d'activité d'un musicien (0.31.0) ------------------------
+//
+// Ses tours, du plus récent au plus ancien, réduits par TurnCore.createJournal
+// (public/turn-core.js, le même code que le client) : demande, ce qui a été
+// fait, issue, durée, coût, model. Aucun appel LLM.
+//
+// Les logs dépassent parfois 300 Mo : on ne lit que la fin (fenêtre qui double
+// de 4 à 64 Mio jusqu'à trouver `n` tours), en asynchrone, puis on garde l'état
+// en cache et on ne relit que ce qui a été ajouté depuis.
+const journalCache = new Map();   // nom → { size, offset, partial, journal, windowStart, truncated }
+const journalLocks = new Map();
+const JOURNAL_KEEP = 200;
+const JOURNAL_WINDOW_MAX = 64 * 1024 * 1024;
+
+async function readRange(file, start, end) {
+  const fh = await fsp.open(file, 'r');
+  try {
+    const len = end - start;
+    const buf = Buffer.alloc(len);
+    let off = 0;
+    while (off < len) {
+      const { bytesRead } = await fh.read(buf, off, Math.min(len - off, 4 * 1024 * 1024), start + off);
+      if (!bytesRead) break;
+      off += bytesRead;
+    }
+    return buf.subarray(0, off);
+  } finally { await fh.close(); }
+}
+
+function feedJournal(journal, text) {
+  for (const ln of text.split('\n')) {
+    if (!ln || ln.startsWith('{"type":"stream_event"')) continue;   // deltas : rien pour le journal
+    let ev; try { ev = JSON.parse(ln); } catch { continue; }
+    journal.push(ev);
+  }
+}
+
+async function projectJournal(name, want) {
+  const file = path.join(LOGS_DIR, `${name}.jsonl`);
+  let st; try { st = await fsp.stat(file); } catch { return { turns: [], truncated: false, sizeBytes: 0 }; }
+  let c = journalCache.get(name);
+  if (c && st.size < c.size) c = null;                    // log tronqué/remplacé : on repart
+  if (c && c.windowStart > 0 && c.journal.size < want && c.windowStart < JOURNAL_WINDOW_MAX && st.size > c.size) c = null;
+  if (!c) {
+    let win = 4 * 1024 * 1024;
+    for (;;) {
+      const start = Math.max(0, st.size - win);
+      const buf = await readRange(file, start, st.size);
+      let text = buf.toString('utf8').replace(/\u0000+/g, '');
+      if (start > 0) text = text.slice(text.indexOf('\n') + 1);   // ligne coupée en tête
+      const nl = text.lastIndexOf('\n');
+      const body = nl >= 0 ? text.slice(0, nl + 1) : '';
+      const journal = createJournal({ max: JOURNAL_KEEP });
+      feedJournal(journal, body);
+      c = { size: st.size, partial: nl >= 0 ? text.slice(nl + 1) : text, journal, windowStart: start };
+      if (start === 0 || journal.size >= want + 1 || win >= JOURNAL_WINDOW_MAX) break;
+      win *= 2;
+    }
+    journalCache.set(name, c);
+  } else if (st.size > c.size) {
+    const buf = await readRange(file, c.size, st.size);
+    const text = c.partial + buf.toString('utf8').replace(/\u0000+/g, '');
+    const nl = text.lastIndexOf('\n');
+    feedJournal(c.journal, nl >= 0 ? text.slice(0, nl + 1) : '');
+    c.partial = nl >= 0 ? text.slice(nl + 1) : text;
+    c.size = st.size;
+  }
+  const all = c.journal.list();
+  // Le plus ancien tour d'une fenêtre qui ne commence pas au début du log peut
+  // être amputé de sa demande : on le signale plutôt que de le présenter entier.
+  return { turns: all.slice(0, want), truncated: c.windowStart > 0, sizeBytes: st.size };
+}
+
+app.get('/api/project/:name/journal', async (req, res) => {
+  const name = String(req.params.name || '');
+  if (!config.projects.find(p => p.name === name)) return res.status(404).json({ error: `unknown project "${name}"` });
+  const want = Math.max(1, Math.min(JOURNAL_KEEP, Number(req.query.n) || 50));
+  try {
+    // Une requête à la fois par musicien : deux lectures incrémentales
+    // simultanées pousseraient deux fois les mêmes lignes.
+    const run = (journalLocks.get(name) || Promise.resolve()).catch(() => {}).then(() => projectJournal(name, want));
+    journalLocks.set(name, run);
+    const j = await run;
+    res.json({ project: name, ...j });
+  } catch (e) {
+    res.status(500).json({ error: `journal illisible : ${e.message}` });
+  }
 });
 
 // Register an Android device's SSH public key for SFTP access.
@@ -3186,10 +3342,23 @@ function reduceMusician(name, ev) {
     musicianAutoStates.set(name, { ...prev, state });
     return { prevState: prev.state, newState: state, lastLine, awaitingChef, expectCallback: null, wakeGen, resolved: true };
   }
+  // « Vu » (0.31.0) : même traitement, pour un échec / arrêt acquitté.
+  if (isAcknowledged(ev)) {
+    if (state === 'error' || state === 'unread') { state = 'idle'; awaitingChef = false; }
+    musicianAutoStates.set(name, { ...prev, state, awaitingChef });
+    return { prevState: prev.state, newState: state, lastLine, awaitingChef, expectCallback: null, wakeGen, resolved: true };
+  }
+  // Un result qui suit un arrêt du chef dans le même tour (ancien « model
+  // indisponible » de dispatch.mjs) : aucun effet, comme un fantôme.
+  if (t === 'result' && prev.stopped && !isConductorStop(ev)) {
+    return { prevState: state, newState: state, lastLine, awaitingChef, expectCallback: null, wakeGen, phantom: true, afterStop: true };
+  }
+  let stopped = prev.stopped ?? null;
   // Sourced user_prompt (callback / @shortcut / notify) is not a turn start.
   if ((t === 'user_prompt' && !ev.source) || (t === 'system' && ev.subtype === 'init')) {
     if (state === 'idle' || state === 'unread') state = 'live';
     awaitingChef = false;   // a new turn clears "waiting on the chef"
+    stopped = null;
     // Only the user_prompt carries the expectation; the system/init that follows
     // it belongs to the SAME turn, so it must not clear what we just recorded.
     if (t === 'user_prompt') {
@@ -3215,7 +3384,8 @@ function reduceMusician(name, ev) {
     // "attend le chef" instead of the misleading "terminé".
     const asksChef = NEEDS_CHEF_RE.test(lastAssistantText || '')
       || (typeof ev.result === 'string' && NEEDS_CHEF_RE.test(ev.result));
-    if (isErr && ev.synthetic)  { state = 'idle'; awaitingChef = false; }
+    if (isConductorStop(ev))    { stopped = stopInfo(ev); state = 'error'; lastLine = stopped.reason || 'arrêté par le chef'; awaitingChef = false; }
+    else if (isErr && ev.synthetic)  { state = 'idle'; awaitingChef = false; }
     else if (isErr)             { state = 'error'; lastLine = ev.subtype || 'échec du tour'; awaitingChef = false; }
     else if (needs)             { state = 'input'; lastLine = needs[1].trim().slice(0, 600); awaitingChef = false; }
     else {
@@ -3230,7 +3400,7 @@ function reduceMusician(name, ev) {
   const turnExpectCallback = expectCallback;
   const turnWakeGen = wakeGen;
   if (t === 'result') { expectCallback = null; wakeGen = 0; }
-  musicianAutoStates.set(name, { state, lastAssistantText, lastLine, awaitingChef, expectCallback, wakeGen });
+  musicianAutoStates.set(name, { state, lastAssistantText, lastLine, awaitingChef, expectCallback, wakeGen, stopped });
   return {
     prevState: prev.state, newState: state, lastLine, awaitingChef,
     expectCallback: turnExpectCallback, wakeGen: turnWakeGen,
@@ -4947,18 +5117,20 @@ function startBackgroundNotifyWatchers() {
         if (!line) continue;
         try {
           const ev = JSON.parse(line);
-          const { prevState, newState, lastLine, awaitingChef, expectCallback, wakeGen, phantom, resolved } =
+          const { prevState, newState, lastLine, awaitingChef, expectCallback, wakeGen, phantom, resolved, afterStop } =
             reduceMusician(name, ev);
           if (resolved) {
-            const msg = `[question] ${name} : question acquittée (${prevState} → ${newState})` +
+            const msg = `[${ev.subtype === 'acknowledged' ? 'vu' : 'question'}] ${name} : ${ev.subtype === 'acknowledged' ? 'marqué vu' : 'question acquittée'} (${prevState} → ${newState})` +
               (ev.note ? ` — ${String(ev.note).slice(0, 120)}` : '');
             console.log(msg); debugLog(msg);
             continue;
           }
           if (phantom) {
             // Ni réveil, ni notification, ni drain, ni clôture de ticket de chef.
-            const msg = `[result-fantôme] ${name} : result ignoré (num_turns=0, duration_api_ms=0, ` +
-              `session=${String(ev.session_id || '').slice(0, 8)}) — mini-tour rejoué par le CLI, pas une fin de tour`;
+            const msg = afterStop
+              ? `[arrêt-chef] ${name} : result ${ev.subtype || ''} ignoré — il suit un arrêt par le chef dans le même tour`
+              : `[result-fantôme] ${name} : result ignoré (num_turns=0, duration_api_ms=0, ` +
+                `session=${String(ev.session_id || '').slice(0, 8)}) — mini-tour rejoué par le CLI, pas une fin de tour`;
             console.log(msg);
             debugLog(msg);
             continue;

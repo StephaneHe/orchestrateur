@@ -480,6 +480,56 @@ dashboard ne servait alors à rien.
 - Recette : `node scripts/_test_workspace_trust.mjs` (faux `~/.claude.json`,
   `ORCH_CLAUDE_JSON`).
 
+## « Vu », arrêt par le chef, journal d'activité, cadres du Pilotage (0.31.0)
+
+Retours utilisateur : un échec restait dans « À examiner » sans moyen de le
+marquer vu ; un arrêt volontaire du chef passait pour un échec ; le volet ne
+donnait qu'un accès au log brut.
+
+- **Règles partagées** : `public/turn-core.js`, un seul fichier chargé par le
+  navigateur et importé par Node (`fleet-status-core.mjs`, `server.js`). Il ne
+  contient ni import ni export et pose `globalThis.TurnCore`. Tout réducteur
+  d'état passe par ces règles : `deriveState`, `scanProjectState`,
+  `reduceMusician`, `Musician.transition`.
+- **« Vu »** : `POST /api/ack/:project {note?, by?, auto?}`.
+  - `error` (échec ou arrêt) : ajoute `notification/acknowledged` au log
+    (même conception que `question_resolved`), puis l'état passe à `idle`.
+  - `unread` (y compris attente du chef) : pose le marqueur de lecture.
+  - `input`, tour en cours ou rien à acquitter : 409.
+  - **Règle choisie** : ouvrir le volet vaut « vu » pour un échec, un arrêt ou
+    un résultat. Une question n'est jamais acquittée ainsi : elle attend une
+    réponse ou un « Marquer comme répondue ».
+  - Boutons « ✓ Vu » ou « ✓ Répondue » sur chaque ligne de « À examiner »,
+    « ✓ Marquer vu » dans la bande d'attention et sur l'état du volet.
+- **Arrêt par le chef** : `kill-stalled.mjs <p> [--reason "…"]` écrit
+  `result/error_killed_by_conductor` (`stopped_by`, `reason`). L'état reste
+  `error` (vocabulaire verrouillé), avec l'attribut additif `stopped`, affiché
+  « ■ Arrêté par le chef ».
+  - kill-stalled pose `logs/<p>.killed` avant de tuer.
+  - `dispatch.mjs` (`killedByConductor`) clôt alors le tour sans rien écrire
+    d'autre. Avant, un `error_model_unavailable` masquait l'arrêt.
+  - Les réducteurs ignorent tout result qui suit un arrêt dans le même tour,
+    pour les anciens logs.
+- **Journal** : `GET /api/project/:name/journal?n=` renvoie les tours, du plus
+  récent au plus ancien : demande sans boilerplate, 1 à 3 lignes de résultat,
+  commits, versions, URL, issue, durée, coût et model. Aucun LLM.
+  - Seule la fin du log est lue (4 à 64 Mio), en asynchrone, avec un cache
+    incrémental et une requête à la fois par musicien.
+  - Le client redemande le journal à chaque événement de bord du musicien
+    ouvert (`public/activite.js`). Le log brut reste dans l'onglet « Log brut ».
+- **Cadres** : 2ᵉ partie verticale du Pilotage, un cadre par musicien non
+  parqué, trié par `lastActivityAt` de `/api/pupitre`. La sorte et le mot
+  viennent de `Projets.describe` (une seule classification avec la vue
+  Projets). L'âge est affiché à la minute, et chaque partie du rail a son
+  propre cache pour qu'un cadre ne soit pas recréé sous le pointeur.
+- **Désactiver sans redéploiement** : `config.json` →
+  `"ui": { "activityJournal": false, "railCards": false }` (à chaud), ou
+  `?journal=0` / `?cadres=0` pour un seul navigateur.
+- Recettes : `node scripts/_test_activity_journal.mjs` (dont kill-stalled
+  contre le vrai dispatch.mjs), parcours HTTP `ack-stopped` et `journal`,
+  parcours navigateur `examine-*`, `journal-*`, `cards-order`, `flags-031`,
+  `mobile-journal`.
+
 ## Attachments
 
 Images uploaded via the dashboard (paste / drag-drop / file picker) land in

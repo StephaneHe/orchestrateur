@@ -973,6 +973,16 @@ logStream.write(JSON.stringify(userPromptEvent) + '\n');
  * limite). `duration_api_ms` est omis exprès : ce result ne doit jamais
  * ressembler à un « result fantôme » (0 tour / 0 ms).
  */
+/** Marqueur posé par kill-stalled.mjs juste avant de tuer ce tour. Consommé. */
+function killedByConductor(since) {
+  const p = path.join(LOGS, `${projectName}.killed`);
+  try {
+    const st = fs.statSync(p);
+    fs.unlinkSync(p);
+    return st.mtimeMs >= since - 1000;
+  } catch { return false; }
+}
+
 let explicitFailed = false;
 function failExplicitModel(reason, extra = {}) {
   if (explicitFailed) return;
@@ -1779,6 +1789,12 @@ function runClaude() {
       };
       fs.appendFileSync(instrPath, JSON.stringify(record) + '\n');
     } catch {}
+
+    // ---------- ARRÊT PAR LE CHEF (kill-stalled, 0.31.0) --------------------
+    // kill-stalled clôt lui-même le tour (result error_killed_by_conductor).
+    // Rien d'autre ici : ni « model indisponible », ni bascule, ni repli — sinon
+    // l'arrêt volontaire passait pour un échec.
+    if (killedByConductor(dispatchStartedAt)) { endLogAndExit(1); return; }
 
     // ---------- MODEL EXPLICITE : jamais de repli (0.26.0) -------------------
     if (EXPLICIT_MODEL) {

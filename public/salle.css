@@ -631,3 +631,87 @@
 .dive-denials .dd-item { padding: 3px 0; }
 .dive-denials .dd-item code { color: var(--fg-0); word-break: break-all; }
 .dive-denials .dd-reason, .dive-denials .dd-todo { color: var(--fg-2); }
+
+/* ---------- 0.31.0 — « À examiner » acquittable, cadres, journal ---------- */
+/* Rail en deux parties verticales : l'attention en haut, les cadres en bas. */
+.rail-body.is-split { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.rail-body.is-split .rail-top { flex: 0 1 auto; max-height: 48%; overflow-y: auto; scrollbar-width: thin; }
+.rail-body.is-split .rail-bottom {
+  flex: 1 1 auto; min-height: 140px; overflow-y: auto; scrollbar-width: thin;
+  border-top: 1px solid var(--card-border); padding-top: 8px;
+}
+.rail:has(.rail-body.is-split) { overflow-y: hidden; }
+
+.rail-item { display: flex; align-items: stretch; gap: 5px; margin-bottom: 5px; }
+.rail-item > .rail-row { margin-bottom: 0; flex: 1; min-width: 0; }
+.rr-ack {
+  flex: 0 0 auto; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.04em;
+  padding: 0 9px; border-radius: 8px; border: 1px solid var(--card-border);
+  color: var(--fg-1); background: var(--card-bg); cursor: pointer; white-space: nowrap;
+}
+.rr-ack:hover { color: var(--fg-0); background: var(--card-bg-hover); }
+.rail-row[data-stopped="1"] { --state-color: var(--fg-2); }
+.ds-reason { color: var(--fg-2); }
+
+.rail-card { grid-template-columns: 1fr; row-gap: 3px; }
+.rail-card .rc-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.rail-card .rc-top .rr-name { flex: 1; min-width: 0; }
+.rail-card .rc-age { font-family: var(--font-mono); font-size: 10px; color: var(--fg-3); white-space: nowrap; }
+.rail-card .rr-state { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rail-card .rc-line {
+  font-family: var(--font-mono); font-size: 10px; color: var(--fg-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rail-card[data-kind="stopped"] { --state-color: var(--fg-2); }
+
+/* Journal d'activité du volet */
+.dive-pane[hidden], .dive-tab[hidden] { display: none; }
+.jt-links { display: flex; gap: 8px; justify-content: flex-end; padding-bottom: 8px; }
+.jt-link {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; color: var(--fg-2);
+  border: 1px solid var(--card-border); border-radius: 6px; padding: 3px 8px; background: var(--card-bg);
+}
+.jt-link:hover { color: var(--fg-0); }
+.jt {
+  border: 1px solid var(--card-border); border-left: 3px solid var(--jt-color, var(--fg-3));
+  border-radius: 8px; background: var(--card-bg); padding: 8px 10px; margin-bottom: 8px;
+}
+.jt[data-outcome="ok"]          { --jt-color: var(--st-unread); }
+.jt[data-outcome="error"]       { --jt-color: var(--st-error); }
+.jt[data-outcome="question"]    { --jt-color: var(--st-input); }
+.jt[data-outcome="ask_chef"]    { --jt-color: var(--st-think); }
+.jt[data-outcome="running"]     { --jt-color: var(--st-live); }
+.jt[data-outcome="stopped"],
+.jt[data-outcome="system"],
+.jt[data-outcome="interrupted"] { --jt-color: var(--fg-3); }
+.jt-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-family: var(--font-mono); font-size: 11px; }
+.jt-mark { color: var(--jt-color); font-weight: 700; }
+.jt-when { color: var(--fg-1); }
+.jt-outcome { color: var(--jt-color); }
+.jt-meta { margin-left: auto; color: var(--fg-3); }
+.jt-ask { font-size: 12px; color: var(--fg-1); margin-top: 5px; line-height: 1.4; }
+.jt-ask.is-unknown { color: var(--fg-3); font-style: italic; }
+.jt-k { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--fg-3); margin-right: 4px; }
+.jt-did { margin: 5px 0 0; padding-left: 16px; font-size: 12px; color: var(--fg-0); line-height: 1.45; }
+div.jt-did { padding-left: 0; }
+.jt-did li { margin: 1px 0; }
+.jt-q { margin-top: 5px; font-size: 12px; color: var(--st-input); }
+.jt-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.jt-chip {
+  font-family: var(--font-mono); font-size: 10px; color: var(--fg-1);
+  border: 1px solid var(--card-border); border-radius: 10px; padding: 1px 7px;
+}
+.jt-chip.is-link { color: var(--st-live); text-decoration: none; }
+.jt-after { margin-top: 5px; font-family: var(--font-mono); font-size: 10px; color: var(--fg-3); }
+
+@media (max-width: 767.98px) {
+  /* Feuille mobile : un seul défilement, les deux parties à la suite. */
+  .rail-body.is-split { display: block; }
+  .rail-body.is-split .rail-top, .rail-body.is-split .rail-bottom { max-height: none; overflow: visible; }
+  .rail:has(.rail-body.is-split) { overflow-y: auto; }
+  .rail-card, .rr-ack { min-height: 44px; }
+  /* Volet plein écran : .main-row (z-index 20) est un contexte d'empilement,
+     le volet passait SOUS la topbar (50) et son « Retour » était intouchable. */
+  .main-row:has(.dive:not([hidden])) { z-index: 160; }
+  .jt-meta { margin-left: 0; width: 100%; }
+}

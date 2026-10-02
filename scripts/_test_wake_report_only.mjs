@@ -17,9 +17,12 @@
 // ============================================================================
 
 import fs from 'node:fs';
+import '../public/turn-core.js';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+const TC = globalThis.TurnCore;   // règles 0.31.0 passées aux fonctions de server.js évaluées
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
@@ -167,8 +170,8 @@ scenario('reduceMusician réel : le fantôme n’a AUCUN effet, le vrai result r
   const end = SRC.indexOf('\n}\n', start) + 2;
   const musicianAutoStates = new Map();
   // eslint-disable-next-line no-new-func
-  const reduceMusician = new Function('musicianAutoStates', 'isPhantomResult', 'isQuestionResolved', 'NEEDS_CHEF_RE',
-    `${SRC.slice(start, end)}\nreturn reduceMusician;`)(musicianAutoStates, isPhantomResult, isQuestionResolved, /NEEDS_CHEF_INPUT:\s*([^\n]+)/i);
+  const reduceMusician = new Function('musicianAutoStates', 'isPhantomResult', 'isQuestionResolved', 'NEEDS_CHEF_RE', 'isAcknowledged', 'isConductorStop', 'stopInfo',
+    `${SRC.slice(start, end)}\nreturn reduceMusician;`)(musicianAutoStates, isPhantomResult, isQuestionResolved, /NEEDS_CHEF_INPUT:\s*([^\n]+)/i, TC.isAcknowledged, TC.isConductorStop, TC.stopInfo);
   const out = SEQ.map(ev => reduceMusician('vuBox', ev));
   const phantom = out[6];
   ok(phantom.phantom === true, 'le fantôme est signalé au pump');
@@ -239,8 +242,8 @@ scenario('question acquittée : reduceMusician réel (pump) et scanProjectState 
   const end = SRC.indexOf('\n}\n', start) + 2;
   const states = new Map();
   // eslint-disable-next-line no-new-func
-  const reduce = new Function('musicianAutoStates', 'isPhantomResult', 'isQuestionResolved', 'NEEDS_CHEF_RE',
-    `${SRC.slice(start, end)}\nreturn reduceMusician;`)(states, isPhantomResult, isQuestionResolved, /NEEDS_CHEF_INPUT:\s*([^\n]+)/i);
+  const reduce = new Function('musicianAutoStates', 'isPhantomResult', 'isQuestionResolved', 'NEEDS_CHEF_RE', 'isAcknowledged', 'isConductorStop', 'stopInfo',
+    `${SRC.slice(start, end)}\nreturn reduceMusician;`)(states, isPhantomResult, isQuestionResolved, /NEEDS_CHEF_INPUT:\s*([^\n]+)/i, TC.isAcknowledged, TC.isConductorStop, TC.stopInfo);
   ASK.forEach(e => reduce('TO', e));
   const r = reduce('TO', RESOLVED);
   ok(r.resolved === true && r.prevState === 'input' && r.newState === 'idle', 'input → idle, signalé au pump');
@@ -253,8 +256,8 @@ scenario('question acquittée : reduceMusician réel (pump) et scanProjectState 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'q-sps-'));
   fs.writeFileSync(path.join(dir, 'TO.jsonl'), [...ASK, RESOLVED].map(e => JSON.stringify(e)).join('\n') + '\n');
   // eslint-disable-next-line no-new-func
-  const sps = new Function('fs', 'path', 'LOGS_DIR', 'SCAN_TAIL_BYTES', 'readMarker', 'isPhantomResult', 'isQuestionResolved',
-    `${SRC.slice(s0, s1)}\nreturn scanProjectState;`)(fs, path, dir, 256 * 1024, () => null, isPhantomResult, isQuestionResolved);
+  const sps = new Function('fs', 'path', 'LOGS_DIR', 'SCAN_TAIL_BYTES', 'readMarker', 'isPhantomResult', 'isQuestionResolved', 'isAcknowledged', 'isConductorStop', 'stopInfo',
+    `${SRC.slice(s0, s1)}\nreturn scanProjectState;`)(fs, path, dir, 256 * 1024, () => null, isPhantomResult, isQuestionResolved, TC.isAcknowledged, TC.isConductorStop, TC.stopInfo);
   const snap = sps('TO');
   ok(snap.state === 'idle' && snap.questionResolved?.note === 'répondu via le chef : hébreu',
      '/api/config : la carte se recharge « prête », avec la note (survit au redémarrage)');

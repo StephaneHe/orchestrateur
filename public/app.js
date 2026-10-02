@@ -97,6 +97,9 @@ class Musician {
       ? { ts: Date.parse(project.questionResolved.ts) || 0, note: project.questionResolved.note || "" }
       : null;
     this.lastLine = project.lastLine || "";
+    // Arrêt par le chef du dernier tour ({by, reason, ts}), 0.31.0 — l'état
+    // reste `error` (vocabulaire verrouillé), l'affichage dit « Arrêté par le chef ».
+    this.stopped = project.stopped || null;
     this.lastAssistantText = "";         // last assistant text (for NEEDS_USER_INPUT detection)
     this.unreadCount = project.unreadCount || 0;
     // Last-read marker (ISO timestamp). Comes from the server at
@@ -157,12 +160,14 @@ class Musician {
       // A SOURCED prompt (callback / @shortcut / notify) is not a turn start —
       // only a source-less prompt is (a --source dispatch also emits system/init).
       if (!raw.source) {
+        this.stopped = null;
         this.turnStartMs = Date.parse(raw.timestamp) || Date.now();
         this.setState(this.state === "idle" || this.state === "unread" ? "live" : this.state);
       }
       this.lastLine = stripReplyPrefixes(String(raw.text || "")).replace(/\s+/g, " ").trim().slice(0, 140);
     } else if (t === "system") {
       if (raw.subtype === "init") {
+        this.stopped = null;
         this.pendingDenials = [];
         this._toolIdToName  = {};
         this._toolUses      = {};
@@ -176,6 +181,15 @@ class Musician {
       if (this.state === "input") this.setState("idle");
       this.questionResolved = { ts: Date.parse(raw.timestamp) || Date.now(), note: raw.note || "" };
       this.lastLine = String(raw.text || "✓ question marquée répondue").slice(0, 140);
+    } else if (t === "notification" && raw.subtype === "acknowledged") {
+      // « Vu » (0.31.0, window.TurnCore) : un échec ou un arrêt acquitté repasse
+      // à « prêt », sans relancer de tour. Même règle que les réducteurs serveur.
+      if (this.state === "error" || this.state === "unread") {
+        this.awaitingChef = false;
+        this.unreadCount = 0;
+        this.setState("idle");
+      }
+      this.lastLine = String(raw.text || "✓ marqué vu").slice(0, 140);
     } else if (t === "stream_event") {
       // Partial message deltas — just bump activity timestamp so the heartbeat
       // moves. Rendering the deltas would require reassembling content blocks
@@ -205,6 +219,8 @@ class Musician {
         if (!this.pendingDenials.some(x => x.toolId === d.toolId)) this.pendingDenials.push(d);
       }
     } else if (t === "result") {
+      // Un result qui suit un arrêt du chef dans le même tour ne change rien.
+      if (this.stopped && !window.TurnCore?.isConductorStop(raw)) return;
       this.pendingDenials = [];
       this._toolIdToName  = {};
       this._toolUses      = {};
@@ -233,7 +249,12 @@ class Musician {
         NEEDS_CHEF_INPUT_RE.test(this.lastAssistantText || "") ||
         (typeof raw.result === "string" && NEEDS_CHEF_INPUT_RE.test(raw.result))
       );
-      if (isErr && raw.synthetic) {
+      if (window.TurnCore?.isConductorStop(raw)) {
+        this.stopped = window.TurnCore.stopInfo(raw);
+        this.awaitingChef = false;
+        this.lastLine = this.stopped.reason || "arrêté par le chef";
+        this.setState("error");
+      } else if (isErr && raw.synthetic) {
         // Synthetic interrupts (orchestrator restart / child crash) — no question was asked.
         this.lastLine = raw.subtype || "interrompu";
         this.awaitingChef = false;
@@ -1142,7 +1163,7 @@ const App = {
         }
       }
       this.renderFleet(cfg.projects || []);
-      window.Projets?.applyUi(cfg.ui);
+      window.Projets?.applyUi(cfg.ui); window.Activite?.applyUi(cfg.ui);
     } catch (err) {
       console.error("[app] config fetch failed", err);
       $("#empty-hint").hidden = false;
@@ -1162,7 +1183,7 @@ const App = {
       if (!resp.ok) return;
       cfg = await resp.json();
     } catch { return; }
-    window.Projets?.applyUi(cfg.ui);   // `ui` rechargé à chaud (config.json)
+    window.Projets?.applyUi(cfg.ui); window.Activite?.applyUi(cfg.ui);   // `ui` rechargé à chaud (config.json)
     const projects = cfg.projects || [];
     const wanted = new Set(projects.map(p => p.name));
     let changed = false;
@@ -3034,6 +3055,37 @@ const App = {
     }
   },
 
+  /** « Vu » (0.31.0) : acquitte un échec, un arrêt par le chef ou un résultat
+   *  en attente, sans relancer de tour. `auto` = acquitté par l'ouverture du
+   *  volet (silencieux en cas de refus : rien à acquitter n'est pas une erreur). */
+  async ackMusician(name, { auto = false } = {}) {
+    const m = this.musicians.get(name);
+    try {
+      const resp = await fetch(`/api/ack/${encodeURIComponent(name)}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ by: "utilisateur", auto }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+      // L'événement de log arrive aussi par le SSE ; on n'attend pas pour
+      // retirer la ligne de « À examiner ».
+      if (m) {
+        if (data.kind === "unread" || data.kind === "awaiting_chef") m.markRead();
+        else if (m.state === "error") {
+          m.awaitingChef = false;
+          m.setState("idle");
+          m.lastLine = data.kind === "stopped" ? "✓ arrêt marqué vu" : "✓ échec marqué vu";
+        }
+      }
+      this.pollPupitre();
+      window.Salle?.renderRail();
+      window.Salle?.renderAttention();
+      if (window.Salle?.diveName === name) window.Salle.renderDive();
+    } catch (err) {
+      if (!auto) alert("Impossible de marquer vu : " + (err.message || err));
+    }
+  },
+
   async interruptChef(slot = 1) {
     if (!confirm(`Interrompre le tour en cours du chef ${slot} ?\n\nLe travail non terminé de ce tour sera perdu ; le message suivant de la file démarrera aussitôt.`)) return;
     try {
@@ -3278,7 +3330,7 @@ const App = {
     const snap = this.pupitreSnapshot;
     if (!snap || !Array.isArray(snap.fleet)) return;
     const S = window.Salle;
-    window.Projets?.applyUi(snap.ui);
+    window.Projets?.applyUi(snap.ui); window.Activite?.applyUi(snap.ui);
     window.Projets?.render();
     S?.renderRail();
     S?.renderAttention();
