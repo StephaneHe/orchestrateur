@@ -531,13 +531,26 @@
     if (h < 48) return `il y a ${h} h ${String(mn % 60).padStart(2, "0")}`;
     return `il y a ${Math.floor(h / 24)} j`;
   }
-  const byRecency = (a, b) => (lastActivityMs(b) - lastActivityMs(a)) || a.name.localeCompare(b.name);
+  // 0.32.0 : le bloc « En cours » a disparu, ce sont les cadres qui montrent les
+  // tours en cours — EN TÊTE, explicitement : un musicien qui réfléchit
+  // longtemps sans rien écrire ne doit pas glisser sous un musicien au repos.
+  const inFlight = (m) => m.state === "live" || m.state === "think";
+  const byRecency = (a, b) => (inFlight(b) - inFlight(a)) ||
+    (lastActivityMs(b) - lastActivityMs(a)) || a.name.localeCompare(b.name);
 
   function cardHtml(m, now) {
     const r = snapRow(m.name);
     const d = global.Projets?.describe ? global.Projets.describe(m, r) : { glyph: glyph(m), word: label(m), kind: m.state };
     const last = lastActivityMs(m);
-    const age = last ? coarseAge(now - last) : "jamais observé";
+    // En cours : la durée du tour (que portait l'ancien bloc « En cours »), à
+    // la minute comme l'âge, pour ne pas réécrire le cadre chaque seconde.
+    let age = last ? coarseAge(now - last) : "jamais observé";
+    if (inFlight(m) && r?.turnElapsedMs != null) {
+      const mn = Math.floor(r.turnElapsedMs / 60000);
+      age = mn < 1 ? "tour < 1 min" : mn < 60 ? `tour ${mn} min` : `tour ${Math.floor(mn / 60)} h ${String(mn % 60).padStart(2, "0")}`;
+    }
+    if (snapStale() && !m.parked) age += " · données anciennes";
+    const q = r?.queueDepth > 0 ? `<span class="rc-chip" title="tâches en file derrière son tour">⏳ ${r.queueDepth}</span>` : "";
     let line = "";
     if (m.state === "error" && m.stopped) line = m.stopped.reason || "arrêté par la supervision du chef";
     else if (m.state === "input") line = r?.needsInput || m.lastLine || "";
@@ -546,7 +559,7 @@
     line = String(line).replace(/\s+/g, " ").slice(0, 90);
     return `<button class="rail-row rail-card" type="button" data-state="${esc(m.state)}" data-kind="${esc(d.kind)}" data-name="${esc(m.name)}" data-last="${last || 0}">
         <span class="rc-top"><span class="rr-dot"></span><span class="rr-name">${esc(m.name)}</span><span class="rc-age">${esc(age)}</span></span>
-        <span class="rr-state">${esc(d.glyph)} ${esc(d.word)}</span>
+        <span class="rr-state">${esc(d.glyph)} ${esc(d.word)}${q}</span>
         <span class="rc-line">${line ? esc(line) : "&nbsp;"}</span>
       </button>`;
   }
@@ -584,11 +597,14 @@
         </div>`;
     };
 
-    const running = group("En cours", g.running);
+    // Avec les cadres, plus de bloc « En cours » : il doublonnait les cadres et
+    // tassait la place (retour utilisateur, 0.32.0). Sans eux, il revient.
+    const cardsOn = !!global.Activite?.cardsOn();
+    const running = cardsOn ? "" : group("En cours", g.running);
     const examine = group("À examiner", g.examine, true);
 
     const othersList = [...g.active].sort((a, b) => a.name.localeCompare(b.name));
-    const others = global.Activite?.cardsOn() ? cardsHtml(g.active) : `<div class="rail-group">
+    const others = cardsOn ? cardsHtml(g.active) : `<div class="rail-group">
         <button class="rail-group-head" type="button" data-fold="all">
           Tous les musiciens <span class="rg-n">(${g.active.length})</span>
           <span class="rg-caret">${railState.foldAll ? "▸" : "▾"}</span>
@@ -605,14 +621,15 @@
         ${railState.foldParked ? "" : parkedList.map(m => railRowHtml(m)).join("")}
       </div>` : "";
 
-    const empty = (!g.running.length && !g.examine.length)
-      ? `<div class="rail-empty">Aucun musicien en cours ni à examiner.</div>` : "";
+    const empty = cardsOn
+      ? (g.examine.length ? "" : `<div class="rail-empty">Rien à examiner.</div>`)
+      : ((!g.running.length && !g.examine.length) ? `<div class="rail-empty">Aucun musicien en cours ni à examiner.</div>` : "");
 
     // Écriture seulement si le contenu a changé : pas de re-mount inutile, pas
     // de scroll qui saute pendant qu'on lit le rail.
     // Deux parties verticales (0.31.0) : en haut ce qui réclame l'attention, en
     // bas les cadres de tous les musiciens, chacune avec son défilement.
-    const split = !!global.Activite?.cardsOn();
+    const split = cardsOn;
     body.classList.toggle("is-split", split);
     if (split) {
       // Chaque partie a son propre cache : la durée d'un tour en cours (à la

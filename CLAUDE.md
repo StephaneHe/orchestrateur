@@ -518,7 +518,12 @@ donnait qu'un accès au log brut.
   - Le client redemande le journal à chaque événement de bord du musicien
     ouvert (`public/activite.js`). Le log brut reste dans l'onglet « Log brut ».
 - **Cadres** : 2ᵉ partie verticale du Pilotage, un cadre par musicien non
-  parqué, trié par `lastActivityAt` de `/api/pupitre`. La sorte et le mot
+  parqué. Tri : tours en cours d'abord, puis `lastActivityAt` de
+  `/api/pupitre`. Depuis 0.32.0, il n'y a plus de bloc « En cours » au-dessus
+  (il doublonnait les cadres) : le haut ne montre que « À examiner ». Le cadre
+  d'un tour en cours porte la durée du tour (« tour N min »), sa file (⏳ n) et
+  « données anciennes » si l'instantané date. Le bloc revient seulement si
+  `ui.railCards` est désactivé. La sorte et le mot
   viennent de `Projets.describe` (une seule classification avec la vue
   Projets). L'âge est affiché à la minute, et chaque partie du rail a son
   propre cache pour qu'un cadre ne soit pas recréé sous le pointeur.

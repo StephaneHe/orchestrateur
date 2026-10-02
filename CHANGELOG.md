@@ -11,6 +11,39 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-10-02
+
+Retour utilisateur : « la fenêtre des musiciens En cours est trop petite, elle
+fait doublon avec les dernières activités des musiciens ; on peut l'enlever ».
+
+### Removed
+- (viewer) Le bloc « En cours » de la colonne Pilotage, quand les cadres des
+  musiciens sont affichés. La partie haute ne montre plus que « À examiner » ;
+  la place libérée revient aux cadres. Le bloc réapparaît si `ui.railCards`
+  est désactivé.
+
+### Changed
+- (viewer) Cadres du Pilotage :
+  - les tours en cours viennent explicitement **en tête**, avec une bordure à
+    la couleur de leur état ;
+  - ils reprennent ce que seul l'ancien bloc affichait : la durée du tour
+    (« tour N min », à la minute près) et la mention « données anciennes »
+    quand l'instantané date ;
+  - ils indiquent aussi la file derrière le tour (⏳ n).
+  - La santé (sans progrès, processus perdu) reste dans « À examiner ». Le
+    bloc n'avait ni bouton d'interruption ni file.
+  - Un cadre en cours mais malade (processus perdu, sans progrès) prend la
+    couleur d'alerte, plus celle de « en cours ».
+
+### Fixed
+- (viewer) La partie haute du Pilotage (« À examiner ») se faisait écraser par
+  la liste des cadres, et sa dernière ligne était coupée. Elle garde sa hauteur
+  (48 % au plus), et les cadres prennent le reste.
+- Parcours navigateur adaptés : le parcours `rail` vérifie les cadres en tête,
+  et le nouveau parcours `rail-no-running` vérifie l'absence du bloc et la
+  part de place des cadres. `cards-order` impose l'ordre « en cours, puis
+  activité ».
+
 ## [0.31.0] - 2026-10-02
 
 Retours utilisateur sur le dashboard :

@@ -64,7 +64,8 @@ export async function browserChecks(sb, t) {
       const ok = await until(async () => (await page.textContent('#cv-scroll')).includes('la flotte est calme'), 10_000);
       assert(ok, 'réponse historique du chef absente');
     });
-    await check(B, 'rail', 'Rail PILOTAGE : groupes En cours / À examiner, dépliage « Tous »', async () => {
+    const railHeads = () => page.evaluate(() => [...document.querySelectorAll('#rail-body .rail-group-head')].map(h => h.textContent.replace(/\s+/g, ' ').trim()));
+    await check(B, 'rail', 'Rail PILOTAGE : À examiner + cadres des musiciens (ou dépliage « Tous » sans cadres)', async () => {
       const txt = await page.textContent('#rail-body');
       assert(/En cours/.test(txt) && /À examiner/.test(txt), 'groupes absents');
       assert(await page.locator('.rail-row[data-name="eps"][data-state="live"]').count() >= 1, 'eps pas en cours');
@@ -72,6 +73,14 @@ export async function browserChecks(sb, t) {
       if (await page.locator('[data-fold="cards"]').count()) {
         // 0.31.0 : 2e partie du Pilotage = un cadre par musicien, visible d'emblée.
         assert(await page.locator('.rail-card[data-name="kappa"]').count() === 1, 'cadre de kappa absent');
+        // 0.32.0 : plus de bloc « En cours » ; les tours en cours sont les
+        // premiers cadres, avec la durée du tour et la file.
+        if (!(await railHeads()).some(h => /^En cours \(/.test(h))) {
+          const first = page.locator('.rail-card').first();
+          assert((await first.getAttribute('data-name')) === 'eps' && (await first.getAttribute('data-state')) === 'live', 'eps (en cours) pas en tête des cadres');
+          const t = (await first.textContent()).replace(/\s+/g, ' ');
+          assert(/En cours/.test(t) && /tour (< 1|\d+) (min|h)/.test(t) && /⏳ 2/.test(t), `cadre eps : ${t}`);
+        }
         await page.click('[data-fold="cards"]');
         assert(await page.locator('.rail-card').count() === 0, 'les cadres ne se replient pas');
         await page.click('[data-fold="cards"]');
@@ -80,6 +89,20 @@ export async function browserChecks(sb, t) {
       await page.click('[data-fold="all"]');
       assert(await page.locator('.rail-row[data-name="kappa"]').count() >= 1, '« Tous les musiciens » ne se déplie pas');
       await page.click('[data-fold="all"]');
+    });
+    await check(B, 'rail-no-running', 'Pilotage sans bloc « En cours » : la place va aux cadres, tours en cours en tête', async () => {
+      if (!(await page.locator('[data-fold="cards"]').count())) NA('cadres absents de cet état du code');
+      if ((await railHeads()).some(h => /^En cours \(/.test(h))) NA('bloc « En cours » encore présent dans cet état du code (avant 0.32.0)');
+      const states = await page.evaluate(() => [...document.querySelectorAll('.rail-card')].map(c => c.dataset.state));
+      const isLive = (x) => x === 'live' || x === 'think';
+      const firstRest = states.findIndex(x => !isLive(x));
+      assert(firstRest === -1 || states.slice(firstRest).every(x => !isLive(x)), `un cadre en cours après un cadre au repos : ${states.join(',')}`);
+      const h = await page.evaluate(() => ({
+        top: document.querySelector('#rail-body .rail-top')?.getBoundingClientRect().height || 0,
+        bottom: document.querySelector('#rail-body .rail-bottom')?.getBoundingClientRect().height || 0,
+      }));
+      assert(h.bottom > h.top, `les cadres n'ont pas la plus grande part : haut ${Math.round(h.top)} px, bas ${Math.round(h.bottom)} px`);
+      return `haut ${Math.round(h.top)} px · cadres ${Math.round(h.bottom)} px`;
     });
     await check(B, 'attention', 'Bande d\'attention : compteurs, dépliage, question visible', async () => {
       assert(await visible(page, '#attention'), 'bande masquée');
@@ -384,12 +407,17 @@ export async function browserChecks(sb, t) {
       // sable) : il peut légitimement passer devant. alpha, qui vient de finir un
       // tour, doit précéder tous les autres.
       const read = () => page.evaluate(() => [...document.querySelectorAll('.rail-card')].map(c => ({ n: c.dataset.name, s: c.dataset.state, t: Number(c.dataset.last) })));
-      const sorted = (o) => o.every((x, i) => i === 0 || o[i - 1].t >= x.t);
+      const live = (x) => x.s === 'live' || x.s === 'think';
+      const sorted = (o) => {
+        const rest = o.filter(x => !live(x));
+        return o.slice(0, o.length - rest.length).every(live) && rest.every((x, i) => i === 0 || rest[i - 1].t >= x.t);
+      };
       const firstIdle = (o) => o.find(x => x.s !== 'live' && x.s !== 'think')?.n;
       let order = await until(async () => { const o = await read(); return o.length && firstIdle(o) === 'alpha' && sorted(o) ? o : null; }, 12_000);
       if (!order) order = await read();
       assert(firstIdle(order) === 'alpha', `alpha (le plus récent hors tours en cours) pas en tête : ${order.map(x => x.n).join(' > ')}`);
-      for (let i = 1; i < order.length; i++) assert(order[i - 1].t >= order[i].t, `ordre : ${order[i - 1].n} avant ${order[i].n}`);
+      assert(sorted(order),
+        `ordre : ${order.map(x => `${x.n}(${x.s})`).join(' > ')}`);
       assert(order[order.length - 1].t === 0 || order.every(x => x.t > 0), 'jamais observé hors de la fin');
       assert(!order.some(x => x.n === 'zeta' || x.n === 'chef'), 'parqués ou chef dans les cadres');
       const card = await page.textContent('.rail-card[data-name="alpha"]');

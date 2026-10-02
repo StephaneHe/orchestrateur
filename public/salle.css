@@ -635,9 +635,9 @@
 /* ---------- 0.31.0 — « À examiner » acquittable, cadres, journal ---------- */
 /* Rail en deux parties verticales : l'attention en haut, les cadres en bas. */
 .rail-body.is-split { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.rail-body.is-split .rail-top { flex: 0 1 auto; max-height: 48%; overflow-y: auto; scrollbar-width: thin; }
+.rail-body.is-split .rail-top { flex: 0 0 auto; max-height: 48%; overflow-y: auto; scrollbar-width: thin; }
 .rail-body.is-split .rail-bottom {
-  flex: 1 1 auto; min-height: 140px; overflow-y: auto; scrollbar-width: thin;
+  flex: 1 1 0; min-height: 140px; overflow-y: auto; scrollbar-width: thin;
   border-top: 1px solid var(--card-border); padding-top: 8px;
 }
 .rail:has(.rail-body.is-split) { overflow-y: hidden; }
@@ -715,3 +715,16 @@ div.jt-did { padding-left: 0; }
   .main-row:has(.dive:not([hidden])) { z-index: 160; }
   .jt-meta { margin-left: 0; width: 100%; }
 }
+
+/* 0.32.0 — plus de bloc « En cours » : les cadres en cours, en tête, se
+   distinguent par leur bordure et portent la durée du tour et la file. */
+.rail-card[data-state="live"], .rail-card[data-state="think"] {
+  border-color: color-mix(in srgb, var(--state-color) 45%, var(--card-border));
+}
+.rail-card .rc-chip {
+  margin-left: 6px; font-size: 10px; color: var(--fg-1);
+  border: 1px solid var(--card-border); border-radius: 8px; padding: 0 5px;
+}
+/* Un tour en cours mais malade (processus perdu, sans progrès) : alerte, pas
+   la couleur « en cours ». Même lecture que dans « À examiner ». */
+.rail-card[data-kind="dead"], .rail-card[data-kind="stall"] { --state-color: var(--st-error); }
