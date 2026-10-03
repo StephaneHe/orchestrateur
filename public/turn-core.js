@@ -88,11 +88,24 @@
       .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, "$1");
   }
 
-  /** La demande d'un tour, sans le boilerplate, en une ligne courte. */
-  function summarizePrompt(text, max = 160) {
+  /** Texte complet d'une demande, sans boilerplate ni préfixe de relais. */
+  function cleanPrompt(text) {
     let t = String(text || "");
     for (const re of BOILERPLATE) t = t.replace(re, "");
-    t = t.replace(PREFIXES, "");
+    return t.replace(PREFIXES, "").trim();
+  }
+
+  // Texte complet gardé par tour (plié/déplié du journal, 0.33.0), borné : le
+  // serveur garde jusqu'à 200 tours en mémoire par musicien.
+  const FULL_MAX = 12000;
+  function capped(text) {
+    const t = String(text || "").trim();
+    return t.length <= FULL_MAX ? { text: t, cut: false } : { text: t.slice(0, FULL_MAX), cut: true };
+  }
+
+  /** La demande d'un tour, sans le boilerplate, en une ligne courte. */
+  function summarizePrompt(text, max = 160) {
+    const t = cleanPrompt(text);
     const lines = stripMd(t).split("\n").map(s => s.trim()).filter(Boolean);
     return oneLine(lines.slice(0, 3).join(" — "), max);
   }
@@ -135,6 +148,8 @@
         id: (promptEv && promptEv.timestamp) || ev.timestamp || null,
         start: (promptEv && promptEv.timestamp) || ev.timestamp || null,
         prompt: promptEv ? summarizePrompt(promptEv.text) : "",
+        promptFull: promptEv ? capped(cleanPrompt(promptEv.text)) : null,
+        resultFull: null,
         source: promptEv ? (promptEv.source || null) : null,
         model: (promptEv && promptEv.model) || null,
         provider: null,
@@ -236,10 +251,12 @@
           const d = Date.parse(ev.timestamp) - Date.parse(cur.start);
           if (Number.isFinite(d) && d >= 0) cur.durationMs = d;
         }
+        // Un result vide ou laconique (« ok ») : le dernier texte en dit plus.
+        const served = text.trim().length >= 20 || !lastText ? (text || lastText) : lastText;
         cur.summary = cur.outcome === "stopped"
           ? [cur.stop.reason || "arrêté par la supervision du chef"]
-          // Un result vide ou laconique (« ok ») : le dernier texte en dit plus.
-          : summarizeResult(text.trim().length >= 20 || !lastText ? (text || lastText) : lastText);
+          : summarizeResult(served);
+        cur.resultFull = served.trim() ? capped(served) : null;
         // Commits, versions et URL : dans le result ET dans le dernier texte de
         // l'assistant (le result du CLI ne le reprend pas toujours).
         const body = text === lastText ? text : `${text}\n${lastText}`;
@@ -267,6 +284,6 @@
   g.TurnCore = {
     isAcknowledged, isQuestionResolved, isConductorStop, isPhantomResult,
     isResultError, isTurnStart, stopInfo,
-    summarizePrompt, summarizeResult, createJournal,
+    summarizePrompt, summarizeResult, cleanPrompt, createJournal, FULL_MAX,
   };
 })(typeof globalThis !== "undefined" ? globalThis : window);

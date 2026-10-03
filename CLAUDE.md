@@ -517,6 +517,16 @@ donnait qu'un accès au log brut.
     incrémental et une requête à la fois par musicien.
   - Le client redemande le journal à chaque événement de bord du musicien
     ouvert (`public/activite.js`). Le log brut reste dans l'onglet « Log brut ».
+  - **Plié / déplié** (0.33.0) : chaque tour porte aussi `promptFull` et
+    `resultFull` (`{text, cut}`, plafonnés à 12 000 caractères). Ils sont
+    rendus en Markdown via `mdToHtml` seulement quand l'entrée est dépliée.
+    Les contrôles « ▸ Afficher tout / ▾ Réduire » ont `aria-expanded`, et un
+    « ▴ Réduire » en bas ramène l'entrée à l'écran. Les entrées dépliées sont
+    gardées par musicien, et le focus clavier est rendu au même contrôle après
+    chaque rafraîchissement temps réel.
+  - `turn-core.js` est chargé par le **serveur au démarrage** : une
+    modification de ce fichier demande un redémarrage pour le journal servi.
+    Sans ces champs (ancien serveur), le contrôle n'apparaît pas.
 - **Cadres** : 2ᵉ partie verticale du Pilotage, un cadre par musicien non
   parqué. Tri : tours en cours d'abord, puis `lastActivityAt` de
   `/api/pupitre`. Depuis 0.32.0, il n'y a plus de bloc « En cours » au-dessus

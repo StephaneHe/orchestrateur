@@ -424,6 +424,58 @@ export async function browserChecks(sb, t) {
       assert(/il y a|à l'instant/.test(card), `âge absent : ${card}`);
       return order.map(x => x.n).join(' > ');
     });
+    // ---------------- Plié / déplié du journal (0.33.0) ----------------
+    const LONG_PROMPT = 'Rapport détaillé demandé : ' + 'contexte long, '.repeat(30) + 'FIN DE LA DEMANDE';
+    const LONG_RESULT = [
+      '## Rapport détaillé', '', 'Voici le **bilan complet** de la migration.', '',
+      '- étape un : schéma migré', '- étape deux : données recopiées', '- étape trois : index reconstruits', '',
+      '| Table | Lignes | Statut |', '|---|---|---|', '| users | 1200 | ok |', '| orders | 98000 | ok |', '',
+      '```sql', 'SELECT count(*) FROM orders;', '```', '',
+      'Documentation : https://example.org/doc', '', 'Paragraphe '.repeat(60), '', 'FIN DU TEXTE',
+    ].join('\n');
+    const longCard = () => page.locator('#dive .jt', { hasText: 'Rapport détaillé' }).first();
+    await v031('journal-fold', 'Journal : entrée longue pliée par défaut, « Afficher tout » déplie le texte complet (Markdown), clavier, état gardé au rafraîchissement', async () => {
+      await setHash(page, '#/m/alpha');
+      await until(async () => (await page.locator('#dive .jt').count()) > 0, 8000);
+      appendLog('alpha', [{ type: 'user_prompt', text: LONG_PROMPT }, { type: 'system', subtype: 'init', model: 'claude-opus-5-5' },
+        { type: 'assistant', message: { content: [{ type: 'text', text: LONG_RESULT }] } },
+        { type: 'result', subtype: 'success', is_error: false, num_turns: 3, duration_ms: 61000, total_cost_usd: 0.31, result: LONG_RESULT }]);
+      assert(await until(async () => (await longCard().count()) > 0, 8000), 'entrée longue absente');
+      const card = longCard();
+      const btn = card.locator('[data-jt-toggle]');
+      if (!(await btn.count())) NA('serveur sans texte complet (turn-core.js antérieur à 0.33.0 chargé par le serveur)');
+      assert((await btn.getAttribute('aria-expanded')) === 'false' && /Afficher tout/.test(await btn.textContent()), 'pas plié par défaut');
+      assert(!(await card.locator('.jt-full').isVisible()), 'texte complet visible alors que plié');
+      assert(!/FIN DU TEXTE/.test(await card.textContent()), 'l\'aperçu ne doit pas contenir tout le texte');
+      await shot(page, 'journal-replie-desktop');
+      await btn.click();
+      assert(await until(async () => (await longCard().locator('[data-jt-toggle]').getAttribute('aria-expanded')) === 'true', 3000), 'ne se déplie pas');
+      const full = longCard().locator('.jt-full');
+      assert(await full.isVisible(), 'texte complet masqué');
+      const ft = await full.textContent();
+      for (const want of ['FIN DE LA DEMANDE', 'FIN DU TEXTE', 'étape trois', 'SELECT count(*) FROM orders;']) assert(ft.includes(want), `texte complet sans « ${want} »`);
+      assert(await full.locator('table td', { hasText: 'orders' }).count() === 1, 'tableau non rendu');
+      assert(await full.locator('li').count() >= 3 && await full.locator('pre code').count() >= 1 && await full.locator('strong', { hasText: 'bilan complet' }).count() === 1, 'liste / code / gras non rendus');
+      assert(await full.locator('a[href="https://example.org/doc"]').count() === 1, 'lien non rendu');
+      await shot(page, 'journal-deplie-desktop');
+      // Clavier : Entrée replie, le focus reste sur le contrôle.
+      await longCard().locator('[data-jt-toggle]').focus();
+      await page.keyboard.press('Enter');
+      assert(await until(async () => (await longCard().locator('[data-jt-toggle]').getAttribute('aria-expanded')) === 'false', 3000), 'Entrée ne replie pas');
+      assert(await page.evaluate(() => !!document.activeElement?.matches?.('[data-jt-toggle]')), 'focus perdu après Entrée');
+      await page.keyboard.press(' ');
+      assert(await until(async () => (await longCard().locator('[data-jt-toggle]').getAttribute('aria-expanded')) === 'true', 3000), 'Espace ne déplie pas');
+      // Temps réel : un nouveau tour arrive, l'entrée longue reste dépliée.
+      appendLog('alpha', [{ type: 'user_prompt', text: 'Vérification rapide' }, { type: 'system', subtype: 'init' },
+        { type: 'result', subtype: 'success', is_error: false, num_turns: 1, duration_ms: 2000, result: 'Vérification faite, rien à signaler.' }]);
+      assert(await until(async () => /Vérification rapide/.test(await page.textContent('#dive .jt:first-of-type')), 8000), 'nouveau tour non affiché');
+      assert((await longCard().locator('[data-jt-toggle]').getAttribute('aria-expanded')) === 'true' && await longCard().locator('.jt-full').isVisible(),
+        'l\'entrée dépliée s\'est repliée au rafraîchissement');
+      // « Réduire » en bas d'un long texte : replie et ramène l'entrée.
+      await longCard().locator('[data-jt-collapse]').click();
+      assert(await until(async () => (await longCard().locator('[data-jt-toggle]').getAttribute('aria-expanded')) === 'false', 3000), '« Réduire » du bas sans effet');
+      await page.click('#dive .dive-back');
+    });
     await v031('flags-031', 'Désactivation à chaud : ui.activityJournal / ui.railCards = false puis rétablis', async () => {
       const fc = path.join(sb.root, 'config.json');
       const cfg = JSON.parse(fs.readFileSync(fc, 'utf8'));
@@ -464,6 +516,17 @@ export async function browserChecks(sb, t) {
       const over = await m.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       assert(over <= 0, `débordement horizontal ${over}px`);
       await shot(m, 'journal-mobile');
+      const mlong = m.locator('#dive .jt', { hasText: 'Rapport détaillé' }).first();
+      if (await mlong.locator('[data-jt-toggle]').count()) {
+        const h = await mlong.locator('[data-jt-toggle]').boundingBox();
+        assert(h && h.height >= 44, `contrôle de ${h && h.height}px (cible tactile < 44 px)`);
+        if ((await mlong.locator('[data-jt-toggle]').getAttribute('aria-expanded')) !== 'true') await mlong.locator('[data-jt-toggle]').click();
+        assert(await until(async () => mlong.locator('.jt-full').isVisible(), 3000), 'mobile : ne se déplie pas');
+        await mlong.locator('.jt-full table').scrollIntoViewIfNeeded();
+        const over2 = await m.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        assert(over2 <= 0, `mobile déplié : débordement horizontal ${over2}px`);
+        await shot(m, 'journal-deplie-mobile');
+      }
       await m.click('#dive .dive-back');
     });
     await check(B, 'projets-mobile', 'Projets · mobile : une colonne, aucun défilement horizontal, cibles ≥ 44 px', async () => {

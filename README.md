@@ -4,7 +4,7 @@ A local Windows dashboard where one "conductor" AI session pilots a fleet of
 headless coding agents, one per project, with a live web viewer and an
 Android companion app.
 
-`version 0.32.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
+`version 0.33.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
 
 > **Status: active, personal project.** Built and used daily on a single
 > Windows machine. Pre-1.0: internal APIs and file formats can still change
@@ -65,8 +65,9 @@ one screen to watch the whole fleet.
 - **Activity journal per agent.** Each agent's panel opens on a timeline of
   its turns: the request (without boilerplate), what it did (from its
   result, plus detected commits, versions and URLs), outcome, duration, cost
-  and model. The journal is built from the logs deterministically, with no
-  LLM call, and updates live. The raw log is one click away. The "Pilotage"
+  and model. Each entry can be unfolded to read the full request and result
+  (rendered Markdown). The journal is built from the logs deterministically,
+  with no LLM call, and updates live. The raw log is one click away. The "Pilotage"
   column shows what needs review, then every agent as a card: running turns
   first (with turn duration and queue), then most recently active.
 - **Android companion app** (Kotlin + Jetpack Compose): fleet overview,

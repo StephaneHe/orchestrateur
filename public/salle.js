@@ -1240,7 +1240,11 @@
     const turnsPane = $(".dive-turns", el);
     if (turnsPane) turnsPane.addEventListener("click", (e) => {
       const b = e.target.closest("[data-dive-tab]");
-      if (b) { dive.tab = b.dataset.diveTab; renderDive(); }
+      if (b) { dive.tab = b.dataset.diveTab; renderDive(); return; }
+      const tg = e.target.closest("[data-jt-toggle]");
+      if (tg) global.Activite?.toggle(tg.dataset.jtToggle);
+      const cl = e.target.closest("[data-jt-collapse]");
+      if (cl) global.Activite?.toggle(cl.dataset.jtCollapse, { reveal: true });
     });
     $(".dive-queue", el).addEventListener("click", (e) => {
       const b = e.target.closest("[data-queue-rm]");

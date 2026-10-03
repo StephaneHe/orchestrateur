@@ -86,6 +86,22 @@ ok(t5.outcome === 'running' && t5.tools === 1, 'tour en cours');
   k.push({ type: 'result', subtype: 'success', result: 'Fait. Commité en local (e5b0408, v1.1.0).', duration_ms: 10 });
   ok(k.list()[0].commits[0]?.sha === 'e5b0408' && k.list()[0].prompt === '', 'SHA cité dans le texte ; tour sans demande visible');
 }
+// Plié / déplié (0.33.0) : texte complet de la demande et du résultat.
+ok(t1.promptFull?.text === 'Corrige le bug du login.\nDétail : le jeton expire trop tôt.' && t1.promptFull.cut === false,
+  `demande complète sans boilerplate : ${JSON.stringify(t1.promptFull)}`);
+ok(t1.resultFull?.text.includes('Détails sans intérêt.') && t1.resultFull.text.startsWith('**Corrigé**'), 'résultat complet, Markdown brut conservé');
+ok(t2.promptFull?.text === 'Choisis le nom du module', 'préfixe [CHEF_ANSWER] retiré du texte complet');
+{
+  const k = createJournal({ max: 5 });
+  const long = 'ligne\n'.repeat(4000);   // 24 000 caractères
+  k.push({ type: 'user_prompt', text: 'Longue demande', timestamp: at(1) });
+  k.push({ type: 'result', subtype: 'success', result: long, duration_ms: 10 });
+  const t = k.list()[0];
+  ok(t.resultFull.cut === true && t.resultFull.text.length === 12000, `texte complet plafonné à 12 000 caractères (${t.resultFull.text.length})`);
+  k.push({ type: 'user_prompt', text: 'x', timestamp: at(2) });
+  k.push({ type: 'result', subtype: 'success', result: 'ok', duration_ms: 10 });
+  ok(k.list()[0].resultFull?.text === 'ok', 'result court sans texte assistant : gardé tel quel');
+}
 
 // ---------------------------------------------------------------------------
 section('2. États : arrêt, « vu » persistant, nouveau tour');

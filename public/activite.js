@@ -37,7 +37,43 @@
     error: "",
     lastFetch: 0,
     timer: null,
+    // Entrées dépliées, par musicien (0.33.0) : survivent au rafraîchissement
+    // temps réel et au va-et-vient entre volets, le temps de la page.
+    unfolded: new Map(),   // nom → Set(clé de tour)
   };
+
+  function turnKey(t) { return String(t.id || t.start || t.end || t.prompt || "?"); }
+  function unfoldedSet(name) {
+    if (!st.unfolded.has(name)) st.unfolded.set(name, new Set());
+    return st.unfolded.get(name);
+  }
+  function toggle(key, { reveal = false } = {}) {
+    if (!st.name) return;
+    const set = unfoldedSet(st.name);
+    if (set.has(key)) set.delete(key); else set.add(key);
+    paint();
+    // Replié depuis le bas d'un long texte : on ramène l'entrée à l'écran.
+    if (reveal) {
+      const card = [...document.querySelectorAll("#dive .dive-turns .jt")].find(c => c.dataset.key === key);
+      if (card) {
+        card.scrollIntoView({ block: "nearest" });
+        card.querySelector("[data-jt-toggle]")?.focus({ preventScroll: true });
+      }
+    }
+  }
+  function md(text) {
+    return typeof global.mdToHtml === "function" ? global.mdToHtml(text) : esc(text).replace(/\n/g, "<br>");
+  }
+  /** Texte complet d'une entrée dépliée : demande puis résultat, en Markdown. */
+  function fullHtml(t, key) {
+    const part = (label, full) => {
+      if (!full || !full.text) return "";
+      const cut = full.cut ? `<div class="jt-cut">texte coupé à ${(global.TurnCore?.FULL_MAX || 12000).toLocaleString("fr-FR")} caractères — la suite est dans l'onglet « Log brut »</div>` : "";
+      return `<section class="jt-part"><div class="jt-k">${label}</div><div class="jt-md md">${md(full.text)}</div>${cut}</section>`;
+    };
+    return part("Demande complète", t.promptFull) + part("Résultat complet", t.resultFull) +
+      `<button class="jt-toggle jt-bottom" type="button" data-jt-collapse="${esc(key)}">▴ Réduire</button>`;
+  }
 
   function readUrlParams() {
     for (const [param, key] of [["journal", LS.journal], ["cadres", LS.cards]]) {
@@ -139,8 +175,15 @@
     return String(m || "").replace(/^claude-/, "").replace(/-\d{8}$/, "");
   }
 
-  function turnHtml(t) {
+  function turnHtml(t, i) {
     const o = OUTCOME[t.outcome] || OUTCOME.ok;
+    const key = turnKey(t);
+    const canUnfold = !!(t.promptFull?.text || t.resultFull?.text);
+    const open = canUnfold && st.name && unfoldedSet(st.name).has(key);
+    const fid = `jt-full-${i}`;
+    const toggleBtn = canUnfold
+      ? `<button class="jt-toggle" type="button" data-jt-toggle="${esc(key)}" aria-expanded="${open ? "true" : "false"}" aria-controls="${fid}">${open ? "▾ Réduire" : "▸ Afficher tout"}</button>`
+      : "";
     let word = o.word;
     if (t.outcome === "error" && t.subtype) word += ` · ${t.subtype}`;
     const meta = [fmtDur(t.durationMs), Number.isFinite(t.costUsd) ? `$${t.costUsd.toFixed(2)}` : null, shortModel(t.model) || null]
@@ -165,7 +208,7 @@
     const after = [];
     if (t.ack) after.push(`✓ marqué vu${t.ack.by && t.ack.by !== "utilisateur" ? " par " + esc(t.ack.by) : ""}${t.ack.ts ? " · " + esc(fmtWhen(t.ack.ts)) : ""}${t.ack.note ? " — " + esc(t.ack.note) : ""}`);
     if (t.resolved) after.push(`✓ question marquée répondue${t.resolved.note ? " — " + esc(t.resolved.note) : ""}`);
-    return `<article class="jt" data-outcome="${esc(t.outcome)}">
+    return `<article class="jt${open ? " is-open" : ""}" data-outcome="${esc(t.outcome)}" data-key="${esc(key)}">
         <header class="jt-head">
           <span class="jt-mark">${esc(o.mark)}</span>
           <span class="jt-when">${esc(fmtWhen(t.start || t.end))}</span>
@@ -175,6 +218,8 @@
         ${ask}${did}${q}
         ${chips.length ? `<div class="jt-chips">${chips.join("")}</div>` : ""}
         ${after.length ? `<div class="jt-after">${after.join(" · ")}</div>` : ""}
+        ${toggleBtn}
+        ${canUnfold ? `<div class="jt-full" id="${fid}"${open ? "" : " hidden"}>${open ? fullHtml(t, key) : ""}</div>` : ""}
       </article>`;
   }
 
@@ -190,15 +235,26 @@
     else if (!st.data) body = `<div class="dj-note">chargement du journal…</div>`;
     else if (!st.data.turns.length) body = `<div class="dj-note">Aucun tour dans le log de ce musicien.</div>`;
     else {
-      body = st.data.turns.map(turnHtml).join("") +
+      body = st.data.turns.map((t, i) => turnHtml(t, i)).join("") +
         (st.data.truncated ? `<div class="dj-note">tours plus anciens : non chargés (seule la fin du log est lue)</div>` : "");
     }
     const html = links + body;
-    if (pane._html !== html) { pane.innerHTML = html; pane._html = html; }
+    if (pane._html === html) return;
+    // Le rafraîchissement temps réel réécrit le panneau : on rend le focus au
+    // même contrôle (clavier) et on garde la position de lecture.
+    const focusKey = document.activeElement?.closest?.(".dive-turns [data-jt-toggle]")?.dataset.jtToggle;
+    const top = pane.scrollTop;
+    pane.innerHTML = html;
+    pane._html = html;
+    pane.scrollTop = top;
+    if (focusKey != null) {
+      const b = [...pane.querySelectorAll("[data-jt-toggle]")].find(x => x.dataset.jtToggle === focusKey);
+      if (b) b.focus({ preventScroll: true });
+    }
   }
 
   global.Activite = {
-    applyUi, journalOn, cardsOn, open, load, onLiveEvent, paint,
+    applyUi, journalOn, cardsOn, open, load, onLiveEvent, paint, toggle,
     get name() { return st.name; },
   };
 })(window);

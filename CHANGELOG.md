@@ -11,6 +11,38 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-10-03
+
+Retour utilisateur sur le journal d'activité : « les messages longs sont
+tronqués, je ne peux pas tout lire. Faire un plié / déplié ? »
+
+### Added
+- (viewer) **Plié / déplié** dans le journal d'activité de chaque musicien.
+  - Chaque entrée garde son aperçu court.
+  - « ▸ Afficher tout » déplie le texte **complet** de la demande (sans
+    boilerplate) et du résultat, sans quitter le journal.
+  - Le texte complet est rendu en Markdown : titres, gras, listes, tableaux,
+    blocs de code, liens.
+  - « ▾ Réduire » replie l'entrée. Un second « ▴ Réduire », en bas d'un long
+    texte, replie et ramène l'entrée à l'écran.
+  - Au clavier : boutons natifs (Entrée / Espace), `aria-expanded` /
+    `aria-controls`. Le focus reste sur le contrôle après chaque
+    rafraîchissement.
+  - L'état déplié est conservé pendant le rafraîchissement temps réel et
+    quand on passe d'un volet à l'autre.
+  - Sur mobile : cibles de 44 px. Tableaux et blocs de code défilent dans leur
+    cadre, sans débordement horizontal de la page.
+- (server) Chaque tour du journal (`/api/project/:name/journal`) porte
+  `promptFull` et `resultFull` (`{text, cut}`), plafonnés à 12 000
+  caractères chacun. Au-delà, le texte est coupé, l'interface le signale et
+  renvoie à l'onglet « Log brut ».
+- Recettes :
+  - `_test_activity_journal.mjs` vérifie le texte complet, le boilerplate
+    retiré et le plafond ;
+  - le nouveau parcours navigateur `journal-fold` teste une entrée longue
+    pliée puis dépliée (Markdown, clavier, état conservé, « Réduire » du bas) ;
+  - les captures bureau et mobile montrent l'entrée pliée et dépliée.
+
 ## [0.32.0] - 2026-10-02
 
 Retour utilisateur : « la fenêtre des musiciens En cours est trop petite, elle
