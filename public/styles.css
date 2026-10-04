@@ -2877,3 +2877,42 @@ html.anim-paused *::after {
 @media (max-width: 767.98px) {
   .topbar-actions { flex-wrap: wrap; row-gap: 6px; }
 }
+
+/* ---------- Lecture audio (0.35.0) ---------- */
+.cv-tts-btn {
+  margin-left: 6px; font-family: var(--font-mono); font-size: 0.625rem; letter-spacing: 0.06em;
+  color: var(--fg-2); border: 1px solid var(--card-border); border-radius: 6px; padding: 1px 7px;
+}
+.cv-tts-btn:hover { color: var(--fg-0); background: var(--card-bg-hover); }
+.cv-tts-btn.is-playing { color: var(--st-live, #4ade80); border-color: currentColor; }
+.cv-tts-btn[hidden], .tts-bar[hidden], .tts-settings[hidden], .tts-unsupported[hidden] { display: none; }
+.tts-bar {
+  position: fixed; right: 18px; bottom: 96px; z-index: 180;
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px;
+  background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 999px;
+  box-shadow: var(--card-shadow); backdrop-filter: blur(14px);
+  font-family: var(--font-mono); font-size: 0.75rem; color: var(--fg-1);
+}
+.tts-bar .tts-act {
+  min-width: 32px; min-height: 32px; border-radius: 999px; border: 1px solid var(--card-border);
+  color: var(--fg-0); font-size: 0.875rem;
+}
+.tts-bar .tts-act:hover { background: var(--card-bg-hover); }
+.tts-settings { border-top: 1px solid var(--card-border); padding-top: 10px; }
+.tts-field { display: flex; flex-direction: column; gap: 4px; font-size: 0.75rem; color: var(--fg-1); }
+.tts-field select { background: var(--input-bg); color: var(--fg-0); border: 1px solid var(--card-border); border-radius: 6px; padding: 4px; font-size: 0.75rem; max-width: 100%; }
+.tts-check { display: flex; gap: 6px; align-items: flex-start; font-size: 0.75rem; color: var(--fg-1); }
+.tts-test { align-self: flex-start; font-family: var(--font-mono); font-size: 0.6875rem; border: 1px solid var(--card-border); border-radius: 6px; padding: 3px 9px; color: var(--fg-1); }
+.tts-unsupported { font-size: 0.75rem; color: var(--fg-3); font-style: italic; }
+@media (max-width: 767.98px) {
+  /* ⚙ (réglages, dont la voix) redevient accessible sur mobile. */
+  #btn-tweaks { display: inline-flex; min-width: 44px; min-height: 44px; align-items: center; justify-content: center; }
+  .tweaks { position: fixed; left: 10px; right: 10px; bottom: 10px; width: auto; max-height: 80vh; overflow-y: auto; z-index: 190; }
+  .cv-tts-btn { min-height: 32px; padding: 0 10px; font-size: 0.75rem; }
+  .tts-bar { right: 10px; left: 10px; bottom: 88px; justify-content: space-between; }
+  .tts-bar .tts-act { min-width: 44px; min-height: 44px; }
+}
+@media (min-width: 768px) {
+  /* Au-dessus du fil, pas des cadres du Pilotage (rail de 330 px à droite). */
+  .tts-bar { right: 372px; }
+}

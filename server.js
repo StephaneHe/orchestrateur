@@ -2452,6 +2452,8 @@ function uiFlags() {
     // 0.31.0 — journal d'activité du volet et cadres du Pilotage.
     activityJournal: config.ui?.activityJournal !== false,
     railCards: config.ui?.railCards !== false,
+    // 0.35.0 — lecture audio des réponses du chef.
+    tts: config.ui?.tts !== false,
   };
 }
 

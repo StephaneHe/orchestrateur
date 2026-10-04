@@ -9,13 +9,13 @@
      CSS/JS à chaque release sans Ctrl+F5 (le HTML est servi du disque à chaque
      requête, donc la nouvelle URL est prise immédiatement). Bump à chaque MàJ. -->
 <link rel="stylesheet" href="./fonts/fonts.css">
-<link rel="stylesheet" href="./styles.css?v=0.34.0">
+<link rel="stylesheet" href="./styles.css?v=0.35.0">
 <!-- Taille du texte : appliquée avant le premier rendu (pas de defer). -->
 <script src="./text-size.js?v=0.34.0"></script>
 <link rel="stylesheet" href="./pupitre-row.css?v=0.34.0">
 <link rel="stylesheet" href="./pupitre-detail.css?v=0.34.0">
 <!-- v0.21.0 — chargé APRÈS styles.css : complète et surcharge, ne remplace rien -->
-<link rel="stylesheet" href="./salle.css?v=0.34.0">
+<link rel="stylesheet" href="./salle.css?v=0.35.0">
 <!-- v0.29.0 — vue « Projets » (désactivable : config.json ui.projectsView=false ou ?projets=0) -->
 <link rel="stylesheet" href="./projets.css?v=0.34.0">
 </head>
@@ -317,6 +317,28 @@
       <button data-v="codex">CODEX</button>
     </div>
   </div>
+  <!-- Lecture audio des réponses du chef (0.35.0, public/tts.js) -->
+  <div id="tts-settings" class="tweaks-row tts-settings">
+    <div class="tweaks-lbl">Lecture audio (voix du navigateur, locale)</div>
+    <div class="tts-unsupported" hidden>Ce navigateur n'a pas de synthèse vocale.</div>
+    <label class="tts-field">Voix
+      <select id="tts-voice" aria-label="Voix de lecture"></select>
+    </label>
+    <label class="tts-field">Vitesse <span class="tts-rate-val">×1.0</span>
+      <input id="tts-rate" type="range" min="0.7" max="1.6" step="0.1" value="1" aria-label="Vitesse de lecture">
+    </label>
+    <label class="tts-check"><input id="tts-auto" type="checkbox"> Lire automatiquement les nouvelles réponses du chef</label>
+    <label class="tts-check"><input id="tts-autolang" type="checkbox" checked> Voix anglaise pour les passages en anglais</label>
+    <button class="tts-test" type="button" data-tts-test="1">▶ Tester la voix</button>
+  </div>
+</div>
+
+<!-- Barre de lecture audio : visible pendant une lecture -->
+<div id="tts-bar" class="tts-bar" role="region" aria-label="Lecture audio" hidden>
+  <span class="tts-icon" aria-hidden="true">🔊</span>
+  <span class="tts-prog" aria-live="polite">Lecture</span>
+  <button type="button" class="tts-act" data-tts-act="pause" aria-label="Mettre la lecture en pause">⏸</button>
+  <button type="button" class="tts-act" data-tts-act="stop" aria-label="Arrêter la lecture">⏹</button>
 </div>
 
 <!-- Server version — règle standing du CLAUDE.md (pied de page) ------ -->
@@ -327,10 +349,11 @@
 <script src="./pupitre-detail.js?v=0.29.1"></script>
 <!-- salle.js est chargé AVANT app.js : ses fonctions sont donc définies quand
      app.js les appelle, et `App` est résolu au moment de l'appel. -->
-<script src="./turn-core.js?v=0.33.0"></script>
+<script src="./turn-core.js?v=0.35.0"></script>
+<script src="./tts.js?v=0.35.0"></script>
 <script src="./activite.js?v=0.33.0"></script>
 <script src="./salle.js?v=0.33.0"></script>
 <script src="./projets.js?v=0.31.0"></script>
-<script src="./app.js?v=0.31.0"></script>
+<script src="./app.js?v=0.35.0"></script>
 </body>
 </html>

@@ -569,6 +569,47 @@ de la police ».
   captures à 85 % et 150 %. Ils vérifient l'absence de débordement, les bords
   réels de la barre et les libellés du rail qui ne passent pas sous les boutons.
 
+## Lecture audio des réponses du chef (0.35.0)
+
+Demande utilisateur : « implémente une fonction de lecture audio des réponses,
+déjà du chef ».
+
+- `public/tts.js` : Web Speech API du navigateur (`speechSynthesis`),
+  100 % local et gratuit, sans service cloud ni clé. Comme `turn-core.js`,
+  le fichier n'a ni import ni export et pose `globalThis.Tts`. Sa partie pure
+  est testée sous Node par `scripts/_test_tts_text.mjs` :
+  - `toSpeech(md)` retire le Markdown, ne lit jamais les blocs de code (« bloc
+    de code »), remplace les liens par leur texte (« lien vers domaine » pour
+    une URL nue), les chemins par leur dernier segment, les SHA et longs
+    identifiants par « identifiant » ; il annonce les tableaux (et les lit
+    s'ils ont au plus 8 lignes) ;
+  - `chunks()` découpe en morceaux de 220 caractères au plus, aux fins de
+    phrase (une ponctuation suivie d'un espace) ;
+  - `guessLang()` repère l'anglais nettement dominant et lui donne une voix
+    anglaise.
+- **Lecteur** : un énoncé par morceau, le suivant sur `onend`. Les moteurs
+  coupent les longs énoncés, et la pause n'est pas fiable sur Android : pause
+  = arrêt en mémorisant le morceau, reprise = relecture de ce morceau.
+  - Bouton « 🔊 écouter / ⏹ arrêter » dans l'en-tête de chaque bulle du chef
+    (`Tts.buttonHtml`, état posé par `Tts.sync()` après chaque `renderChat`).
+  - Barre ⏸/▶ et ⏹ (`#tts-bar`).
+  - Raccourci `Ctrl+Alt+L` : écouter la dernière réponse, ou arrêter. Il est
+    ignoré dans un champ de saisie et avec AltGr.
+- **Lecture automatique** (désactivée par défaut) : appelée depuis
+  `onConductorEvent` quand une bulle du chef arrive en direct. Le SSE ne
+  rejoue pas l'historique, donc rien d'ancien n'est relu au chargement.
+- **Réglages** dans le panneau ⚙ (rendu visible sur mobile pour cela) : voix
+  (par défaut la meilleure voix française, « Natural » / « Online » d'abord),
+  vitesse, lecture automatique, voix anglaise pour l'anglais. Mémorisés dans
+  `localStorage` (`tts.*`).
+- **Désactiver sans redéploiement** : `config.json` → `"ui": {"tts": false}`
+  (à chaud ; ce drapeau est servi par `uiFlags()` de server.js, depuis le
+  redémarrage qui suit la 0.35.0), ou `?tts=0` pour un navigateur.
+- Recettes : `_test_tts_text.mjs` et les parcours `tts`, `tts-settings`,
+  `tts-mobile`, avec une doublure de `speechSynthesis` injectée par
+  `addInitScript`. Elle enregistre chaque énoncé, ce qui permet de vérifier
+  le texte réellement envoyé au moteur.
+
 ## Attachments
 
 Images uploaded via the dashboard (paste / drag-drop / file picker) land in

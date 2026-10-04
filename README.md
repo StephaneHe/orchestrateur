@@ -4,7 +4,7 @@ A local Windows dashboard where one "conductor" AI session pilots a fleet of
 headless coding agents, one per project, with a live web viewer and an
 Android companion app.
 
-`version 0.34.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
+`version 0.35.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
 
 > **Status: active, personal project.** Built and used daily on a single
 > Windows machine. Pre-1.0: internal APIs and file formats can still change
@@ -72,6 +72,11 @@ one screen to watch the whole fleet.
   with no LLM call, and updates live. The raw log is one click away. The "Pilotage"
   column shows what needs review, then every agent as a card: running turns
   first (with turn duration and queue), then most recently active.
+- **Read-aloud of the conductor's replies.** A 🔊 button on each reply, a
+  pause / stop bar, optional auto-read of new replies, voice and speed
+  settings. It uses the browser's own speech synthesis (Web Speech API):
+  local, free, no cloud service. Markdown, code blocks, links and long
+  identifiers are cleaned up before speaking.
 - **Android companion app** (Kotlin + Jetpack Compose): fleet overview,
   per-agent detail, chat with the conductor.
 - **`/downloads` page** listing the Android builds of your projects, driven

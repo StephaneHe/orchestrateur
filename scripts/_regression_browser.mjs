@@ -537,6 +537,147 @@ export async function browserChecks(sb, t) {
     });
     await ctx.close();
 
+    // ---------------- Lecture audio (0.35.0) — doublure de speechSynthesis ----------------
+    // Edge headless n'a pas de voix fiables : on remplace speechSynthesis AVANT
+    // le chargement par une doublure qui enregistre chaque énoncé et simule sa
+    // fin (window.__tts.delay ms). On teste ainsi ce qui est réellement envoyé
+    // au moteur, l'enchaînement des morceaux, la pause et l'arrêt.
+    const TTS_MOCK = () => {
+      window.__tts = { spoken: [], cancels: 0, delay: 40 };
+      class U { constructor(t) { this.text = t; this.lang = ''; this.voice = null; this.rate = 1; } }
+      const voices = [
+        { name: 'Microsoft Hortense - French (France)', lang: 'fr-FR' },
+        { name: 'Microsoft Denise Online (Natural) - French (France)', lang: 'fr-FR' },
+        { name: 'Microsoft Aria Online (Natural) - English (United States)', lang: 'en-US' },
+      ];
+      let cur = null;
+      const synth = {
+        speaking: false, paused: false,
+        getVoices: () => voices,
+        addEventListener() {}, removeEventListener() {},
+        speak(u) {
+          window.__tts.spoken.push({ text: u.text, lang: u.lang, voice: u.voice && u.voice.name, rate: u.rate });
+          cur = u; this.speaking = true;
+          setTimeout(() => { if (cur !== u) return; cur = null; this.speaking = false; if (u.onend) u.onend({}); }, window.__tts.delay);
+        },
+        cancel() { window.__tts.cancels++; const u = cur; cur = null; this.speaking = false; if (u && u.onerror) u.onerror({ error: 'interrupted' }); },
+        pause() {}, resume() {},
+      };
+      Object.defineProperty(window, 'speechSynthesis', { value: synth, configurable: true });
+      window.SpeechSynthesisUtterance = U;
+    };
+    const tctx = await browser.newContext({ viewport: { width: 1600, height: 1000 }, locale: 'fr-FR' });
+    await tctx.addInitScript(TTS_MOCK);
+    const tp = await tctx.newPage();
+    wire(tp);
+    const spoken = () => tp.evaluate(() => window.__tts.spoken);
+    await check(B, 'tts', 'Lecture audio : 🔊 sur les bulles du chef, texte nettoyé et découpé, voix FR, pause / reprise / arrêt, Ctrl+Alt+L', async () => {
+      await tp.goto(`${sb.url}/?token=${sb.token}`);
+      await tp.locator('.brand').waitFor();
+      if (!(await tp.evaluate(() => !!window.Tts))) NA('lecture audio absente de cet état du code');
+      assert(await until(async () => (await tp.locator('#cv-scroll .cv-tts-btn').count()) > 0, 10_000), 'aucun bouton « écouter » sur les bulles du chef');
+      const btn = tp.locator('#cv-scroll .cv-tts-btn').first();
+      assert(/Écouter/.test(await btn.getAttribute('aria-label')), 'aria-label');
+      // On fait défiler le FIL jusqu'à la première bulle, comme un utilisateur :
+      // laissé à Playwright, le défilement automatique décale aussi les
+      // conteneurs parents (overflow: hidden) et fausse les captures.
+      await tp.evaluate(() => { document.getElementById('cv-scroll').scrollTop = 0; });
+      await sleep(200);
+      await btn.click();
+      assert(await until(async () => (await spoken()).length > 0, 3000), 'rien envoyé au moteur');
+      const first = (await spoken())[0];
+      assert(/la flotte est calme/.test(first.text), `texte lu : ${first.text}`);
+      assert(/^fr/.test(first.lang) && /Denise Online \(Natural\)/.test(first.voice || ''), `voix : ${first.voice} (${first.lang}) — la voix française « Natural » est attendue par défaut`);
+      assert(await until(async () => !(await visible(tp, '#tts-bar')), 3000), 'barre restée visible après la fin');
+      // Texte long en Markdown : nettoyé, découpé, enchaîné morceau par morceau.
+      await tp.evaluate(() => { window.__tts.spoken = []; });
+      const md = '## Bilan\n\n' + Array.from({ length: 14 }, (_, i) => `- Étape ${i} terminée avec succès, aucune erreur constatée dans les journaux.`).join('\n') +
+        '\n\n\`\`\`bash\nrm -rf /secret\n\`\`\`\n\nCommit 5bf1dde sur https://github.com/StephaneHe/orchestrateur/commit/5bf1dde.';
+      await tp.evaluate((t) => window.Tts.speak(t, 'test-long'), md);
+      assert(await until(async () => { const sp = await spoken(); return sp.length >= 3 && !(await tp.evaluate(() => !!window.Tts.playing)); }, 8000), 'les morceaux ne s\'enchaînent pas');
+      const all = (await spoken()).map(x => x.text);
+      assert(all.every(t => t.length <= 220), 'morceau trop long');
+      const joined = all.join(' ');
+      assert(!/secret|rm -rf|5bf1dde|https?:/.test(joined) && /bloc de code/.test(joined) && /lien vers github\.com/.test(joined) && /Étape 13/.test(joined), `texte nettoyé : ${joined.slice(0, 300)}`);
+      // Pause / reprise / arrêt (énoncés lents).
+      await tp.evaluate(() => { window.__tts.delay = 60_000; window.__tts.spoken = []; });
+      await btn.click();
+      assert(await until(async () => visible(tp, '#tts-bar'), 3000), 'barre de lecture absente');
+      assert((await btn.textContent()).includes('arrêter') && (await btn.getAttribute('aria-pressed')) === 'true', 'bouton pas en « arrêter »');
+      await shot(tp, 'tts-lecture-desktop');
+      const c0 = await tp.evaluate(() => window.__tts.cancels);
+      await tp.click('#tts-bar [data-tts-act="pause"]');
+      assert(/En pause/.test(await tp.textContent('#tts-bar .tts-prog')) && (await tp.evaluate(() => window.__tts.cancels)) > c0, 'pause sans effet');
+      await tp.click('#tts-bar [data-tts-act="pause"]');
+      assert(/Lecture/.test(await tp.textContent('#tts-bar .tts-prog')) && (await spoken()).length === 2, 'reprise : le morceau courant doit être relu');
+      await tp.click('#tts-bar [data-tts-act="stop"]');
+      assert(await until(async () => !(await visible(tp, '#tts-bar')), 2000) && (await btn.textContent()).includes('écouter'), 'arrêt sans effet');
+      // Ctrl+Alt+L : dernière réponse, puis arrêt.
+      await tp.evaluate(() => document.activeElement?.blur());
+      await tp.keyboard.press('Control+Alt+l');
+      assert(await until(async () => visible(tp, '#tts-bar'), 2000), 'Ctrl+Alt+L ne lance pas la lecture');
+      await tp.keyboard.press('Control+Alt+l');
+      assert(await until(async () => !(await visible(tp, '#tts-bar')), 2000), 'Ctrl+Alt+L n\'arrête pas');
+      await tp.evaluate(() => { window.__tts.delay = 40; });
+    });
+    await check(B, 'tts-settings', 'Lecture audio : réglages (voix, vitesse), lecture automatique d\'une nouvelle réponse, désactivation à chaud', async () => {
+      if (!(await tp.evaluate(() => !!window.Tts))) NA('lecture audio absente de cet état du code');
+      await tp.click('#btn-tweaks');
+      assert(await visible(tp, '#tts-settings'), 'réglages audio absents du panneau ⚙');
+      assert(await tp.locator('#tts-voice optgroup[label="Français"] option').count() === 2, 'voix françaises non listées');
+      await tp.selectOption('#tts-voice', 'Microsoft Hortense - French (France)');
+      await tp.locator('#tts-rate').fill('1.3');
+      await tp.check('#tts-auto');
+      await shot(tp, 'tts-reglages-desktop');
+      await tp.click('#btn-tweaks');
+      await tp.evaluate(() => { window.__tts.spoken = []; });
+      await tp.fill('#composer-input', 'Message pour la lecture automatique');
+      await tp.click('#composer-send');
+      assert(await until(async () => (await spoken()).some(x => /fake reply to/.test(x.text)), 45_000, 500), 'nouvelle réponse du chef non lue automatiquement');
+      const u = (await spoken()).find(x => /fake reply to/.test(x.text));
+      assert(/Hortense/.test(u.voice || '') && Math.abs(u.rate - 1.3) < 1e-9, `réglages non appliqués : ${u.voice} ×${u.rate}`);
+      await tp.reload(); await tp.locator('.brand').waitFor();
+      assert(await tp.evaluate(() => localStorage.getItem('tts.auto') === '1' && localStorage.getItem('tts.voice')?.includes('Hortense')), 'réglages non mémorisés');
+      await tp.evaluate(() => { localStorage.removeItem('tts.auto'); localStorage.removeItem('tts.voice'); localStorage.removeItem('tts.rate'); });
+      // Désactivation à chaud (config.json → ui.tts=false).
+      const fc = path.join(sb.root, 'config.json');
+      const cfg = JSON.parse(fs.readFileSync(fc, 'utf8'));
+      cfg.ui = { ...(cfg.ui || {}), tts: false };
+      fs.writeFileSync(fc, JSON.stringify(cfg, null, 2) + '\n');
+      assert(await until(async () => (await tp.locator('#cv-scroll .cv-tts-btn:not([hidden])').count()) === 0, 15_000), 'boutons toujours là avec ui.tts=false');
+      cfg.ui = { ...(cfg.ui || {}), tts: true };
+      fs.writeFileSync(fc, JSON.stringify(cfg, null, 2) + '\n');
+      assert(await until(async () => (await tp.locator('#cv-scroll .cv-tts-btn:not([hidden])').count()) > 0, 15_000), 'boutons non rétablis');
+      await tp.goto(`${sb.url}/?tts=0`); await tp.locator('.brand').waitFor(); await sleep(800);
+      assert(await tp.locator('#cv-scroll .cv-tts-btn:not([hidden])').count() === 0, '?tts=0 sans effet');
+      await tp.goto(`${sb.url}/?tts=1`); await tp.locator('.brand').waitFor();
+      assert(await until(async () => (await tp.locator('#cv-scroll .cv-tts-btn').count()) > 0, 10_000), '?tts=1 ne rétablit pas');
+    });
+    await tctx.close();
+    const tmctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'fr-FR' });
+    await tmctx.addInitScript(TTS_MOCK);
+    const tm = await tmctx.newPage();
+    wire(tm);
+    await check(B, 'tts-mobile', 'Lecture audio · mobile : bouton, barre de lecture (44 px), réglages ⚙ accessibles', async () => {
+      await tm.goto(`${sb.url}/?token=${sb.token}`);
+      await tm.locator('.brand').waitFor();
+      if (!(await tm.evaluate(() => !!window.Tts))) NA('lecture audio absente de cet état du code');
+      assert(await until(async () => (await tm.locator('#cv-scroll .cv-tts-btn').count()) > 0, 10_000), 'pas de bouton sur mobile');
+      await tm.evaluate(() => { window.__tts.delay = 60_000; });
+      await tm.locator('#cv-scroll .cv-tts-btn').last().click();
+      assert(await until(async () => visible(tm, '#tts-bar'), 3000), 'barre absente');
+      const hb = await tm.locator('#tts-bar [data-tts-act="stop"]').boundingBox();
+      assert(hb && hb.height >= 44, `bouton stop de ${hb && hb.height}px`);
+      assert(await tm.evaluate(() => document.documentElement.scrollWidth - window.innerWidth) <= 0, 'débordement horizontal');
+      await shot(tm, 'tts-lecture-mobile');
+      await tm.click('#tts-bar [data-tts-act="stop"]');
+      assert(await visible(tm, '#btn-tweaks'), '⚙ masqué sur mobile : réglages de voix inaccessibles');
+      await tm.click('#btn-tweaks');
+      assert(await until(async () => visible(tm, '#tts-settings'), 3000), 'réglages audio absents');
+      await shot(tm, 'tts-reglages-mobile');
+    });
+    await tmctx.close();
+
     // ---------------------- Mobile ----------------------
     const mctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'fr-FR' });
     const m = await mctx.newPage();

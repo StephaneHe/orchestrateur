@@ -1163,7 +1163,7 @@ const App = {
         }
       }
       this.renderFleet(cfg.projects || []);
-      window.Projets?.applyUi(cfg.ui); window.Activite?.applyUi(cfg.ui);
+      window.Projets?.applyUi(cfg.ui); window.Activite?.applyUi(cfg.ui); window.Tts?.applyUi(cfg.ui);
     } catch (err) {
       console.error("[app] config fetch failed", err);
       $("#empty-hint").hidden = false;
@@ -1183,7 +1183,7 @@ const App = {
       if (!resp.ok) return;
       cfg = await resp.json();
     } catch { return; }
-    window.Projets?.applyUi(cfg.ui); window.Activite?.applyUi(cfg.ui);   // `ui` rechargé à chaud (config.json)
+    window.Projets?.applyUi(cfg.ui); window.Activite?.applyUi(cfg.ui); window.Tts?.applyUi(cfg.ui);   // `ui` rechargé à chaud (config.json)
     const projects = cfg.projects || [];
     const wanted = new Set(projects.map(p => p.name));
     let changed = false;
@@ -1846,6 +1846,7 @@ const App = {
   renderChat() {
     this.renderMainPane();
     window.Salle?.renderRail();
+    window.Tts?.sync();   // état « écouter / arrêter » des bulles re-rendues
   },
 
   renderMainPane() {
@@ -2086,6 +2087,7 @@ const App = {
     return `<div class="cv-bubble is-conductor${qCls}${rCls}">
           <div class="cv-byline">${esc(byline)}${tsChip}${qTag}${usageChip}
             <button class="cv-reply-btn" data-reply-idx="${idx}" title="Répondre à ce message">↩ répondre</button>
+            ${window.Tts ? window.Tts.buttonHtml(idx) : ""}
           </div>
           ${answers}${hint}${takingHtml(b)}
           <div class="cv-body md">${mdToHtml(b.text || "")}</div>
@@ -2719,6 +2721,10 @@ const App = {
         // Les lignes de mission de ce tour se lisent APRÈS la réponse du chef
         // (« je leur confie… » puis la liste), exactement comme la maquette.
         this._reorderMissionsAfterReply();
+        // Réponse arrivée en direct (le SSE ne rejoue pas l'historique) :
+        // lecture audio si l'utilisateur l'a demandée (0.35.0).
+        const replyEntry = this.chat.findLast(e => e.role === "conductor" && e.text === txt);
+        if (replyEntry) setTimeout(() => window.Tts?.onChefReply(this.chat.indexOf(replyEntry)), 0);
       }
       musician.markRead();
       this._endChefTurn();
@@ -3330,7 +3336,7 @@ const App = {
     const snap = this.pupitreSnapshot;
     if (!snap || !Array.isArray(snap.fleet)) return;
     const S = window.Salle;
-    window.Projets?.applyUi(snap.ui); window.Activite?.applyUi(snap.ui);
+    window.Projets?.applyUi(snap.ui); window.Activite?.applyUi(snap.ui); window.Tts?.applyUi(snap.ui);
     window.Projets?.render();
     S?.renderRail();
     S?.renderAttention();

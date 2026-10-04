@@ -11,6 +11,50 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-10-04
+
+Demande utilisateur : « implémente une fonction de lecture audio des réponses,
+déjà du chef ».
+
+### Added
+- (viewer) **Lecture à voix haute des réponses du chef**, avec la synthèse
+  vocale du navigateur (Web Speech API) : locale, gratuite, sans service cloud
+  ni clé.
+  - Bouton « 🔊 écouter » (devient « ⏹ arrêter ») sur chaque bulle du chef.
+  - Barre de lecture avec pause / reprise et arrêt, et progression par
+    morceau.
+  - Raccourci `Ctrl+Alt+L` : écouter la dernière réponse, ou arrêter.
+  - Option « lire automatiquement les nouvelles réponses du chef »,
+    désactivée par défaut et mémorisée.
+  - Réglages dans le panneau ⚙ : voix (par défaut la meilleure voix
+    française), vitesse, voix anglaise pour les passages en anglais, bouton
+    « Tester la voix ».
+  - **Texte lu nettoyé** :
+    - Markdown retiré (titres, gras, puces) ;
+    - liens remplacés par leur texte, URL nues par « lien vers domaine » ;
+    - blocs de code jamais lus ;
+    - chemins, SHA et longs identifiants remplacés ;
+    - tableaux annoncés, et lus s'ils sont courts ;
+    - symboles décoratifs retirés.
+  - Le texte est découpé en phrases (220 caractères au plus) : les longues
+    réponses ne sont plus coupées par le moteur.
+  - Accessible : `aria-label` / `aria-pressed`, et progression annoncée
+    (`aria-live`).
+  - Mobile : barre et boutons de 44 px. Le bouton ⚙ est désormais visible sur
+    mobile, pour accéder aux réglages de voix.
+- (server) Drapeau `ui.tts` dans `uiFlags()` : `config.json` →
+  `"ui": {"tts": false}` désactive la lecture à chaud, après le prochain
+  redémarrage du serveur. `?tts=0` la désactive pour un seul navigateur, tout
+  de suite.
+- Recettes :
+  - `scripts/_test_tts_text.mjs` (18 cas) : nettoyage du texte, découpe,
+    langue ;
+  - parcours navigateur `tts`, `tts-settings` et `tts-mobile`, avec une
+    doublure de `speechSynthesis` qui vérifie le texte réellement envoyé, la
+    pause, l'arrêt, le choix de la voix, la lecture automatique et la
+    désactivation ;
+  - captures bureau et mobile.
+
 ## [0.34.0] - 2026-10-04
 
 Demande utilisateur : « donne la possibilité d'augmenter ou diminuer la taille
