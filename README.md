@@ -4,7 +4,7 @@ A local Windows dashboard where one "conductor" AI session pilots a fleet of
 headless coding agents, one per project, with a live web viewer and an
 Android companion app.
 
-`version 0.33.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
+`version 0.34.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
 
 > **Status: active, personal project.** Built and used daily on a single
 > Windows machine. Pre-1.0: internal APIs and file formats can still change
@@ -61,7 +61,9 @@ one screen to watch the whole fleet.
 - **Live web viewer.** Vanilla JS + xterm.js, fed by Server-Sent Events from
   the append-only stream-json logs: thread view, attention band, search,
   briefing, queue management, image attachments, a "Projects" status view,
-  four colour palettes (`amber`, `matrix`, `ghost`, `crimson`).
+  four colour palettes (`amber`, `matrix`, `ghost`, `crimson`), and an
+  adjustable text size (A− / A / A+, 85 % to 150 %, remembered per browser,
+  `Ctrl+Alt+=` / `Ctrl+Alt+-` / `Ctrl+Alt+0`).
 - **Activity journal per agent.** Each agent's panel opens on a timeline of
   its turns: the request (without boilerplate), what it did (from its
   result, plus detected commits, versions and URLs), outcome, duration, cost

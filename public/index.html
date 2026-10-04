@@ -9,13 +9,15 @@
      CSS/JS à chaque release sans Ctrl+F5 (le HTML est servi du disque à chaque
      requête, donc la nouvelle URL est prise immédiatement). Bump à chaque MàJ. -->
 <link rel="stylesheet" href="./fonts/fonts.css">
-<link rel="stylesheet" href="./styles.css?v=0.29.1">
-<link rel="stylesheet" href="./pupitre-row.css?v=0.29.1">
-<link rel="stylesheet" href="./pupitre-detail.css?v=0.29.1">
+<link rel="stylesheet" href="./styles.css?v=0.34.0">
+<!-- Taille du texte : appliquée avant le premier rendu (pas de defer). -->
+<script src="./text-size.js?v=0.34.0"></script>
+<link rel="stylesheet" href="./pupitre-row.css?v=0.34.0">
+<link rel="stylesheet" href="./pupitre-detail.css?v=0.34.0">
 <!-- v0.21.0 — chargé APRÈS styles.css : complète et surcharge, ne remplace rien -->
-<link rel="stylesheet" href="./salle.css?v=0.33.0">
+<link rel="stylesheet" href="./salle.css?v=0.34.0">
 <!-- v0.29.0 — vue « Projets » (désactivable : config.json ui.projectsView=false ou ?projets=0) -->
-<link rel="stylesheet" href="./projets.css?v=0.31.0">
+<link rel="stylesheet" href="./projets.css?v=0.34.0">
 </head>
 <body data-theme="cinematic">
 
@@ -45,6 +47,11 @@
       <span id="conn-status" class="pill conn-ok" title="État du flux temps réel">
         <span class="conn-dot"></span><span class="conn-text">connexion…</span>
       </span>
+      <div id="text-size" class="text-size" role="group" aria-label="Taille du texte (Ctrl+Alt+= / Ctrl+Alt+- / Ctrl+Alt+0)">
+        <button type="button" class="ts-btn" data-ts="-1" aria-label="Réduire la taille du texte" title="Réduire le texte (Ctrl+Alt+-)">A−</button>
+        <button type="button" class="ts-btn ts-mid" data-ts="0" aria-label="Taille du texte : 100 %" title="Rétablir 100 % (Ctrl+Alt+0)">100&nbsp;%</button>
+        <button type="button" class="ts-btn" data-ts="1" aria-label="Agrandir la taille du texte" title="Agrandir le texte (Ctrl+Alt+=)">A+</button>
+      </div>
       <button id="btn-menu" class="pill-icon" title="Menu" aria-haspopup="true" aria-expanded="false">⋮</button>
       <button id="btn-tweaks" class="pill-icon" title="Paramètres visuels">⚙</button>
     </div>

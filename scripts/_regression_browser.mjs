@@ -64,6 +64,51 @@ export async function browserChecks(sb, t) {
       const ok = await until(async () => (await page.textContent('#cv-scroll')).includes('la flotte est calme'), 10_000);
       assert(ok, 'réponse historique du chef absente');
     });
+    // ---------------- Taille du texte (0.34.0) ----------------
+    const rootPx = (pg) => pg.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize));
+    const overflowX = (pg) => pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    await check(B, 'text-size', 'Taille du texte : A− / A / A+ de 85 % à 150 %, toute l\'interface, mémorisée, Ctrl+Alt, jamais dans un champ', async () => {
+      if (!(await page.locator('#text-size').count())) NA('réglage absent de cet état du code');
+      assert(await visible(page, '#text-size'), 'réglage masqué');
+      assert((await page.textContent('#text-size [data-ts="0"]')).replace(/\s+/g, ' ').trim() === '100 %', 'pas à 100 % par défaut');
+      for (const sel of ['[data-ts="-1"]', '[data-ts="0"]', '[data-ts="1"]']) assert(await page.getAttribute('#text-size ' + sel, 'aria-label'), `aria-label manquant ${sel}`);
+      assert(await rootPx(page) === 16, `racine ${await rootPx(page)} px à 100 %`);
+      const ref = async () => page.evaluate(() => ['#rail-body .rail-group-head', '.brand', '#composer-input'].map(q => parseFloat(getComputedStyle(document.querySelector(q)).fontSize)));
+      const base = await ref();
+      for (let i = 0; i < 6; i++) { const b = page.locator('#text-size [data-ts="1"]'); if (await b.isEnabled()) await b.click(); }
+      assert((await page.textContent('#text-size [data-ts="0"]')).replace(/\s+/g, ' ').trim() === '150 %' && await page.locator('#text-size [data-ts="1"]').isDisabled(), 'maximum 150 % non atteint / A+ pas désactivé');
+      const clipped = await page.evaluate(() => [...document.querySelectorAll('#rail-body .rail-item')].filter(it => {
+        const st = it.querySelector('.rr-state'), ack = it.querySelector('.rr-ack');
+        return st && ack && st.getBoundingClientRect().right > ack.getBoundingClientRect().left + 0.5;
+      }).length);
+      assert(clipped === 0, `${clipped} libellé(s) d'état sous le bouton « Vu / Répondue » à 150 %`);
+      assert(await page.evaluate(() => { const b = document.querySelector('#text-size [data-ts="0"]'); return b.scrollHeight <= b.clientHeight + 1 && !/\n/.test(b.innerText); }), '« 150 % » sur deux lignes');
+      const big = await ref();
+      big.forEach((v, i) => assert(Math.abs(v / base[i] - 1.5) < 0.02, `police ${i} : ${base[i]} → ${v} (×1.5 attendu)`));
+      assert(await overflowX(page) <= 0, `débordement horizontal à 150 % : ${await overflowX(page)} px`);
+      await sleep(400);
+      await shot(page, 'texte-150-desktop');
+      await page.reload(); await page.locator('.brand').waitFor();
+      assert(await rootPx(page) === 24, `non mémorisé après rechargement : ${await rootPx(page)} px`);
+      // Clavier : Ctrl+Alt+0 rétablit, Ctrl+Alt+- réduit, bornes respectées.
+      await page.locator('body').click({ position: { x: 5, y: 5 } }).catch(() => {});
+      await page.keyboard.press('Control+Alt+0');
+      assert(await until(async () => (await rootPx(page)) === 16, 2000), 'Ctrl+Alt+0 sans effet');
+      for (let i = 0; i < 3; i++) await page.keyboard.press('Control+Alt+-');
+      assert(Math.abs(await rootPx(page) - 13.6) < 0.05 && await page.locator('#text-size [data-ts="-1"]').isDisabled(), `minimum 85 % : ${await rootPx(page)} px`);
+      await page.keyboard.press('Control+Alt+=');
+      assert(Math.abs(await rootPx(page) - 14.4) < 0.05, `Ctrl+Alt+= : ${await rootPx(page)} px`);
+      await page.keyboard.press('Control+Alt+-');
+      await sleep(400);
+      await shot(page, 'texte-85-desktop');
+      // Dans un champ de saisie, Ctrl+Alt (= AltGr sous Windows) reste à la frappe.
+      await page.focus('#composer-input');
+      await page.keyboard.press('Control+Alt+0');
+      assert(Math.abs(await rootPx(page) - 13.6) < 0.05, 'raccourci intercepté dans le composer');
+      await page.click('#text-size [data-ts="0"]');
+      assert(await rootPx(page) === 16 && await page.evaluate(() => localStorage.getItem('ui.textScale')) === null, 'retour à 100 % non mémorisé');
+      return `polices ${base.join('/')} px → ${big.join('/')} px à 150 %`;
+    });
     const railHeads = () => page.evaluate(() => [...document.querySelectorAll('#rail-body .rail-group-head')].map(h => h.textContent.replace(/\s+/g, ' ').trim()));
     await check(B, 'rail', 'Rail PILOTAGE : À examiner + cadres des musiciens (ou dépliage « Tous » sans cadres)', async () => {
       const txt = await page.textContent('#rail-body');
@@ -528,6 +573,34 @@ export async function browserChecks(sb, t) {
         await shot(m, 'journal-deplie-mobile');
       }
       await m.click('#dive .dive-back');
+    });
+    await check(B, 'text-size-mobile', 'Taille du texte · mobile : réglage dans la barre (≥ 44 px), 150 % et 85 % sans débordement', async () => {
+      if (!(await m.locator('#text-size').count())) NA('réglage absent de cet état du code');
+      await setHash(m, '#/');
+      assert(await visible(m, '#text-size'), 'réglage masqué sur mobile');
+      const hb = await m.locator('#text-size [data-ts="1"]').boundingBox();
+      assert(hb && hb.height >= 44 && hb.width >= 44, `cible A+ ${hb && Math.round(hb.width)}×${hb && Math.round(hb.height)} px`);
+      for (let i = 0; i < 6; i++) { const b = m.locator('#text-size [data-ts="1"]'); if (await b.isEnabled()) await b.click(); }
+      assert(await rootPx(m) === 24, `150 % : ${await rootPx(m)} px`);
+      await sleep(400);
+      assert(await overflowX(m) <= 0, `débordement horizontal à 150 % : ${await overflowX(m)} px`);
+      // Le html masque le débordement : on mesure les bords réels.
+      const outside = await m.evaluate(() => [...document.querySelectorAll('.topbar button, .topbar .pill, #text-size')]
+        .filter(e => e.offsetParent).map(e => ({ id: e.id || e.className, r: e.getBoundingClientRect().right }))
+        .filter(x => x.r > window.innerWidth + 0.5).map(x => x.id));
+      assert(!outside.length, `hors écran à 150 % : ${outside.join(', ')}`);
+      await shot(m, 'texte-150-mobile');
+      await m.click('#mobile-pilot');
+      await sleep(500);
+      assert(await overflowX(m) <= 0, 'feuille Pilotage : débordement à 150 %');
+      await shot(m, 'texte-150-mobile-pilotage');
+      await m.keyboard.press('Escape');
+      for (let i = 0; i < 6; i++) { const b = m.locator('#text-size [data-ts="-1"]'); if (await b.isEnabled()) await b.click(); }
+      assert(Math.abs(await rootPx(m) - 13.6) < 0.05, `85 % : ${await rootPx(m)} px`);
+      await sleep(300);
+      await shot(m, 'texte-85-mobile');
+      await m.click('#text-size [data-ts="0"]');
+      assert(await rootPx(m) === 16, 'retour à 100 %');
     });
     await check(B, 'projets-mobile', 'Projets · mobile : une colonne, aucun défilement horizontal, cibles ≥ 44 px', async () => {
       if (!(await m.locator('#btn-projects').count())) NA('vue absente de cet état du code');

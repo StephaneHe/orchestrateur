@@ -545,6 +545,30 @@ donnait qu'un accès au log brut.
   parcours navigateur `examine-*`, `journal-*`, `cards-order`, `flags-031`,
   `mobile-journal`.
 
+## Taille du texte (0.34.0)
+
+Demande utilisateur : « donne la possibilité d'augmenter ou diminuer la taille
+de la police ».
+
+- **Toutes les polices sont en `rem`** (`font-size` en px converties : N px →
+  N/16 rem). La racine vaut `html { font-size: calc(16px * var(--text-scale)) }`,
+  et `body` garde ses 14 px (0.875rem). À 100 %, le rendu est identique à avant.
+  **Toute nouvelle règle doit écrire `font-size` en `rem`**, jamais en px :
+  sinon elle ne suit pas le réglage.
+- `public/text-size.js` est chargé dans `<head>` sans `defer`, pour appliquer
+  l'échelle avant le premier rendu.
+  - Crans : 85, 90, 100, 110, 125 et 150 %.
+  - Mémorisé dans `localStorage` (`ui.textScale`, absent = 100 %).
+  - Réglage A− / A / A+ dans la barre du haut, avec `aria-label`. Il reste
+    visible sur mobile (⋮ et ⚙ y sont masqués), avec des cibles de 44 px.
+- Raccourcis : `Ctrl+Alt+=` (ou `+`), `Ctrl+Alt+-`, `Ctrl+Alt+0`. `Ctrl+/-`
+  reste au zoom du navigateur. Sous Windows, AltGr = Ctrl+Alt (AZERTY :
+  AltGr+0 = « @ ») : les raccourcis sont ignorés dans un champ de saisie et
+  quand AltGr est enfoncé.
+- Recettes : parcours `text-size` (bureau) et `text-size-mobile`, avec
+  captures à 85 % et 150 %. Ils vérifient l'absence de débordement, les bords
+  réels de la barre et les libellés du rail qui ne passent pas sous les boutons.
+
 ## Attachments
 
 Images uploaded via the dashboard (paste / drag-drop / file picker) land in

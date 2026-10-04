@@ -11,6 +11,36 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-10-04
+
+Demande utilisateur : « donne la possibilité d'augmenter ou diminuer la taille
+de la police ».
+
+### Added
+- (viewer) **Taille du texte réglable** sur tout le dashboard : fil, Pilotage,
+  cadres, journal, vue Projets, panneaux, mobile.
+  - Réglage « A− / 100 % / A+ » dans la barre du haut, toujours visible (aussi
+    sur mobile, en cibles de 44 px), avec `aria-label`.
+  - Six crans : 85, 90, 100, 110, 125 et 150 %. La préférence est mémorisée
+    dans le navigateur et appliquée avant le premier rendu, sans éclair.
+  - Raccourcis : `Ctrl+Alt+=` / `Ctrl+Alt+-` / `Ctrl+Alt+0`. `Ctrl+/-` reste
+    au zoom du navigateur. Les raccourcis ne s'appliquent jamais dans un champ
+    de saisie, ni avec AltGr (sous Windows, AltGr équivaut à Ctrl+Alt ; sur
+    AZERTY, AltGr+0 tape « @ »).
+- Parcours navigateur `text-size` (bureau) et `text-size-mobile`, avec
+  captures à 85 % et 150 %.
+
+### Changed
+- (viewer) Les 292 tailles de police des feuilles de style passent de px à
+  `rem`. La racine (16 px × échelle) porte le réglage, et `body` garde ses
+  14 px : le rendu à 100 % est inchangé.
+
+### Fixed
+- (viewer) En grand texte, l'état d'une ligne de « À examiner » passait sous
+  le bouton « ✓ Vu / ✓ Répondue ». Il s'ellipse désormais.
+- (viewer) Sur mobile, les actions de la barre du haut passent à la ligne au
+  lieu de sortir de l'écran.
+
 ## [0.33.0] - 2026-10-03
 
 Retour utilisateur sur le journal d'activité : « les messages longs sont
