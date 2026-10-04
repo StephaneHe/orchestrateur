@@ -4,7 +4,7 @@ A local Windows dashboard where one "conductor" AI session pilots a fleet of
 headless coding agents, one per project, with a live web viewer and an
 Android companion app.
 
-`version 0.35.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
+`version 0.36.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
 
 > **Status: active, personal project.** Built and used daily on a single
 > Windows machine. Pre-1.0: internal APIs and file formats can still change
@@ -236,6 +236,11 @@ node scripts/regression.mjs --compare before.json after.json --md report.md
    Projects view).
 
 Each suite can also run alone, e.g. `node scripts/_test_tools_resolution.mjs`.
+
+Every feature request from the user is pinned by an automated test and
+recorded in [`docs/USER_REQUIREMENTS.md`](docs/USER_REQUIREMENTS.md) (date,
+verbatim request, test). The same rule is injected into every sub-agent's
+prompt and shipped in the project template.
 The project rule is to tag the current state before a change and compare
 the before/after reports, so any regression is visible and revertible.
 

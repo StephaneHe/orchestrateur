@@ -49,6 +49,18 @@ Un commit par unité de travail cohérente et testée, message à l'impératif
 décrivant le *quoi* et le *pourquoi*. Ne laisse pas s'accumuler un gros
 diff non commité. Ne pousse (`git push`) que sur demande explicite.
 
+**6 — Toute demande utilisateur devient un test de non-régression.**
+Dès que l'utilisateur fait une demande précise sur une fonctionnalité
+(comportement voulu, réglage, correction signalée), ajoute un **test
+automatisé** à la suite de non-régression du projet et trace-le dans
+`docs/USER_REQUIREMENTS.md` (date, demande verbatim, test associé).
+- Rejoue toute la suite **avant** chaque modification, puis **après**.
+- Un test d'exigence utilisateur ne se supprime ni ne s'affaiblit sans
+  l'accord explicite de l'utilisateur (`NEEDS_USER_INPUT: …`).
+- Exemple : « la lecture d'un chapitre se fait en une seule image » → un
+  test qui ouvre un chapitre et vérifie qu'une seule image est affichée,
+  rejoué à chaque évolution.
+
 ---
 
 ## Definition of Done

@@ -146,6 +146,25 @@ scenario("Règle de fin de tour injectée aux musiciens");
   ok(/noQueueIdx !== -1 \? false/.test(D), '--no-queue-if-busy l’emporte sur DISPATCH_SLOT (lancement depuis la file)');
 }
 
+// ── 7b. Règle des exigences utilisateur injectée aux musiciens (0.36.0) ────
+// Règle utilisateur : toute demande sur une fonctionnalité devient un test de
+// non-régression. De bout en bout : _test_user_requirements.mjs.
+scenario('Règle des exigences utilisateur injectée aux musiciens');
+{
+  const D = fs.readFileSync(DISPATCH, 'utf8');
+  const a = D.indexOf('function userRequirementsRule(');
+  const b = D.indexOf('\n}\n', a) + 2;
+  ok(a > 0, 'userRequirementsRule() existe');
+  // eslint-disable-next-line no-new-func
+  const rule = new Function(`${D.slice(a, b)}\nreturn userRequirementsRule;`)()();
+  ok(/TEST AUTOMATISÉ/.test(rule) && /suite de non-régression du projet, rejouée à chaque évolution/.test(rule), 'test automatisé dans la suite de non-régression, rejouée à chaque évolution');
+  ok(/docs\/USER_REQUIREMENTS\.md/.test(rule) && /date, demande verbatim, test associé/.test(rule), 'tracée dans docs/USER_REQUIREMENTS.md');
+  ok(/Avant toute\s+modification, rejoue cette suite/.test(rule.replace(/' \+\s*'/g, '')), 'suite rejouée avant toute modification');
+  ok(/ni supprimé ni affaibli sans l'accord explicite de l'utilisateur/.test(rule), 'ni supprimé ni affaibli sans accord explicite');
+  ok(/if \(projectName !== CONDUCTOR\) prompt = prompt \+ userRequirementsRule\(\)/.test(D), 'injectée pour tout musicien (pas le chef)');
+  ok(D.indexOf('prompt = prompt + userRequirementsRule()') > D.indexOf('const promptForLog = prompt;'), 'invisible dans le fil (après promptForLog)');
+}
+
 // ── 8. codex : le --model est respecté, plus de gpt-4o codé en dur (0.25.1) ─
 scenario('codex : choix du model (flag > projet > défaut config > config.toml de codex)');
 {

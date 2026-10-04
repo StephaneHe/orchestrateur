@@ -610,6 +610,38 @@ déjà du chef ».
   `addInitScript`. Elle enregistre chaque énoncé, ce qui permet de vérifier
   le texte réellement envoyé au moteur.
 
+## Toute demande utilisateur devient un test de non-régression (0.36.0)
+
+Règle utilisateur, pour toute la flotte : « que ce soit pour le chef ou pour
+les musiciens, à partir du moment où je fais une demande spécifique à propos
+d'une fonctionnalité, il faut rajouter un test de non-régression pour plus
+tard ».
+
+- **Pour ce projet** : chaque demande est tracée dans
+  `docs/USER_REQUIREMENTS.md` (date, demande verbatim, test associé, version).
+  Les noms de projets privés y sont remplacés par « [projet] ».
+  - Le test doit être ajouté à `regression.mjs`, à `_regression_browser.mjs`
+    ou à une suite `scripts/_test_*.mjs`.
+  - Références : `suite:<fichier>`, `http:<id>`, `nav:<id>`.
+  - `scripts/_test_user_requirements.mjs` échoue si une demande n'a pas de
+    test, si une référence n'existe plus, ou si un nom de projet privé du
+    `config.json` local apparaît.
+  - Un test d'exigence ne se supprime ni ne s'affaiblit sans accord explicite.
+- **Pour les musiciens** : `dispatch.mjs` ajoute `userRequirementsRule()` au
+  prompt de chaque musicien (pas du chef), comme la règle de fin de tour.
+  Elle reste invisible dans le fil (après `promptForLog`).
+- **Pour les nouveaux projets** : `templates/project/CLAUDE.md` porte la règle
+  n° 6, et `templates/project/docs/USER_REQUIREMENTS.md` le registre.
+  `new-project.mjs` copie tout le modèle. Les projets existants reçoivent la
+  consigne par le dispatch, qui leur dit de créer le registre et la suite.
+- **Le chef** : il ne code pas et n'a pas de suite. Son contrat (`I:\Dev\Chef`,
+  un autre projet) doit relayer la règle à chaque demande de fonctionnalité.
+- Recettes :
+  - `_test_user_requirements.mjs` : vrai `dispatch.mjs` avec une doublure de
+    `claude`, modèle de projet, registre ;
+  - `_test_pool_chef_dispatch.mjs` (scénario 7b) ;
+  - `_test_repo_hygiene.mjs` : rien de sensible suivi par git.
+
 ## Attachments
 
 Images uploaded via the dashboard (paste / drag-drop / file picker) land in

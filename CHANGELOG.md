@@ -11,6 +11,45 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-10-04
+
+Règle utilisateur pour toute la flotte : « que ce soit pour le chef ou pour
+les musiciens, à partir du moment où je fais une demande spécifique à propos
+d'une fonctionnalité, il faut rajouter un test de non-régression pour plus
+tard ».
+
+### Added
+- (dispatch) **Règle des exigences utilisateur** ajoutée au prompt de chaque
+  musicien, comme la règle de fin de tour, et invisible dans le fil. Elle
+  demande que :
+  - toute demande sur une fonctionnalité soit protégée par un test automatisé
+    de la suite de non-régression, rejouée à chaque évolution ;
+  - la demande soit tracée dans `docs/USER_REQUIREMENTS.md` (date, demande
+    verbatim, test associé) ;
+  - la suite soit rejouée avant et après toute modification ;
+  - aucun test d'exigence ne soit supprimé ou affaibli sans l'accord
+    explicite de l'utilisateur.
+- (templates) Les nouveaux projets reçoivent la règle n° 6 dans leur
+  `CLAUDE.md` et un modèle `docs/USER_REQUIREMENTS.md`, posés par
+  `new-project.mjs`.
+- `docs/USER_REQUIREMENTS.md` de l'orchestrateur : les 18 demandes déjà
+  livrées (de 0.25.0 à 0.36.0), chacune avec ses tests. Exemples :
+  - question acquittée, aucun fallback de model, `--new-session`, web pour
+    tous ;
+  - vue Projets, autorisations à la création ;
+  - « Vu », arrêt par le chef, journal et cadres, bloc « En cours » retiré ;
+  - plié / déplié, taille du texte, lecture audio.
+- Recettes :
+  - `scripts/_test_user_requirements.mjs` : consigne vérifiée dans le prompt
+    réellement envoyé par `dispatch.mjs` (absente pour le chef et dans le
+    fil), modèle et `new-project.mjs`, registre (chaque demande a un test,
+    chaque référence existe, aucun nom de projet privé) ;
+  - scénario 7b de `_test_pool_chef_dispatch.mjs`.
+- Test manquant ajouté : `scripts/_test_repo_hygiene.mjs` couvre l'exigence
+  « rien n'apparaisse sur le git » (0.29.2). Il vérifie que logs, `.token`,
+  `.env`, `config.json`, `secrets/`, pièces jointes, APK, captures et
+  instances de test ne sont pas suivis, et que `.gitignore` les garde.
+
 ## [0.35.0] - 2026-10-04
 
 Demande utilisateur : « implémente une fonction de lecture audio des réponses,

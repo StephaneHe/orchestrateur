@@ -849,6 +849,21 @@ function backgroundRule(notifyTo) {
     `pour qu'il prévienne lui-même « ${notifyTo} » à la fin — et tu le dis explicitement dans ta réponse.`;
 }
 
+// ---------- règle des exigences utilisateur (0.36.0) ------------------------
+//
+// Règle utilisateur, pour toute la flotte : « à partir du moment où je fais une
+// demande spécifique à propos d'une fonctionnalité, il faut rajouter un test de
+// non-régression pour plus tard ». Même mécanisme que la règle de fin de tour :
+// dans le prompt de chaque musicien, jamais dans le texte affiché.
+function userRequirementsRule() {
+  return `\n\n---\nRÈGLE DES EXIGENCES UTILISATEUR : toute demande de l'utilisateur concernant une fonctionnalité ` +
+    `(comportement voulu, réglage, correction signalée) doit être protégée par un TEST AUTOMATISÉ ajouté à la ` +
+    `suite de non-régression du projet, rejouée à chaque évolution, et tracée dans docs/USER_REQUIREMENTS.md ` +
+    `(date, demande verbatim, test associé). Crée ce fichier et la suite s'ils n'existent pas. Avant toute ` +
+    `modification, rejoue cette suite ; après, rejoue-la et signale tout échec. Un test d'exigence utilisateur ne ` +
+    `peut être ni supprimé ni affaibli sans l'accord explicite de l'utilisateur (demande-le par NEEDS_USER_INPUT).`;
+}
+
 // ---------- callback injection ----------------------------------------------
 
 // promptForLog = original prompt shown in the viewer (no boilerplate).
@@ -863,6 +878,7 @@ if (callbackProject) {
 // Seul `prompt` (ce que reçoit claude) porte la règle ; `promptForLog` reste le
 // texte d'origine, donc le fil et le panneau n'affichent pas ce bloc.
 if (projectName !== CONDUCTOR) prompt = prompt + backgroundRule(callbackProject || CONDUCTOR);
+if (projectName !== CONDUCTOR) prompt = prompt + userRequirementsRule();
 
 // ---------- env scrub -------------------------------------------------------
 
