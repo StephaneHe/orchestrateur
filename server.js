@@ -4152,7 +4152,12 @@ function autoNotifyConductor(musicianName, opts = {}) {
   // a report to the user. No fake user turn, no forced chef response.
 }
 
-app.post('/api/notify', express.json({ limit: '2kb' }), (req, res) => {
+// 0.37.2 — la limite était de 2 Ko : tout résumé un peu long (markdown,
+// tableaux, accents multi-octets) levait « entity too large », que le
+// gestionnaire d'erreurs global renvoyait en 500. D'où le « premier envoi
+// échoue, la version courte passe » chez presque tous les musiciens.
+const NOTIFY_MAX_BODY = '512kb';
+app.post('/api/notify', express.json({ limit: NOTIFY_MAX_BODY }), (req, res) => {
   const { project, text, source } = req.body ?? {};
   if (typeof project !== 'string' || !project) return res.status(400).json({ error: 'missing project' });
   if (typeof text    !== 'string' || !text.trim()) return res.status(400).json({ error: 'missing text' });
@@ -5334,8 +5339,17 @@ startSshServer(console);
 // next(err) inside route handlers. Without this, a buggy route can leave
 // the request hanging without ever logging a stack trace.
 app.use((err, req, res, next) => {
-  crashLog(`EXPRESS ERROR ${req.method} ${req.url}: ${err && err.stack || err}`);
   if (res.headersSent) return next(err);
+  // Erreurs du parseur JSON (body-parser) : ce sont des erreurs du CLIENT, pas
+  // des pannes — un corps trop gros n'est pas un « internal server error ».
+  if (err && err.type === 'entity.too.large') {
+    debugLog(`[http] ${req.method} ${req.url} : corps trop volumineux (${err.length ?? '?'} octets, limite ${err.limit ?? '?'})`);
+    return res.status(413).json({ error: `corps trop volumineux : ${err.length ?? '?'} octets (limite ${err.limit ?? '?'})` });
+  }
+  if (err && (err.type === 'entity.parse.failed' || err.type === 'charset.unsupported' || err.type === 'encoding.unsupported')) {
+    return res.status(400).json({ error: `corps illisible : ${err.message}` });
+  }
+  crashLog(`EXPRESS ERROR ${req.method} ${req.url}: ${err && err.stack || err}`);
   res.status(500).json({ error: 'internal server error' });
 });
 

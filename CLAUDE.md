@@ -683,6 +683,32 @@ aillent après validation ».
   acquittements), parcours HTTP `denials-ack` et navigateur `denial-ack`,
   scénario 7c de `_test_pool_chef_dispatch.mjs`.
 
+## Callback par fichier, résumés longs (0.37.2)
+
+- **Consigne de callback** (`dispatch.mjs`, bloc `if (callbackProject)`) :
+  1. le musicien écrit son résumé avec l'outil **Write** dans
+     `<projet>/.orchestrateur-callback.md` (dans son dossier, donc toujours
+     autorisé) ;
+  2. il lance `node "<orchestrateur>/scripts/notify.mjs" chef --file
+     "<ce fichier>" --source <projet>`.
+
+  notify.mjs supprime le fichier après l'envoi (`--keep` pour le garder).
+  L'ancienne forme (`RESUME="…"` multi-ligne puis `printf | node notify.mjs
+  --stdin`) était refusée par l'analyse de sécurité du CLI. `--stdin` et le
+  texte en argument restent acceptés.
+- **Erreurs 500 de notify** : `/api/notify` limitait le corps à **2 Ko**
+  (`express.json({limit:'2kb'})`). « entity too large » tombait dans le
+  gestionnaire d'erreurs global, qui renvoyait 500. La limite est maintenant
+  `NOTIFY_MAX_BODY = '512kb'`, et le gestionnaire global renvoie **413** pour
+  un corps trop gros et **400** pour un JSON illisible.
+- Repli côté notify.mjs (serveur pas encore redémarré) : sur 413 ou 500 avec
+  un corps de plus de 1 900 octets, le texte est envoyé en parties numérotées
+  « [partie i/n] », coupées aux paragraphes.
+- Recettes : `_test_user_requirements.mjs` (section 1b : consigne réellement
+  injectée avec `--callback`) et parcours HTTP `notify-long` : 20 Ko
+  accentué avec tableau livré en un envoi, texte intact, fichier supprimé ;
+  600 Ko → 413.
+
 ## Attachments
 
 Images uploaded via the dashboard (paste / drag-drop / file picker) land in

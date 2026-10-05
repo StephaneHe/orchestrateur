@@ -882,10 +882,15 @@ function simpleCommandsRule() {
 // prompt       = what actually reaches claude (with injected callback instruction).
 const promptForLog = prompt;
 if (callbackProject) {
-  const notifyPath = path.join(ROOT, 'scripts', 'notify.mjs');
-  // Use printf + --stdin to avoid shell truncation of multi-line or
-  // markdown-rich text (pipes, quotes, newlines break argv on Windows).
-  prompt = prompt + `\n\n---\nUne fois ta tâche terminée — ou si tu as un point important à signaler en cours de route — envoie un résumé au projet « ${callbackProject} » via cette commande Bash (utilise IMPÉRATIVEMENT la forme stdin pour éviter la troncature shell) :\n\n  printf '%s' "ton résumé complet ici" | node "${notifyPath}" ${callbackProject} --stdin --source ${projectName}\n\nSi le résumé contient des sauts de ligne ou du markdown, écris-le dans une variable bash d'abord :\n\n  RESUME="ligne 1\nligne 2\nligne 3"\n  printf '%s' "$RESUME" | node "${notifyPath}" ${callbackProject} --stdin --source ${projectName}\n\nAdapte le contenu au contexte : ce que tu as accompli, découvert, ou la question que tu poses.`;
+  // 0.37.2 — le résumé passe par un FICHIER. L'ancienne consigne (variable
+  // shell multi-ligne RESUME="…" puis printf | node notify.mjs --stdin) était
+  // refusée par l'analyse de sécurité du CLI en mode non interactif, et le
+  // texte long tombait en plus sur la limite de 2 Ko de /api/notify (500).
+  // Write dans le dossier du projet (toujours autorisé), puis une commande
+  // simple ; notify.mjs supprime le fichier après l'envoi.
+  const notifyPath = path.join(ROOT, 'scripts', 'notify.mjs').replace(/\\/g, '/');
+  const cbFile = path.join(project.path, '.orchestrateur-callback.md').replace(/\\/g, '/');
+  prompt = prompt + `\n\n---\nUne fois ta tâche terminée — ou si tu as un point important à signaler en cours de route — envoie un résumé au projet « ${callbackProject} » en DEUX étapes, sans variable shell, heredoc, printf ni pipe (le CLI refuse ces commandes) :\n\n  1. Écris le résumé complet (markdown, tableaux et accents permis, pas de limite de taille gênante) avec l'outil Write dans le fichier :\n     ${cbFile}\n  2. Lance exactement cette commande Bash :\n     node "${notifyPath}" ${callbackProject} --file "${cbFile}" --source ${projectName}\n\nnotify.mjs supprime le fichier après l'envoi (ne le commite pas). Adapte le contenu au contexte : ce que tu as accompli, découvert, ou la question que tu poses.`;
 }
 // Seul `prompt` (ce que reçoit claude) porte la règle ; `promptForLog` reste le
 // texte d'origine, donc le fil et le panneau n'affichent pas ce bloc.

@@ -4,7 +4,7 @@ A local Windows dashboard where one "conductor" AI session pilots a fleet of
 headless coding agents, one per project, with a live web viewer and an
 Android companion app.
 
-`version 0.37.1` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
+`version 0.37.2` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
 
 > **Status: active, personal project.** Built and used daily on a single
 > Windows machine. Pre-1.0: internal APIs and file formats can still change
@@ -160,7 +160,7 @@ node scripts/resolve-question.mjs <project> [--note "answered in chat"]
 node scripts/new-project.mjs <name> [--path <dir>]   # register a project, ready to run
 node scripts/trust-projects.mjs [<name>...] [--dry-run]   # trust + permissions retrofit
 node scripts/kill-stalled.mjs <project> [--reason "…"]   # stop a stalled turn ("stopped by the conductor")
-node scripts/notify.mjs <project> --stdin --source <from>   # post a callback
+node scripts/notify.mjs <project> --file <summary.md> --source <from>   # post a callback
 ```
 
 Main HTTP endpoints: `GET /api/version`, `GET /api/config`,

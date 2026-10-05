@@ -336,6 +336,33 @@ async function apiChecks(sb) {
     const c = await json('/api/config');
     assert(c.projects.find(p => p.name === 'delta').currentState === 'unread', 'l\'acquittement d\'un refus ne change pas l\'état du musicien');
   });
+  // 0.37.2 — exigence : un résumé long (20 Ko, markdown, accents, tableau)
+  // passe du premier coup, envoyé par fichier (notify.mjs --file).
+  await check(S, 'notify-long', 'Callback long par fichier : notify.mjs --file 20 Ko accentué → 200 du premier coup, texte intact, fichier supprimé ; 413 (pas 500) au-delà de la limite', async () => {
+    const notifySrc = fs.readFileSync(path.join(sb.root, 'scripts', 'notify.mjs'), 'utf8');
+    if (!notifySrc.includes("'--file'")) NA('notify.mjs --file absent de cet état du code');
+    const row = '| étape | résultat élevé | « remarque » ça déborde ? |\n';
+    let body = '# Résumé détaillé — tâche terminée\n\nÉté, août, œuvre, ç, ü, 中文, emoji ✓ → ⇄.\n\n| Colonne | Valeur | Commentaire |\n|---|---|---|\n';
+    while (Buffer.byteLength(body) < 20 * 1024) body += row;
+    body += '\nFIN DU RÉSUMÉ LONG';
+    const f = path.join(sb.root, '.orchestrateur-callback.md');
+    fs.writeFileSync(f, body, 'utf8');
+    const r = await new Promise((resolve) => {
+      const c = spawn(process.execPath, [path.join(sb.root, 'scripts', 'notify.mjs'), 'chef', '--file', f, '--source', 'regression'], { cwd: sb.root });
+      let out = '';
+      c.stdout.on('data', d => { out += d; }); c.stderr.on('data', d => { out += d; });
+      c.on('close', code => resolve({ code, out }));
+    });
+    assert(r.code === 0 && /delivered/.test(r.out) && !/parts|HTTP 5/.test(r.out), `notify --file : exit ${r.code} — ${r.out.trim()}`);
+    assert(!fs.existsSync(f), 'le fichier de résumé n\'a pas été supprimé après l\'envoi');
+    const got = readLog('chef').filter(e => e.type === 'user_prompt' && e.source === 'regression').pop();
+    assert(got && got.text === body.trim(), `texte reçu différent (${got ? got.text.length : 0} car. au lieu de ${body.trim().length})`);
+    const direct = await post('/api/notify', { project: 'chef', text: body, source: 'regression' });
+    assert(direct.status === 200, `POST direct 20 Ko : HTTP ${direct.status}`);
+    const huge = await post('/api/notify', { project: 'chef', text: 'x'.repeat(600 * 1024), source: 'regression' });
+    assert(huge.status === 413, `corps de 600 Ko : HTTP ${huge.status} (413 attendu, jamais 500)`);
+    return `${Buffer.byteLength(body)} octets livrés en un envoi`;
+  });
   await check(S, 'mark-read', 'Marquer lu (/api/mark-read) persiste le marqueur', async () => {
     const r = await post('/api/mark-read', { project: 'lambda' });
     assert(r.ok, `HTTP ${r.status}`);

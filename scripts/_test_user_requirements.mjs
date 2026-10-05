@@ -43,14 +43,14 @@ out({ type: 'system', subtype: 'init', session_id: 'sid-u', model: 'claude-opus-
 out({ type: 'assistant', message: { model: 'claude-opus-5-5', content: [{ type: 'text', text: 'fait' }] }, session_id: 'sid-u' });
 out({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, duration_api_ms: 5, result: 'fait', session_id: 'sid-u' });
 `);
-const run = (project, prompt) => {
+const run = (project, prompt, extra = []) => {
   const argsFile = path.join(T, `args-${project}.json`);
   const env = { ...process.env, DISPATCH_ROOT_FOR_TESTS: T, CLAUDE_BIN: STUB, STUB_ARGS: argsFile };
   delete env.ANTHROPIC_API_KEY;
   // Lancée depuis un tour du chef (file, pool), la suite hérite de DISPATCH_SLOT
   // & co : dispatch.mjs se croirait « le chef qui parle » et refuserait chef → chef.
   for (const k of Object.keys(env)) if (/^DISPATCH_/.test(k) && k !== 'DISPATCH_ROOT_FOR_TESTS') delete env[k];
-  const r = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'dispatch.mjs'), project, prompt, '--no-queue-if-busy'],
+  const r = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'dispatch.mjs'), project, prompt, '--no-queue-if-busy', ...extra],
     { env, encoding: 'utf8', timeout: 60_000 });
   let argv = [];
   try { argv = JSON.parse(fs.readFileSync(argsFile, 'utf8')); } catch {}
@@ -75,6 +75,18 @@ const c = run('chef', 'Point sur la flotte');
 ok(c.r.status === 0 && c.prompt && !c.prompt.includes(RULE), 'chef : pas de consigne (il route, il ne code pas)');
 if (!c.prompt) console.log(String(c.r.stderr || '').slice(-800), String(c.r.stdout || '').slice(-400));
 if (!c.prompt) console.log(String(c.r.stderr).slice(-800));
+
+// Exigence 0.37.2 : la consigne de callback passe par un FICHIER (outil Write +
+// notify.mjs --file), sans variable shell multi-ligne que le CLI refuse.
+section('1b. Consigne de callback : résumé par fichier');
+const cb = run('M', 'Corrige le bug de connexion', ['--callback', 'chef']);
+ok(cb.r.status === 0, `dispatch avec --callback chef (exit ${cb.r.status})`);
+const cbFile = path.join(T, 'proj', '.orchestrateur-callback.md').replace(/\\/g, '/');
+ok(cb.prompt.includes(`--file "${cbFile}"`) && /notify\.mjs" chef --file/.test(cb.prompt) && /--source M/.test(cb.prompt), 'consigne : node notify.mjs chef --file "<projet>/.orchestrateur-callback.md" --source M');
+ok(/outil Write/.test(cb.prompt), 'consigne : le résumé est écrit avec l\'outil Write');
+ok(!/RESUME=/.test(cb.prompt) && !/printf '%s'/.test(cb.prompt) && !/--stdin/.test(cb.prompt) && !/\| node/.test(cb.prompt), 'plus de variable RESUME=, de printf \'%s\', de --stdin ni de pipe dans la consigne');
+ok(/sans variable shell, heredoc, printf ni pipe/.test(cb.prompt), 'la consigne dit pourquoi : ces formes sont refusées par le CLI');
+ok(cb.log.filter(e => e.type === 'user_prompt').pop()?.text === 'Corrige le bug de connexion', 'consigne invisible dans le fil');
 fs.rmSync(T, { recursive: true, force: true });
 
 // ---------------------------------------------------------------------------

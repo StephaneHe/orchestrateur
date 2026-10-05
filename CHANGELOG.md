@@ -11,6 +11,44 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.37.2] - 2026-10-05
+
+Signalement utilisateur : le panneau « Bash refusé pendant ce tour :
+RESUME="…" … c'est cet appel précis que le CLI a refusé » apparaissait sur
+l'envoi du résumé au chef. Presque tous les musiciens avaient aussi des
+« erreur 500 » de notify.mjs sur les résumés longs : le premier envoi
+échouait, une version courte passait.
+
+### Fixed
+- (server) **Cause des 500** : `/api/notify` limitait le corps à 2 Ko. Au-delà
+  (tout résumé un peu long, d'autant que les accents comptent plusieurs
+  octets), Express levait « entity too large », que le gestionnaire d'erreurs
+  global renvoyait en 500.
+  - La limite passe à 512 Ko.
+  - Le gestionnaire renvoie désormais 413 (corps trop gros) ou 400 (JSON
+    illisible), jamais 500 pour une erreur du client.
+- (dispatch) **Consigne de callback** : elle ne demande plus une variable shell
+  multi-ligne suivie de `printf | node notify.mjs --stdin`, que l'analyse de
+  sécurité du CLI refuse en mode non interactif. Le musicien écrit son résumé
+  avec l'outil Write dans `<projet>/.orchestrateur-callback.md`, puis lance
+  une seule commande simple : `node …/notify.mjs chef --file "<fichier>"
+  --source <projet>`.
+
+### Added
+- `notify.mjs --file <chemin>` : lecture UTF-8 (BOM retiré). Le fichier est
+  supprimé après l'envoi (`--keep` pour le garder), et le message d'erreur du
+  serveur est affiché. Contre un serveur pas encore redémarré, un texte trop
+  long pour l'ancienne limite est envoyé en parties numérotées plutôt que
+  perdu.
+- Recettes :
+  - `_test_user_requirements.mjs` : la consigne réellement injectée avec
+    `--callback` contient la forme `--file`, sans `RESUME=`, `printf '%s'`,
+    `--stdin` ni pipe ;
+  - parcours HTTP `notify-long` : 20 Ko accentué (markdown, tableau) livré du
+    premier coup, texte intact, fichier supprimé ; 600 Ko → 413 et non 500.
+
+  Exigence ajoutée au registre `docs/USER_REQUIREMENTS.md`.
+
 ## [0.37.1] - 2026-10-05
 
 Précision de l'utilisateur, avec le texte exact du panneau : « 🚫 PowerShell
