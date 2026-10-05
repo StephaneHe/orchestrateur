@@ -527,8 +527,7 @@ donnait qu'un accès au log brut.
   - `turn-core.js` est chargé par le **serveur au démarrage** : une
     modification de ce fichier demande un redémarrage pour le journal servi.
     Sans ces champs (ancien serveur), le contrôle n'apparaît pas.
-- **Cadres** : 2ᵉ partie verticale du Pilotage, un cadre par musicien non
-  parqué. Tri : tours en cours d'abord, puis `lastActivityAt` de
+- **Cadres** : 2ᵉ partie verticale du Pilotage, un cadre par musicien. Tri : tours en cours d'abord, puis `lastActivityAt` de
   `/api/pupitre`. Depuis 0.32.0, il n'y a plus de bloc « En cours » au-dessus
   (il doublonnait les cadres) : le haut ne montre que « À examiner ». Le cadre
   d'un tour en cours porte la durée du tour (« tour N min »), sa file (⏳ n) et
@@ -708,6 +707,30 @@ aillent après validation ».
   injectée avec `--callback`) et parcours HTTP `notify-long` : 20 Ko
   accentué avec tableau livré en un envoi, texte intact, fichier supprimé ;
   600 Ko → 413.
+
+## Plus de « mis de côté » (0.38.0)
+
+Demande utilisateur : « Ce concept de mis de cote n'a plus d'interet. Fais une
+etude du code, et supprime le concept. Fais attention a ne rien supprimer
+d'autre ». Un projet remis en activité restait hors de la liste principale.
+
+- Supprimés : le champ `parked` (config.json, `/api/config`,
+  `/api/pupitre`), `healthTracked`, le cache de 60 s des projets parqués, la
+  route `POST /api/project/:name/park`, le bouton ⊟ et le menu « Mettre de
+  côté / Remettre en avant », le groupe « Mis de côté » du rail, le groupe
+  « Parqués » de la vue Projets, les badges PARQUÉ / MIS DE CÔTÉ / PARKED,
+  l'étagère « En attente » (code mort), et leur équivalent dans l'app Android
+  (0.8.0).
+- **Tous les projets sont traités pareil** : liste principale, cadres,
+  attention et santé (stall, processus perdu).
+- Un ancien `"parked": true` resté dans un config.json est **ignoré**. Les
+  fixtures de régression le gardent sur zeta et eta pour le prouver.
+- Ne pas réintroduire de notion équivalente sans demande explicite.
+  Recettes : `_test_projects_view.mjs` (section 4), parcours HTTP `no-parked`
+  et navigateur `groups`, `tiles`, `only`, `cards-order`.
+- Retour arrière : `git revert` jusqu'au tag `pre-remove-parked-v0.37.2`. La
+  copie du config.json d'avant est dans
+  `.tmp/config.before-remove-parked.json` (locale, non versionnée).
 
 ## Attachments
 

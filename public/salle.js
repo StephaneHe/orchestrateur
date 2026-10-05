@@ -4,7 +4,7 @@
 //
 // Rendu de la nouvelle conversation de direction, hors du fil lui-même :
 //   · en-tête chef (état unique, sans carte dupliquée)
-//   · rail PILOTAGE (EN COURS / À EXAMINER / Tous / Mis de côté)
+//   · rail PILOTAGE (EN COURS / À EXAMINER / Tous)
 //   · bande d'attention + bandeau système unique
 //   · lignes de mission (tour du chef) et « activité de l'orchestre »
 //   · volet musicien routé par hash (#/m/<projet>) à trois onglets
@@ -257,7 +257,7 @@
     const snap = App.pupitreSnapshot;
     const banners = [];
 
-    const dead = (snap?.fleet || []).filter(r => r.deadInFlight === true && !r.parked);
+    const dead = (snap?.fleet || []).filter(r => r.deadInFlight === true);
     if (dead.length) {
       banners.push({ kind: "lost", text: `✗ processus perdu — ${dead.map(r => r.name).join(", ")}` });
     }
@@ -296,7 +296,6 @@
     const out = [];
     for (const m of App.musicians.values()) {
       if (m.name === App.composer.CONDUCTOR) continue;
-      if (m.parked) continue;                       // santé non suivie
       const r = snapRow(m.name);
       const needs = r?.needsInput || (m.state === "input" ? m.lastLine : "");
       if (m.state === "input") {
@@ -408,7 +407,6 @@
     pendingSince: {},     // clé de groupe → début de la permutation en attente
     hovered: false,
     foldAll: true,        // « Tous les musiciens » replié par défaut
-    foldParked: true,
     foldCards: false,     // cadres des musiciens dépliés par défaut (0.31.0)
     open: false,          // mobile : feuille ouverte ?
   };
@@ -441,9 +439,7 @@
     const h = healthFlag(r);
     const stale = snapStale();
     const bits = [];
-    if (m.parked) {
-      bits.push(`<span class="rr-soft">santé non suivie</span>`);
-    } else if (h) {
+    if (h) {
       bits.push(`<span class="rr-warn">${esc(h.text)}</span>`);
     } else if (r && (m.state === "live" || m.state === "think")) {
       const act = r.activity ? String(r.activity).slice(0, 48) : "";
@@ -459,7 +455,7 @@
     } else if (m.lastLine) {
       bits.push(`<span class="rr-soft">${esc(m.lastLine.slice(0, 50))}</span>`);
     }
-    if (stale && !m.parked) bits.push(`<span class="rr-soft">(données anciennes)</span>`);
+    if (stale) bits.push(`<span class="rr-soft">(données anciennes)</span>`);
     const alert = h ? " is-alert" : "";
     const stoppedAttr = m.stopped && m.state === "error" ? ' data-stopped="1"' : "";
     const row = `<button class="rail-row${alert}" data-state="${esc(m.state)}" data-name="${esc(m.name)}"${stoppedAttr} type="button">
@@ -488,8 +484,7 @@
   function railGroups() {
     const CONDUCTOR = App.composer.CONDUCTOR;
     const all = [...App.musicians.values()].filter(m => m.name !== CONDUCTOR);
-    const active = all.filter(m => !m.parked);
-    const parked = all.filter(m => m.parked);
+    const active = all;
 
     const inFlight = active.filter(m => m.state === "live" || m.state === "think");
     const examine = active.filter(m => {
@@ -504,7 +499,7 @@
              (m.state === "unread" && m.awaitingChef);
     });
     const running = inFlight.filter(m => !examine.includes(m));
-    return { all, active, parked, running, examine };
+    return { all, active, running, examine };
   }
 
   // ------------------------------------------------------------------------
@@ -512,7 +507,7 @@
   // musicien, du plus récemment actif au plus ancien. L'état et son mot
   // viennent de la vue Projets (Projets.describe) : une seule classification.
   // Même règle de stabilité que les groupes (permutation différée, jamais sous
-  // le pointeur). Parqués exclus : ils restent dans « Mis de côté ».
+  // le pointeur).
   // ------------------------------------------------------------------------
   // Source : `lastActivityAt` de /api/pupitre (horodatage du dernier vrai
   // événement, sinon mtime du log), rafraîchi toutes les 5 s. Pas
@@ -549,7 +544,7 @@
       const mn = Math.floor(r.turnElapsedMs / 60000);
       age = mn < 1 ? "tour < 1 min" : mn < 60 ? `tour ${mn} min` : `tour ${Math.floor(mn / 60)} h ${String(mn % 60).padStart(2, "0")}`;
     }
-    if (snapStale() && !m.parked) age += " · données anciennes";
+    if (snapStale()) age += " · données anciennes";
     const q = r?.queueDepth > 0 ? `<span class="rc-chip" title="tâches en file derrière son tour">⏳ ${r.queueDepth}</span>` : "";
     let line = "";
     if (m.state === "error" && m.stopped) line = m.stopped.reason || "arrêté par la supervision du chef";
@@ -612,15 +607,6 @@
         ${railState.foldAll ? "" : othersList.map(m => railRowHtml(m)).join("")}
       </div>`;
 
-    const parkedList = [...g.parked].sort((a, b) => a.name.localeCompare(b.name));
-    const parkedBlock = g.parked.length ? `<div class="rail-group">
-        <button class="rail-group-head" type="button" data-fold="parked">
-          Mis de côté <span class="rg-n">(${g.parked.length})</span>
-          <span class="rg-caret">${railState.foldParked ? "▸" : "▾"}</span>
-        </button>
-        ${railState.foldParked ? "" : parkedList.map(m => railRowHtml(m)).join("")}
-      </div>` : "";
-
     const empty = cardsOn
       ? (g.examine.length ? "" : `<div class="rail-empty">Rien à examiner.</div>`)
       : ((!g.running.length && !g.examine.length) ? `<div class="rail-empty">Aucun musicien en cours ni à examiner.</div>` : "");
@@ -640,11 +626,11 @@
       }
       const top = body.querySelector(":scope > .rail-top");
       const bottom = body.querySelector(":scope > .rail-bottom");
-      const th = running + examine + empty, bh = others + parkedBlock;
+      const th = running + examine + empty, bh = others;
       if (top._html !== th) { top.innerHTML = th; top._html = th; }
       if (bottom._html !== bh) { bottom.innerHTML = bh; bottom._html = bh; }
     } else {
-      const html = running + examine + empty + others + parkedBlock;
+      const html = running + examine + empty + others;
       if (body._html !== html) { body.innerHTML = html; body._html = html; }
     }
     renderMobilePilot(g);
@@ -676,7 +662,6 @@
       if (fold) {
         if (fold.dataset.fold === "all") railState.foldAll = !railState.foldAll;
         else if (fold.dataset.fold === "cards") railState.foldCards = !railState.foldCards;
-        else railState.foldParked = !railState.foldParked;
         renderRail();
         return;
       }
@@ -813,7 +798,7 @@
     }
     const items = [];
     for (const m of App.musicians.values()) {
-      if (m.name === App.composer.CONDUCTOR || m.parked) continue;
+      if (m.name === App.composer.CONDUCTOR) continue;
       if (m.state !== "live" && m.state !== "think") continue;
       if (piloted.has(m.name)) continue;
       items.push({ name: m.name, started: true, outcome: null });
@@ -970,8 +955,7 @@
     // Sous-titre : le rôle du musicien + sa mission si le chef l'a lancée.
     const mission = findMission(dive.name);
     const sub = $(".dive-sub", el);
-    if (m && m.parked) sub.textContent = "Musicien mis de côté · santé non suivie";
-    else if (mission) sub.textContent = `Musicien piloté par le chef · mission lancée ${new Date(mission.launchedAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
+    if (mission) sub.textContent = `Musicien piloté par le chef · mission lancée ${new Date(mission.launchedAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
     else sub.textContent = "Musicien de l'orchestre";
 
     // Ligne d'état + télémétrie (mêmes champs que /pupitre).
@@ -992,9 +976,7 @@
     }
 
     const meta = $(".dive-meta", el);
-    if (m && m.parked) {
-      meta.textContent = "santé non suivie (projet mis de côté) — aucun scan périodique";
-    } else if (!r) {
+    if (!r) {
       meta.textContent = "instantané non disponible pour ce musicien";
     } else {
       const el2 = App.pupitreRecvPerf ? (performance.now() - App.pupitreRecvPerf) : 0;
@@ -1293,7 +1275,6 @@
       adv.innerHTML =
         `<button class="da-item" data-adv="direct">Envoyer directement à ${esc(dive.name)}…</button>` +
         `<div class="da-sep"></div>` +
-        `<button class="da-item" data-adv="park">${m && m.parked ? "Remettre en avant" : "Mettre de côté"}</button>` +
         `<button class="da-item" data-adv="session">Session Claude…</button>` +
         `<button class="da-item" data-adv="read">Marquer lu</button>` +
         `<a class="da-item" href="/pupitre" target="_blank" rel="noopener">Ouvrir /pupitre</a>`;
@@ -1306,7 +1287,6 @@
       const m = App.musicians.get(dive.name);
       if (!m) return;
       if (b.dataset.adv === "direct")  App.sendDirectTo(m.name);
-      if (b.dataset.adv === "park")    m.parked ? App.unparkProject(m.name) : App.parkProject(m);
       if (b.dataset.adv === "session") App.openSession(m);
       if (b.dataset.adv === "read")    { m.markRead(); renderRail(); }
     });
@@ -1346,8 +1326,7 @@
       <button class="psr-row${i === 0 ? " is-sel" : ""}" data-name="${esc(m.name)}" data-state="${esc(m.state)}" type="button">
         <span class="pr-dot"></span>
         <span class="pr-name">${esc(m.name)}</span>
-        ${m.parked ? `<span class="pr-parked">MIS DE CÔTÉ</span>` : ""}
-        ${m.name === App.composer.CONDUCTOR ? `<span class="pr-parked">CHEF</span>` : ""}
+        ${m.name === App.composer.CONDUCTOR ? `<span class="pr-tag">CHEF</span>` : ""}
         <span class="pr-state">${esc(glyph(m))} ${esc(label(m))}</span>
       </button>`).join("");
   }

@@ -11,8 +11,10 @@
 //    fichier jette toujours sa ligne partielle).
 // 2. Le VRAI classement de public/projets.js (chargé dans une VM avec le vrai
 //    public/salle.js) : groupe et sorte pour chaque cas de la flotte.
-// 3. server.js : la route /api/pupitre scanne les parqués (plus d'« idle »
-//    forcé), expose ui/version/build, et relit `ui` à chaud.
+// 3. server.js : la route /api/pupitre traite tous les projets pareil (plus de
+//    « mis de côté » depuis 0.38.0), expose ui/version/build, relit `ui` à chaud.
+// 4. Exigence 0.38.0 : aucun projet n'est exclu par un ancien marqueur
+//    « parked » (le config.json local, s'il existe, n'en porte plus).
 //
 // Aucun port ouvert, aucun fichier du projet écrit.
 //   node scripts/_test_projects_view.mjs
@@ -84,7 +86,7 @@ vm.createContext(ctx);
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'public', 'salle.js'), 'utf8'), ctx);
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'public', 'projets.js'), 'utf8'), ctx);
 const classify = ctx.Projets.classify;
-const M = (state, extra = {}) => ({ name: 'x', state, parked: false, awaitingChef: false, ...extra });
+const M = (state, extra = {}) => ({ name: 'x', state, awaitingChef: false, ...extra });
 const cases = [
   ['question',             M('input'),                              {},                               'attention', 'question'],
   ['processus perdu',      M('live'),                               { deadInFlight: true },            'attention', 'dead'],
@@ -97,10 +99,10 @@ const cases = [
   ['en file sans tour',    M('idle'),                               { queueDepth: 2 },                'active',    'queued'],
   ['terminé non lu',       M('unread'),                             {},                               'rest',      'unread'],
   ['prêt',                 M('idle'),                               {},                               'rest',      'idle'],
-  ['parqué au repos',      M('unread', { parked: true }),           {},                               'parked',    'parked'],
-  ['parqué avec question', M('input', { parked: true }),            {},                               'attention', 'question'],
-  ['parqué en cours',      M('live', { parked: true }),             {},                               'active',    'live'],
-  ['parqué : santé non suivie', M('live', { parked: true }),        { stalled: true, deadInFlight: true }, 'active', 'live'],
+  // Ancien marqueur « parked » (concept supprimé en 0.38.0) : ignoré.
+  ['ancien marqueur parked, au repos',  M('unread', { parked: true }), { parked: true }, 'rest',      'unread'],
+  ['ancien marqueur parked, en cours',  M('live', { parked: true }),   { parked: true }, 'active',    'live'],
+  ['ancien marqueur parked : santé suivie', M('live', { parked: true }), { parked: true, deadInFlight: true }, 'attention', 'dead'],
 ];
 for (const [label, m, r, group, kind] of cases) {
   const c = classify(m, r);
@@ -110,12 +112,25 @@ for (const [label, m, r, group, kind] of cases) {
 console.log('\n── 3. server.js');
 const SRC = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
 const route = SRC.slice(SRC.indexOf("app.get('/api/pupitre'"), SRC.indexOf("app.get('/api/pupitre'") + 2500);
-ok(!/state:\s*'idle'\s*}/.test(route), "/api/pupitre ne force plus « idle » pour les parqués");
-ok(/PUPITRE_PARKED_CACHE_MS/.test(route) && /healthTracked/.test(route), 'parqués scannés (cache 60 s), healthTracked exposé');
+ok(!/state:\s*'idle'\s*}/.test(route), "/api/pupitre ne force jamais « idle »");
+ok(!/parked/i.test(SRC) && !/healthTracked/.test(SRC) && !/PUPITRE_PARKED_CACHE_MS/.test(SRC), 'server.js : plus aucune trace du concept « mis de côté » (parked, healthTracked)');
+ok(!/app\.post\('\/api\/project\/:name\/park'/.test(SRC), 'route /api/project/:name/park supprimée');
 ok(/ui:\s*uiFlags\(\)/.test(route) && /version:\s*meta\.version/.test(route), 'ui, version et build exposés');
 ok(/config\.ui\s*=\s*parsed\.ui/.test(SRC) && /uiChanged/.test(SRC), '`ui` relu à chaud avec signal fleet_config_changed');
 const metaFn = SRC.slice(SRC.indexOf('async function refreshProjectMeta'), SRC.indexOf('function projectMetaFor'));
 ok(/fsp\./.test(metaFn) && !/fs\.(readFileSync|statSync|existsSync)/.test(metaFn), 'métadonnées lues en asynchrone uniquement (jamais de I/O synchrone sur I:\\Dev)');
+
+console.log('\n── 4. Plus de « mis de côté » (exigence 0.38.0)');
+for (const f of ['public/app.js', 'public/salle.js', 'public/projets.js', 'public/index.html', 'public/pupitre-row.js']) {
+  const t = fs.readFileSync(path.join(ROOT, f), 'utf8');
+  ok(!/\bparked\b|parkProject|unparkProject|Mis de côté|Mettre de côté|PARQUÉ|Parqués/.test(t), `${f} : plus aucune trace du concept`);
+}
+ok(!ctx.Projets.describe || ctx.Projets.describe({ name: 'p', state: 'idle', parked: true }, { parked: true }).group === 'rest', 'Projets.describe : un projet marqué « parked » est au repos comme les autres');
+const cfgPath = path.join(ROOT, 'config.json');
+if (fs.existsSync(cfgPath)) {
+  const stale = JSON.parse(fs.readFileSync(cfgPath, 'utf8')).projects.filter(p => 'parked' in p).map(p => p.name);
+  ok(stale.length === 0, `config.json local : aucun projet ne porte encore le marqueur « parked »${stale.length ? ' — ' + stale.join(', ') : ''}`);
+}
 
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${fail === 0 ? '✓' : '✗'} ${pass} réussis, ${fail} échoués`);

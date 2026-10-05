@@ -135,7 +135,6 @@ class Musician {
     this._toolIdToName  = {};            // tool_use_id → name within current turn
     this._toolUses      = {};            // tool_use_id → {name, input} : l'aperçu d'un refus en dépend
 
-    this.parked   = project.parked   || false;
     this.provider = project.provider || 'claude';
   }
 
@@ -332,7 +331,6 @@ class Musician {
         <div class="m-corner m-corner-r">${corner}</div>
         <div class="m-tools">
           <button class="m-tool" data-act="session" title="Session Claude">⌬</button>
-          <button class="m-tool" data-act="park" title="Mettre de côté">⊟</button>
           <button class="m-tool danger" data-act="remove" title="Retirer de l'orchestre">✕</button>
         </div>
         <header class="m-header">
@@ -353,12 +351,10 @@ class Musician {
     el.addEventListener("click", (e) => {
       const act = e.target.closest("[data-act]")?.dataset.act;
       if (act === "session") { e.stopPropagation(); App.openSession(this); return; }
-      if (act === "park")    { e.stopPropagation(); App.parkProject(this); return; }
       if (act === "remove")  { e.stopPropagation(); App.removeProject(this); return; }
       App.openFocused(this);
     });
     this.el = el;
-    if (this.parked) el.classList.add("is-parked");
     return el;
   }
 
@@ -3632,54 +3628,6 @@ const App = {
     } catch (err) {
       alert("Suppression échouée : " + (err.message || err));
     }
-  },
-
-  // ---------- Parked shelf ----------
-
-  renderParkedShelf() {
-    const shelf = document.getElementById("parked-shelf");
-    if (!shelf) return;
-    const parked = [...this.musicians.values()]
-      .filter(m => m.parked && m.name !== this.composer.CONDUCTOR);
-    shelf.hidden = parked.length === 0;
-    if (!parked.length) { shelf.innerHTML = ""; return; }
-    shelf.innerHTML =
-      `<div class="psh-header">EN ATTENTE <span class="psh-count">${parked.length}</span></div>` +
-      parked.map(m => {
-        const st = STATE_LABELS[m.state] || STATE_LABELS.idle;
-        const last = esc((m.lastLine || "—").slice(0, 90));
-        return `<div class="psh-strip" data-name="${esc(m.name)}" data-state="${esc(m.state)}">
-          <span class="psh-dot"></span>
-          <span class="psh-name">${esc(m.name)}</span>
-          <span class="psh-state">${esc(st.icon)}&thinsp;${esc(st.label)}</span>
-          <span class="psh-last">${last}</span>
-          <button class="psh-unpark" data-name="${esc(m.name)}" title="Remettre en avant">⊞</button>
-        </div>`;
-      }).join("");
-  },
-
-  parkProject(m) {
-    m.parked = true;
-    m.el?.classList.add("is-parked");
-    this.relayout();
-    fetch(`/api/project/${encodeURIComponent(m.name)}/park`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ parked: true }),
-    }).catch(() => {});
-  },
-
-  unparkProject(name) {
-    const m = this.musicians.get(name);
-    if (!m) return;
-    m.parked = false;
-    m.el?.classList.remove("is-parked");
-    this.relayout();
-    fetch(`/api/project/${encodeURIComponent(name)}/park`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ parked: false }),
-    }).catch(() => {});
   },
 
   // ---------- Session picker ----------

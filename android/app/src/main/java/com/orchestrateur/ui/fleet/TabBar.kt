@@ -51,8 +51,8 @@ fun TabBar(
     // Sort by activity priority only. sortedBy is STABLE, so musicians at equal
     // priority keep their existing (config) order — no erratic reshuffling. The
     // remember key includes each state, so the bar re-sorts live on state change.
-    val others = remember(musicians, musicians.map { it.state }, musicians.map { it.parked }, activeTab) {
-        musicians.filter { it.name != CONDUCTOR && !it.parked }
+    val others = remember(musicians, musicians.map { it.state }, activeTab) {
+        musicians.filter { it.name != CONDUCTOR }
             .sortedBy { tabPriority(it, activeTab) }
     }
 

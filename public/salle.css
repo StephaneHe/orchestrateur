@@ -551,7 +551,7 @@
 .psr-row .pr-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--state-color); flex-shrink: 0; }
 .psr-row .pr-name { font-family: var(--font-mono); font-size: 0.75rem; color: var(--fg-0); font-weight: 600; }
 .psr-row .pr-state { font-family: var(--font-mono); font-size: 0.625rem; color: var(--state-color); margin-left: auto; }
-.psr-row .pr-parked { font-family: var(--font-mono); font-size: 0.5625rem; color: var(--fg-3); letter-spacing: 0.1em; }
+.psr-row .pr-tag { font-family: var(--font-mono); font-size: 0.5625rem; color: var(--fg-3); letter-spacing: 0.1em; }
 .psr-empty { color: var(--fg-3); font-size: 0.75rem; padding: 12px; font-style: italic; }
 
 /* ---------- Pied de page : version serveur ---------- */

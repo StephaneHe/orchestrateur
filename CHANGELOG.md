@@ -11,6 +11,61 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-10-05
+
+Demande utilisateur : « [un projet] était un projet mis de côté, maintenant
+qu'il est actif il n'est quand même pas revenu dans la liste principale. Ce
+concept de mis de côté n'a plus d'intérêt. Fais une étude du code, et supprime
+le concept. Fais attention à ne rien supprimer d'autre. »
+
+### Removed
+- (server) Champ `parked` de `/api/config` et `/api/pupitre`, champ
+  `healthTracked`, cache de 60 s des projets parqués
+  (`PUPITRE_PARKED_CACHE_MS`), route `POST /api/project/:name/park`. Tous les
+  projets sont désormais scannés de la même façon.
+- (viewer) Le concept « mis de côté » dans le dashboard :
+  - bouton ⊟ des cartes et entrée « Mettre de côté / Remettre en avant » du
+    menu du volet ;
+  - groupe « Mis de côté » du rail Pilotage ;
+  - groupe « Parqués » de la vue Projets, avec son compteur, son repli et son
+    badge PARQUÉ ;
+  - badge MIS DE CÔTÉ de l'annuaire et badge PARKED de `/pupitre` ;
+  - mentions « santé non suivie » ;
+  - étagère « En attente », qui était du code mort (jamais appelée, élément
+    absent de la page), et ses styles.
+- (android, 0.8.0, versionCode 18) Même concept dans l'app :
+  - filtres `!parked` des listes, des onglets et de l'attention ;
+  - section « Mis de côté » de la feuille Pilotage ;
+  - compteur « mis de côté » ;
+  - libellés « santé non suivie » ;
+  - fonction `parkProject`.
+- (config) La clé `parked` a été retirée des 13 projets qui la portaient
+  dans le config.json local, en une écriture atomique ciblée : seules ces
+  lignes ont changé. Elle est aussi retirée de `config.example.json`.
+
+### Changed
+- La classe CSS `pr-parked`, qui servait aussi au badge « CHEF » de
+  l'annuaire, est renommée `pr-tag` (style inchangé).
+
+### Added
+- Test d'exigence : un ancien `"parked": true` resté dans un config.json est
+  ignoré. Aucun projet n'est exclu de la liste principale, des cadres ni de la
+  vue Projets. Il est vérifié par :
+  - `_test_projects_view.mjs` (section 4, dont le config.json local) ;
+  - le parcours HTTP `no-parked` ;
+  - les parcours navigateur `groups` / `tiles` / `only` / `cards-order`.
+
+  Les fixtures gardent ce marqueur sur zeta et eta. Exigence ajoutée au
+  registre `docs/USER_REQUIREMENTS.md`.
+
+### Notes
+- Conservé volontairement : tous les projets, logs, sessions et files ; les
+  vues Projets et Pilotage avec leurs autres groupes ; « Retirer de
+  l'orchestre » ; le repli « Tous les musiciens » (quand les cadres sont
+  désactivés) ; l'historique (CHANGELOG, TODO_LIST, documents de conception
+  datés).
+- Retour arrière : tag `pre-remove-parked-v0.37.2`.
+
 ## [0.37.2] - 2026-10-05
 
 Signalement utilisateur : le panneau « Bash refusé pendant ce tour :

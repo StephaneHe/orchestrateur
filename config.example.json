@@ -17,8 +17,7 @@
     {
       "name": "example-tool",
       "path": "I:\\Dev\\example-tool",
-      "tools": "Read,Edit,Write,Bash,WebFetch,WebSearch,Grep,Glob,Agent",
-      "parked": false
+      "tools": "Read,Edit,Write,Bash,WebFetch,WebSearch,Grep,Glob,Agent"
     }
   ],
   "ui": { "projectsView": true }

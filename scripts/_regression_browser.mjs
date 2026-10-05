@@ -387,18 +387,20 @@ export async function browserChecks(sb, t) {
       for (const n of ['gamma', 'theta', 'iota', 'eta']) assert(g.attention.includes(n), `${n} pas dans Attention`);
       assert(g.attention[0] === 'eta', `la question doit être en tête (${g.attention.join(',')})`);
       for (const n of ['eps', 'delta']) assert(g.active.includes(n), `${n} pas dans Actifs`);
-      for (const n of ['alpha', 'lambda', 'beta', 'mu']) assert(g.rest.includes(n), `${n} pas au Repos`);
-      assert(g.parked.length === 1 && g.parked[0] === 'zeta', `parqués : ${g.parked}`);
+      for (const n of ['alpha', 'lambda', 'beta', 'mu', 'zeta']) assert(g.rest.includes(n), `${n} pas au Repos`);
+      // 0.38.0 : plus de groupe « Parqués » ; zeta (ancien marqueur) est au repos.
+      assert(!('parked' in g), 'groupe « Parqués » encore présent');
+      assert(g.rest.includes('zeta'), `zeta (ancien marqueur) pas au Repos : ${JSON.stringify(g)}`);
       return JSON.stringify(g);
     });
     await pv('tiles', 'tuiles : sorte, mot d\'état visible, badges, chips, aria-label', async () => {
       const k = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('.pv-tile')].map(b => [b.dataset.name, {
         kind: b.dataset.kind, word: b.querySelector('.pv-word')?.textContent || '', aria: b.getAttribute('aria-label') || '', text: b.textContent }])));
       // alpha : son volet a été ouvert plus haut ⇒ marqué lu ⇒ « Prêt ».
-      const want = { iota: 'dead', theta: 'stall', gamma: 'error', eta: 'question', eps: 'live', delta: 'chef', zeta: 'parked', alpha: 'idle', lambda: 'idle' };
+      const want = { iota: 'dead', theta: 'stall', gamma: 'error', eta: 'question', eps: 'live', delta: 'chef', alpha: 'idle', lambda: 'idle' };
       for (const [n, kind] of Object.entries(want)) assert(k[n]?.kind === kind, `${n} : ${k[n]?.kind} ≠ ${kind}`);
       for (const [n, x] of Object.entries(k)) assert(x.word.trim() && x.aria.startsWith(n), `${n} sans mot ou aria-label`);
-      assert(/PARQUÉ/.test(k.eta.text), 'badge PARQUÉ sur eta');
+      assert(!Object.values(k).some(x => /PARQUÉ/.test(x.text)), 'badge PARQUÉ encore affiché');
       assert(/CHEF/.test(k.chef.text), 'badge CHEF');
       assert(/⏳ 1/.test(k.eps.text) && /⇄ chef/.test(k.eps.text), `chips eps : ${k.eps.text}`);
       assert(/jamais observé/.test(k.omega?.text || '') || /il y a|instant/.test(k.omega?.text || ''), 'âge omega');
@@ -412,7 +414,7 @@ export async function browserChecks(sb, t) {
     await pv('only', 'compteur « Attention » isole le groupe, second clic annule', async () => {
       await page.click('#projects .pv-count[data-only="attention"]');
       const hid = await page.evaluate(() => [...document.querySelectorAll('.pv-section')].filter(s => s.hidden).map(s => s.dataset.group));
-      assert(hid.sort().join() === 'active,parked,rest', `masqués : ${hid}`);
+      assert(hid.sort().join() === 'active,rest', `masqués : ${hid}`);
       await page.click('#projects .pv-count[data-only="attention"]');
       assert(await page.evaluate(() => [...document.querySelectorAll('.pv-section')].every(s => !s.hidden)), 'non rétabli');
     });
@@ -549,7 +551,8 @@ export async function browserChecks(sb, t) {
       assert(sorted(order),
         `ordre : ${order.map(x => `${x.n}(${x.s})`).join(' > ')}`);
       assert(order[order.length - 1].t === 0 || order.every(x => x.t > 0), 'jamais observé hors de la fin');
-      assert(!order.some(x => x.n === 'zeta' || x.n === 'chef'), 'parqués ou chef dans les cadres');
+      assert(!order.some(x => x.n === 'chef'), 'chef dans les cadres');
+      assert(order.some(x => x.n === 'zeta') && order.some(x => x.n === 'eta'), 'un projet à l\'ancien marqueur « parked » manque dans les cadres');
       const card = await page.textContent('.rail-card[data-name="alpha"]');
       assert(/il y a|à l'instant/.test(card), `âge absent : ${card}`);
       return order.map(x => x.n).join(' > ');

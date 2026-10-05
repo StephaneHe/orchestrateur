@@ -5,7 +5,7 @@
 // Construit, depuis n'importe quel état du code (ref git, dossier, ou l'arbre
 // de travail), une copie jetable sous `.regress/` et y lance le VRAI server.js
 // sur un port libre, avec :
-//   · une flotte de fixtures (14 projets couvrant tous les états, parqués,
+//   · une flotte de fixtures (14 projets couvrant tous les états, dont deux qui gardent l'ancien marqueur « parked »,
 //     file, question, stall, processus perdu, question acquittée…) ;
 //   · `CLAUDE_BIN` → tests/fake_claude (aucun appel réseau, aucun coût) ;
 //   · 7777 réécrit dans server.js ET dans les scripts copiés (dispatch, notify,
@@ -133,8 +133,7 @@ const result = (extra = {}) => ({ type: 'result', subtype: 'success', is_error: 
 export const FIXTURE_EXPECT = {
   attention: ['gamma', 'theta', 'iota', 'eta', 'beta', 'mu'],   // beta/mu : jusqu'à leur acquittement
   active: ['eps', 'delta'],
-  rest: ['chef', 'alpha', 'lambda', 'kappa', 'omega'],
-  parked: ['zeta'],
+  rest: ['chef', 'alpha', 'lambda', 'kappa', 'omega', 'zeta'],
 };
 
 function fleetFixtures(root, keepAlivePid) {
@@ -190,6 +189,8 @@ function writeFixtures(root, keepAlivePid) {
   const config = {
     conductor: 'chef',
     defaults: { allowedTools: 'Read,Edit,Write,Bash,WebFetch,WebSearch,Grep,Glob', provider: 'claude' },
+    // zeta et eta gardent l'ancien marqueur « parked » (concept supprimé en
+    // 0.38.0) : il doit être IGNORÉ, comme dans un config.json pas encore nettoyé.
     projects: names.map(n => ({ name: n, path: path.join(projDir, n), ...(n === 'zeta' || n === 'eta' ? { parked: true } : {}) })),
   };
   fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify(config, null, 2) + '\n');

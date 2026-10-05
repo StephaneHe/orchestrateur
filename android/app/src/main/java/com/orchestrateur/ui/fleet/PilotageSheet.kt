@@ -90,7 +90,7 @@ enum class PilotFilter { running, examine, all }
  *  qui se réordonnent (le fil montre déjà QUI travaille). */
 @Composable
 fun PilotageLine(musicians: List<Musician>, onOpen: () -> Unit, modifier: Modifier = Modifier) {
-    val others = musicians.filter { it.name != FleetViewModel.CONDUCTOR && !it.parked }
+    val others = musicians.filter { it.name != FleetViewModel.CONDUCTOR }
     val running = others.count { it.state == MState.live || it.state == MState.think }
     val questions = others.count { it.state == MState.input }
     val examine = others.count {
@@ -136,15 +136,12 @@ fun PilotageSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var query by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf(PilotFilter.running) }
-    var showParked by remember { mutableStateOf(false) }
 
-    val others = musicians.filter { it.name != FleetViewModel.CONDUCTOR }
-    val parked = others.filter { it.parked }
-    val active = others.filter { !it.parked }
+    val active = musicians.filter { it.name != FleetViewModel.CONDUCTOR }
 
     // La sélection ne bouge pas pendant un geste : la liste est triée UNE fois
     // par composition (remember sur les clés d'état), pas à chaque recomposition.
-    val listed = remember(query, filter, showParked, active.map { it.name to it.state }, parked.size) {
+    val listed = remember(query, filter, active.map { it.name to it.state }) {
         val base = when (filter) {
             PilotFilter.running -> active.filter { it.state == MState.live || it.state == MState.think }
             PilotFilter.examine -> active.filter {
@@ -154,7 +151,7 @@ fun PilotageSheet(
             PilotFilter.all -> active
         }
         val q = query.trim().lowercase()
-        val pool = if (q.isEmpty()) base else (active + parked).filter { it.name.lowercase().contains(q) }
+        val pool = if (q.isEmpty()) base else active.filter { it.name.lowercase().contains(q) }
         pool.sortedWith(compareBy({ railRank(it) }, { it.name }))
     }
 
@@ -219,34 +216,6 @@ fun PilotageSheet(
             ) {
                 items(listed, key = { it.name }) { m -> PilotRow(m) { onOpenMusician(m.name) } }
             }
-            if (parked.isNotEmpty() && query.isBlank()) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 48.dp)
-                        .clickable { showParked = !showParked }
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Text(
-                        "Mis de côté (${parked.size})", color = Palette.Fg2, fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace, letterSpacing = 1.2.sp,
-                    )
-                    Spacer(Modifier.weight(1f))
-                    Text(if (showParked) "▾" else "▸", color = Palette.Fg2, fontSize = 11.sp)
-                }
-                if (showParked) {
-                    Column(
-                        Modifier.padding(horizontal = 14.dp),
-                        verticalArrangement = Arrangement.spacedBy(5.dp),
-                    ) {
-                        parked.sortedBy { it.name }.forEach { m ->
-                            PilotRow(m) { onOpenMusician(m.name) }
-                        }
-                    }
-                }
-            }
         }
     }
 }
@@ -277,7 +246,6 @@ private fun PilotRow(m: Musician, onClick: () -> Unit) {
     val health = healthNote(m)
     val sub = buildList {
         when {
-            m.parked -> add("santé non suivie")
             health != null -> add(health.first)
             m.state == MState.live || m.state == MState.think -> {
                 m.activity?.takeIf { it.isNotBlank() }?.let { add(it.take(34)) }

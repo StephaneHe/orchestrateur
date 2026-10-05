@@ -8,9 +8,8 @@
 // SANTÉ et les métadonnées de l'instantané `/api/pupitre` déjà pollé. Aucun
 // poll, aucune requête par projet.
 //
-// Quatre groupes DISJOINTS, ordre imposé : À votre attention · Actifs et en
-// attente · Au repos · Parqués. Le parcage est un attribut : un parqué qui
-// travaille ou pose une question remonte dans son groupe avec son badge.
+// Trois groupes DISJOINTS, ordre imposé : À votre attention · Actifs et en
+// attente · Au repos.
 //
 // Le DOM est clé par `data-name` : une tuile est patchée, jamais recréée ; une
 // permutation dans un groupe attend 1,5 s, et rien ne bouge tant que le
@@ -33,7 +32,6 @@
     { key: "attention", title: "À votre attention" },
     { key: "active",    title: "Actifs et en attente" },
     { key: "rest",      title: "Au repos" },
-    { key: "parked",    title: "Parqués" },
   ];
 
   // Affichage par « sorte » (dérivée, jamais un nouvel état moteur).
@@ -49,11 +47,10 @@
     queued:   { glyph: "⏳", word: "En file",                state: "idle" },
     unread:   { glyph: "✓", word: "Terminé · non lu",       state: "unread" },
     idle:     { glyph: "○", word: "Prêt",                   state: "idle" },
-    parked:   { glyph: "▫", word: "Parqué",                 state: "idle" },
   };
 
   const LS = {
-    details: "pv.details", foldParked: "pv.foldParked",
+    details: "pv.details",
     disabled: "pv.disabled", level: "pv.lastLevel",
   };
   const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -65,7 +62,6 @@
     filter: "",
     only: null,              // groupe isolé par un compteur
     details: lsGet(LS.details) === "1",
-    foldParked: lsGet(LS.foldParked) === "1",
     orders: {},              // groupe → noms affichés
     pendingSince: {},        // groupe → début d'une permutation en attente
     hold: false,             // pointeur/focus dans la grille : rien ne bouge
@@ -119,7 +115,7 @@
 
   function classify(m, r) {
     const inFlight = m.state === "live" || m.state === "think";
-    const h = !m.parked && global.Salle ? global.Salle.healthFlag(r) : null;
+    const h = global.Salle ? global.Salle.healthFlag(r) : null;
     if (m.state === "input")         return { group: "attention", kind: "question", rank: 0 };
     if (h && h.kind === "dead")      return { group: "attention", kind: "dead",     rank: 1 };
     if (m.state === "error")         return { group: "attention", kind: m.stopped ? "stopped" : "error", rank: 2 };
@@ -129,7 +125,6 @@
     // rechargement, l'instantané serveur (deriveState) le porte.
     if (m.state === "unread" && (m.awaitingChef || r?.awaitingChef)) return { group: "active", kind: "chef", rank: 1 };
     if ((r?.queueDepth || 0) > 0)    return { group: "active",    kind: "queued",   rank: 2 };
-    if (m.parked)                    return { group: "parked",    kind: "parked",   rank: 0 };
     if (m.state === "unread")        return { group: "rest",      kind: "unread",   rank: 0 };
     return { group: "rest", kind: "idle", rank: 1 };
   }
@@ -248,7 +243,6 @@
   function sortGroup(key, list) {
     const byName = (a, b) => a.m.name.localeCompare(b.m.name);
     if (key === "rest")   return list.sort((a, b) => a.rank - b.rank || b.la - a.la || byName(a, b));
-    if (key === "parked") return list.sort(byName);
     return list.sort((a, b) => a.rank - b.rank || byName(a, b));
   }
 
@@ -268,10 +262,9 @@
     if (q > 0) chips.push(`<span class="pv-chip pv-chip-queue" title="${q} tâche(s) en file derrière son tour">⏳ ${q}</span>`);
     if (r?.callbackTo) chips.push(`<span class="pv-chip pv-chip-cb" title="rapport promis à ${esc(r.callbackTo)} à la fin du tour">⇄ ${esc(r.callbackTo)}</span>`);
     if (it.isChef) chips.push(`<span class="pv-chip pv-chip-badge">CHEF</span>`);
-    if (it.m.parked) chips.push(`<span class="pv-chip pv-chip-badge pv-chip-parked">PARQUÉ</span>`);
     const mdl = shortModel(r);
     if (mdl) chips.push(`<span class="pv-chip pv-chip-model" title="${esc(mdl.title)}">${esc(mdl.text)}</span>`);
-    const word = it.kind === "parked" && it.m.state === "unread" ? "Parqué · résultat dispo" : k.word;
+    const word = k.word;
     return `<span class="pv-glyph" aria-hidden="true">${esc(k.glyph)}</span>` +
       `<span class="pv-name">${esc(it.m.name)}</span>` +
       `<span class="pv-word">${esc(word)}</span>` +
@@ -289,7 +282,6 @@
     if (q) bits.push(`${q} en file`);
     if (it.r?.callbackTo) bits.push(`rapport promis à ${it.r.callbackTo}`);
     if (it.isChef) bits.push("chef d'orchestre");
-    if (it.m.parked) bits.push("parqué");
     return bits.join(", ");
   }
 
@@ -341,7 +333,7 @@
   }
 
   function counts(vm) {
-    const c = { all: vm.length, attention: 0, active: 0, rest: 0, parked: 0, live: 0, questions: 0 };
+    const c = { all: vm.length, attention: 0, active: 0, rest: 0, live: 0, questions: 0 };
     for (const it of vm) {
       c[it.group]++;
       if (it.kind === "live" || it.kind === "think") c.live++;
@@ -370,7 +362,7 @@
     const bar = $(".pv-counts", el);
     const defs = [
       ["all", "Tous", c.all], ["attention", "Attention", c.attention],
-      ["active", "Actifs / attente", c.active], ["rest", "Repos", c.rest], ["parked", "Parqués", c.parked],
+      ["active", "Actifs / attente", c.active], ["rest", "Repos", c.rest],
     ];
     const html = defs.map(([k, lbl, n]) => {
       const on = (k === "all" && !st.only) || st.only === k;
@@ -411,7 +403,7 @@
     const chk = $(".pv-details input", el);
     if (chk) chk.checked = st.details;
 
-    const groups = { attention: [], active: [], rest: [], parked: [] };
+    const groups = { attention: [], active: [], rest: [] };
     for (const it of vm) groups[it.group].push(it);
 
     for (const g of GROUPS) {
@@ -429,7 +421,6 @@
         rec.btn.dataset.state = k.state;
         rec.btn.dataset.kind = it.kind;
         rec.btn.dataset.health = it.kind === "dead" ? "dead" : it.kind === "stall" ? "stall" : "";
-        rec.btn.dataset.parked = it.m.parked ? "1" : "";
         rec.btn.setAttribute("aria-label", ariaLabel(it));
         rec.li.hidden = !matches(it);
         rec.want = g.key;
@@ -437,19 +428,12 @@
 
       // En-tête du groupe.
       const head = $(".pv-head", sec);
-      const nParkedHere = g.key !== "parked" ? list.filter(it => it.m.parked).length : 0;
-      const extra = nParkedHere ? ` <span class="pv-sub">dont ${nParkedHere} parqué${nParkedHere > 1 ? "s" : ""}</span>` : "";
-      const fold = g.key === "parked"
-        ? ` <span class="pv-caret" aria-hidden="true">${st.foldParked ? "▸" : "▾"}</span>` : "";
       const n = st.filter ? `${vis.length}/${list.length}` : `${list.length}`;
-      const hh = `${esc(g.title)} <span class="pv-n">(${n})</span>${extra}${fold}`;
-      const label = g.key === "parked" ? $(".pv-fold", head) : head;
-      if (label._html !== hh) { label.innerHTML = hh; label._html = hh; }
-      if (g.key === "parked") $(".pv-fold", head).setAttribute("aria-expanded", String(!st.foldParked));
+      const hh = `${esc(g.title)} <span class="pv-n">(${n})</span>`;
+      if (head._html !== hh) { head.innerHTML = hh; head._html = hh; }
 
       const hiddenByOnly = st.only && st.only !== g.key;
       sec.hidden = hiddenByOnly || (!!st.filter && !vis.length);
-      grid.hidden = g.key === "parked" && st.foldParked && !st.filter && st.only !== "parked";
       const empty = $(".pv-empty", sec);
       empty.hidden = list.length > 0;
 
@@ -553,12 +537,6 @@
       if (only) {
         const k = only.dataset.only;
         st.only = (k === "all" || st.only === k) ? null : k;
-        render();
-        return;
-      }
-      if (e.target.closest(".pv-fold")) {
-        st.foldParked = !st.foldParked;
-        lsSet(LS.foldParked, st.foldParked ? "1" : null);
         render();
         return;
       }

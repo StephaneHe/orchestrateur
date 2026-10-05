@@ -115,7 +115,6 @@ fun MusicianDetailScreen(
             .lastOrNull { it.name == name }
         Text(
             when {
-                m.parked -> "Musicien mis de côté · santé non suivie"
                 mission != null -> "Musicien piloté par le chef · mission lancée"
                 else -> "Musicien de l'orchestre"
             },
@@ -131,8 +130,7 @@ fun MusicianDetailScreen(
         )
         val snapAt by vm.snapshotAt.collectAsState()
         Text(
-            if (m.parked) "santé non suivie (projet mis de côté) — aucun scan périodique"
-            else listOfNotNull(
+            listOfNotNull(
                 "tour " + (m.turnElapsedMs?.let { fmtAgeShort(it) } ?: "—"),
                 "dernier progrès " + (m.silentMs?.let { fmtAgeShort(it) } ?: "—"),
                 when {

@@ -21,7 +21,7 @@
 .pill-projects.is-alert { border-color: color-mix(in srgb, var(--st-input) 60%, transparent); }
 .pill-projects[aria-pressed="true"] { background: var(--card-bg-hover); border-color: var(--st-think); }
 .pill-projects:focus-visible, .pv-tile:focus-visible, .pv-count:focus-visible,
-.pv-back:focus-visible, .pv-fold:focus-visible, .pv-filter:focus-visible {
+.pv-back:focus-visible, .pv-filter:focus-visible {
   outline: 2px solid var(--st-unread); outline-offset: 2px;
 }
 
@@ -81,12 +81,7 @@
   letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-2);
 }
 .pv-head .pv-n { color: var(--fg-1); letter-spacing: 0; }
-.pv-head .pv-sub { color: var(--fg-2); letter-spacing: 0; text-transform: none; font-weight: 400; }
 .pv-section[data-group="attention"] .pv-head { color: var(--st-input); }
-.pv-fold {
-  font: inherit; color: inherit; letter-spacing: inherit; text-transform: inherit;
-  background: none; border: none; padding: 4px 0; cursor: pointer; min-height: 28px;
-}
 .pv-empty { font-size: 0.6875rem; color: var(--fg-2); font-style: italic; padding: 2px 2px 6px; }
 
 .pv-grid {
@@ -123,7 +118,6 @@
 .pv-tile[data-state="unread"] { --state-color: var(--st-unread); }
 .pv-tile[data-kind="stall"]   { --state-color: color-mix(in srgb, var(--st-error) 65%, var(--st-think)); border-left-style: dashed; }
 .pv-tile[data-kind="queued"]  { --state-color: var(--fg-2); }
-.pv-tile[data-kind="parked"]  { --state-color: var(--fg-3); background: color-mix(in srgb, var(--card-bg) 55%, transparent); }
 .pv-tile[data-kind="dead"], .pv-tile[data-kind="error"], .pv-tile[data-kind="question"] {
   border-color: color-mix(in srgb, var(--state-color) 40%, var(--card-border));
   border-left-color: var(--state-color);
@@ -143,7 +137,6 @@
 .pv-chip-queue { color: var(--fg-0); border-color: color-mix(in srgb, var(--st-think) 50%, transparent); }
 .pv-chip-cb    { color: var(--st-unread); }
 .pv-chip-badge { color: var(--fg-0); letter-spacing: 0.08em; }
-.pv-chip-parked { color: var(--fg-2); }
 .pv-chip-model { color: var(--fg-2); max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
 .pv-line  { grid-area: l; font-size: 0.7188rem; color: var(--fg-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pv-tile[data-kind="question"] .pv-line { color: var(--fg-0); }

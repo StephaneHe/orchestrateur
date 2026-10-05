@@ -2346,7 +2346,6 @@ app.get('/api/config', (req, res) => {
         model: p.model ?? defaults.model ?? null,
         tools: p.tools ?? defaults.allowedTools ?? FALLBACK_TOOLS,
         provider: p.provider ?? defaults.provider ?? 'claude',
-        parked: p.parked ?? false,
         attachedSession: sessions.get(p.name) || null,
         readAt: readMarker(p.name),
         currentState: snap.state,
@@ -2362,8 +2361,7 @@ app.get('/api/config', (req, res) => {
 // ---------- Live desk view (« pupitre ») ------------------------------------
 //
 // Real-time snapshot of every musician INCLUDING the conductor (chef), derived
-// from the same shared core as the CLI supervisor. Powers /pupitre. Parked
-// projects are included but flagged so the page can de-emphasise them.
+// from the same shared core as the CLI supervisor. Powers /pupitre.
 // Short-TTL cache keyed by the log's (mtime,size): /api/pupitre used to rescan
 // every project synchronously on EVERY request (29 × up to 256 KiB on a USB
 // disk, ×clients). We reuse a member snapshot when its log is byte-identical AND
@@ -2372,10 +2370,6 @@ app.get('/api/config', (req, res) => {
 // (silence, PID liveness) fresh: a static log still rescans on the next poll.
 const pupitreCache = new Map();   // name → { key, at, snap }
 const PUPITRE_CACHE_MS = 2500;
-// Parqués (0.29.0) : scannés quand même — sinon /api/pupitre les disait « idle »,
-// ce qui masquait un tour lancé sur un parqué — mais au plus une fois par minute
-// quand leur log ne bouge pas. Un log qui change est relu aussitôt.
-const PUPITRE_PARKED_CACHE_MS = 60_000;
 function scanFleetMemberCached(name, maxAgeMs = PUPITRE_CACHE_MS) {
   const logPath = path.join(LOGS_DIR, `${name}.jsonl`);
   let key = '0:0';
@@ -2472,20 +2466,13 @@ function readLimitedUntil() {
 app.get('/api/pupitre', (req, res) => {
   const conductor = config.conductor || 'chef';
   const fleet = config.projects.map(p => {
-    const parked = p.parked ?? false;
-    // Parqués : état RÉEL (cache 60 s), mais santé non suivie — pas de stall ni
-    // de « processus perdu » annoncés pour eux (même contrat qu'avant 0.29.0).
-    const snap = parked
-      ? { ...scanFleetMemberCached(p.name, PUPITRE_PARKED_CACHE_MS), stalled: false, deadInFlight: false }
-      : scanFleetMemberCached(p.name);   // state, silence, stall, pid, model…
+    const snap = scanFleetMemberCached(p.name);   // state, silence, stall, pid, model…
     const meta = projectMetaFor(p.name);
     return {
       ...snap,
-      healthTracked: !parked,
       version: meta.version,
       build: meta.build,
       isConductor: p.name === conductor,
-      parked,
       queueDepth: dispatchQueue.get(p.name)?.length ?? 0,
       // Configured provider/model as a fallback when the log has none yet.
       configModel: p.model ?? config.defaults?.model ?? null,
@@ -2896,7 +2883,6 @@ app.post('/api/project/:name/denials/ack', express.json({ limit: '16kb' }), (req
   res.json({ ok: true, project: name, toolIds: ids, action });
 });
 
-// Toggle parked flag for a project (parked cards are hidden in the fleet UI).
 // Toggle the global AI provider (claude | codex). Persists to config.json.
 // Per-project overrides (project.provider) are set via /api/project/:name/provider.
 app.post('/api/config/provider', express.json({ limit: '1kb' }), (req, res) => {
@@ -2920,16 +2906,6 @@ app.post('/api/project/:name/provider', express.json({ limit: '1kb' }), (req, re
   else proj.provider = provider;
   atomicWriteJson(CONFIG_PATH, config);
   res.json({ ok: true, provider: proj.provider ?? config.defaults?.provider ?? 'claude' });
-});
-
-app.post('/api/project/:name/park', express.json({ limit: '1kb' }), (req, res) => {
-  const proj = config.projects.find(p => p.name === req.params.name);
-  if (!proj) return res.status(404).json({ error: 'unknown project' });
-  const parked = req.body?.parked !== false;
-  if (parked) proj.parked = true;
-  else delete proj.parked;
-  atomicWriteJson(CONFIG_PATH, config);
-  res.json({ ok: true, parked });
 });
 
 // ---------- Conductor chat history ------------------------------------------

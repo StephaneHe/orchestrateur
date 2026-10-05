@@ -232,7 +232,6 @@ class FleetViewModel(
                     state = st,
                     unreadCount = p.unreadCount ?: 0,
                     lastLine = p.lastLine.orEmpty(),
-                    parked = p.parked ?: false,
                     readAt = p.readAt,
                 )
                 m
@@ -555,7 +554,7 @@ class FleetViewModel(
             .map { it.name }
             .toSet()
         return musicians
-            .filter { it.name != CONDUCTOR && !it.parked }
+            .filter { it.name != CONDUCTOR }
             .filter { it.state == State.live || it.state == State.think }
             .filter { it.name !in piloted }
             .map { MissionItem(it.name, started = true) }

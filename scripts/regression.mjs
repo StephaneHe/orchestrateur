@@ -213,7 +213,10 @@ async function apiChecks(sb) {
     assert(by.beta.currentState === 'input', `beta ${by.beta.currentState}`);
     assert(by.gamma.currentState === 'error', `gamma ${by.gamma.currentState}`);
     assert(by.eps.currentState === 'live', `eps ${by.eps.currentState}`);
-    assert(by.zeta.parked === true && by.eta.parked === true, 'parqués');
+    // 0.38.0 : plus de « mis de côté » ; zeta et eta gardent l'ancien marqueur
+    // dans la config de fixtures, il doit être ignoré.
+    if (c.projects.some(p => 'parked' in p)) NA('concept « mis de côté » encore présent dans cet état du code');
+    assert(by.zeta && by.eta, 'projets à l\'ancien marqueur absents de /api/config');
     assert(by.lambda.questionResolved?.note === 'répondu via le chef', 'questionResolved lambda');
     assert(!JSON.stringify(c).includes(sb.token), 'le jeton fuit dans /api/config');
   });
@@ -229,7 +232,7 @@ async function apiChecks(sb) {
     assert(by.chef.isConductor === true, 'isConductor');
     assert(p.pool && Array.isArray(p.pool.queue) && Array.isArray(p.pool.slots), 'pool');
   });
-  await check(S, 'pupitre-projects', '/api/pupitre : champs de la vue Projets (dernier tour, mission, version, APK, parqués réels)', async () => {
+  await check(S, 'pupitre-projects', '/api/pupitre : champs de la vue Projets (dernier tour, mission, version, APK)', async () => {
     const p0 = await json('/api/pupitre');
     if (!('lastTurn' in (p0.fleet[0] || {}))) NA('champs absents de cet état du code');
     await sleep(1200);                                 // rafraîchissement asynchrone des métadonnées
@@ -242,7 +245,7 @@ async function apiChecks(sb) {
     assert(by.alpha.version?.value === '1.2.3', `version alpha ${JSON.stringify(by.alpha.version)}`);
     assert(by.gamma.version?.value === '0.4.0', 'version gamma (pyproject)');
     assert(by.alpha.build?.apkAt > 0 && by.beta.build === null, 'APK');
-    assert(by.eta.state === 'input' && by.eta.healthTracked === false && by.eta.stalled === false, 'parqué scanné, santé non suivie');
+    assert(by.eta.state === 'input' && by.eta.stalled === false, 'eta scanné comme les autres (question ouverte)');
     assert(by.kappa.lastActivityAt === null, 'jamais observé');
     assert(p.ui?.projectsView === true, 'drapeau ui');
   });
@@ -368,12 +371,16 @@ async function apiChecks(sb) {
     assert(r.ok, `HTTP ${r.status}`);
     assert(fs.existsSync(path.join(sb.root, 'logs', 'lambda.read')), 'marqueur absent');
   });
-  await check(S, 'park', 'Mettre de côté / remettre en avant (config.json)', async () => {
-    let r = await post('/api/project/omega/park', { parked: true });
-    assert(r.ok, `park ${r.status}`);
-    assert((await json('/api/config')).projects.find(p => p.name === 'omega').parked === true, 'non parqué');
-    r = await post('/api/project/omega/park', { parked: false });
-    assert(r.ok && !(await json('/api/config')).projects.find(p => p.name === 'omega').parked, 'non déparqué');
+  // Exigence 0.38.0 : « Ce concept de mis de côté n'a plus d'intérêt » — aucun
+  // projet n'est exclu par un ancien marqueur (zeta/eta le gardent en fixtures).
+  await check(S, 'no-parked', 'Plus de « mis de côté » : marqueur ignoré, aucun projet exclu, route /park supprimée', async () => {
+    const c = await json('/api/config');
+    if (c.projects.some(p => 'parked' in p)) NA('concept encore présent dans cet état du code');
+    assert(c.projects.length === 14 && ['zeta', 'eta'].every(n => c.projects.some(p => p.name === n)), 'un projet à l\'ancien marqueur manque');
+    const p = await json('/api/pupitre');
+    assert(p.fleet.length === 14 && p.fleet.every(r => !('parked' in r) && !('healthTracked' in r)), '/api/pupitre expose encore parked/healthTracked');
+    const r = await post('/api/project/omega/park', { parked: true });
+    assert(r.status === 404, `route /park encore servie (HTTP ${r.status})`);
   });
   await check(S, 'sse', 'Flux temps réel /api/sse/fleet : une ligne de log arrive au client', async () => {
     const ac = new AbortController();

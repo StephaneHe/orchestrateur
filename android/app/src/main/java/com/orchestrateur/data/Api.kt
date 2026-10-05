@@ -167,17 +167,6 @@ class Api(private val store: ServerStore) {
         }
     }
 
-    /** Set/clear the parked flag for a project. */
-    suspend fun parkProject(project: String, parked: Boolean) = withContext(Dispatchers.IO) {
-        val payload = buildJsonObject { put("parked", parked) }
-        val body = Json.encodeToString(payload).toRequestBody("application/json".toMediaType())
-        http.newCall(
-            req("/api/project/$project/park").post(body).header("Content-Type", "application/json").build()
-        ).execute().use { resp ->
-            if (!resp.isSuccessful) error("parkProject ${resp.code}: ${resp.body?.string()}")
-        }
-    }
-
     /** Append `tool` to the project's allowed-tools list in config.json. */
     suspend fun addTool(project: String, tool: String) = withContext(Dispatchers.IO) {
         val payload = buildJsonObject { put("tool", tool) }

@@ -266,7 +266,7 @@ private fun JournalHeader(
 private fun SystemBanner(vm: FleetViewModel, connected: Boolean) {
     val limitedUntil by vm.limitedUntil.collectAsState()
     val telemetryFresh by vm.telemetryFresh.collectAsState()
-    val dead = vm.musicians.filter { it.deadInFlight && !it.parked }
+    val dead = vm.musicians.filter { it.deadInFlight }
 
     data class Banner(val msg: String, val tone: Color)
     val banners = buildList {
@@ -316,7 +316,7 @@ private fun AttentionBand(vm: FleetViewModel, onOpenMusician: (String) -> Unit) 
 
     data class Item(val rank: Int, val name: String, val mark: String, val text: String, val question: Boolean)
     val items = vm.musicians
-        .filter { it.name != FleetViewModel.CONDUCTOR && !it.parked }
+        .filter { it.name != FleetViewModel.CONDUCTOR }
         .mapNotNull { m ->
             val health = healthNote(m)
             when {
@@ -448,8 +448,7 @@ fun SettingsScreen(vm: FleetViewModel, onBack: () -> Unit) {
             color = Palette.Fg1, fontSize = 13.sp, fontFamily = FontFamily.Monospace,
         )
         Text(
-            "${vm.musicians.count { !it.parked }} musiciens actifs · " +
-                "${vm.musicians.count { it.parked }} mis de côté",
+            "${vm.musicians.size} musiciens",
             color = Palette.Fg2, fontSize = 12.sp,
         )
         Text(

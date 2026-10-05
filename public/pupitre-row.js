@@ -74,7 +74,6 @@
     var mp = [(r.provider || r.configProvider || ''), (r.model || r.configModel || '')].filter(Boolean).join(' · ');
     var badges = '';
     if (r.isConductor) badges += '<span class="badge badge-chef">CHEF</span>';
-    if (r.parked) badges += '<span class="badge badge-parked">PARKED</span>';
     var note = r.needsInput ? ('<span class="note">↳ ' + esc(r.needsInput) + '</span>') : '';
     var cls = 'row ' + si.cls + (opts.selected ? ' sel' : '');
     var styleAttr = (opts.clickable === false) ? ' style="cursor:default"' : '';

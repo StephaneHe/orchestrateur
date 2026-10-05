@@ -32,11 +32,8 @@ class Musician(
     initialState: State = State.idle,
     initialLastLine: String = "",
     initialUnreadCount: Int = 0,
-    initialParked: Boolean = false,
 ) {
     var state: State by mutableStateOf(initialState)
-        private set
-    var parked: Boolean by mutableStateOf(initialParked)
         private set
     var lastLine: String by mutableStateOf(initialLastLine)
         private set
@@ -349,13 +346,11 @@ class Musician(
         state: State,
         unreadCount: Int,
         lastLine: String,
-        parked: Boolean,
         readAt: String?,
     ) {
         this.state = state
         this.unreadCount = unreadCount
         this.lastLine = lastLine
-        this.parked = parked
         this.readAt = readAt
     }
 

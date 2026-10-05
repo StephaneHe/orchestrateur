@@ -4,7 +4,7 @@ A local Windows dashboard where one "conductor" AI session pilots a fleet of
 headless coding agents, one per project, with a live web viewer and an
 Android companion app.
 
-`version 0.37.2` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
+`version 0.38.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
 
 > **Status: active, personal project.** Built and used daily on a single
 > Windows machine. Pre-1.0: internal APIs and file formats can still change
@@ -109,7 +109,7 @@ copy config.example.json config.json   # then list your own projects
 
 | File | Role | In git? |
 | --- | --- | --- |
-| `config.json` | Fleet definition: conductor name, defaults (`model`, `provider`, `allowedTools`), the `projects[]` list (`name`, `path`, optional `tools`, `model`, `codexModel`, `parked`), and `ui` flags. Hot-reloaded. | no — copy [`config.example.json`](config.example.json) |
+| `config.json` | Fleet definition: conductor name, defaults (`model`, `provider`, `allowedTools`), the `projects[]` list (`name`, `path`, optional `tools`, `model`, `codexModel`), and `ui` flags. Hot-reloaded. | no — copy [`config.example.json`](config.example.json) |
 | `downloads.json` | Registry of the `/downloads` page (apps and docs). Hot-reloaded; an invalid file is rejected as a whole and the last valid version keeps being served. | yes |
 | `.token` | 32-byte hex token for the optional token gate. Generated locally by `start.ps1` or the server. | no |
 | `.env` | Optional, holds `NVIDIA_API_KEY` for the failover leg. | no |

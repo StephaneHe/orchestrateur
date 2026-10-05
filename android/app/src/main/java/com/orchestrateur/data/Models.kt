@@ -34,7 +34,6 @@ data class ProjectConfig(
     val currentState: String? = null,
     val lastLine: String? = null,
     val unreadCount: Int? = null,
-    val parked: Boolean? = null,
 )
 
 @Serializable
@@ -204,6 +203,5 @@ data class PupitreRow(
     val provider: String? = null,
     val configModel: String? = null,
     val queueDepth: Int = 0,
-    val parked: Boolean = false,
     val isConductor: Boolean = false,
 )
