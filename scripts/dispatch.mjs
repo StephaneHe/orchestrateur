@@ -864,6 +864,18 @@ function userRequirementsRule() {
     `peut être ni supprimé ni affaibli sans l'accord explicite de l'utilisateur (demande-le par NEEDS_USER_INPUT).`;
 }
 
+// ---------- commandes simples (0.37.0) ---------------------------------------
+//
+// En mode non interactif, l'analyse de sécurité du CLI refuse sans recours les
+// commandes PowerShell qu'elle ne sait pas valider (91 refus relevés sur la
+// flotte : opérations multiples, $( ), script, .NET…). Autoriser l'outil n'y
+// change rien : on réduit la source.
+function simpleCommandsRule() {
+  return `\n\n---\nCOMMANDES : préfère l'outil Bash, ou des commandes PowerShell simples — une commande par appel, ` +
+    `sans sous-expression $( ), ni tableau @( ), ni bloc de script { }, ni chemin calculé, ni appel .NET. ` +
+    `Sinon le CLI refuse l'appel en mode non interactif, sans recours possible.`;
+}
+
 // ---------- callback injection ----------------------------------------------
 
 // promptForLog = original prompt shown in the viewer (no boilerplate).
@@ -879,6 +891,7 @@ if (callbackProject) {
 // texte d'origine, donc le fil et le panneau n'affichent pas ce bloc.
 if (projectName !== CONDUCTOR) prompt = prompt + backgroundRule(callbackProject || CONDUCTOR);
 if (projectName !== CONDUCTOR) prompt = prompt + userRequirementsRule();
+if (projectName !== CONDUCTOR) prompt = prompt + simpleCommandsRule();
 
 // ---------- env scrub -------------------------------------------------------
 

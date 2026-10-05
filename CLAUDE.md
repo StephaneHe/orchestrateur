@@ -642,6 +642,43 @@ tard ».
   - `_test_pool_chef_dispatch.mjs` (scénario 7b) ;
   - `_test_repo_hygiene.mjs` : rien de sensible suivi par git.
 
+## Refus d'autorisation : nature, « Vu », plus de retour (0.37.0)
+
+Exigence utilisateur : « fais en sorte que les demandes d'autorisations s'en
+aillent après validation ».
+
+- **Trois natures de refus** (`PermissionDenial.classify`, public/permission-denial.js),
+  relevées dans les logs de la flotte :
+  - `tool` : « Claude requested permissions to use X, but you haven't
+    granted it yet ». C'est le **seul** refus que « + Autoriser X » règle
+    (`add-tool` : settings.json + confiance).
+  - `path` : écriture ou lecture hors du projet, fichier sensible,
+    `workingDir`, « may only access files ».
+  - `command` : analyse de sécurité du CLI (`subcommandResults`,
+    `safetyCheck`, `rule`) : opérations multiples, `$( )`, script, .NET,
+    tâche planifiée… L'outil est déjà accordé : **jamais de bouton
+    « Autoriser »**, une explication et « ✓ Vu ».
+- Le motif vient de `system/permission_denied` (`decision_reason_type`,
+  `message`) ou de la `tool_result` en erreur du même appel
+  (`PermissionDenial.enrich`). Le `result` ne donne que l'outil.
+- **Refus traités** : `POST /api/project/:name/denials/ack {toolIds, action:
+  seen|granted, tool?}` ajoute `notification/denials_acknowledged` au log.
+  Le volet et le panneau ne ré-affichent jamais un `tool_use_id` acquitté.
+  « + Autoriser » accorde l'outil puis acquitte. Repli : `localStorage`
+  (`perm.acked`) si la route est absente (serveur pas encore redémarré).
+- Cause du signalement : l'ancien volet comparait l'outil aux `tools` de
+  config.json. Un outil accordé par settings.json (PowerShell) y paraissait
+  « manquant », et le volet ré-affichait sans fin les refus du dernier tour.
+  Ces refus dataient d'avant la confiance du dossier (0.30.0). Testé le
+  2026-10-05 : dans un dossier de confiance avec `PowerShell` autorisé,
+  `Get-Content @(…)` et `Get-Content $(…)` passent ; une règle de préfixe
+  `PowerShell(Get-Content:*)` n'apporte rien, et n'est donc pas ajoutée.
+- `dispatch.mjs` ajoute `simpleCommandsRule()` au prompt des musiciens :
+  préférer Bash ou des commandes PowerShell simples.
+- Recettes : `_test_permission_denial.mjs` (classification, enrichissement,
+  acquittements), parcours HTTP `denials-ack` et navigateur `denial-ack`,
+  scénario 7c de `_test_pool_chef_dispatch.mjs`.
+
 ## Attachments
 
 Images uploaded via the dashboard (paste / drag-drop / file picker) land in

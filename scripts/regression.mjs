@@ -321,6 +321,21 @@ async function apiChecks(sb) {
     assert((await get('/api/project/nope/journal')).status === 404, 'projet inconnu ≠ 404');
     return `${jA.turns.length} tour(s) pour alpha`;
   });
+  // 0.37.0 — exigence : « les demandes d'autorisations s'en aillent après validation ».
+  await check(S, 'denials-ack', 'Refus d\'autorisation traités : /api/project/:name/denials/ack (200, événement dans le log, 400, 404)', async () => {
+    const probe = await post('/api/project/nope/denials/ack', { toolIds: ['x'] });
+    if (probe.status === 404 && !/unknown project/.test(await probe.text())) NA('route absente de cet état du code');
+    const r = await post('/api/project/delta/denials/ack', { toolIds: ['toolu_http1', 'toolu_http2'], action: 'granted', tool: 'WebSearch', by: 'regression' });
+    const j = await r.json();
+    assert(r.status === 200 && j.ok && j.action === 'granted', `ack : ${r.status} ${JSON.stringify(j)}`);
+    const ev = readLog('delta').find(e => e.type === 'notification' && e.subtype === 'denials_acknowledged');
+    assert(ev && ev.toolIds.join() === 'toolu_http1,toolu_http2' && ev.tool === 'WebSearch' && ev.by === 'regression', 'événement absent ou incomplet');
+    assert((await post('/api/project/delta/denials/ack', { toolIds: [] })).status === 400, 'liste vide ≠ 400');
+    assert((await post('/api/project/delta/denials/ack', { toolIds: ['pas un id!'] })).status === 400, 'identifiant invalide ≠ 400');
+    assert((await post('/api/project/nope/denials/ack', { toolIds: ['x'] })).status === 404, 'projet inconnu ≠ 404');
+    const c = await json('/api/config');
+    assert(c.projects.find(p => p.name === 'delta').currentState === 'unread', 'l\'acquittement d\'un refus ne change pas l\'état du musicien');
+  });
   await check(S, 'mark-read', 'Marquer lu (/api/mark-read) persiste le marqueur', async () => {
     const r = await post('/api/mark-read', { project: 'lambda' });
     assert(r.ok, `HTTP ${r.status}`);

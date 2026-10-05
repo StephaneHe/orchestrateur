@@ -11,6 +11,63 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-10-05
+
+Retour utilisateur : « Même après l'avoir ajouté, je continue à avoir une
+demande d'autorisation PowerShell pour [un projet]. Vérifie, et fais en sorte
+que les demandes d'autorisations s'en aillent après validation. »
+
+Cause : les refus ré-affichés venaient de l'analyse de sécurité du CLI
+(commande PowerShell complexe), pas d'un outil manquant. Le volet comparait
+l'outil aux `tools` de config.json, alors que PowerShell était accordé par
+`.claude/settings.json`. Il proposait donc sans fin « + Ajouter PowerShell »,
+qui ne pouvait rien régler. Ces refus dataient d'ailleurs d'avant que le
+dossier soit marqué de confiance (0.30.0).
+
+### Added
+- (viewer) **Nature de chaque refus**, d'après les messages réels relevés
+  dans les logs de la flotte :
+  - outil non accordé ;
+  - chemin hors du projet ou fichier protégé ;
+  - commande refusée par l'analyse du CLI.
+
+  Chaque refus porte son motif et une explication. « + Autoriser X »
+  n'apparaît plus que pour un outil réellement non accordé.
+- (viewer) **« ✓ Vu »** sur chaque refus, plus « ✓ Tout marquer vu ».
+  Accorder un outil depuis un refus acquitte aussi ce refus. Un refus traité
+  ne revient ni au rafraîchissement, ni au rechargement, ni dans un autre
+  navigateur.
+- (server) `POST /api/project/:name/denials/ack` ajoute au log du musicien un
+  événement `notification/denials_acknowledged` (même conception que les
+  questions acquittées et « Vu »). **Demande un redémarrage de 7777** : d'ici
+  là, l'acquittement est gardé dans le navigateur.
+- (dispatch) Consigne « commandes simples » ajoutée au prompt des musiciens :
+  préférer Bash ou des commandes PowerShell simples, sans `$( )`, `@( )`,
+  script, chemin calculé ni .NET. 91 refus de ce type ont été relevés sur la
+  flotte.
+- Recettes :
+  - `_test_permission_denial.mjs` (+ 17 cas) : classification sur les
+    messages réels, enrichissement, acquittements ;
+  - parcours HTTP `denials-ack` ;
+  - parcours navigateur `denial-ack` : refus « commande » sans Autoriser et
+    retiré par « Vu », refus « outil » accordé puis retiré, persistance relue
+    dans le log, panneau en direct ;
+  - scénario 7c de la suite dispatch. Demande ajoutée au registre
+    `docs/USER_REQUIREMENTS.md`.
+
+### Fixed
+- `_test_repo_hygiene.mjs` ne tourne que dans un dépôt dont il est la racine :
+  dans une copie extraite d'un tag (`regression.mjs --ref`), git remontait au
+  dépôt parent et le test échouait à tort.
+
+### Notes
+- Vérifié sur un projet jetable, puis supprimé : dans un dossier de confiance
+  avec `PowerShell` autorisé, les formes complexes `Get-Content @(…)` et
+  `$(…)` passent. Une règle de préfixe `PowerShell(Get-Content:*)`
+  n'apporte rien : elle n'est pas ajoutée, et `--dangerously-skip-permissions`
+  n'est jamais utilisé.
+- Les refus encore affichés pour le musicien concerné ont été acquittés.
+
 ## [0.36.0] - 2026-10-04
 
 Règle utilisateur pour toute la flotte : « que ce soit pour le chef ou pour

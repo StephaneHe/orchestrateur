@@ -243,6 +243,7 @@ export async function browserChecks(sb, t) {
     // ------------- Refus d'autorisation (incident du 28/09, 0.29.1) -------------
     const appendLog = (name, evs) => fs.appendFileSync(path.join(sb.root, 'logs', `${name}.jsonl`),
       evs.map(e => JSON.stringify({ timestamp: new Date().toISOString(), ...e })).join('\n') + '\n');
+    const readLogB = (name) => fs.readFileSync(path.join(sb.root, 'logs', `${name}.jsonl`), 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return {}; } });
     const toolUse = (id, name, input) => ({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input }] } });
     const toolRes = (id, content, is_error) => ({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content, ...(is_error ? { is_error: true } : {}) }] } });
     await check(B, 'denial-false', 'Refus d\'autorisation : un Read dont le contenu contient « requires approval » ne déclenche RIEN', async () => {
@@ -262,7 +263,8 @@ export async function browserChecks(sb, t) {
       const toast = page.locator('.perm-denial-toast').last();
       assert(await until(async () => (await page.locator('.perm-denial-toast').count()) > 0, 8000), 'aucun panneau');
       const t = await toast.textContent();
-      for (const want of ['eps', 'Bash', 'rm -rf build && git push origin main', 'déjà dans ses outils']) assert(t.includes(want), `panneau sans « ${want} » : ${t}`);
+      for (const want of ['eps', 'Bash', 'rm -rf build && git push origin main']) assert(t.includes(want), `panneau sans « ${want} » : ${t}`);
+      assert(/déjà dans ses outils|déjà accordé/.test(t), `panneau : l'outil est déjà accordé, le dire : ${t}`);
       assert(await toast.locator('.ct-add-btn').count() === 0, 'bouton « Autoriser Bash » proposé alors que Bash est déjà autorisé');
       appendLog('eps', [toolUse('toolu_d2', 'Agent', { description: 'explorer le module natif', prompt: '…' }),
         toolRes('toolu_d2', "Claude requested permissions to use Agent, but you haven't granted it yet.", true)]);
@@ -274,6 +276,70 @@ export async function browserChecks(sb, t) {
       assert(await page.locator('#dive .dive-denials .ev-perm-add-btn[data-tool="Agent"]').count() === 1, 'volet : bouton Agent');
       await page.click('#dive .dive-back');
       await page.evaluate(() => document.querySelectorAll('.perm-denial-toast').forEach(t => t.remove()));
+    });
+
+    // -------- Refus traités : ils s'en vont après validation (0.37.0) --------
+    await check(B, 'denial-ack', 'Refus d\'autorisation : « commande » sans Autoriser et « ✓ Vu » le retire ; « outil » accordé puis retiré ; rien ne revient au rechargement', async () => {
+      if (!(await page.evaluate(() => typeof window.PermissionDenial?.classify === 'function'))) NA('fonction absente de cet état du code');
+      const ts = (x) => new Date(Date.now() - x * 1000).toISOString();
+      const PS = 'Get-Content README.md,CHANGELOG.md,TODO_LIST.md -Encoding utf8; Get-ChildItem parts | select -first 5 Name';
+      const PS_MSG = 'get-content uses a parameter or complex path expression (array literal, subexpression, unknown parameter, etc.) that cannot be statically validated and requires manual approval';
+      appendLog('omega', [
+        { type: 'user_prompt', text: 'Faire le point sur le dépôt', timestamp: ts(60) }, { type: 'system', subtype: 'init', timestamp: ts(59) },
+        toolUse('toolu_ps1', 'PowerShell', { command: PS }),
+        { type: 'system', subtype: 'permission_denied', tool_name: 'PowerShell', tool_use_id: 'toolu_ps1', decision_reason_type: 'subcommandResults', message: PS_MSG },
+        toolRes('toolu_ps1', PS_MSG, true),
+        toolUse('toolu_ws1', 'WebSearch', { query: 'actualité du projet' }),
+        toolRes('toolu_ws1', "Claude requested permissions to use WebSearch, but you haven't granted it yet.", true),
+        { type: 'result', subtype: 'success', is_error: false, num_turns: 3, duration_ms: 9000, result: 'Point fait (deux appels refusés).',
+          permission_denials: [{ tool_name: 'PowerShell', tool_use_id: 'toolu_ps1', tool_input: { command: PS } }, { tool_name: 'WebSearch', tool_use_id: 'toolu_ws1', tool_input: { query: 'actualité du projet' } }] },
+      ]);
+      await page.evaluate(() => document.querySelectorAll('.perm-denial-toast').forEach(t => t.remove()));
+      await setHash(page, '#/m/omega');
+      assert(await until(async () => (await page.locator('#dive .dive-denials .dd-item').count()) === 2, 10_000), `refus affichés : ${await page.locator('#dive .dive-denials .dd-item').count()}`);
+      const ps = page.locator('#dive .dd-item[data-tool-id="toolu_ps1"]');
+      assert((await ps.getAttribute('data-kind')) === 'command', 'PowerShell : nature « command » attendue');
+      assert(await ps.locator('.ev-perm-add-btn').count() === 0, 'PowerShell : « Autoriser » proposé alors que c\'est inutile');
+      assert(/ne changerait rien/.test(await ps.textContent()) && /cannot be statically validated/.test(await ps.textContent()), 'PowerShell : explication ou motif absent');
+      const ws = page.locator('#dive .dd-item[data-tool-id="toolu_ws1"]');
+      assert((await ws.getAttribute('data-kind')) === 'tool' && await ws.locator('.ev-perm-add-btn[data-tool="WebSearch"]').count() === 1, 'WebSearch : « + Autoriser WebSearch » attendu');
+      await shot(page, 'refus-volet-desktop');
+      await ps.locator('[data-ack-denial]').click();
+      assert(await until(async () => (await page.locator('#dive .dd-item[data-tool-id="toolu_ps1"]').count()) === 0, 5000), '« ✓ Vu » ne retire pas le refus');
+      assert(await until(async () => readLogB('omega').some(e => e.subtype === 'denials_acknowledged' && e.toolIds.includes('toolu_ps1') && e.action === 'seen'), 5000), 'serveur : « Vu » non enregistré');
+      await ws.locator('.ev-perm-add-btn').click();
+      assert(await until(async () => (await page.locator('#dive .dive-denials .dd-item').count()) === 0, 8000), 'WebSearch accordé mais le refus reste affiché');
+      const proj = JSON.parse(fs.readFileSync(path.join(sb.root, 'config.json'), 'utf8')).projects.find(p => p.name === 'omega');
+      const st = JSON.parse(fs.readFileSync(path.join(proj.path, '.claude', 'settings.json'), 'utf8'));
+      assert(st.permissions.allow.includes('WebSearch'), 'WebSearch absent de .claude/settings.json');
+      assert(readLogB('omega').some(e => e.subtype === 'denials_acknowledged' && e.toolIds.includes('toolu_ws1') && e.action === 'granted'), 'serveur : refus accordé non acquitté');
+      // Rechargement : rien ne revient. Dans un second onglet neuf (état relu
+      // depuis le serveur) — recharger la page principale fausserait les
+      // parcours suivants (fixtures sans horodatage repassées « non lues »).
+      const p2 = await ctx.newPage();
+      wire(p2);
+      await p2.evaluate(() => localStorage.removeItem('perm.acked')).catch(() => {});
+      await p2.goto(`${sb.url}/?token=${sb.token}#/m/omega`);
+      await p2.locator('.brand').waitFor();
+      await p2.evaluate(() => localStorage.removeItem('perm.acked'));
+      await p2.reload(); await p2.locator('.brand').waitFor();
+      await until(async () => (await p2.locator('#dive .jt, #dive .dj-line').count()) > 0, 8000);
+      await sleep(1500);
+      assert(await p2.locator('#dive .dive-denials .dd-item').count() === 0, 'les refus traités reviennent après rechargement (acquittement lu dans le log, pas seulement en local)');
+      await p2.close();
+      // Panneau en direct : refus « commande » → pas d'Autoriser, « ✓ Vu » le retire.
+      appendLog('eps', [toolUse('toolu_ps2', 'PowerShell', { command: 'Get-Content $(Join-Path . a.txt)' }),
+        { type: 'system', subtype: 'permission_denied', tool_name: 'PowerShell', tool_use_id: 'toolu_ps2', decision_reason_type: 'subcommandResults', message: 'Command contains subexpressions $()' },
+        toolRes('toolu_ps2', 'This PowerShell command contains multiple operations. The following part requires approval: Get-Content $(Join-Path . a.txt)', true)]);
+      const toast = page.locator('.perm-denial-toast[data-tool-id="toolu_ps2"]');
+      assert(await until(async () => (await toast.count()) === 1, 8000), 'aucun panneau pour le refus en direct');
+      assert(await toast.locator('.ct-add-btn').count() === 0 && await toast.locator('.ct-ack-btn').count() === 1, 'panneau : pas d\'Autoriser, un « ✓ Vu »');
+      await toast.locator('.ct-ack-btn').click();
+      assert(await until(async () => (await toast.count()) === 0, 3000), 'le panneau reste après « Vu »');
+      await setHash(page, '#/m/eps');
+      await sleep(800);
+      assert(await page.locator('#dive .dd-item[data-tool-id="toolu_ps2"]').count() === 0, 'refus acquitté encore visible dans le volet');
+      await page.click('#dive .dive-back');
     });
 
     // ---------------------- Vue « Projets » ----------------------

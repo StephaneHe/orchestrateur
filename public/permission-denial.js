@@ -94,6 +94,82 @@
 
   function isComplete(d) { return !!(d && d.toolName && d.preview); }
 
+  // --------------------------------------------------------------------------
+  // Nature du refus (0.37.0). Seul un outil NON ACCORDÉ se règle en l'ajoutant.
+  // Relevé sur les logs de la flotte (octobre 2026) :
+  //   · tool    « Claude requested permissions to use WebSearch, but you
+  //              haven't granted it yet. » (decision_reason_type absent)
+  //   · path    « …permissions to write to|read from|edit <chemin>… »,
+  //              « …may only access files… », workingDir, fichier sensible,
+  //              répertoire refusé par les réglages
+  //   · command tout le reste : l'analyse de sécurité du CLI juge l'APPEL
+  //              (subcommandResults, safetyCheck, rule) — opérations
+  //              multiples, $( ), bloc de script, .NET, tâche planifiée…
+  //              L'outil est déjà accordé : l'ajouter ne change rien.
+  // --------------------------------------------------------------------------
+  const TOOL_RE = /^Claude requested permissions? to use (\S+?),? but you haven't granted it yet/;
+  const PATH_RE = [
+    /^Claude requested permissions? to (?:write to|read from|read|edit|access) /,
+    /may only access files/,
+    /denied by your permission settings/,
+    /which is a sensitive file/,
+  ];
+  function classify(d) {
+    const msg = String((d && (d.message || d.reason)) || "");
+    const type = d && d.decisionType;
+    if (TOOL_RE.test(msg) && !type) return "tool";
+    if (type === "workingDir" || PATH_RE.some(re => re.test(msg))) return "path";
+    if (TOOL_RE.test(msg)) return "tool";
+    if (!msg && !type) return "unknown";
+    return "command";
+  }
+
+  /** Refus annoncé par un événement `system/permission_denied` du CLI. */
+  function denialFromSystemEvent(ev, toolUses) {
+    if (!ev || ev.type !== "system" || ev.subtype !== "permission_denied") return null;
+    const use = (toolUses && ev.tool_use_id && toolUses[ev.tool_use_id]) || null;
+    const d = {
+      toolId: ev.tool_use_id || null,
+      toolName: ev.tool_name || (use && use.name) || null,
+      preview: use ? inputPreview(use.input) : "",
+      reason: String(ev.message || "").split("\n")[0].trim().slice(0, 200),
+      decisionType: ev.decision_reason_type || null,
+    };
+    return isComplete(d) ? d : null;
+  }
+
+  /** Complète un refus (motif, nature) avec le `system/permission_denied` du
+   *  même appel, s'il est connu : le `result` n'en donne que l'outil. */
+  function enrich(d, systemById) {
+    const s = d && d.toolId && systemById ? systemById[d.toolId] : null;
+    const out = Object.assign({}, d);
+    if (s) {
+      if (!out.reason) out.reason = String(s.message || "").split("\n")[0].trim().slice(0, 200);
+      if (!out.decisionType) out.decisionType = s.decision_reason_type || null;
+    }
+    out.kind = classify(out);
+    return out;
+  }
+
+  /** Identifiants d'appels déjà traités (« Vu » ou outil accordé), lus dans
+   *  les événements `notification/denials_acknowledged` du log. */
+  function acknowledgedIds(events) {
+    const set = new Set();
+    for (const e of events || []) {
+      if (e && e.type === "notification" && e.subtype === "denials_acknowledged" && Array.isArray(e.toolIds)) {
+        for (const id of e.toolIds) set.add(String(id));
+      }
+    }
+    return set;
+  }
+
+  const KIND_TEXT = {
+    tool: "Outil non accordé à ce musicien : l'autoriser règle le cas aux prochains tours.",
+    path: "Chemin hors du projet ou fichier protégé : le CLI refuse cet accès en mode non interactif. Si l'accès est légitime, à régler via le chef.",
+    command: "Le CLI a jugé cette commande trop complexe ou risquée pour la valider seul (opérations multiples, sous-expression, script, .NET…). L'outil est déjà accordé : l'autoriser à nouveau ne changerait rien. Le musicien peut la reformuler en commande simple ou passer par Bash.",
+    unknown: "Le CLI a refusé cet appel sans dire pourquoi.",
+  };
+
   /** L'outil figure-t-il dans les --allowed-tools du musicien ? (« Bash(git:*) » compte pour Bash) */
   function toolAllowed(tools, name) {
     const list = Array.isArray(tools) ? tools : String(tools || "").split(",");
@@ -102,5 +178,6 @@
 
   global.PermissionDenial = {
     DENIAL_PATTERNS, isDenialResult, inputPreview, denialsFromUserEvent, denialsFromResult, isComplete, toolAllowed, resultText,
+    classify, denialFromSystemEvent, enrich, acknowledgedIds, KIND_TEXT,
   };
 })(typeof window !== "undefined" ? window : globalThis);

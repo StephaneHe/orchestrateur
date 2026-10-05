@@ -127,6 +127,11 @@ class Musician {
     this.pos = { x: 0, y: 0, w: CARD_MAX_W, row: 0 };
 
     this.pendingDenials = [];            // [{toolName,toolId,preview,reason}] — VRAIS refus seulement (permission-denial.js)
+    // 0.37.0 — refus déjà traités (« Vu » ou outil accordé) : identifiants
+    // d'appels, lus dans le log (notification/denials_acknowledged) et, tant que
+    // le serveur n'a pas la route, dans localStorage.
+    this.ackedDenials = new Set(App.localAckedDenials(project.name));
+    this._systemDenials = {};            // tool_use_id → system/permission_denied (motif, nature)
     this._toolIdToName  = {};            // tool_use_id → name within current turn
     this._toolUses      = {};            // tool_use_id → {name, input} : l'aperçu d'un refus en dépend
 
@@ -181,6 +186,11 @@ class Musician {
       if (this.state === "input") this.setState("idle");
       this.questionResolved = { ts: Date.parse(raw.timestamp) || Date.now(), note: raw.note || "" };
       this.lastLine = String(raw.text || "✓ question marquée répondue").slice(0, 140);
+    } else if (t === "notification" && raw.subtype === "denials_acknowledged") {
+      for (const id of raw.toolIds || []) this.ackedDenials.add(String(id));
+      this.pendingDenials = this.pendingDenials.filter(d => !this.ackedDenials.has(String(d.toolId)));
+    } else if (t === "system" && raw.subtype === "permission_denied") {
+      if (raw.tool_use_id) this._systemDenials[raw.tool_use_id] = raw;
     } else if (t === "notification" && raw.subtype === "acknowledged") {
       // « Vu » (0.31.0, window.TurnCore) : un échec ou un arrêt acquitté repasse
       // à « prêt », sans relancer de tour. Même règle que les réducteurs serveur.
@@ -2771,19 +2781,68 @@ const App = {
     }, 7000);
   },
 
+  // ---------- Refus d'autorisation traités (0.37.0) ----------
+  /** Identifiants acquittés localement (serveur antérieur à 0.37.0). */
+  localAckedDenials(name) {
+    try { return (JSON.parse(localStorage.getItem("perm.acked") || "{}")[name] || []).map(String); } catch { return []; }
+  },
+  _storeLocalAck(name, ids) {
+    try {
+      const all = JSON.parse(localStorage.getItem("perm.acked") || "{}");
+      all[name] = [...new Set([...(all[name] || []), ...ids])].slice(-300);
+      localStorage.setItem("perm.acked", JSON.stringify(all));
+    } catch { /* privé */ }
+  },
+  /** « Vu » ou outil accordé : le refus disparaît, ici et au rechargement. */
+  async ackDenials(name, ids, { action = "seen", tool = null } = {}) {
+    ids = (ids || []).filter(Boolean).map(String);
+    if (!ids.length) return;
+    const m = this.musicians.get(name);
+    if (m) {
+      ids.forEach(id => m.ackedDenials.add(id));
+      m.pendingDenials = m.pendingDenials.filter(d => !m.ackedDenials.has(String(d.toolId)));
+    }
+    document.querySelectorAll(".perm-denial-toast").forEach(t => { if (ids.includes(t.dataset.toolId)) t.remove(); });
+    window.Salle?.renderDive();
+    try {
+      const r = await fetch(`/api/project/${encodeURIComponent(name)}/denials/ack`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ toolIds: ids, action, tool, by: "utilisateur" }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    } catch {
+      // Serveur pas encore redémarré (route absente) : on garde la trace ici.
+      this._storeLocalAck(name, ids);
+    }
+  },
+  /** Outil accordé depuis un refus : settings.json + confiance (add-tool),
+   *  puis le refus est acquitté — il ne revient pas. */
+  async grantToolFromDenial(name, tool, toolIds) {
+    const r = await fetch(`/api/project/${encodeURIComponent(name)}/add-tool`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tool }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) throw new Error(d.error || `HTTP ${r.status}`);
+    const m = this.musicians.get(name);
+    if (m && !window.PermissionDenial.toolAllowed(m.tools, tool)) m.tools = `${m.tools || ""},${tool}`.replace(/^,/, "");
+    await this.ackDenials(name, toolIds, { action: "granted", tool });
+  },
+
   /** Panneau de refus : toujours QUI (musicien), QUEL outil, QUEL appel, et
    *  QUOI FAIRE. Un refus incomplet n'est jamais annoncé (permission-denial.js). */
   showPermDenialToast(m, d) {
     if (!window.PermissionDenial?.isComplete(d)) return;
+    if (m.ackedDenials?.has(String(d.toolId))) return;
     const toast = document.createElement("div");
     toast.className = "callback-toast perm-denial-toast";
+    toast.dataset.toolId = String(d.toolId || "");
     const tLabel = esc(d.toolName);
-    // Outil absent de ses --allowed-tools : l'ajouter règle le cas. Outil déjà
-    // autorisé : c'est CET appel (commande, chemin sensible) que le CLI refuse.
-    const toolMissing = !window.PermissionDenial.toolAllowed(m.tools, d.toolName);
-    const todo = toolMissing
-      ? `Pour l'autoriser aux prochains tours : ajouter <code>${tLabel}</code> à ses outils.`
-      : `<code>${tLabel}</code> est déjà dans ses outils : le CLI refuse cet appel précis (commande composée ou chemin protégé). À régler via le chef ou les réglages de permission du projet.`;
+    // 0.37.0 : seul un outil NON ACCORDÉ se règle en l'ajoutant. Les refus de
+    // l'analyse du CLI (commande complexe) ou de chemin ne proposent jamais
+    // « Autoriser » : ça ne changerait rien et le panneau reviendrait.
+    const kind = window.PermissionDenial.enrich(d, m._systemDenials).kind;
+    const toolMissing = kind === "tool";
+    const todo = esc(window.PermissionDenial.KIND_TEXT[kind] || "");
     toast.innerHTML =
       `<span class="ct-source">🚫 ${esc(m.name)} — autorisation refusée : ${tLabel}</span>` +
       `<span class="ct-text">Appel bloqué : <code>${esc(d.preview)}</code>` +
@@ -2792,6 +2851,7 @@ const App = {
       `<div class="ct-actions">` +
       `<button class="ct-open-btn">Ouvrir ${esc(m.name)} →</button>` +
       (toolMissing ? `<button class="ct-add-btn" data-project="${esc(m.name)}" data-tool="${esc(d.toolName)}">+ Autoriser ${tLabel}</button>` : "") +
+      `<button class="ct-ack-btn" title="Ne plus afficher ce refus">✓ Vu</button>` +
       `</div>`;
     const dismiss = () => {
       toast.classList.remove("callback-toast--show");
@@ -2807,14 +2867,14 @@ const App = {
       const btn = e.currentTarget;
       const { project, tool } = btn.dataset;
       btn.disabled = true; btn.textContent = "Ajout…";
-      fetch(`/api/project/${encodeURIComponent(project)}/add-tool`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tool }),
-      })
-        .then(r => r.json())
-        .then(d => { btn.textContent = d.ok ? `✓ autorisé` : "Erreur"; })
-        .catch(() => { btn.textContent = "Erreur réseau"; });
+      App.grantToolFromDenial(project, tool, [d.toolId])
+        .then(() => dismiss())
+        .catch(err => { btn.disabled = false; btn.textContent = `Erreur : ${err.message || err}`; });
+    });
+    toast.querySelector(".ct-ack-btn")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      App.ackDenials(m.name, [d.toolId]);
+      dismiss();
     });
     toast.addEventListener("click", dismiss);
     document.body.appendChild(toast);
@@ -3162,16 +3222,10 @@ const App = {
       if (!project || !tool) return;
       btn.disabled = true;
       btn.textContent = "Ajout…";
-      fetch(`/api/project/${encodeURIComponent(project)}/add-tool`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tool }),
-      })
-        .then(r => r.json())
-        .then(d => {
-          btn.textContent = d.ok ? `✓ ${tool} ajouté` : `Erreur : ${d.error || "?"}`;
-        })
-        .catch(() => { btn.textContent = "Erreur réseau"; });
+      const ids = String(btn.dataset.toolIds || btn.dataset.toolId || "").split(",").filter(Boolean);
+      this.grantToolFromDenial(project, tool, ids)
+        .then(() => { btn.textContent = `✓ ${tool} ajouté`; })
+        .catch(err => { btn.disabled = false; btn.textContent = `Erreur : ${err.message || err}`; });
     });
 
     // briefing — re-render live by itself, no special button
@@ -3749,8 +3803,8 @@ function renderFocusedEventMain(raw, projectName, toolNames) {
       const uses = toolNames && typeof toolNames === "object" ? toolNames : {};
       const d = (window.PermissionDenial?.denialsFromUserEvent(raw, uses) || [])[0];
       if (!d) return "";
-      const btn = projectName
-        ? `<br><button class="ev-perm-add-btn" data-project="${esc(projectName)}" data-tool="${esc(d.toolName)}">+ Ajouter ${esc(d.toolName)} aux outils</button>`
+      const btn = projectName && window.PermissionDenial.classify(d) === "tool"
+        ? `<br><button class="ev-perm-add-btn" data-project="${esc(projectName)}" data-tool="${esc(d.toolName)}" data-tool-id="${esc(d.toolId || "")}">+ Ajouter ${esc(d.toolName)} aux outils</button>`
         : "";
       return `<div class="ev ev-perm-denied"><span class="ev-ts">${ts}</span>🚫 <strong>Autorisation refusée</strong> — <code>${esc(d.toolName)}</code> : <code>${esc(d.preview)}</code>${btn}</div>`;
     }

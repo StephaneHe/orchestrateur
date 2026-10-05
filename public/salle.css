@@ -765,3 +765,13 @@ div.jt-did { padding-left: 0; }
 
 /* 0.34.0 — grand texte : l'état d'une ligne s'ellipse au lieu de déborder. */
 .rail-row .rr-state { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* 0.37.0 — refus d'autorisation : nature + « ✓ Vu » */
+.dive-denials .dd-item[data-kind="command"] { border-left: 2px solid var(--fg-3); padding-left: 6px; }
+.dive-denials .dd-act { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 3px; }
+.dive-denials .dd-ack, .perm-denial-toast .ct-ack-btn {
+  font-family: var(--font-mono); font-size: 0.6875rem; border: 1px solid var(--card-border);
+  border-radius: 6px; padding: 2px 8px; color: var(--fg-1); background: transparent; cursor: pointer;
+}
+.dive-denials .dd-ack-all { margin-left: 8px; }
+@media (max-width: 767.98px) { .dive-denials .dd-ack, .dive-denials .ev-perm-add-btn { min-height: 44px; padding: 0 12px; } }

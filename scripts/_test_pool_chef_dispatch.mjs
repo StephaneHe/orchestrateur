@@ -165,6 +165,21 @@ scenario('Règle des exigences utilisateur injectée aux musiciens');
   ok(D.indexOf('prompt = prompt + userRequirementsRule()') > D.indexOf('const promptForLog = prompt;'), 'invisible dans le fil (après promptForLog)');
 }
 
+// ── 7c. Commandes simples : réduire les refus du CLI (0.37.0) ──────────────
+scenario('Consigne « commandes simples » injectée aux musiciens');
+{
+  const D = fs.readFileSync(DISPATCH, 'utf8');
+  const a = D.indexOf('function simpleCommandsRule(');
+  const b = D.indexOf('\n}\n', a) + 2;
+  ok(a > 0, 'simpleCommandsRule() existe');
+  // eslint-disable-next-line no-new-func
+  const rule = new Function(`${D.slice(a, b)}\nreturn simpleCommandsRule;`)()();
+  ok(/préfère l'outil Bash/.test(rule) && /PowerShell simples/.test(rule), 'préférer Bash ou des commandes PowerShell simples');
+  ok(/\$\( \)/.test(rule) && /@\( \)/.test(rule) && /bloc de script/.test(rule) && /chemin calculé/.test(rule) && /\.NET/.test(rule), 'cite les formes refusées : $( ), @( ), script, chemin calculé, .NET');
+  ok(/if \(projectName !== CONDUCTOR\) prompt = prompt \+ simpleCommandsRule\(\)/.test(D), 'injectée pour tout musicien (pas le chef)');
+  ok(D.indexOf('prompt = prompt + simpleCommandsRule()') > D.indexOf('const promptForLog = prompt;'), 'invisible dans le fil');
+}
+
 // ── 8. codex : le --model est respecté, plus de gpt-4o codé en dur (0.25.1) ─
 scenario('codex : choix du model (flag > projet > défaut config > config.toml de codex)');
 {

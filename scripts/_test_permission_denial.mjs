@@ -95,5 +95,36 @@ ok(/b\.isError == true/.test(KT) && !/contains\("requires approval"/.test(KT), '
 const APP = fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
 ok(!/includes\("requires approval"\)/.test(APP), 'public/app.js n\'utilise plus la sous-chaîne');
 
+// Exigence utilisateur (0.37.0) : « fais en sorte que les demandes
+// d'autorisations s'en aillent après validation ». Seul un outil NON accordé
+// se règle en l'ajoutant ; les autres refus ne proposent jamais « Autoriser ».
+console.log('\n── Nature du refus (messages réels, octobre 2026)');
+const K = (message, decisionType) => PD.classify({ message, decisionType });
+ok(K("Claude requested permissions to use WebSearch, but you haven't granted it yet.") === 'tool', 'outil non accordé (WebSearch) → tool');
+ok(K("Claude requested permissions to use WebFetch, but you haven't granted it yet.", null) === 'tool', 'outil non accordé (WebFetch) → tool');
+ok(K("Claude requested permissions to write to I:\\Dev\\x\\a.txt, but you haven't granted it yet.", 'safetyCheck') === 'path', 'écriture hors projet → path');
+ok(K("Claude requested permissions to read from C:\\Users\\x, but you haven't granted it yet.", 'workingDir') === 'path', 'lecture hors projet (workingDir) → path');
+ok(K("Claude requested permissions to edit I:\\Dev\\x\\.env which is a sensitive file.", 'safetyCheck') === 'path', 'fichier sensible → path');
+ok(K("get-childitem targeting 'C:/x' was blocked. For security, Claude Code may only access files in the allowed working directories", 'subcommandResults') === 'path', 'cible hors des répertoires autorisés → path');
+ok(K("get-content uses a parameter or complex path expression (array literal, subexpression, unknown parameter, etc.) that cannot be statically validated and requires manual approval", 'subcommandResults') === 'command', 'PowerShell : chemin complexe (le cas signalé) → command');
+ok(K('This PowerShell command contains multiple operations. The following part requires approval: Start-Process …', 'subcommandResults') === 'command', 'PowerShell : opérations multiples → command');
+ok(K('Command contains subexpressions $()', 'subcommandResults') === 'command', 'PowerShell : $( ) → command');
+ok(K('Command invokes .NET methods', 'subcommandResults') === 'command', 'PowerShell : .NET → command');
+ok(K("Dangerous rm operation detected: 'I:/Dev/x/.tmp'", 'safetyCheck') === 'command', 'Bash : rm dangereux → command');
+ok(K('This command requires approval') === 'command', 'commande à approuver → command');
+ok(PD.classify({}) === 'unknown', 'sans motif → unknown');
+ok(PD.KIND_TEXT.command.includes("l'autoriser à nouveau ne changerait rien"), 'explication « commande » : inutile d\'autoriser');
+
+console.log('\n── Refus déjà traités');
+const sys = { type: 'system', subtype: 'permission_denied', tool_name: 'PowerShell', tool_use_id: 'toolu_x1',
+  decision_reason_type: 'subcommandResults', message: 'Command contains subexpressions $()' };
+const fromSys = PD.denialFromSystemEvent(sys, { toolu_x1: { name: 'PowerShell', input: { command: 'Get-Content $(Join-Path . a)' } } });
+ok(fromSys && fromSys.decisionType === 'subcommandResults' && PD.classify(fromSys) === 'command', 'system/permission_denied lu (motif, nature)');
+const fromRes = PD.denialsFromResult({ permission_denials: [{ tool_name: 'PowerShell', tool_use_id: 'toolu_x1', tool_input: { command: 'Get-Content $(Join-Path . a)' } }] })[0];
+const en = PD.enrich(fromRes, { toolu_x1: sys });
+ok(en.kind === 'command' && /subexpressions/.test(en.reason), 'refus du result enrichi par le system/permission_denied du même appel');
+const acked = PD.acknowledgedIds([{ type: 'notification', subtype: 'denials_acknowledged', toolIds: ['toolu_x1', 'toolu_x2'] }, { type: 'result' }]);
+ok(acked.has('toolu_x1') && acked.has('toolu_x2') && acked.size === 2, 'appels acquittés lus dans le log');
+
 console.log(`\n${fail === 0 ? '✓' : '✗'} ${pass} réussis, ${fail} échoués`);
 process.exit(fail === 0 ? 0 : 1);

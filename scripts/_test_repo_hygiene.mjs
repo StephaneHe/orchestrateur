@@ -12,6 +12,13 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
 const ok = (c, l) => { c ? pass++ : fail++; console.log(`  ${c ? '✓' : '✗'} ${l}`); };
 
+// Une copie extraite d'un tag (regression.mjs --ref, sous .regress/) n'est pas
+// la racine d'un dépôt : git remonterait au dépôt parent et ne verrait rien.
+const top = spawnSync('git', ['-C', ROOT, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' });
+if (top.status !== 0 || path.resolve(top.stdout.trim()).toLowerCase() !== ROOT.toLowerCase()) {
+  console.log('  — pas la racine d\'un dépôt git (copie extraite) : rien à vérifier');
+  process.exit(0);
+}
 const ls = spawnSync('git', ['-C', ROOT, 'ls-files', '-z'], { encoding: 'utf8' });
 if (ls.status !== 0) { console.log('  — pas un dépôt git : rien à vérifier'); process.exit(0); }
 const files = ls.stdout.split('\0').filter(Boolean);

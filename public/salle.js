@@ -1044,6 +1044,22 @@
     const box = $(".dive-denials", el);
     const PD = global.PermissionDenial;
     if (!box || !PD) return;
+    // 0.37.0 : nature de chaque refus (outil non accordé / chemin / commande
+    // refusée par l'analyse du CLI) et refus déjà traités, qui ne reviennent pas.
+    const systemById = Object.assign({}, m && m._systemDenials);
+    for (const e of dive.events) if (e?.type === "system" && e.subtype === "permission_denied" && e.tool_use_id) systemById[e.tool_use_id] = e;
+    // Sans system/permission_denied (outil non accordé), le motif n'est que dans
+    // la tool_result en erreur du même appel.
+    for (const e of dive.events) {
+      if (e?.type !== "user") continue;
+      for (const b of e.message?.content || []) {
+        if (b?.type === "tool_result" && b.is_error && b.tool_use_id && !systemById[b.tool_use_id] && PD.isDenialResult(b)) {
+          systemById[b.tool_use_id] = { message: PD.resultText(b).split("\n")[0] };
+        }
+      }
+    }
+    const acked = PD.acknowledgedIds(dive.events);
+    if (m && m.ackedDenials) m.ackedDenials.forEach(id => acked.add(id));
     let list = (m && m.pendingDenials || []).filter(PD.isComplete);
     let when = "pendant ce tour";
     if (!list.length) {
@@ -1055,19 +1071,24 @@
         break;
       }
     }
+    list = list.filter(d => !acked.has(String(d.toolId))).map(d => PD.enrich(d, systemById));
     const html = list.map(d => {
-      const missing = !PD.toolAllowed(m && m.tools, d.toolName);
-      const todo = missing
-        ? `<button class="ev-perm-add-btn" data-project="${esc(m.name)}" data-tool="${esc(d.toolName)}">+ Ajouter ${esc(d.toolName)} à ses outils</button>`
-        : `<span class="dd-todo">${esc(d.toolName)} est déjà autorisé : c'est cet appel précis que le CLI a refusé — à régler via le chef.</span>`;
-      return `<div class="dd-item">🚫 <strong>${esc(d.toolName)}</strong> refusé ${esc(when)} : <code>${esc(d.preview)}</code>` +
-        (d.reason ? `<div class="dd-reason">${esc(d.reason)}</div>` : "") + `<div class="dd-act">${todo}</div></div>`;
+      const todo = d.kind === "tool"
+        ? `<button class="ev-perm-add-btn" data-project="${esc(m.name)}" data-tool="${esc(d.toolName)}" data-tool-ids="${esc(list.filter(x => x.kind === "tool" && x.toolName === d.toolName).map(x => x.toolId).join(","))}">+ Autoriser ${esc(d.toolName)}</button>`
+        : "";
+      return `<div class="dd-item" data-kind="${esc(d.kind)}" data-tool-id="${esc(d.toolId || "")}">🚫 <strong>${esc(d.toolName)}</strong> refusé ${esc(when)} : <code>${esc(d.preview)}</code>` +
+        (d.reason ? `<div class="dd-reason">${esc(d.reason)}</div>` : "") +
+        `<div class="dd-todo">${esc(PD.KIND_TEXT[d.kind] || "")}</div>` +
+        `<div class="dd-act">${todo}<button class="dd-ack" type="button" data-ack-denial="${esc(d.toolId || "")}" title="Ne plus afficher ce refus">✓ Vu</button></div></div>`;
     }).join("");
     if (box._html === html) return;
     box._html = html;
-    box.innerHTML = html ? `<div class="dd-title">Autorisations refusées à ${esc(m.name)}</div>${html}` : "";
+    const all = list.length > 1
+      ? `<button class="dd-ack dd-ack-all" type="button" data-ack-denial="${esc(list.map(d => d.toolId).join(","))}">✓ Tout marquer vu</button>` : "";
+    box.innerHTML = html ? `<div class="dd-title">Autorisations refusées à ${esc(m.name)} ${all}</div>${html}` : "";
     box.hidden = !html;
   }
+
 
   // ------------------------------------------------------------------------
   // File du musicien (0.24.0) : les tâches qui attendent la fin de son tour,
@@ -1245,6 +1266,10 @@
       if (tg) global.Activite?.toggle(tg.dataset.jtToggle);
       const cl = e.target.closest("[data-jt-collapse]");
       if (cl) global.Activite?.toggle(cl.dataset.jtCollapse, { reveal: true });
+    });
+    $(".dive-denials", el)?.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-ack-denial]");
+      if (b && dive.name) App.ackDenials(dive.name, String(b.dataset.ackDenial).split(",").filter(Boolean));
     });
     $(".dive-queue", el).addEventListener("click", (e) => {
       const b = e.target.closest("[data-queue-rm]");

@@ -2865,6 +2865,37 @@ app.post('/api/project/:name/add-tool', express.json({ limit: '1kb' }), (req, re
   res.json({ ok: true, tool, trusted });
 });
 
+// ---------- Refus d'autorisation traités (0.37.0) -----------------------------
+//
+// Exigence utilisateur : « fais en sorte que les demandes d'autorisations s'en
+// aillent après validation ». Le volet ré-affichait les refus du dernier tour
+// (permission_denials du result) sans fin, et proposait « + Ajouter PowerShell »
+// pour des refus que l'ajout ne peut pas régler (analyse de sécurité du CLI).
+// Un refus traité (« Vu », ou outil accordé) est acquitté par un événement de
+// log — même conception que question_resolved et « vu » : lu par le client dans
+// l'ordre, il survit au redémarrage et part par le SSE.
+// Body : { toolIds: [tool_use_id…], action: 'seen'|'granted', tool?, by? }
+app.post('/api/project/:name/denials/ack', express.json({ limit: '16kb' }), (req, res) => {
+  const name = String(req.params.name || '');
+  if (!config.projects.find(p => p.name === name)) return res.status(404).json({ error: `unknown project "${name}"` });
+  const ids = Array.isArray(req.body?.toolIds) ? req.body.toolIds.map(String) : [];
+  if (!ids.length || ids.length > 200 || !ids.every(id => /^[A-Za-z0-9_\-]{1,100}$/.test(id))) {
+    return res.status(400).json({ error: 'toolIds : 1 à 200 identifiants d\'appel attendus' });
+  }
+  const action = req.body?.action === 'granted' ? 'granted' : 'seen';
+  const tool = typeof req.body?.tool === 'string' && /^[A-Za-z0-9_]{1,40}$/.test(req.body.tool) ? req.body.tool : null;
+  const by = typeof req.body?.by === 'string' && /^[A-Za-z0-9_.\-]{1,32}$/.test(req.body.by) ? req.body.by : 'utilisateur';
+  const ev = {
+    type: 'notification', subtype: 'denials_acknowledged', toolIds: ids, action, ...(tool ? { tool } : {}), by,
+    text: action === 'granted' ? `✓ ${tool || 'outil'} autorisé — refus traité` : `✓ refus d'autorisation marqué vu (${ids.length})`,
+    timestamp: new Date().toISOString(),
+  };
+  try { fs.appendFileSync(path.join(LOGS_DIR, `${name}.jsonl`), JSON.stringify(ev) + '\n'); }
+  catch (e) { return res.status(500).json({ error: `écriture impossible : ${e.message}` }); }
+  debugLog(`[autorisation] ${name} : ${ids.length} refus acquitté(s) (${action}${tool ? ' ' + tool : ''}) par ${by}`);
+  res.json({ ok: true, project: name, toolIds: ids, action });
+});
+
 // Toggle parked flag for a project (parked cards are hidden in the fleet UI).
 // Toggle the global AI provider (claude | codex). Persists to config.json.
 // Per-project overrides (project.provider) are set via /api/project/:name/provider.
