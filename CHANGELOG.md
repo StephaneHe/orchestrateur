@@ -11,6 +11,32 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.37.1] - 2026-10-05
+
+Précision de l'utilisateur, avec le texte exact du panneau : « 🚫 PowerShell
+refusé au dernier tour : Get-Content README.md,CHANGELOG.md,TODO_LIST.md,
+package.json,… — + Ajouter PowerShell à ses outils ». Le bouton était
+trompeur : PowerShell est déjà accordé, et c'est la commande `Get-Content` à
+liste de fichiers que le CLI refuse.
+
+### Fixed
+- (viewer) Un refus Bash ou PowerShell dont seul le `result` est connu
+  (motif du CLI hors de la fenêtre chargée) est classé « commande complexe » :
+  explication et « ✓ Vu », jamais « Ajouter ». Un autre outil sans motif reste
+  « inconnu », sans bouton « Ajouter » non plus.
+
+### Added
+- Fixture du cas exact : la commande réelle `Get-Content README.md,
+  CHANGELOG.md,…,run-scrap-heap.bat -Encoding utf8; Get-ChildItem parts |
+  select -first 5 Name`. Elle est testée :
+  - dans `_test_permission_denial.mjs`, avec le motif du CLI puis avec le
+    seul `result` ;
+  - dans le parcours navigateur `denial-ack` : « commande », pas de bouton
+    Ajouter, plus de texte « à ses outils », « ✓ Vu » le retire ; capture
+    `refus-cas-exact`.
+
+  Précision ajoutée au registre `docs/USER_REQUIREMENTS.md`.
+
 ## [0.37.0] - 2026-10-05
 
 Retour utilisateur : « Même après l'avoir ajouté, je continue à avoir une

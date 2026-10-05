@@ -282,7 +282,8 @@ export async function browserChecks(sb, t) {
     await check(B, 'denial-ack', 'Refus d\'autorisation : « commande » sans Autoriser et « ✓ Vu » le retire ; « outil » accordé puis retiré ; rien ne revient au rechargement', async () => {
       if (!(await page.evaluate(() => typeof window.PermissionDenial?.classify === 'function'))) NA('fonction absente de cet état du code');
       const ts = (x) => new Date(Date.now() - x * 1000).toISOString();
-      const PS = 'Get-Content README.md,CHANGELOG.md,TODO_LIST.md -Encoding utf8; Get-ChildItem parts | select -first 5 Name';
+      // Cas exact signalé par l'utilisateur (Get-Content avec une LISTE de fichiers).
+      const PS = 'Get-Content README.md,CHANGELOG.md,TODO_LIST.md,package.json,serve.py,start-player-server.bat,start-server.bat,.gitignore,dl-batch.bat,concat-bastard.sh,ffmpeg-faststart.bat,run-scrap-heap.bat -Encoding utf8; Get-ChildItem parts | select -first 5 Name';
       const PS_MSG = 'get-content uses a parameter or complex path expression (array literal, subexpression, unknown parameter, etc.) that cannot be statically validated and requires manual approval';
       appendLog('omega', [
         { type: 'user_prompt', text: 'Faire le point sur le dépôt', timestamp: ts(60) }, { type: 'system', subtype: 'init', timestamp: ts(59) },
@@ -327,6 +328,24 @@ export async function browserChecks(sb, t) {
       await sleep(1500);
       assert(await p2.locator('#dive .dive-denials .dd-item').count() === 0, 'les refus traités reviennent après rechargement (acquittement lu dans le log, pas seulement en local)');
       await p2.close();
+      // Même cas, quand seul le `result` est connu (motif du CLI hors de la
+      // fenêtre chargée) : toujours « commande », jamais « Ajouter PowerShell ».
+      appendLog('omega', [
+        { type: 'user_prompt', text: 'Relire la documentation', timestamp: ts(20) }, { type: 'system', subtype: 'init', timestamp: ts(19) },
+        toolUse('toolu_01R4xqsbBXjaFpR55r94y8iZ', 'PowerShell', { command: PS, description: 'Read project docs and key scripts' }),
+        { type: 'result', subtype: 'success', is_error: false, num_turns: 2, duration_ms: 5000, result: 'Documentation relue.',
+          permission_denials: [{ tool_name: 'PowerShell', tool_use_id: 'toolu_01R4xqsbBXjaFpR55r94y8iZ', tool_input: { command: PS, description: 'Read project docs and key scripts' } }] },
+      ]);
+      await setHash(page, '#/m/omega');
+      const exact = page.locator('#dive .dd-item[data-tool-id="toolu_01R4xqsbBXjaFpR55r94y8iZ"]');
+      assert(await until(async () => (await exact.count()) === 1, 10_000), 'cas exact : refus non affiché');
+      const et = await exact.textContent();
+      assert((await exact.getAttribute('data-kind')) === 'command' && await exact.locator('.ev-perm-add-btn').count() === 0, 'cas exact : « commande » attendue, sans bouton Ajouter');
+      assert(!/à ses outils/.test(await page.textContent('#dive .dive-denials')) && /ne changerait rien/.test(et) && /Get-Content README\.md,CHANGELOG\.md/.test(et), `cas exact : texte ${et}`);
+      await shot(page, 'refus-cas-exact');
+      await exact.locator('[data-ack-denial]').click();
+      assert(await until(async () => (await exact.count()) === 0, 5000), 'cas exact : « ✓ Vu » ne le retire pas');
+      await page.click('#dive .dive-back');
       // Panneau en direct : refus « commande » → pas d'Autoriser, « ✓ Vu » le retire.
       appendLog('eps', [toolUse('toolu_ps2', 'PowerShell', { command: 'Get-Content $(Join-Path . a.txt)' }),
         { type: 'system', subtype: 'permission_denied', tool_name: 'PowerShell', tool_use_id: 'toolu_ps2', decision_reason_type: 'subcommandResults', message: 'Command contains subexpressions $()' },

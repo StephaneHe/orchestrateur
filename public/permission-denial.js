@@ -120,7 +120,10 @@
     if (TOOL_RE.test(msg) && !type) return "tool";
     if (type === "workingDir" || PATH_RE.some(re => re.test(msg))) return "path";
     if (TOOL_RE.test(msg)) return "tool";
-    if (!msg && !type) return "unknown";
+    // Sans motif (seul le `result` est connu, l'événement du CLI est hors de la
+    // fenêtre chargée) : un shell refusé l'a été par l'analyse de la commande —
+    // cas réel : « Get-Content README.md,CHANGELOG.md,… ; Get-ChildItem … ».
+    if (!msg && !type) return d && /^(Bash|PowerShell)$/.test(d.toolName || "") && d.preview ? "command" : "unknown";
     return "command";
   }
 

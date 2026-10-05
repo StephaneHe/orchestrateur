@@ -113,6 +113,17 @@ ok(K('Command invokes .NET methods', 'subcommandResults') === 'command', 'PowerS
 ok(K("Dangerous rm operation detected: 'I:/Dev/x/.tmp'", 'safetyCheck') === 'command', 'Bash : rm dangereux → command');
 ok(K('This command requires approval') === 'command', 'commande à approuver → command');
 ok(PD.classify({}) === 'unknown', 'sans motif → unknown');
+
+// Cas exact signalé par l'utilisateur (panneau « + Ajouter PowerShell à ses
+// outils » alors que PowerShell est déjà accordé) : Get-Content avec une LISTE
+// de fichiers = refus « commande complexe » du CLI.
+const YTL_CMD = 'Get-Content README.md,CHANGELOG.md,TODO_LIST.md,package.json,serve.py,start-player-server.bat,start-server.bat,.gitignore,dl-batch.bat,concat-bastard.sh,ffmpeg-faststart.bat,run-scrap-heap.bat -Encoding utf8; Get-ChildItem parts | select -first 5 Name';
+const YTL_MSG = 'get-content uses a parameter or complex path expression (array literal, subexpression, unknown parameter, etc.) that cannot be statically validated and requires manual approval';
+const ytlRes = PD.denialsFromResult({ permission_denials: [{ tool_name: 'PowerShell', tool_use_id: 'toolu_01R4xqsbBXjaFpR55r94y8iZ', tool_input: { command: YTL_CMD, description: 'Read project docs and key scripts' } }] })[0];
+ok(ytlRes && ytlRes.preview.startsWith('Get-Content README.md,CHANGELOG.md,TODO_LIST.md'), 'cas réel : aperçu = la commande Get-Content à liste de fichiers');
+ok(PD.enrich(ytlRes, { toolu_01R4xqsbBXjaFpR55r94y8iZ: { decision_reason_type: 'subcommandResults', message: YTL_MSG } }).kind === 'command', 'cas réel, motif du CLI connu → command (pas « Ajouter »)');
+ok(PD.enrich(ytlRes, {}).kind === 'command', 'cas réel, seul le result connu (motif hors fenêtre) → command quand même');
+ok(PD.classify({ toolName: 'WebSearch', preview: 'actualité' }) === 'unknown', 'outil non-shell sans motif → unknown (jamais « tool » par défaut)');
 ok(PD.KIND_TEXT.command.includes("l'autoriser à nouveau ne changerait rien"), 'explication « commande » : inutile d\'autoriser');
 
 console.log('\n── Refus déjà traités');

@@ -673,6 +673,10 @@ aillent après validation ».
   2026-10-05 : dans un dossier de confiance avec `PowerShell` autorisé,
   `Get-Content @(…)` et `Get-Content $(…)` passent ; une règle de préfixe
   `PowerShell(Get-Content:*)` n'apporte rien, et n'est donc pas ajoutée.
+- Sans motif connu (événement du CLI hors de la fenêtre chargée, seul le
+  `result` reste), un refus **Bash ou PowerShell** est classé `command` ; les
+  autres outils sont classés `unknown`. Jamais `tool` par défaut (0.37.1).
+  Fixture : la commande réelle `Get-Content README.md,CHANGELOG.md,…`.
 - `dispatch.mjs` ajoute `simpleCommandsRule()` au prompt des musiciens :
   préférer Bash ou des commandes PowerShell simples.
 - Recettes : `_test_permission_denial.mjs` (classification, enrichissement,
