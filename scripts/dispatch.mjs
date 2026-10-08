@@ -935,6 +935,9 @@ delete env.OPENAI_API_KEY;
 // (a codex last-resort spawn rides its own OAuth). loadNvidiaKey reads it from
 // the parent process.env / .env, so scrubbing the child copy is harmless here.
 delete env.NVIDIA_API_KEY;
+// Même règle pour la clé OpenRouter (0.43.0) : seuls nos modules la lisent,
+// depuis .env ; aucun fils (claude, codex) n'en hérite.
+delete env.OPENROUTER_API_KEY;
 
 // ---------- shared log setup ------------------------------------------------
 

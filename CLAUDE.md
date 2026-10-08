@@ -784,7 +784,27 @@ OpenRouter.
 - **Clés** : seule la présence de la clé OpenRouter est rapportée
   (`OPENROUTER_API_KEY` dans l'environnement du serveur ou dans le `.env` de
   l'orchestrateur), jamais sa valeur. Sans clé, le groupe est grisé et le
-  `PUT` renvoie 409. Les `.env` des autres projets ne sont jamais lus.
+  `PUT` renvoie 409. Les `.env` des autres projets ne sont jamais lus par le
+  code. Exception : la copie unique et autorisée du 2026-10-08, voir
+  ci-dessous.
+- **Section « 🔑 Clés API » (0.43.0)** : `scripts/api-keys.mjs`, routes
+  `/api/api-keys` (GET, PUT `:name`, POST `:name/test`, DELETE `:name`).
+  - **Jamais la valeur** dans une réponse, un log ou `logs/api-keys.status.json` :
+    au plus les 4 derniers caractères.
+  - Écriture atomique dans le `.env` de la racine, et nulle part ailleurs.
+    La valeur doit respecter `^[A-Za-z0-9._~+/=:-]{16,512}$`, ce qui empêche
+    toute injection de ligne.
+  - Test envoyé à l'hôte du fournisseur seulement. Les écritures exigent la
+    même origine (`sameOriginOnly`).
+  - Instance de test : mode hors ligne (`MODEL_CATALOG_FIXTURES`), où une clé
+    finissant par `-valid` est acceptée.
+  - Le serveur retire `OPENROUTER_API_KEY` et `NVIDIA_API_KEY` de
+    `process.env` au démarrage (copie privée `BOOT_PROVIDER_KEYS`), et
+    `dispatch.mjs` les retire de l'environnement de ses fils : aucun processus
+    qui n'en a pas besoin ne les reçoit.
+  - La clé OpenRouter vient du `.env` d'un autre projet de l'utilisateur. Elle
+    a été copiée une seule fois, sur son autorisation explicite (« Utilises la
+    meme clef »).
 - Enregistrement : `PUT /api/model-routing/:task {provider, model}` ou
   `{default:true}`.
   - Les choix vont dans **`model-routing.json`** (racine, non versionné), et

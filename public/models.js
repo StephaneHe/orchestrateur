@@ -48,6 +48,10 @@
     showObs: false,            // panneau « Observation » (phase 1 des pipelines)
     obs: null,
     obsError: null,
+    showKeys: false,           // panneau « Clés API » (0.43.0) — aucune valeur côté client
+    keys: null,
+    keysError: null,
+    keyNotice: {},             // nom → message après une action
     showGaps: false,           // panneau « Lacunes proposées » (0.42.0)
     gaps: null,
     gapsError: null,
@@ -367,6 +371,98 @@
     patch();
   }
 
+  // --- Clés API (0.43.0) : la valeur n'est jamais lue, gardée ni affichée ---
+  function keyStateHtml(k) {
+    if (!k.configured) return '<span class="mr-key-state" data-state="absente">○ absente</span>';
+    if (k.valid === false) return '<span class="mr-key-state" data-state="invalide">✕ invalide</span>';
+    if (k.valid === true) return '<span class="mr-key-state" data-state="valide">✓ configurée · acceptée</span>';
+    return '<span class="mr-key-state" data-state="configuree">✓ configurée · non vérifiée</span>';
+  }
+
+  function keysHtml() {
+    if (st.keysError) return `<p class="mr-error" role="alert">${esc(st.keysError)}</p>`;
+    if (!st.keys) return '<p class="mr-empty">Chargement de l’état des clés…</p>';
+    return `<p class="mr-obs-intro">Les clés sont écrites dans le <code>.env</code> de l’orchestrateur (non versionné) et prises en compte
+        immédiatement. <b>Leur valeur n’est jamais renvoyée ni affichée</b> : seuls ses 4 derniers caractères le sont.</p>
+      ${st.keys.map(k => `<div class="mr-key" data-key="${esc(k.name)}">
+        <div class="mr-key-head"><b>${esc(k.label)}</b> ${keyStateHtml(k)}
+          ${k.last4 ? `<span class="mr-key-mask" title="4 derniers caractères">••••${esc(k.last4)}</span>` : ""}
+          ${k.source ? `<span class="mr-obs-dim">source : ${esc(k.source)}</span>` : ""}
+          ${k.checkedAt ? `<span class="mr-obs-dim">vérifiée ${esc(fmtTime(k.checkedAt))}</span>` : ""}</div>
+        <p class="mr-key-usage">${esc(k.usage)}${k.detail ? ` — <span class="mr-obs-dim">${esc(k.detail)}</span>` : ""}</p>
+        <form class="mr-key-form" data-key="${esc(k.name)}" autocomplete="off">
+          <label class="sr-only" for="mr-key-in-${esc(k.name)}">Nouvelle clé ${esc(k.label)}</label>
+          <input id="mr-key-in-${esc(k.name)}" class="mr-key-input" type="password" autocomplete="new-password" spellcheck="false"
+                 placeholder="${k.configured ? "Remplacer la clé…" : `Coller la clé ${esc(k.label)}…`}">
+          <button type="submit" class="mr-key-save">Enregistrer</button>
+          <button type="button" class="mr-key-test" ${k.configured ? "" : "disabled"}>Tester</button>
+          <button type="button" class="mr-key-del" ${k.deletable ? "" : "disabled"} title="${k.deletable ? "Retirer la clé du .env" : k.configured ? "Clé fournie par l’environnement du serveur" : "Aucune clé"}">Supprimer</button>
+        </form>
+        <p class="mr-key-notice" role="status">${esc(st.keyNotice[k.name] || "")}</p>
+      </div>`).join("")}`;
+  }
+
+  function renderKeys() {
+    const box = root()?.querySelector(".mr-keys");
+    if (box) box.innerHTML = '<h2 class="mr-h2">Clés API</h2>' + keysHtml();
+    const b = root()?.querySelector(".mr-keys-btn");
+    if (b) {
+      const missing = (st.keys || []).filter(k => !k.configured || k.valid === false).length;
+      b.textContent = missing && st.keys ? `🔑 Clés API (${missing} à régler)` : "🔑 Clés API";
+      b.setAttribute("aria-expanded", st.showKeys ? "true" : "false");
+    }
+    if (box) box.hidden = !st.showKeys;
+  }
+
+  async function loadKeys() {
+    try {
+      st.keys = (await getJson("/api/api-keys")).keys;
+      st.keysError = null;
+    } catch (e) {
+      st.keysError = e.status === 404
+        ? "Le serveur ne connaît pas encore cette section : il doit être redémarré (version ≥ 0.43.0)."
+        : `Chargement impossible : ${e.message}`;
+    }
+    renderKeys();
+  }
+
+  /** Après un changement de clé : le catalogue (groupe OpenRouter grisé ou non) est relu. */
+  async function afterKeyChange() {
+    try { st.catalog = await getJson("/api/model-catalog"); st.optionsCache.clear(); } catch { /* menus inchangés */ }
+    renderShell();
+  }
+
+  async function keyAction(name, action, input) {
+    const k = (st.keys || []).find(x => x.name === name);
+    try {
+      let r;
+      if (action === "save") {
+        const value = input.value.trim();
+        input.value = "";               // la valeur ne reste ni dans le champ ni dans l'état
+        if (!value) { st.keyNotice[name] = "Collez d’abord une clé."; renderKeys(); return; }
+        st.keyNotice[name] = "Enregistrement et vérification…"; renderKeys();
+        r = await getJson(`/api/api-keys/${encodeURIComponent(name)}`, {
+          method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ value }),
+        });
+      } else if (action === "test") {
+        st.keyNotice[name] = "Vérification…"; renderKeys();
+        r = await getJson(`/api/api-keys/${encodeURIComponent(name)}/test`, { method: "POST" });
+      } else {
+        if (!confirm(`Retirer la clé ${k?.label || name} du .env ?`)) return;
+        r = await getJson(`/api/api-keys/${encodeURIComponent(name)}`, { method: "DELETE" });
+      }
+      st.keyNotice[name] = action === "del" ? "Clé retirée."
+        : r.key.valid === true ? "Clé enregistrée et acceptée par le fournisseur."
+        : r.key.valid === false ? "Clé refusée par le fournisseur (invalide)."
+        : `Clé enregistrée — vérification impossible : ${r.key.detail || "?"}`;
+      await loadKeys();
+      await afterKeyChange();
+    } catch (e) {
+      st.keyNotice[name] = `Échec : ${e.message}`;
+      renderKeys();
+    }
+  }
+
   // --- Lacunes proposées (0.42.0) : rien n'est forcé, tout est proposé ---
   function gapProposalHtml(p, key, choice) {
     if (!p) return "";
@@ -629,6 +725,9 @@
       <section class="mr-history" ${st.showHistory ? "" : "hidden"} aria-label="Historique des changements">
         <h2 class="mr-h2">Historique</h2>${historyHtml()}
       </section>
+      <section class="mr-keys" ${st.showKeys ? "" : "hidden"} aria-label="Clés API">
+        <h2 class="mr-h2">Clés API</h2>${keysHtml()}
+      </section>
       <section class="mr-gaps" ${st.showGaps ? "" : "hidden"} aria-label="Lacunes proposées">
         <h2 class="mr-h2">Lacunes proposées</h2>${gapsHtml()}
       </section>
@@ -853,6 +952,12 @@
       const sel = e.target.closest(".mr-select");
       if (sel) save(sel);
     });
+    el.addEventListener("submit", (e) => {
+      const form = e.target.closest(".mr-key-form");
+      if (!form) return;
+      e.preventDefault();
+      keyAction(form.dataset.key, "save", form.querySelector(".mr-key-input"));
+    });
     el.addEventListener("toggle", (e) => {
       const det = e.target.closest?.("details.mr-vars");
       if (!det) return;
@@ -867,6 +972,11 @@
       if (e.target.closest(".mr-hist-btn")) { st.showHistory = !st.showHistory; patch(); return; }
       if (e.target.closest(".mr-obs-btn")) { st.showObs = !st.showObs; patch(); if (st.showObs) loadObs(); return; }
       if (e.target.closest(".mr-obs-reload")) { loadObs(); return; }
+      if (e.target.closest(".mr-keys-btn")) { st.showKeys = !st.showKeys; renderKeys(); if (st.showKeys) loadKeys(); return; }
+      const kt = e.target.closest(".mr-key-test");
+      if (kt) { keyAction(kt.closest("form").dataset.key, "test"); return; }
+      const kd = e.target.closest(".mr-key-del");
+      if (kd) { keyAction(kd.closest("form").dataset.key, "del"); return; }
       if (e.target.closest(".mr-gaps-btn")) { st.showGaps = !st.showGaps; st.gapNotice = null; syncGapBadges(); if (st.showGaps) loadGaps(); return; }
       const acc = e.target.closest(".mr-gap-accept");
       if (acc) { acc.disabled = true; decideGap(acc.dataset.gap, "accept", acc.dataset.choice); return; }

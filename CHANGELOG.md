@@ -11,6 +11,52 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-10-08
+
+Demande utilisateur : « Utilises la meme clef, et prevois dans la page Models,
+un endroit pour entrer les clefs de nvidia et de openrouter. »
+
+### Added
+- (viewer) Page Models : section **« 🔑 Clés API »** pour NVIDIA et OpenRouter.
+  - Pour chaque clé : son état (absente, configurée · acceptée, non vérifiée,
+    invalide), les 4 derniers caractères (••••xxxx), la source (`.env` ou
+    environnement du serveur) et la date de vérification.
+  - Champ masqué (`type=password`), avec Enregistrer, Tester et Supprimer. Le
+    champ est vidé après l'envoi : la valeur ne reste ni dans la page ni dans
+    l'état du client.
+  - Une clé enregistrée est vérifiée aussitôt. Le groupe OpenRouter n'est plus
+    grisé pour les étapes de jugement (relecture du catalogue à chaud).
+- (server) `scripts/api-keys.mjs` et les routes `GET /api/api-keys`,
+  `PUT /api/api-keys/:name {value}`, `POST /api/api-keys/:name/test` et
+  `DELETE /api/api-keys/:name`.
+  - **La valeur n'est jamais renvoyée ni journalisée** : au plus les 4 derniers
+    caractères.
+  - Écriture atomique (temp + rename) dans le `.env` de l'orchestrateur
+    seulement, les autres lignes restant intactes.
+  - Validation stricte de la valeur : un retour à la ligne ne peut pas injecter
+    de ligne dans `.env`.
+  - Test minimal authentifié, envoyé seulement à l'hôte du fournisseur :
+    OpenRouter `GET /api/v1/key` ; pour NVIDIA, une complétion d'un jeton sur
+    un model présent dans le catalogue public.
+  - Les écritures exigent la même origine, en plus du token gate.
+  - Prise en compte à chaud : le catalogue et `dispatch.mjs` relisent `.env`.
+- La clé OpenRouter de l'utilisateur est réutilisée, sur son autorisation
+  (« Utilises la meme clef »). Elle a été copiée une fois dans
+  `I:\orchestrateur\.env` par un script qui n'affiche jamais la valeur.
+  Vérifiées : **OpenRouter OK**, **NVIDIA OK**.
+- Tests : suite `_test_api_keys.mjs` (30, sur un `.env` de test), parcours HTTP
+  `api-keys` et navigateur `api-keys-view` (instance de test hors ligne, son
+  propre `.env`).
+
+### Security
+- `OPENROUTER_API_KEY` et `NVIDIA_API_KEY` sont retirées de `process.env` au
+  démarrage du serveur, comme `ANTHROPIC_API_KEY`. Aucun fils (terminal
+  central, `dispatch.mjs`, codex) n'en hérite. `dispatch.mjs` retire aussi
+  `OPENROUTER_API_KEY` de l'environnement de ses tours.
+- Un corps JSON illisible reçoit un message générique. Le message de
+  `JSON.parse` (Node ≥ 20) recopiait le début du corps, donc une clé envoyée
+  dans un JSON mal formé.
+
 ## [0.42.0] - 2026-10-08
 
 Demandes utilisateur : « La reponse a ta question de classification : ok. » et

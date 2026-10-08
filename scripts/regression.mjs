@@ -565,6 +565,52 @@ async function apiChecks(sb) {
     fs.rmSync(routingPath, { force: true });
     return `proposition « ${gap.proposal.kind} » acceptée → ${acc.applied.slot}`;
   });
+  await check(S, 'api-keys', 'Clés API : enregistrer (état « configurée », .env de l’instance de test), l’API ne renvoie jamais la valeur, tester, groupe OpenRouter dégrisé pour le jugement, Supprimer, valeurs et origines refusées, JSON illisible sans écho', async () => {
+    const first = await get('/api/api-keys');
+    if (first.status === 404) NA('clés API absentes de cet état du code');
+    const envPath = path.join(sb.root, '.env');
+    const VALUE = 'sk-or-v1-regression-0123456789abcdef-valid';
+    const keyReq = (method, p, body, extra = {}) => fetch(sb.url + p, { method, headers: { ...H, 'Content-Type': 'application/json', ...extra }, body: body == null ? undefined : (typeof body === 'string' ? body : JSON.stringify(body)) });
+    const ks = await first.json();
+    assert(ks.keys.map(k => k.name).join(',') === 'nvidia,openrouter' && ks.keys.every(k => k.state === 'absente'), `état initial : ${JSON.stringify(ks.keys.map(k => [k.name, k.state]))}`);
+    // Enregistrer.
+    let r = await keyReq('PUT', '/api/api-keys/openrouter', { value: VALUE });
+    let txt = await r.text();
+    assert(r.status === 200, `PUT ${r.status} ${txt.slice(0, 120)}`);
+    const k = JSON.parse(txt).key;
+    assert(k.state === 'configurée' && k.valid === true && k.last4 === VALUE.slice(-4) && k.checkedAt, `après Enregistrer : ${JSON.stringify(k)}`);
+    assert(!txt.includes(VALUE) && !txt.includes(VALUE.slice(0, 24)), 'la réponse contient la valeur');
+    txt = await (await get('/api/api-keys')).text();
+    assert(!txt.includes(VALUE.slice(0, 24)), 'GET /api/api-keys contient la valeur');
+    assert(fs.readFileSync(envPath, 'utf8').includes(`OPENROUTER_API_KEY=${VALUE}`), 'valeur absente du .env de l’instance');
+    // Prise en compte à chaud : groupe OpenRouter dégrisé pour une étape de jugement.
+    const c = await json('/api/model-catalog');
+    assert(c.providers.openrouter.keyPresent === true && c.providers.openrouter.disabled === false, 'OpenRouter encore grisé avec la clé');
+    const put = (slot, body) => keyReq('PUT', `/api/model-routing/${slot}`, body);
+    assert((await put('routage.classifier', { provider: 'openrouter', model: 'qwen/qwen3-coder' })).status === 200, 'OpenRouter refusé sur une étape de jugement avec la clé');
+    assert((await put('dev.vert', { provider: 'openrouter', model: 'qwen/qwen3-coder' })).status === 409, 'OpenRouter accepté sur une étape d’action (outillage en construction)');
+    await put('routage.classifier', { default: true });
+    // Tester, refuser, protéger.
+    r = await keyReq('POST', '/api/api-keys/openrouter/test');
+    assert(r.status === 200 && (await r.json()).key.valid === true, 'Tester');
+    assert((await keyReq('PUT', '/api/api-keys/openrouter', { value: 'avec espace interdit 1234567890' })).status === 400, 'valeur invalide acceptée');
+    assert((await keyReq('PUT', '/api/api-keys/openrouter', { value: 'sk-or-xxxxxxxxxxxxxxxxxxxx\nPIRATE=1' })).status === 400, 'injection de ligne acceptée');
+    assert(!fs.readFileSync(envPath, 'utf8').includes('PIRATE'), 'ligne injectée dans .env');
+    assert((await keyReq('PUT', '/api/api-keys/openrouter', { value: VALUE }, { Origin: 'http://site-tiers.example' })).status === 403, 'origine étrangère acceptée');
+    r = await keyReq('PUT', '/api/api-keys/openrouter', `{"value": ${VALUE.slice(0, 30)}SECRETZZZ`);
+    txt = await r.text();
+    assert(r.status === 400 && !txt.includes('SECRETZZZ') && !txt.includes(VALUE.slice(0, 20)), `JSON illisible : écho du corps (${txt.slice(0, 80)})`);
+    assert((await keyReq('PUT', '/api/api-keys/anthropic', { value: VALUE })).status === 404, 'clé inconnue acceptée');
+    // Clé refusée par le fournisseur (convention hors ligne de l'instance).
+    r = await keyReq('PUT', '/api/api-keys/openrouter', { value: 'sk-or-v1-regression-0123456789abcdef-bad' });
+    assert((await r.json()).key.state === 'invalide', 'clé refusée non marquée « invalide »');
+    // Supprimer.
+    r = await keyReq('DELETE', '/api/api-keys/openrouter');
+    assert(r.status === 200 && (await r.json()).key.state === 'absente', 'Supprimer');
+    assert(!fs.readFileSync(envPath, 'utf8').includes('OPENROUTER_API_KEY'), 'ligne encore présente dans .env');
+    assert((await json('/api/model-catalog')).providers.openrouter.disabled === true, 'OpenRouter non regrisé après suppression');
+    return 'enregistrer → configurée (acceptée), jamais la valeur, supprimer → absente';
+  });
   await check(S, 'sse', 'Flux temps réel /api/sse/fleet : une ligne de log arrive au client', async () => {
     const ac = new AbortController();
     const res = await fetch(`${sb.url}/api/sse/fleet`, { headers: H, signal: ac.signal });

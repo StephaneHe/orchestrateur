@@ -4,7 +4,7 @@ A local Windows dashboard where one "conductor" AI session pilots a fleet of
 headless coding agents, one per project, with a live web viewer and an
 Android companion app.
 
-`version 0.42.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
+`version 0.43.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
 
 > **Status: active, personal project.** Built and used daily on a single
 > Windows machine. Pre-1.0: internal APIs and file formats can still change
@@ -98,6 +98,10 @@ one screen to watch the whole fleet.
   never forced into one. It is handled as a discussion, and a "gap" is reported
   with a concrete proposal (new pipeline, step or variant, or attaching it to
   an existing one). Accepting it adds the task, after which you pick its model.
+  An "API keys" section stores the NVIDIA and OpenRouter keys in the local
+  `.env`, with save, test and delete. A key's value is never returned or
+  logged (only its last 4 characters are shown), and no child process inherits
+  it.
 - **Android companion app** (Kotlin + Jetpack Compose): fleet overview,
   per-agent detail, chat with the conductor.
 - **`/downloads` page** listing the Android builds of your projects, driven

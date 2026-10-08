@@ -36,6 +36,14 @@
 // CRITICAL: scrub ANTHROPIC_API_KEY from our own env before anything spawns.
 // Any child we launch (central pty, dispatch script) inherits this env.
 delete process.env.ANTHROPIC_API_KEY;
+// Clés des fournisseurs (0.43.0) : retirées de process.env pour qu'aucun fils
+// (terminal central, dispatch.mjs, codex) n'en hérite. Seuls nos modules les
+// lisent (.env d'abord, puis cette copie privée).
+const BOOT_PROVIDER_KEYS = {};
+for (const k of ['OPENROUTER_API_KEY', 'NVIDIA_API_KEY']) {
+  if (process.env[k]) BOOT_PROVIDER_KEYS[k] = process.env[k];
+  delete process.env[k];
+}
 
 import { createServer as createHttpServer } from 'node:http';
 import fs from 'node:fs';
@@ -54,6 +62,8 @@ import { createDownloadsRegistry, VERSION_NAME_RE } from './scripts/downloads-re
 import { trustWorkspace } from './scripts/workspace-trust.mjs';
 // Vue « Models par tâche » (0.39.0) : catalogue + model-routing.json.
 import { createModelRouting } from './scripts/model-routing.mjs';
+// Clés NVIDIA / OpenRouter saisies dans la page Models (0.43.0).
+import { createApiKeys } from './scripts/api-keys.mjs';
 // Pipelines, phase 1 (0.41.0) : chaque entrée est classée et journalisée, sans effet.
 import { createObserver, TerminalLineBuffer, ENTRY_KINDS } from './scripts/pipeline-observe.mjs';
 import os from 'node:os';
@@ -2534,6 +2544,51 @@ function uiFlags() {
 const modelRouting = createModelRouting({
   root: __dirname,
   cacheFile: path.join(LOGS_DIR, 'model-catalog.cache.json'),
+  env: { ...process.env, ...BOOT_PROVIDER_KEYS },
+});
+
+// ── Clés API (0.43.0) ────────────────────────────────────────────────────────
+// Demande utilisateur : « prevois dans la page Models, un endroit pour entrer
+// les clefs de nvidia et de openrouter ». La valeur n'est JAMAIS renvoyée ni
+// journalisée (au plus les 4 derniers caractères) ; écriture atomique dans
+// .env seulement ; prise en compte à chaud (tout relit .env à l'usage).
+const apiKeys = createApiKeys({
+  root: __dirname,
+  statusFile: path.join(LOGS_DIR, 'api-keys.status.json'),
+  env: BOOT_PROVIDER_KEYS,
+  offline: !!process.env.MODEL_CATALOG_FIXTURES,   // instance de non-régression
+});
+// En plus du token gate : une écriture de clé ne vient que de la page elle-même
+// (pas d'un autre site ouvert dans le navigateur).
+function sameOriginOnly(req, res, next) {
+  const origin = req.get('origin');
+  if (origin) {
+    let ok = false;
+    try { ok = new URL(origin).host === req.get('host'); } catch { /* origine illisible */ }
+    if (!ok) return res.status(403).json({ ok: false, error: 'origine refusée' });
+  }
+  next();
+}
+app.get('/api/api-keys', (req, res) => {
+  res.json({ ok: true, keys: apiKeys.all() });
+});
+app.put('/api/api-keys/:name', sameOriginOnly, express.json({ limit: '2kb' }), async (req, res) => {
+  const r = apiKeys.set(req.params.name, req.body?.value);
+  if (!r.ok) return res.status(r.status).json({ ok: false, error: r.error });
+  const t = await apiKeys.test(req.params.name);
+  console.log(`[api-keys] ${req.params.name} enregistrée dans .env → ${t.key.state}${t.key.valid === false ? ' (refusée par le fournisseur)' : ''}`);
+  res.json({ ok: true, key: t.key });
+});
+app.post('/api/api-keys/:name/test', sameOriginOnly, async (req, res) => {
+  const t = await apiKeys.test(req.params.name);
+  if (!t.ok) return res.status(t.status).json({ ok: false, error: t.error });
+  res.json({ ok: true, key: t.key });
+});
+app.delete('/api/api-keys/:name', sameOriginOnly, (req, res) => {
+  const r = apiKeys.remove(req.params.name);
+  if (!r.ok) return res.status(r.status).json({ ok: false, error: r.error });
+  console.log(`[api-keys] ${req.params.name} retirée du .env`);
+  res.json({ ok: true, key: r.key });
 });
 
 app.get('/api/model-routing', (req, res) => {
@@ -5523,7 +5578,7 @@ app.use((err, req, res, next) => {
     return res.status(413).json({ error: `corps trop volumineux : ${err.length ?? '?'} octets (limite ${err.limit ?? '?'})` });
   }
   if (err && (err.type === 'entity.parse.failed' || err.type === 'charset.unsupported' || err.type === 'encoding.unsupported')) {
-    return res.status(400).json({ error: `corps illisible : ${err.message}` });
+    return res.status(400).json({ error: 'corps illisible (JSON attendu)' });
   }
   crashLog(`EXPRESS ERROR ${req.method} ${req.url}: ${err && err.stack || err}`);
   res.status(500).json({ error: 'internal server error' });

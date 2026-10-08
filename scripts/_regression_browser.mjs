@@ -806,6 +806,39 @@ export async function browserChecks(sb, t) {
       await page.click('#models .mr-gaps-btn');
       await setHash(page, '#/');
     });
+    await check(B, 'api-keys-view', 'Clés API dans la page Models : NVIDIA et OpenRouter, état, champ masqué ; Enregistrer → « configurée », valeur jamais affichée ni gardée dans la page, groupe OpenRouter dégrisé pour le jugement ; Supprimer → « absente »', async () => {
+      if (!(await hasModels(page))) NA('vue absente de cet état du code');
+      await setHash(page, '#/models');
+      assert(await until(async () => (await page.locator('#models .mr-tab').count()) > 0, 10_000), 'vue');
+      if (!(await page.locator('#models .mr-keys-btn').count())) NA('clés API absentes de cet état du code');
+      const VALUE = 'sk-or-v1-navigateur-0123456789abcdef-valid';
+      await page.click('#models .mr-keys-btn');
+      assert(await until(async () => (await page.locator('#models .mr-key').count()) === 2, 5000), 'deux clés attendues');
+      const row = page.locator('#models .mr-key[data-key="openrouter"]');
+      assert(/absente/.test(await row.textContent()), 'OpenRouter non « absente » au départ');
+      assert(await page.getAttribute('#models .mr-key[data-key="openrouter"] .mr-key-input', 'type') === 'password', 'champ non masqué');
+      await row.locator('.mr-key-input').fill(VALUE);
+      await row.locator('.mr-key-save').click();
+      assert(await until(async () => /configurée · acceptée/.test(await page.textContent('#models .mr-key[data-key="openrouter"]')), 8000), 'état « configurée » absent après Enregistrer');
+      assert((await page.inputValue('#models .mr-key[data-key="openrouter"] .mr-key-input')) === '', 'la valeur reste dans le champ');
+      const html = await page.evaluate(() => document.documentElement.outerHTML);
+      assert(!html.includes(VALUE) && !html.includes(VALUE.slice(0, 24)), 'la valeur apparaît dans la page');
+      assert(new RegExp(`••••${VALUE.slice(-4)}`).test(await page.textContent('#models .mr-key[data-key="openrouter"]')), '4 derniers caractères absents');
+      await page.click('#models .mr-tab[data-pipeline="dev"]');
+      const degrise = await until(async () => {
+        const og = await page.$eval('#models .mr-select[data-slot="dev.revue"] optgroup[data-provider="openrouter"]', g => ({ off: g.disabled, l: g.label })).catch(() => null);
+        return og && !og.off && !/clé non configurée/.test(og.l);
+      }, 8000);
+      assert(degrise, 'OpenRouter encore grisé pour le jugement');
+      await shot(page, 'cles-api');
+      await page.locator('#models .mr-key[data-key="openrouter"] .mr-key-del').click();
+      assert(await until(async () => /absente/.test(await page.textContent('#models .mr-key[data-key="openrouter"]')), 8000), 'Supprimer sans effet');
+      // Le catalogue est relu juste après l'état de la clé : on attend le nouveau rendu.
+      const regrise = await until(async () => /clé non configurée/.test(await page.$eval('#models .mr-select[data-slot="dev.revue"] optgroup[data-provider="openrouter"]', g => g.label).catch(() => '')), 8000);
+      assert(regrise, 'OpenRouter non regrisé après suppression');
+      await page.click('#models .mr-keys-btn');
+      await setHash(page, '#/');
+    });
     await check(B, 'observe-view', 'Pipelines, phase 1 : panneau « Observation » — classifications récentes (entrée, projet, pipeline, mode, inclassable = Discussion), mention « rien n’est encore imposé »', async () => {
       if (!(await hasModels(page))) NA('vue absente de cet état du code');
       await setHash(page, '#/models');

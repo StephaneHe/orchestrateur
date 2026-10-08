@@ -249,6 +249,8 @@ Les étapes qui modifient le projet (4a, 4b, 4c, Livrer, Corriger…) exigent `a
 | Autres harnais (opencode, qwen-code, aider…) | Parlent chat/completions | Permissions, journal et bac à sable différents : les garanties ne seraient plus « identiques » | Écarté, sauf si la passerelle échoue |
 | Harnais maison (boucle d'appels d'outils) | Contrôle total | Il faudrait réimplémenter le bac à sable, les permissions, l'analyse des commandes et les reprises : risqué et coûteux | Écarté |
 
+> **0.43.0** : la clé OpenRouter est configurée (section « Clés API » de la page Models) et **acceptée par OpenRouter** ; la clé NVIDIA est vérifiée elle aussi. L'essai codex + OpenRouter « avec clé » peut donc être fait dès la phase 2.
+
 **Recommandation** : **codex comme harnais unique de tout ce qui n'est pas Claude**.
 
 - OpenRouter **directement** (Responses).

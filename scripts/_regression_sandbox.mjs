@@ -253,8 +253,10 @@ function modelCatalogFixtures(root) {
 export function serverEnv(root, port) {
   const env = { ...process.env };
   delete env.ANTHROPIC_API_KEY;
-  // Clé OpenRouter : toujours « absente » dans l'instance de test (état connu).
+  // Clés OpenRouter / NVIDIA : toujours « absentes » dans l'instance de test
+  // (état connu ; son .env est vide — le vrai n'est jamais copié).
   delete env.OPENROUTER_API_KEY;
+  delete env.NVIDIA_API_KEY;
   delete env.DISPATCH_ROOT_FOR_TESTS;
   delete env.DISPATCH_SLOT;
   Object.assign(env, {
