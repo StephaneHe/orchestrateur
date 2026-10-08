@@ -963,6 +963,9 @@ suivante sont tenus dans le plan.
   - Clé NVIDIA côté serveur seulement.
   - **NVIDIA est appelé sans flux** : en flux, kimi-k3 laissait fuir ses jetons
     de modèle.
+  - **NVIDIA est appelé avec le « thinking » coupé** (0.47.1,
+    `extraBody: {chat_template_kwargs: {thinking: false}, temperature: 0.6,
+    top_p: 0.95}`) : sinon kimi-k3 dégénère dès le deuxième tour d'outils.
   - Messages assistant consécutifs fusionnés ; outils « namespace » et
     `web_search` natif retirés ; `web_fetch` servi par la passerelle si le
     projet a droit au web.

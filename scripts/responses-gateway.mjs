@@ -209,7 +209,8 @@ export async function handleResponses({ body, upstream, res, fetch: fetchImpl = 
     // d'outils propres ; sans flux, la même requête rend des tool_calls nets
     // (essais réels du 2026-10-08). Le flux vers codex est alors reconstitué.
     const upstreamStream = upstream.stream !== false;
-    const payload = upstreamStream ? { ...chat, messages } : { ...chat, messages, stream: false, stream_options: undefined };
+    // `extraBody` : réglages propres au fournisseur (NVIDIA : thinking coupé, voir server.js).
+    const payload = { ...chat, messages, ...(upstream.extraBody || {}), ...(upstreamStream ? {} : { stream: false, stream_options: undefined }) };
     let r;
     try {
       r = await fetchImpl(upstream.url, {

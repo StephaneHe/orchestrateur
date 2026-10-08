@@ -2745,6 +2745,12 @@ mountGatewayRoutes(app, express, {
       url: `${(process.env.ORCH_GATEWAY_UPSTREAM_NVIDIA || 'https://integrate.api.nvidia.com/v1').replace(/\/+$/, '')}/chat/completions`,
       key: BOOT_PROVIDER_KEYS.NVIDIA_API_KEY || readDotEnvKey('NVIDIA_API_KEY') || (process.env.ORCH_GATEWAY_UPSTREAM_NVIDIA ? 'fixture' : ''),
       stream: false,   // voir responses-gateway.mjs : le flux NVIDIA abîme les appels d'outils
+      // kimi-k3 en mode « thinking » (défaut) dégénère dès le 2ᵉ tour d'outils :
+      // l'historique renvoyé n'a pas son raisonnement. thinking:false, avec
+      // l'échantillonnage conseillé (température 0,6, top_p 0,95) → appels
+      // d'outils nets sur la vraie requête codex (essais réels du 2026-10-09).
+      // Les modèles sans cette option l'ignorent.
+      extraBody: { chat_template_kwargs: { thinking: false }, temperature: 0.6, top_p: 0.95 },
     }),
   },
   log: (m) => debugLog(m),

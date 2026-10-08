@@ -115,6 +115,11 @@ console.log('\n── 2. Flux chat → flux Responses (ce que codex lit)');
     fetch: scriptedFetch([{ json: { model: 'm', choices: [{ message: { content: '', tool_calls: [{ id: 'c9', type: 'function', function: { name: 'exec_command', arguments: '{"cmd":"ls"}' } }] } }], usage: { prompt_tokens: 5, completion_tokens: 1 } } }]) });
   const fc2 = res2.events().find(e => e.type === 'response.output_item.done' && e.item.type === 'function_call');
   t('fournisseur sans flux (stream:false) : appel d\'outil rendu à codex en flux Responses', fc2 && fc2.item.call_id === 'c9' && fc2.item.arguments === '{"cmd":"ls"}');
+  // Réglages propres au fournisseur (NVIDIA : thinking coupé pour kimi-k3).
+  const f3 = scriptedFetch([{ json: { model: 'm', choices: [{ message: { content: 'ok' } }] } }]);
+  await handleResponses({ body: { model: 'm', input: [] }, upstream: { url: 'http://x', key: 'k', stream: false, extraBody: { chat_template_kwargs: { thinking: false } } }, res: fakeRes(), fetch: f3 });
+  t('extraBody transmis au fournisseur (NVIDIA : chat_template_kwargs.thinking=false), sans flux', f3.calls[0].body.chat_template_kwargs?.thinking === false && f3.calls[0].body.stream === false);
+  t('server.js : NVIDIA appelé thinking coupé, échantillonnage conseillé', /extraBody: \{ chat_template_kwargs: \{ thinking: false \}, temperature: 0\.6, top_p: 0\.95 \}/.test(fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8')));
 }
 
 console.log('\n── 3. Erreurs : jamais de repli, l\'erreur remonte telle quelle');

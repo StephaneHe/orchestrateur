@@ -11,6 +11,23 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.47.1] - 2026-10-09
+
+### Fixed
+- (server) Passerelle NVIDIA : kimi-k3 dégénérait dès le deuxième tour
+  d'outils, flux ou pas (« <|close|> … », des milliers de jetons
+  incohérents). Cause vérifiée par un essai réel : son mode « thinking »,
+  actif par défaut, alors que l'historique renvoyé ne contient pas son
+  raisonnement.
+  - La passerelle accepte désormais des réglages propres à chaque
+    fournisseur (`extraBody`).
+  - NVIDIA est appelé avec `chat_template_kwargs: {thinking: false}`,
+    `temperature: 0.6` et `top_p: 0.95` (échantillonnage conseillé pour les
+    modèles Kimi sans thinking). Sur la vraie requête de codex, ces réglages
+    donnent un appel d'outil net, alors que le mode par défaut a renvoyé un
+    504 au bout de 5 minutes. Les modèles qui n'ont pas cette option
+    l'ignorent.
+
 ## [0.47.0] - 2026-10-09
 
 Phase 2 des pipelines obligatoires. Demande utilisateur : « est-ce que l'on
