@@ -11,6 +11,65 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-10-08
+
+Pipelines, **phase 1 : observation**. Demande utilisateur : « Il faut que toute
+entree dans l'orchestrateur passe par les pipelines decides dans la page
+Models ». Les réponses de l'utilisateur aux questions du plan sont intégrées.
+
+### Added
+- (server) **Classification et journal de toutes les entrées**, **sans aucun
+  changement de comportement** : `scripts/pipeline-observe.mjs` et
+  `logs/pipeline-observe.ndjson`.
+  - Entrées couvertes :
+    - composer → chef, @musicien, musicien direct, app Android (reconnue à son
+      user-agent) ;
+    - `dispatch.mjs` lancé hors du serveur, avec l'appelant déduit du dossier
+      courant (chef, musicien ou humain) ;
+    - réveil du chef, relais `NEEDS_CHEF_INPUT` dans les deux sens, notify,
+      session neuve ;
+    - **terminal interactif**, ligne par ligne ;
+    - un filet de sécurité sur tout autre lancement.
+  - L'identifiant d'observation suit l'entrée jusqu'au tour (`ORCH_OBS_ID`) : une
+    entrée n'est comptée qu'une fois, même après la file ou le pool.
+    `dispatch.mjs` retire la variable de l'environnement du tour.
+  - Classifieur à règles `règles-v1` (gratuit, instantané), calé sur les vraies
+    demandes du fleet : pipeline, mode (léger ou complet), confiance et raisons.
+    Le choix explicite (`/dev`, `/incident`, `/léger`…) est respecté. Les entrées
+    système relèvent du pipeline Routage. **Inclassable = Discussion** (décision
+    de l'utilisateur).
+  - Route `GET /api/pipeline-observe?n=`.
+- (viewer) Page Models : panneau **« Observation »**. Il montre les
+  classifications récentes (entrée, projet, appelant, pipeline, mode,
+  confiance, extrait), les compteurs par pipeline et les inclassables, avec la
+  mention « rien n'est encore imposé ».
+- (server, viewer) Étapes **action / jugement** (`JUDGE_STEPS`).
+  - NVIDIA et OpenRouter restent dans la page Models. Ils sont marqués
+    « 🔧 outillage en construction » et grisés sur une étape d'action.
+  - Le serveur refuse ces affectations (409) tant que `AGENT_HARNESS` ne les
+    déclare pas outillés. Sur une étape de jugement, ils sont proposés
+    normalement.
+  - La légende et les sources l'indiquent.
+- Projet pilote dédié **`pipelineLab`** (`I:\Dev\pipelineLab`, créé par
+  `new-project.mjs`, hors de ce dépôt) :
+  - petit module avec ses tests rapides (`npm test`, moins d'une seconde) ;
+  - version visible (`pipelineLab v1.0.0`), CHANGELOG et USER_REQUIREMENTS
+    dès la création ;
+  - un `.orchestrateur/pipeline.json` pour les futurs critères de sortie.
+
+### Changed
+- `docs/PLAN-pipeline-enforcement.md` :
+  - une section « Décisions du 2026-10-08 » ;
+  - une nouvelle phase **Outillage NVIDIA / OpenRouter**, avec les essais réels :
+    codex refuse `wire_api="chat"` et NVIDIA n'a pas `/v1/responses` ; codex
+    avec OpenRouter est accepté et ne demande que la clé. Recommandation :
+    codex comme harnais unique, OpenRouter en direct, NVIDIA via une passerelle
+    Responses → chat intégrée au serveur ;
+  - la notification de toute limite atteinte (dashboard, chef, bureau,
+    événement de log) ;
+  - le terminal interactif routé, et les phases renumérotées (P1 observation
+    livrée, puis outillage, moteur sur `pipelineLab`…).
+
 ## [0.40.1] - 2026-10-08
 
 Demande utilisateur : « Il faut que toute entree dans l'orchestrateur passe par

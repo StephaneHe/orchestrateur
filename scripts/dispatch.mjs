@@ -767,6 +767,8 @@ function postQueueIfBusy() {
     if (CHEF_TICKET)       payload.ticket = CHEF_TICKET;
     if (imagePaths.length) payload.attachmentPaths = imagePaths;
     if (videoPaths.length) payload.videoPaths      = videoPaths;
+    // Déjà observée ici : le serveur ne la compte pas une seconde fois.
+    if (obsId)             payload.obsId           = obsId;
     const body = Buffer.from(JSON.stringify(payload));
     const req = http.request({
       hostname: '127.0.0.1', port: 7777, path: '/api/dispatch', method: 'POST',
@@ -788,6 +790,27 @@ function postQueueIfBusy() {
     req.setTimeout(5000, () => { try { req.destroy(); } catch {} resolve(null); });
     req.end(body);
   });
+}
+
+// ---------- pipelines, phase 1 : observation (0.41.0) ------------------------
+//
+// Toute entrée est classée (pipeline + mode) et journalisée, SANS rien changer
+// au tour. Lancé par le serveur, l'entrée est déjà observée (ORCH_OBS_ID).
+// La variable est retirée de l'environnement : sinon l'outil Bash du tour en
+// hériterait et les dispatches que le chef lance ne seraient plus observés.
+const OBS_ID_FROM_SERVER = process.env.ORCH_OBS_ID || '';
+delete process.env.ORCH_OBS_ID;
+let obsId = OBS_ID_FROM_SERVER;
+if (!obsId) {
+  try {
+    const obs = await import('./pipeline-observe.mjs');
+    const rec = obs.createObserver({ logsDir: LOGS }).record({
+      entry: 'dispatch-cli', project: projectName, text: prompt,
+      caller: obs.projectFromCwd(process.cwd(), config.projects) || 'humain/script',
+      extra: { fromAgent: !!process.env.CLAUDECODE },
+    });
+    obsId = rec.id;
+  } catch { /* l'observation ne bloque jamais un dispatch */ }
 }
 
 if (queueIfBusy && projectName !== CONDUCTOR) {

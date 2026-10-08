@@ -803,6 +803,45 @@ OpenRouter.
   L'instance de test lit des listes de fixtures (`MODEL_CATALOG_FIXTURES`,
   dont `local-tools.json`), sans réseau, et sans clé OpenRouter.
 
+## Pipelines — phase 1 : observation (0.41.0)
+
+Demande utilisateur : « Il faut que toute entree dans l'orchestrateur passe par
+les pipelines decides dans la page Models ». Plan et décisions :
+`docs/PLAN-pipeline-enforcement.md`.
+
+- **Rien n'est imposé** pour l'instant. Chaque entrée est classée (pipeline et
+  mode) et journalisée dans `logs/pipeline-observe.ndjson` par
+  `scripts/pipeline-observe.mjs` (classifieur à règles `règles-v1`).
+  - Les entrées : `/api/dispatch` (dashboard ou Android × chef, @mention,
+    musicien), `dispatch.mjs` hors serveur (`dispatch-cli`, appelant déduit du
+    cwd), réveil, relais dans les deux sens, notify, session neuve, **terminal
+    interactif** (une ligne validée = une entrée), et un filet de sécurité dans
+    `spawnDirectDispatch`.
+  - **Inclassable = Discussion** (règle utilisateur).
+- **Une entrée n'est comptée qu'une fois** : l'identifiant d'observation voyage
+  dans la file, le pool et le corps du POST de `dispatch.mjs` (`obsId`), puis
+  jusqu'au tour (`ORCH_OBS_ID`). `dispatch.mjs` le retire de son environnement :
+  sinon l'outil Bash du chef en hériterait et ses dispatches ne seraient plus
+  observés.
+- **L'observation ne bloque jamais un dispatch** : import dynamique et try/catch
+  dans `dispatch.mjs`, `observeEntry()` qui avale ses erreurs côté serveur.
+- Lecture : `GET /api/pipeline-observe?n=`, et le panneau « Observation » de la
+  page Models.
+- **Étapes action / jugement** (`JUDGE_STEPS`, `scripts/model-pipelines.mjs`).
+  - NVIDIA et OpenRouter n'ont pas encore de harnais d'agent
+    (`AGENT_HARNESS = false`). Ils restent visibles, mais grisés « 🔧 outillage
+    en construction » sur une étape d'action, et le serveur répond 409.
+  - Passer `AGENT_HARNESS` à `true` seulement quand la phase « Outillage » est
+    livrée (codex et OpenRouter, passerelle Responses → chat pour NVIDIA ;
+    voir le plan §2.7).
+- Projet pilote dédié : `pipelineLab` (`I:\Dev\pipelineLab`, `npm test`), le
+  seul projet où les phases suivantes seront mises en service d'abord.
+- Recettes :
+  - `_test_pipeline_observe.mjs` : vraies demandes du fleet, terminal, câblage
+    de chaque entrée, vrai `dispatch.mjs` ;
+  - HTTP `pipeline-observe` ;
+  - navigateur `observe-view` et `models-harness`.
+
 ## Attachments
 
 Images uploaded via the dashboard (paste / drag-drop / file picker) land in

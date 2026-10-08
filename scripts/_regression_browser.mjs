@@ -748,6 +748,47 @@ export async function browserChecks(sb, t) {
       return `13 onglets, ${nSelects} menus`;
     });
 
+    // 0.41.0 — décisions utilisateur : NVIDIA / OpenRouter gardés (outillage en
+    // construction, jugement seulement) ; phase 1 des pipelines = observation.
+    await check(B, 'models-harness', 'Models par tâche : étapes « action » / « jugement » marquées ; NVIDIA et OpenRouter visibles mais « outillage en construction » sur une étape d’action, proposés sur une étape de jugement', async () => {
+      if (!(await hasModels(page))) NA('vue absente de cet état du code');
+      await setHash(page, '#/models');
+      assert(await until(async () => (await page.locator('#models .mr-tab').count()) > 0, 10_000), 'vue');
+      if (!(await page.locator('#models .mr-kind').count())) NA('distinction action / jugement absente de cet état du code');
+      await page.click('#models .mr-tab[data-pipeline="dev"]');
+      assert(await page.getAttribute('#models .mr-card[data-step="vert"]', 'data-kind') === 'action', '4b non marquée action');
+      assert(await page.getAttribute('#models .mr-card[data-step="revue"]', 'data-kind') === 'judge', 'revue non marquée jugement');
+      const g = (slot) => page.$eval(`#models .mr-select[data-slot="${slot}"]`, s => [...s.querySelectorAll('optgroup')].map(x => ({ p: x.dataset.provider, off: x.disabled, n: x.children.length, l: x.label })));
+      const act = await g('dev.vert'), jug = await g('dev.revue');
+      const nvA = act.find(x => x.p === 'nvidia'), nvJ = jug.find(x => x.p === 'nvidia');
+      assert(nvA && nvA.off && /outillage en construction/.test(nvA.l) && nvA.n > 0, `étape d'action : ${JSON.stringify(nvA)}`);
+      assert(nvJ && !nvJ.off && nvJ.n > 0, `étape de jugement : ${JSON.stringify(nvJ)}`);
+      assert(/outillage en construction/.test(act.find(x => x.p === 'openrouter').l) || /clé non configurée/.test(act.find(x => x.p === 'openrouter').l), 'OpenRouter non signalé');
+      assert(/outillage/.test(await page.textContent('#models .mr-legend')), 'légende sans l’outillage en construction');
+      await page.selectOption('#models .mr-select[data-slot="dev.revue"]', 'nvidia|z-ai/glm-5.3');
+      assert(await until(async () => /enregistré/.test(await page.textContent('#models [data-status="dev.revue"]')), 5000), 'NVIDIA non enregistré sur la revue');
+      await page.selectOption('#models .mr-select[data-slot="dev.revue"]', '');
+      await setHash(page, '#/');
+    });
+    await check(B, 'observe-view', 'Pipelines, phase 1 : panneau « Observation » — classifications récentes (entrée, projet, pipeline, mode, inclassable = Discussion), mention « rien n’est encore imposé »', async () => {
+      if (!(await hasModels(page))) NA('vue absente de cet état du code');
+      await setHash(page, '#/models');
+      assert(await until(async () => (await page.locator('#models .mr-tab').count()) > 0, 10_000), 'vue');
+      if (!(await page.locator('#models .mr-obs-btn').count())) NA('observation absente de cet état du code');
+      await page.click('#models .mr-obs-btn');
+      assert(await until(async () => (await page.locator('#models .mr-obs-table tbody tr').count()) > 0, 8000), 'aucune classification affichée');
+      const txt = await page.textContent('#models .mr-obs');
+      assert(/rien n’est encore imposé/.test(txt) && /Inclassable = Discussion/.test(txt), 'explication de la phase absente');
+      const rows = await page.$$eval('#models .mr-obs-table tbody tr', trs => trs.map(tr => ({ e: tr.dataset.entry, p: tr.dataset.pipeline, t: tr.textContent })));
+      assert(rows.some(r => r.e === 'dashboard:chef'), `entrées : ${[...new Set(rows.map(r => r.e))].join(', ')}`);
+      assert(rows.some(r => /inclassable → Discussion/.test(r.t) && r.p === 'discussion'), 'inclassable non affiché en Discussion');
+      assert(await page.getAttribute('#models .mr-obs-btn', 'aria-expanded') === 'true', 'aria-expanded');
+      await shot(page, 'observation');
+      await page.click('#models .mr-obs-btn');
+      await setHash(page, '#/');
+      return `${rows.length} classifications affichées`;
+    });
+
     await ctx.close();
 
     // ---------------- Lecture audio (0.35.0) — doublure de speechSynthesis ----------------

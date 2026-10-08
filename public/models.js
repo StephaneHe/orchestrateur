@@ -45,6 +45,9 @@
     error: null,
     refreshing: false,
     showHistory: false,
+    showObs: false,            // panneau « Observation » (phase 1 des pipelines)
+    obs: null,
+    obsError: null,
     gPending: 0,
   };
 
@@ -165,7 +168,9 @@
   function optionsFor(slot) {
     const need = slot.need || { llm: "text", local: [] };
     const isVariant = !!slot.variant;
-    const key = `${need.llm}|${(need.local || []).join(",")}|${isVariant}`;
+    // Étape d'action : un fournisseur sans harnais d'agent n'y est pas sélectionnable.
+    const action = need.llm === "text" && !slot.judge;
+    const key = `${need.llm}|${(need.local || []).join(",")}|${isVariant}|${action}`;
     if (st.optionsCache.has(key)) return st.optionsCache.get(key);
     let html = `<option value="">${isVariant ? "(model de l’étape)" : "(défaut du projet)"}</option>`;
     for (const p of LLM) {
@@ -177,6 +182,7 @@
       if (!need.llm) { label = `${PLABEL[p]} — un LLM ne convient pas ici`; disabled = true; }
       else if (!all.length) { label = `${PLABEL[p]} — liste indisponible`; disabled = true; }
       else if (!ok.length) { label = `${PLABEL[p]} — aucun model « ${capLabel(need.llm)} »`; disabled = true; }
+      else if (action && st.routing?.agentHarness?.[p] === false) { label = `${PLABEL[p]} — 🔧 outillage en construction : pas encore pour une étape d’action (${ok.length})`; disabled = true; }
       else if (p === "openrouter" && c.disabled) { label = `${PLABEL[p]} — clé non configurée (${ok.length})`; disabled = true; }
       html += `<optgroup label="${esc(label)}" data-provider="${p}"${disabled ? " disabled" : ""}>`;
       for (const m of ok) html += `<option value="${esc(p + "|" + m.id)}"${m.hint ? ` title="${esc(m.hint)}"` : ""}>${esc(m.label || m.id)}</option>`;
@@ -249,6 +255,7 @@
           ? ` · clé présente (${esc((s.keyWhere || []).join(", "))})`
           : ' · <b class="mr-warn">clé non configurée</b>';
       }
+      if (st.routing?.agentHarness?.[p] === false) extra += ' · <b class="mr-warn">🔧 outillage d’agent en construction (étapes de jugement seulement)</b>';
       if (p === "nvidia") {
         const miss = (s.models || []).filter(m => m.missing).length;
         if (miss) extra += ` · <b class="mr-warn">${miss} model(s) du failover absent(s) du catalogue</b>`;
@@ -280,6 +287,8 @@
         <li><span class="mr-sym">◇</span> variantes : un menu par cas ; vide = model de l’étape</li>
         <li><span class="mr-ptag" data-provider="anthropic">ANT</span><span class="mr-ptag" data-provider="openai">OAI</span><span class="mr-ptag" data-provider="nvidia">NV</span><span class="mr-ptag" data-provider="openrouter">OR</span><span class="mr-ptag" data-provider="local">LOCAL</span> couleur = fournisseur choisi (bordure de l’étape)</li>
         <li><span class="mr-sym">💡</span> conseil (non imposé) · <span class="mr-sym">⚠</span> conseil non suivi</li>
+        <li><span class="mr-kind" data-kind="action">action</span> lit, écrit ou exécute dans le projet · <span class="mr-kind" data-kind="judge">jugement</span> rend un avis sur un texte fourni</li>
+        <li><span class="mr-sym">🔧</span> outillage en construction : NVIDIA et OpenRouter, étapes de jugement seulement pour l’instant</li>
       </ul></details>`;
   }
 
@@ -306,6 +315,50 @@
         <span class="mr-hist-to">${esc(e.to || "(hérité)")}</span>
         ${e.by && e.by !== "dashboard" ? `<span class="mr-hist-by">${esc(e.by)}</span>` : ""}</li>`).join("")}</ol>
       ${st.routing.historyTotal > h.length ? `<p class="mr-empty">${h.length} derniers sur ${st.routing.historyTotal}.</p>` : ""}`;
+  }
+
+  // --- Observation (phase 1) : classifications récentes, rien n'est imposé ---
+  function pipelineLabel(id) { return st.routing?.pipelines?.find(p => p.id === id)?.label || id; }
+
+  function obsHtml() {
+    if (st.obsError) return `<p class="mr-error" role="alert">${esc(st.obsError)}</p>`;
+    const o = st.obs;
+    if (!o) return '<p class="mr-empty">Chargement des classifications…</p>';
+    const by = o.counts?.byPipeline || {};
+    const chips = Object.entries(by).sort((a, b) => b[1] - a[1]).map(([p, n]) =>
+      `<span class="mr-obs-chip" data-pipeline="${esc(p)}">${esc(pipelineLabel(p))} <b>${n}</b></span>`).join("");
+    const rows = (o.items || []).map(r => `<tr data-entry="${esc(r.entry)}" data-pipeline="${esc(r.pipeline)}">
+        <td><time datetime="${esc(r.at)}">${esc(fmtTime(r.at))}</time></td>
+        <td title="${esc(o.entryKinds?.[r.entry] || r.entry)}">${esc(r.entry)}</td>
+        <td>${esc(r.project || "—")}${r.target ? ` → ${esc(r.target)}` : ""}${r.caller ? ` <span class="mr-obs-dim">(par ${esc(r.caller)})</span>` : ""}</td>
+        <td><b>${esc(pipelineLabel(r.pipeline))}</b>${r.mode ? ` · ${esc(r.mode === "leger" ? "léger" : r.mode)}` : ""}
+          ${r.explicit ? '<span class="mr-obs-tag">explicite</span>' : ""}${r.unclassifiable ? '<span class="mr-obs-tag mr-warn">inclassable → Discussion</span>' : ""}</td>
+        <td class="mr-obs-dim">${esc(r.confidence || "")}</td>
+        <td class="mr-obs-head" title="${esc((r.reasons || []).join(" ; "))}">${esc(r.head || "")}</td>
+      </tr>`).join("");
+    return `<p class="mr-obs-intro"><b>Phase 1 — observation.</b> Chaque entrée (composer, @musicien, app, dispatch.mjs, file, réveil,
+        relais, notify, session neuve, terminal interactif) est classée et journalisée ; <b>rien n’est encore imposé</b>.
+        Inclassable = Discussion. Classifieur : ${esc(o.classifier || "")} (${o.total || 0} entrées journalisées).</p>
+      <div class="mr-obs-chips">${chips || '<span class="mr-empty">Aucune entrée pour l’instant.</span>'}
+        ${o.counts?.unclassifiable ? `<span class="mr-obs-chip mr-warn">inclassables <b>${o.counts.unclassifiable}</b></span>` : ""}</div>
+      ${rows ? `<div class="mr-obs-scroll"><table class="mr-obs-table">
+        <thead><tr><th>Heure</th><th>Entrée</th><th>Projet</th><th>Pipeline · mode</th><th>Confiance</th><th>Demande</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>` : ""}
+      <button type="button" class="mr-obs-reload">↻ Actualiser</button>`;
+  }
+
+  async function loadObs() {
+    try {
+      st.obs = await getJson("/api/pipeline-observe?n=100");
+      st.obsError = null;
+    } catch (e) {
+      st.obsError = e.status === 404
+        ? "Le serveur ne journalise pas encore les classifications : il doit être redémarré (version ≥ 0.41.0)."
+        : `Chargement impossible : ${e.message}`;
+    }
+    const box = root()?.querySelector(".mr-obs");
+    if (box) box.innerHTML = '<h2 class="mr-h2">Classifications récentes</h2>' + obsHtml();
+    patch();
   }
 
   function migrationHtml() {
@@ -371,8 +424,12 @@
           ${selectHtml(`${slotId}.${v.id}`, `Model — ${v.label}`, true)}
         </div>`).join("")}
       </details>` : "";
-    return `<article class="mr-card${s.optional ? " is-optional" : ""}" data-step="${esc(s.id)}" data-slot-card="${esc(slotId)}">
-      <header class="mr-card-head"><span class="mr-num">${esc(s.n)}</span><h3 class="mr-card-title">${esc(s.title)}</h3>${opt}
+    const isText = !s.need || s.need.llm === "text";
+    const kind = isText ? `<span class="mr-kind" data-kind="${s.judge ? "judge" : "action"}" title="${s.judge
+      ? "Jugement : avis sur un texte fourni — tout model peut la tenir"
+      : "Action : lit, écrit ou exécute dans le projet — il faut un harnais d’agent"}">${s.judge ? "jugement" : "action"}</span>` : "";
+    return `<article class="mr-card${s.optional ? " is-optional" : ""}" data-step="${esc(s.id)}" data-slot-card="${esc(slotId)}" data-kind="${isText ? (s.judge ? "judge" : "action") : "media"}">
+      <header class="mr-card-head"><span class="mr-num">${esc(s.n)}</span><h3 class="mr-card-title">${esc(s.title)}</h3>${opt}${kind}
         <span class="mr-ptag" data-ptag="${esc(slotId)}"></span></header>
       <p class="mr-what">${esc(s.what)}</p>
       <p class="mr-ex"><b>Ex.</b> ${esc(s.example)}</p>
@@ -471,6 +528,9 @@
       <section class="mr-history" ${st.showHistory ? "" : "hidden"} aria-label="Historique des changements">
         <h2 class="mr-h2">Historique</h2>${historyHtml()}
       </section>
+      <section class="mr-obs" ${st.showObs ? "" : "hidden"} aria-label="Classifications récentes des entrées">
+        <h2 class="mr-h2">Classifications récentes</h2>${obsHtml()}
+      </section>
       <div class="mr-tabs" role="tablist" aria-label="Pipelines">${tabsHtml()}</div>
       ${legendHtml()}
       <div class="mr-panel" id="mr-panel" role="tabpanel"></div>
@@ -515,6 +575,13 @@
     const hb = $(".mr-hist-btn", el);
     hb.textContent = `Historique (${st.routing.historyTotal || 0})`;
     hb.setAttribute("aria-expanded", st.showHistory ? "true" : "false");
+    const ob = $(".mr-obs-btn", el);
+    if (ob) {
+      ob.textContent = st.obs ? `Observation (${st.obs.total || 0})` : "Observation";
+      ob.setAttribute("aria-expanded", st.showObs ? "true" : "false");
+    }
+    const obsBox = $(".mr-obs", el);
+    if (obsBox) obsBox.hidden = !st.showObs;
     const rb = $(".mr-refresh", el);
     rb.disabled = st.refreshing;
     rb.textContent = st.refreshing ? "↻ Rafraîchissement…" : "↻ Rafraîchir les listes";
@@ -692,6 +759,8 @@
       if (e.target.closest(".mr-back")) { back(); return; }
       if (e.target.closest(".mr-refresh")) { refreshLists(); return; }
       if (e.target.closest(".mr-hist-btn")) { st.showHistory = !st.showHistory; patch(); return; }
+      if (e.target.closest(".mr-obs-btn")) { st.showObs = !st.showObs; patch(); if (st.showObs) loadObs(); return; }
+      if (e.target.closest(".mr-obs-reload")) { loadObs(); return; }
       const tab = e.target.closest(".mr-tab");
       if (tab) { selectPipeline(tab.dataset.pipeline); return; }
       const go = e.target.closest(".mr-goto");

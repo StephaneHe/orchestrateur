@@ -54,6 +54,8 @@ import { createDownloadsRegistry, VERSION_NAME_RE } from './scripts/downloads-re
 import { trustWorkspace } from './scripts/workspace-trust.mjs';
 // Vue « Models par tâche » (0.39.0) : catalogue + model-routing.json.
 import { createModelRouting } from './scripts/model-routing.mjs';
+// Pipelines, phase 1 (0.41.0) : chaque entrée est classée et journalisée, sans effet.
+import { createObserver, TerminalLineBuffer, ENTRY_KINDS } from './scripts/pipeline-observe.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -77,6 +79,10 @@ const ATTACHMENTS_DIR = path.join(__dirname, 'attachments');
 const BUILDS_DIR      = path.join(__dirname, 'builds');
 const SECRETS_DIR     = path.join(__dirname, 'secrets');
 const PKG_VERSION     = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version;
+// Pipelines, phase 1 (observation) : créé avant tout ce qui peut lancer un tour
+// au démarrage (réveil réhydraté, file, pool).
+const pipelineObserver = createObserver({ logsDir: LOGS_DIR });
+const OBS_ID_RE = /^obs-[a-z0-9-]{4,40}$/;
 // Outils d'un musicien quand config.json n'a pas de defaults.allowedTools.
 // Règle utilisateur (0.28.0) : « tous les projets doivent avoir droit au web et
 // à la lecture » — même liste que defaults.allowedTools et dispatch.mjs.
@@ -650,6 +656,7 @@ function tryFireWake() {
   // Le lot n'est plus spawné ici : il entre dans la file comme ticket `point`,
   // servi après les tickets `user`/`decision` (§2.4 du design).
   poolEnqueue({
+    obsId: observeEntry({ entry: 'wake', project: conductorName(), text: prompt }),
     class: 'point', text: prompt, source: 'wake', wakeGen: gen, reportOnly,
     displayText: `point sur ${items.length} résultat${items.length > 1 ? 's' : ''} : ` +
       items.map(it => it.source).join(', '),
@@ -676,8 +683,27 @@ loadWakeFromDisk();
 //   opts.ticket / opts.slot    — pool stamping; dispatch.mjs copies them onto
 //                    the turn's opening user_prompt so the file's status can be
 //                    read back from the log rather than guessed.
+// ── Pipelines, phase 1 : observation (0.41.0) ────────────────────────────────
+// Demande utilisateur : « toute entree dans l'orchestrateur passe par les
+// pipelines ». Ici on CLASSE et on JOURNALISE chaque entrée (logs/
+// pipeline-observe.ndjson), sans rien changer. L'identifiant suit l'entrée
+// jusqu'au tour (ORCH_OBS_ID) pour qu'elle ne soit comptée qu'une fois.
+function observeEntry(o) {
+  try { return pipelineObserver.record(o).id; }
+  catch (e) { debugLog(`[observe] ${e.message}`); return null; }
+}
+function clientOf(req) {
+  return /okhttp|dalvik|android/i.test(req.get('user-agent') || '') ? 'android' : 'dashboard';
+}
+
 function spawnDirectDispatch(name, prompt, attachmentPaths = [], videoPaths = [], opts = {}) {
   const dispatchScript = path.join(__dirname, 'scripts', 'dispatch.mjs');
+  // Filet de sécurité : un lancement sans observation d'origine est observé ici.
+  let obsId = typeof opts.obsId === 'string' && OBS_ID_RE.test(opts.obsId) ? opts.obsId : null;
+  if (!obsId) {
+    const entry = opts.observeAs || (opts.poolAssign ? 'pool' : opts.noQueueIfBusy ? 'file' : opts.source === 'wake' ? 'wake' : 'spawn');
+    obsId = observeEntry({ entry, project: name, text: prompt });
+  }
   const hasAny = attachmentPaths.length || videoPaths.length;
   const stdinPayload = hasAny
     ? JSON.stringify({ prompt, attachmentPaths, videoPaths })
@@ -726,6 +752,7 @@ function spawnDirectDispatch(name, prompt, attachmentPaths = [], videoPaths = []
       // is how a musician's turn learns WHICH conductor turn is awaiting it.
       DISPATCH_TICKET: typeof opts.ticket === 'string' ? opts.ticket : '',
       DISPATCH_SLOT: Number.isFinite(opts.slot) && opts.slot > 0 ? String(opts.slot) : '',
+      ORCH_OBS_ID: obsId || '',
     },
     stdio: ['pipe', 'ignore', 'ignore'],
     windowsHide: true,
@@ -787,7 +814,7 @@ function drainAttempt(name, reason) {
     return;
   }
   drainPending.delete(name);
-  const { id, prompt, attachmentPaths, videoPaths, callback, source, model, provider, slot, ticket, newSession } = q.shift();
+  const { id, prompt, attachmentPaths, videoPaths, callback, source, model, provider, slot, ticket, newSession, obsId } = q.shift();
   if (q.length === 0) dispatchQueue.delete(name);
   persistQueue(name);
   drainLaunchedAt.set(name, Date.now());
@@ -796,7 +823,7 @@ function drainAttempt(name, reason) {
     ` attente-pid=${Date.now() - since}ms`;
   console.log(msg); debugLog(msg);
   spawnDirectDispatch(name, prompt, attachmentPaths, videoPaths,
-    { callback, source, model, provider, slot, ticket, newSession, noQueueIfBusy: true });
+    { callback, source, model, provider, slot, ticket, newSession, obsId, noQueueIfBusy: true });
 }
 
 const DRAIN_WAIT_STEP_MS = 1000;
@@ -1091,6 +1118,7 @@ function poolAssign(s, t) {
     slot: s.slot,
     traceId: t.traceId,
     poolAssign: true,
+    obsId: t.obsId,
   });
   t.pid = pid || null;
 }
@@ -2479,6 +2507,12 @@ app.get('/api/model-catalog', async (req, res) => {
   }
 });
 
+// Classifications récentes (phase 1 des pipelines, observation seule).
+app.get('/api/pipeline-observe', (req, res) => {
+  const n = Math.min(500, Math.max(1, Number(req.query.n) || 100));
+  res.json({ ok: true, mode: 'observation', classifier: 'règles-v1', entryKinds: ENTRY_KINDS, ...pipelineObserver.recent(n) });
+});
+
 app.put('/api/model-routing/:task', express.json({ limit: '4kb' }), async (req, res) => {
   try {
     await modelRouting.getCatalog();
@@ -3062,6 +3096,7 @@ function maybeDispatchChefQuestion(musicianName, question) {
   // 0.22.0 : ticket de classe `decision`. Un musicien bloqué passe avec les
   // messages utilisateur (avant les points), mais n'interrompt plus le chef.
   poolEnqueue({
+    obsId: observeEntry({ entry: 'relais-vers-chef', project: conductorName(), text: prompt, caller: musicianName }),
     class: 'decision', text: prompt,
     displayText: `décision demandée par ${musicianName} : ${question}`,
   });
@@ -3100,7 +3135,7 @@ function maybeRelayChefAnswer(parsedEv) {
     `[CHEF_ANSWER] ${cleaned}\n\n` +
     `Reprends ta tâche en intégrant cette décision.`;
   console.log(`[chef→${musicianName}] relay : ${cleaned.slice(0, 80)}…`);
-  spawnDirectDispatch(musicianName, musicianPrompt);
+  spawnDirectDispatch(musicianName, musicianPrompt, [], [], { observeAs: 'relais-vers-musicien' });
 }
 
 function allowedToolsFor(name) {
@@ -4007,6 +4042,7 @@ app.post('/api/projects/:name/sessions/new', express.json({ limit: '2mb' }), (re
   const env = { ...process.env };
   delete env.ANTHROPIC_API_KEY;
 
+  env.ORCH_OBS_ID = observeEntry({ entry: 'session-neuve', project: proj.name, text: prompt }) || '';
   const child = spawn(process.execPath, [dispatchScript, proj.name, '--prompt-stdin'], {
     stdio: ['pipe', 'ignore', 'ignore'],
     env,
@@ -4198,6 +4234,7 @@ app.post('/api/notify', express.json({ limit: NOTIFY_MAX_BODY }), (req, res) => 
   }
 
   if (source) fireDesktopNotification(String(source), text.trim());
+  observeEntry({ entry: 'notify', project, text, caller: typeof source === 'string' ? source.slice(0, 64) : undefined });
 
   res.json({ ok: true });
 });
@@ -4488,6 +4525,18 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
   const proj = config.projects.find(p => p.name === name);
   if (!proj) return res.status(404).json({ error: `unknown project "${name}"` });
 
+  // Pipelines, phase 1 : l'entrée est classée et journalisée (aucun effet).
+  // Venue de dispatch.mjs, elle porte déjà son identifiant d'observation.
+  let obsId = typeof req.body?.obsId === 'string' && OBS_ID_RE.test(req.body.obsId) ? req.body.obsId : null;
+  if (!obsId) {
+    const isChef = name === conductorName();
+    const mention = isChef ? /^@(\S+)/.exec(prompt.trim()) : null;
+    obsId = observeEntry({
+      entry: `${clientOf(req)}:${isChef ? (mention ? 'mention' : 'chef') : 'musicien'}`,
+      project: name, text: prompt, target: mention ? mention[1] : undefined,
+    });
+  }
+
   // ── Un musicien occupé n'est JAMAIS interrompu par un chef (0.22.0) ───────
   //
   // `dispatch.mjs` ne regardait pas le `.pid` de sa cible : deux dispatches
@@ -4511,6 +4560,7 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
       ticket:   typeof req.body?.ticket   === 'string' ? req.body.ticket   : undefined,
       // --new-session : ne prend effet qu'au LANCEMENT de l'entrée (0.27.0).
       newSession: req.body?.newSession === true ? true : undefined,
+      obsId: obsId || undefined,
     };
     if (busy) {
       const len = queuePush(name, entry);
@@ -4552,14 +4602,14 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
       }
       const st = musicianAutoStates.get(directProj.name)?.state ?? 'idle';
       if (st === 'live' || st === 'think') {
-        const len = queuePush(directProj.name, { prompt: stripped, attachmentPaths, videoPaths });
+        const len = queuePush(directProj.name, { prompt: stripped, attachmentPaths, videoPaths, obsId: obsId || undefined });
         const id = dispatchQueue.get(directProj.name)[len - 1].id;
         console.log(`[queue] queued for ${directProj.name} (pos=${len}, state=${st}, id=${id})`);
         return res.status(202).json({
           ok: true, queued: true, project: directProj.name, queueLength: len, id,
         });
       }
-      const pid = spawnDirectDispatch(directProj.name, stripped, attachmentPaths, videoPaths);
+      const pid = spawnDirectDispatch(directProj.name, stripped, attachmentPaths, videoPaths, { obsId });
       console.log(`[queue] direct dispatch to ${directProj.name} (state=${st}) pid=${pid}`);
       return res.status(202).json({ ok: true, direct: true, project: directProj.name, pid });
     }
@@ -4624,6 +4674,7 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
       }
     }
     const ticket = poolEnqueue({
+      obsId: obsId || undefined,
       class: 'user',
       text: isOverride ? promptForRouting : prompt,
       attachmentPaths, videoPaths,
@@ -4716,6 +4767,7 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
       DISPATCH_INTERRUPTED: interrupted ? '1' : '0',
       DISPATCH_TIME_SINCE_LAST_MS: timeSinceLastMs == null ? '' : String(timeSinceLastMs),
       DISPATCH_REQUEST_IN_TS: String(requestInTs),
+      ORCH_OBS_ID: obsId || '',
     },
     stdio: ['pipe', 'ignore', 'ignore'],
     windowsHide: true,
@@ -5096,6 +5148,12 @@ app.ws('/ws/pty', (ws, req) => {
   }
 
   wsClients.add(ws);
+  // Réponse utilisateur n° 1 : le terminal passe aussi par le routeur.
+  const termLines = new TerminalLineBuffer();
+  const observeTyping = (data) => {
+    try { for (const line of termLines.feed(data)) observeEntry({ entry: 'terminal', project: 'central', text: line }); }
+    catch (e) { debugLog(`[observe] terminal: ${e.message}`); }
+  };
 
   if (!centralPty) startCentralPty();
 
@@ -5113,6 +5171,7 @@ app.ws('/ws/pty', (ws, req) => {
         const parsed = JSON.parse(text);
         if (parsed.type === 'input' && typeof parsed.data === 'string') {
           centralPty.write(parsed.data);
+          observeTyping(parsed.data);
           return;
         }
         if (parsed.type === 'resize' && parsed.cols && parsed.rows) {
@@ -5122,6 +5181,7 @@ app.ws('/ws/pty', (ws, req) => {
       } catch { /* fall through to raw */ }
     }
     centralPty.write(text);
+    observeTyping(text);
   });
 
   ws.on('close', () => {

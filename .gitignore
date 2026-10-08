@@ -71,6 +71,7 @@ config.json
 # Choix « Models par tâche » (0.39.0), écrits par le serveur — local
 model-routing.json
 model-routing.json.*.tmp
+model-routing.json.v1-bak
 
 # Captures d'écran de l'UI réelle (conversations, noms de projets)
 docs/*.png

@@ -45,6 +45,9 @@ function sandbox() {
     pool: { queue: [] },
     poolWithdraw: () => null,
     poolEnqueue: (t) => { enqueued.push(t); return t; },
+    // 0.41.0 — observation des pipelines : sans effet sur le réveil.
+    observeEntry: () => null,
+    conductorName: () => 'chef',
   };
   const names = Object.keys(deps);
   // eslint-disable-next-line no-new-func

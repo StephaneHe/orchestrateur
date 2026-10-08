@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createModelRouting, PIPELINES, SLOTS, LEGACY_MAP, HISTORY_MAX, incompatibility } from './model-routing.mjs';
+import { JUDGE_STEPS } from './model-pipelines.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let ok = 0, ko = 0;
@@ -61,6 +62,7 @@ t('Vidéo et Audio : 5 et 4 étapes', stepsOf(PIPELINES.find(p => p.id === 'vide
 const refs = new Set(PIPELINES.flatMap(p => stepsOf(p).filter(s => s.ref).map(s => `${p.id}.${s.id}`)));
 const missing = PIPELINES.flatMap(p => stepsOf(p).flatMap(s => [s.ref ? null : `${p.id}.${s.id}`, ...(s.variants || []).map(v => `${p.id}.${s.id}.${v.id}`)])).filter(Boolean).filter(id => !SLOTS.some(x => x.id === id));
 t('une case par étape (hors renvois) et par variante', !missing.length && SLOTS.every(s => !refs.has(s.id)), missing.join(', '));
+t('étapes de jugement : toutes existent et portent une case marquée', [...JUDGE_STEPS].every(id => SLOTS.some(s => s.id === id && s.judge)) && SLOTS.filter(s => s.id === 'dev.vert').every(s => !s.judge));
 t('les cibles de retour existent', PIPELINES.every(p => { const ids = new Set([...p.flow.map(n => n.id), ...stepsOf(p).map(s => s.id)]); return stepsOf(p).every(s => (s.returns || []).every(r => ids.has(r.to))); }));
 t('l’ancienne structure (20 types) se projette sur des cases existantes', Object.keys(LEGACY_MAP).length === 20 && Object.values(LEGACY_MAP).flat().every(id => SLOTS.some(s => s.id === id)));
 const publicText = JSON.stringify(PIPELINES);
@@ -157,6 +159,13 @@ console.log('\n── 6. Enregistrement, validation, historique');
   t('ffmpeg pour la découpe vidéo → accepté', mr.setAssignment('video.monter.decoupe', { provider: 'local', model: 'ffmpeg' }).ok);
   t('synthèse du navigateur pour le TTS → acceptée', mr.setAssignment('audio.traiter.tts', { provider: 'local', model: 'web-speech' }).ok);
   t('vision NVIDIA pour la vérification visuelle → acceptée', mr.setAssignment('images.verifier', { provider: 'nvidia', model: 'nvidia/vila' }).ok);
+  // Réponse utilisateur n° 7 : NVIDIA / OpenRouter gardés, outillage en construction.
+  const harness = mr.setAssignment('dev.vert', { provider: 'nvidia', model: 'z-ai/glm-5.3' });
+  t('NVIDIA sur une étape d’action (4b) → 409 « outillage en construction »', harness.status === 409 && /outillage/.test(harness.error));
+  t('NVIDIA sur une étape de jugement (revue) → accepté', mr.setAssignment('dev.revue.code', { provider: 'nvidia', model: 'z-ai/glm-5.3' }).ok);
+  t('NVIDIA pour classifier (Routage) → accepté', mr.setAssignment('routage.classifier', { provider: 'nvidia', model: 'z-ai/glm-5.3' }).ok);
+  t('Anthropic / codex restent acceptés sur une étape d’action', mr.setAssignment('dev.vert', { provider: 'anthropic', model: 'claude-sonnet-5' }).ok);
+  t('la vue expose les fournisseurs sans harnais', mr.view().agentHarness.nvidia === false && mr.view().agentHarness.openrouter === false && mr.view().agentHarness.anthropic === true);
   const a = mr.setAssignment('dev.rouge', { provider: 'openai', model: 'gpt-6-astra' }, 'chef');
   t('choix enregistré', a.ok && a.changed);
   t('écrit dans model-routing.json', JSON.parse(fs.readFileSync(path.join(dir, 'model-routing.json'), 'utf8')).assignments['dev.rouge'].model === 'gpt-6-astra');

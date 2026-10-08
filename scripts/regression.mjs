@@ -454,6 +454,13 @@ async function apiChecks(sb) {
     assert((await put('video.monter.decoupe', { provider: 'local', model: 'ffmpeg' })).status === 200, 'ffmpeg refusé pour la découpe');
     assert((await put('audio.traiter.stt', { provider: 'local', model: 'whisper' })).status === 200, 'whisper local refusé pour la transcription');
     assert((await put('images.verifier', { provider: 'nvidia', model: 'meta/llama-3.2-90b-vision-instruct' })).status === 200, 'model vision refusé pour la vérification visuelle');
+    // 0.41.0 — NVIDIA / OpenRouter : outillage d'agent en construction.
+    const hv = await put('dev.vert', { provider: 'nvidia', model: 'z-ai/glm-5.3' });
+    if (Array.isArray(v.slots) && 'judge' in (v.slots[0] || {})) {
+      assert(hv.status === 409 && /outillage/.test((await hv.json()).error || ''), `NVIDIA accepté sur une étape d'action (${hv.status})`);
+      assert((await put('routage.classifier', { provider: 'nvidia', model: 'z-ai/glm-5.3' })).status === 200, 'NVIDIA refusé sur une étape de jugement');
+      await put('routage.classifier', { default: true });
+    }
     const after = await json('/api/model-routing');
     assert(after.assignments['dev.revue.code']?.model === 'claude-opus-5-5' && after.assignments['video.monter.decoupe']?.provider === 'local', 'choix non relus');
     const file = JSON.parse(fs.readFileSync(routingPath, 'utf8'));
@@ -468,6 +475,54 @@ async function apiChecks(sb) {
     // L'instance repart propre pour les parcours navigateur.
     fs.rmSync(routingPath, { force: true });
     return `${v.pipelines.length} pipelines, ${v.slots.length} cases, ${loc.filter(t => t.installed).length} outils locaux`;
+  });
+  await check(S, 'pipeline-observe', 'Pipelines, phase 1 (observation) : chaque entrée (composer → chef, @musicien, app Android, musicien direct, dispatch.mjs via la file, notify, session neuve) est classée et journalisée une seule fois, inclassable = Discussion, aucun changement de comportement', async () => {
+    const first = await get('/api/pipeline-observe?n=5');
+    if (first.status === 404) NA('observation absente de cet état du code');
+    const obsFile = path.join(sb.root, 'logs', 'pipeline-observe.ndjson');
+    const readObs = () => { try { return fs.readFileSync(obsFile, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)); } catch { return []; } };
+    const n0 = readObs().length;
+    const postUA = (p, body, ua) => fetch(sb.url + p, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json', ...(ua ? { 'User-Agent': ua } : {}) }, body: JSON.stringify(body) });
+    const since = () => readObs().slice(n0);
+    // 1. Composer → chef : ticket du pool, comportement inchangé (202 + ticket).
+    let r = await post('/api/dispatch', { project: 'chef', prompt: 'corrige la typo du titre de la page' });
+    assert(r.status === 202 && (await r.json()).ticket, `chef : ${r.status}`);
+    // 2. @mention, 3. app Android, 4. musicien direct, 5. inclassable.
+    r = await post('/api/dispatch', { project: 'chef', prompt: '@omega pourquoi le build est lent ?' });
+    assert(r.status === 202, `mention : ${r.status}`);
+    r = await postUA('/api/dispatch', { project: 'chef', prompt: 'traduis le README en anglais' }, 'okhttp/4.12.0');
+    assert(r.status === 202, `android : ${r.status}`);
+    r = await post('/api/dispatch', { project: 'lambda', prompt: 'bonjour', queueIfBusy: true });
+    assert(r.status === 202, `musicien : ${r.status}`);
+    // 6. dispatch.mjs (déjà observé) : le serveur ne compte pas deux fois.
+    r = await post('/api/dispatch', { project: 'mu', prompt: 'ajoute un test', queueIfBusy: true, obsId: 'obs-deja-observe-1' });
+    assert(r.status === 202, `dispatch.mjs : ${r.status}`);
+    // 7. notify, 8. session neuve.
+    r = await post('/api/notify', { project: 'chef', text: 'omega : tâche terminée', source: 'omega' });
+    assert(r.status === 200, `notify : ${r.status}`);
+    // La route attend que la session existe : on ne l'attend pas, l'entrée est
+    // observée dès son arrivée.
+    post('/api/projects/kappa/sessions/new', { prompt: 'génère une icône pour l\'app' }).catch(() => {});
+    const ok = await until(() => since().length >= 6, 8000);
+    await sleep(2500);   // le pool et les lancements directs ont eu le temps de partir
+    const recs = since();
+    const by = (entry) => recs.filter(x => x.entry === entry);
+    assert(ok, `observations : ${recs.map(x => x.entry).join(', ')}`);
+    assert(!recs.some(x => ['pool', 'file', 'spawn'].includes(x.entry)), `entrée recomptée au lancement : ${recs.map(x => x.entry).join(', ')}`);
+    assert(by('dashboard:chef').some(x => x.pipeline === 'dev' && x.mode === 'leger'), 'composer → chef non classé dev léger');
+    assert(by('dashboard:mention').some(x => x.target === 'omega' && x.pipeline === 'discussion'), '@omega non observé (discussion)');
+    assert(by('android:chef').some(x => x.pipeline === 'redaction'), 'entrée Android non reconnue');
+    assert(by('dashboard:musicien').some(x => x.project === 'lambda' && x.pipeline === 'discussion' && x.unclassifiable), 'inclassable non rangé en Discussion');
+    assert(!recs.some(x => x.project === 'mu'), 'entrée venue de dispatch.mjs comptée deux fois');
+    assert(by('notify').some(x => x.pipeline === 'routage'), 'notify non rattaché au Routage');
+    assert(by('session-neuve').some(x => x.project === 'kappa'), 'session neuve non observée');
+    // Rien n'a changé dans les tours : le texte du musicien est intact.
+    const lam = await until(() => readLog('lambda').some(e => e.type === 'user_prompt' && e.text === 'bonjour'), 15_000);
+    assert(lam, 'le tour du musicien n\'a pas reçu le texte inchangé');
+    // Une entrée de la file ne sera pas re-comptée au drain : l'id voyage avec elle.
+    const v = await json('/api/pipeline-observe?n=50');
+    assert(v.mode === 'observation' && v.items.length && v.counts.byPipeline && v.entryKinds['terminal'], 'route /api/pipeline-observe incomplète');
+    return `${recs.length} entrées observées : ${[...new Set(recs.map(x => x.entry))].join(', ')}`;
   });
   await check(S, 'sse', 'Flux temps réel /api/sse/fleet : une ligne de log arrive au client', async () => {
     const ac = new AbortController();

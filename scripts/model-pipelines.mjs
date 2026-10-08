@@ -434,6 +434,29 @@ export const LEGACY_MAP = {
   'synthese':          ['dev.documenter.rapport', 'recherche.synthetiser'],
 };
 
+// Étapes de JUGEMENT (0.41.0) : elles travaillent sur un texte fourni (demande,
+// artefacts, diff) et rendent du texte — un model sans harnais d'agent peut les
+// tenir. Toutes les autres étapes « texte » sont des étapes d'ACTION : lire le
+// projet, écrire, exécuter. Décision utilisateur (réponse n° 7) : « tous les
+// models doivent pouvoir agir de manière identique » — tant que l'outillage
+// NVIDIA / OpenRouter n'existe pas, ils sont limités au jugement.
+export const JUDGE_STEPS = new Set([
+  'dev.concevoir', 'dev.liste-tests', 'dev.revue',
+  'discussion.comprendre', 'discussion.repondre',
+  'routage.lire', 'routage.classifier', 'routage.decomposer', 'routage.affecter', 'routage.rapporter',
+  'incident.evaluer',
+  'recherche.cadrer', 'recherche.recouper', 'recherche.synthetiser',
+  'audit.second-avis',
+  'redaction.rediger', 'redaction.relire',
+  'nouveau.cadrage',
+  'images.cadrer',
+]);
+for (const p of PIPELINES) {
+  for (const n of p.flow) {
+    for (const s of n.kind === 'loop' ? n.steps : [n]) if (JUDGE_STEPS.has(`${p.id}.${s.id}`)) s.judge = true;
+  }
+}
+
 /** Toutes les étapes d'un pipeline, boucles aplaties, dans l'ordre. */
 export function stepsOf(p) {
   const out = [];
@@ -451,9 +474,10 @@ export function slotsOf() {
     for (const s of stepsOf(p)) {
       if (s.ref) continue;
       const need = s.need || T;
-      slots.push({ id: `${p.id}.${s.id}`, pipeline: p.id, step: s.id, label: `${p.label} · ${s.n} ${s.title}`, need });
+      const judge = !!s.judge;
+      slots.push({ id: `${p.id}.${s.id}`, pipeline: p.id, step: s.id, label: `${p.label} · ${s.n} ${s.title}`, need, judge });
       for (const v of s.variants || []) {
-        slots.push({ id: `${p.id}.${s.id}.${v.id}`, pipeline: p.id, step: s.id, variant: v.id, label: `${p.label} · ${s.n} ${s.title} · ${v.label}`, need: v.need || need });
+        slots.push({ id: `${p.id}.${s.id}.${v.id}`, pipeline: p.id, step: s.id, variant: v.id, label: `${p.label} · ${s.n} ${s.title} · ${v.label}`, need: v.need || need, judge });
       }
     }
   }

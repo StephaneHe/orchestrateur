@@ -87,8 +87,16 @@ function nvidiaCaps(id) {
   return caps;
 }
 
+// Fournisseurs dotés d'un harnais d'agent (lire, écrire, exécuter, permissions
+// par projet, traçage system/init). NVIDIA et OpenRouter : outillage en
+// construction (docs/PLAN-pipeline-enforcement.md, phase « Outillage ») — ils
+// restent proposés, mais seulement pour les étapes de jugement.
+export const AGENT_HARNESS = { anthropic: true, openai: true, nvidia: false, openrouter: false };
+export const HARNESS_PENDING_MSG = 'outillage d’agent en construction : NVIDIA et OpenRouter ne peuvent pas encore lire, écrire ni exécuter — étapes de jugement seulement';
+
 /** Une case accepte-t-elle ce model / cet outil ? Renvoie null si oui, sinon la raison. */
-export function incompatibility(need, provider, entry) {
+export function incompatibility(need, provider, entry, slot) {
+  if (need.llm === 'text' && slot && !slot.judge && AGENT_HARNESS[provider] === false) return HARNESS_PENDING_MSG;
   if (provider === 'local') {
     if (!need.local?.length) return 'aucun outil local ne convient à cette étape';
     if (!entry) return null;
@@ -190,8 +198,9 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
       if (cat && cat.models.length && !entry) {
         return { ok: false, status: 400, error: `absent de la liste ${PROVIDER_LABELS[provider]} : ${model}` };
       }
-      const why = incompatibility(slot.need, provider, entry);
-      if (why) return { ok: false, status: provider === 'local' && entry && !entry.installed ? 409 : 400, error: `incompatible avec « ${slot.label} » : ${why}` };
+      const why = incompatibility(slot.need, provider, entry, slot);
+      const pending = why === HARNESS_PENDING_MSG;
+      if (why) return { ok: false, status: pending || (provider === 'local' && entry && !entry.installed) ? 409 : 400, error: `incompatible avec « ${slot.label} » : ${why}` };
       next = { provider, model };
     }
     const data = readRouting();
@@ -213,6 +222,8 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
       pipelines: PIPELINES,
       slots: SLOTS,
       caps: CAPS,
+      agentHarness: AGENT_HARNESS,
+      harnessPending: HARNESS_PENDING_MSG,
       assignments: data.assignments,
       updatedAt: data.updatedAt,
       history: data.history.slice(-historyN).reverse(),

@@ -4,7 +4,7 @@ A local Windows dashboard where one "conductor" AI session pilots a fleet of
 headless coding agents, one per project, with a live web viewer and an
 Android companion app.
 
-`version 0.40.1` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
+`version 0.41.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
 
 > **Status: active, personal project.** Built and used daily on a single
 > Windows machine. Pre-1.0: internal APIs and file formats can still change
@@ -89,7 +89,12 @@ one screen to watch the whole fleet.
   catalogues and the tools actually installed. Choices are saved, with history,
   to a local `model-routing.json`. Keys are never displayed: only "present /
   absent" is shown. The choices are recorded only; dispatch does not use them
-  yet.
+  yet. Phase 1 of pipeline enforcement (observation) is live. Every entry is
+  classified (pipeline and mode) and logged, with no change in behaviour, and
+  the result is shown in an "Observation" panel. Entries include the composer,
+  direct messages, the Android app, CLI dispatches, wakes, relays, notify and
+  the interactive terminal. NVIDIA and OpenRouter are limited to judgement
+  steps until their agent harness ships.
 - **Android companion app** (Kotlin + Jetpack Compose): fleet overview,
   per-agent detail, chat with the conductor.
 - **`/downloads` page** listing the Android builds of your projects, driven
