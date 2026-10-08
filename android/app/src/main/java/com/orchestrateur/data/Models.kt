@@ -145,6 +145,48 @@ data class PermissionDenial(
     @SerialName("tool_use_id") val toolUseId: String? = null,
 )
 
+// ── Demandes d'autorisation interactives (serveur 0.45.0) ──────────────────
+@Serializable
+data class PermRisk(val tags: List<String> = emptyList(), val level: String = "moyen")
+
+@Serializable
+data class PermWhy(val kind: String = "", val text: String = "")
+
+@Serializable
+data class PermSuggestion(val rule: String, val label: String = "", val scope: String = "")
+
+@Serializable
+data class PermBlock(val label: String = "", val kind: String = "text", val text: String = "")
+
+/** Une demande en attente (GET /api/permissions) ou ses détails complets
+ *  (GET /api/permission/:id/details : blocks, lastText, turnPrompt en plus). */
+@Serializable
+data class PermissionRequest(
+    val id: String,
+    val project: String,
+    val tool: String,
+    val preview: String = "",
+    val branch: String? = null,
+    val model: String? = null,
+    val cwd: String? = null,
+    val createdAt: Long = 0,
+    val deadline: Long = 0,
+    val status: String = "pending",
+    val risk: PermRisk = PermRisk(),
+    val why: PermWhy = PermWhy(),
+    val suggestions: List<PermSuggestion> = emptyList(),
+    val step: String? = null,
+    val blocks: List<PermBlock> = emptyList(),
+    val lastText: String? = null,
+    val turnPrompt: String? = null,
+)
+
+@Serializable
+data class PermissionsResponse(val pending: List<PermissionRequest> = emptyList(), val now: Long = 0)
+
+@Serializable
+data class PermissionDetailsResponse(val request: PermissionRequest? = null, val error: String? = null)
+
 /** Response from POST /api/attach/image */
 @Serializable
 data class AttachResponse(val path: String)

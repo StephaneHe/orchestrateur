@@ -132,10 +132,29 @@ export function deriveState(lines) {
   // 0.31.0 : arrêt par le chef du dernier tour (null sinon) et dernier « vu ».
   let stopped = null;
   let acknowledged = null;
+  // 0.45.0 : demandes d'autorisation sans décision du tour en cours. Le tour est
+  // en PAUSE volontaire (il attend l'utilisateur) : ni bloqué, ni au repos.
+  const permPending = new Map();
 
   for (const ln of lines) {
     let ev; try { ev = JSON.parse(ln); } catch { continue; }
     if (isPhantomResult(ev)) continue;   // mini-tour rejoué par le CLI, pas une fin de tour
+    if (ev?.type === 'system' && ev.subtype === 'permission_request' && ev.permission?.id) {
+      permPending.set(ev.permission.id, { id: ev.permission.id, tool: ev.permission.tool, preview: ev.permission.preview || '',
+        toolUseId: ev.permission.toolUseId || null, deadline: ev.permission.deadline || null, risk: ev.permission.risk || null });
+      continue;
+    }
+    if (ev?.type === 'notification' && ev.subtype === 'permission_decision') {
+      if (ev.permission?.id) permPending.delete(ev.permission.id);
+      continue;
+    }
+    if (ev?.type === 'user' && permPending.size) {
+      for (const b of ev.message?.content || []) {
+        if (b?.type !== 'tool_result') continue;
+        for (const [id, p] of permPending) if (p.toolUseId && p.toolUseId === b.tool_use_id) permPending.delete(id);
+      }
+    }
+    if (ev?.type === 'result' || (ev?.type === 'user_prompt' && !ev.source)) permPending.clear();
     if (isQuestionResolved(ev)) {
       if (state === 'input') { state = 'idle'; resolution = { ts: ev.timestamp || null, note: ev.note || '', question: ev.question || '' }; }
       continue;
@@ -189,9 +208,15 @@ export function deriveState(lines) {
       turnStartTs = null;                                  // turn is over
     }
   }
+  // Une demande dont l'échéance est largement passée (tour tué pendant l'attente)
+  // ne fait plus « attendre » personne.
+  const now = Date.now();
+  const waiting = [...permPending.values()].filter(p => !p.deadline || now < p.deadline + 60_000);
+  const awaitingPermission = (state === 'live' || state === 'think') && waiting.length
+    ? { ...waiting[waiting.length - 1], count: waiting.length } : null;
   return {
     state, lastAssistantText, turnStartTs, model, provider, awaitingChef, resolution,
-    stopped: state === 'error' ? stopped : null, acknowledged,
+    stopped: state === 'error' ? stopped : null, acknowledged, awaitingPermission,
   };
 }
 
@@ -301,13 +326,14 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
   const { lines, mtimeMs, size } = tailLines(logPath);
   const last = lastMeaningful(lines);
   const tail = lastAny(lines);
-  const { state, lastAssistantText, turnStartTs, model, provider, awaitingChef, resolution, stopped, acknowledged } = deriveState(lines);
+  const { state, lastAssistantText, turnStartTs, model, provider, awaitingChef, resolution, stopped, acknowledged, awaitingPermission } = deriveState(lines);
   const now = Date.now();
   const lastMeaningfulTs = last?.timestamp ? Date.parse(last.timestamp) : (mtimeMs || 0);
   const silentMs = now - (lastMeaningfulTs || now);
   const fileSilentMs = now - (mtimeMs || now);
   const inFlight = state === 'live' || state === 'think';
-  const stalled = inFlight && silentMs >= STALL_SILENCE_MS;
+  // Un tour qui attend une autorisation se tait par construction : pas un stall.
+  const stalled = inFlight && !awaitingPermission && silentMs >= STALL_SILENCE_MS;
   const pid = readPid(name, logsDir);
   const alive = pid ? pidAlive(pid) : null;
   const lastKind = lastKindOf(last, tail);
@@ -333,6 +359,9 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
     state,
     // Additive: finished but waiting on a chef decision (state stays `unread`).
     awaitingChef,
+    // Additif 0.45.0 : {id, tool, preview, deadline, risk, count} tant qu'une
+    // demande d'autorisation attend l'utilisateur (l'état reste `live`).
+    awaitingPermission,
     stalled,
     // Dead process while the log still says a turn is running — a stronger,
     // separate stall signal (the child was SIGKILLed or crashed silently).

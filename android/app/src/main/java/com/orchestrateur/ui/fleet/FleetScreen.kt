@@ -108,6 +108,7 @@ fun JournalScreen(
     Column(Modifier.fillMaxSize().background(Palette.Bg0)) {
         JournalHeader(vm, connected, onOpenSettings) { onOpenMusician(FleetViewModel.CONDUCTOR) }
         SystemBanner(vm, connected)
+        PermissionBand(vm)
         AttentionBand(vm, onOpenMusician)
 
         if (vm.musicians.isNotEmpty()) {

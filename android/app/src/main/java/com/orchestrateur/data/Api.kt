@@ -178,6 +178,43 @@ class Api(private val store: ServerStore) {
         }
     }
 
+    /** Demandes d'autorisation en attente (serveur ≥ 0.45.0 ; null sinon). */
+    suspend fun fetchPermissions(): PermissionsResponse? = withContext(Dispatchers.IO) {
+        try {
+            http.newCall(req("/api/permissions").build()).execute().use { resp ->
+                if (!resp.isSuccessful) null
+                else json.decodeFromString(PermissionsResponse.serializer(), resp.body!!.string())
+            }
+        } catch (_: Exception) { null }
+    }
+
+    /** Détails complets d'une demande (entrée entière, secrets masqués par le serveur). */
+    suspend fun fetchPermissionDetails(id: String): PermissionRequest = withContext(Dispatchers.IO) {
+        http.newCall(req("/api/permission/$id/details").build()).execute().use { resp ->
+            val r = json.decodeFromString(PermissionDetailsResponse.serializer(), resp.body!!.string())
+            r.request ?: error(r.error ?: "demande indisponible (${resp.code})")
+        }
+    }
+
+    /** Décision : allow_once | allow_always (avec `rule`) | deny (avec `message` optionnel). */
+    suspend fun decidePermission(id: String, decision: String, rule: String? = null, message: String? = null) = withContext(Dispatchers.IO) {
+        val payload = buildJsonObject {
+            put("decision", decision)
+            put("by", "android")
+            if (!rule.isNullOrBlank()) put("rule", rule)
+            if (!message.isNullOrBlank()) put("message", message)
+        }
+        val body = Json.encodeToString(payload).toRequestBody("application/json".toMediaType())
+        http.newCall(
+            req("/api/permission/$id/decide").post(body).header("Content-Type", "application/json").build()
+        ).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                val err = runCatching { json.parseToJsonElement(resp.body!!.string()).let { (it as? kotlinx.serialization.json.JsonObject)?.get("error")?.toString()?.trim('"') } }.getOrNull()
+                error(err ?: "décision refusée (${resp.code})")
+            }
+        }
+    }
+
     suspend fun markRead(project: String) = withContext(Dispatchers.IO) {
         val payload = buildJsonObject {
             put("project", project)

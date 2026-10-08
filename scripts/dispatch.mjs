@@ -424,6 +424,17 @@ if (dualCwdArg) {
   WORK_DIR = wanted;
 }
 
+// Demandes d'autorisation interactives (0.45.0). Délai de réponse : 5 min par
+// défaut, `permissionTimeoutMin` du projet puis de `defaults` (config.json, lu
+// seulement), ORCH_PERM_TIMEOUT_MS pour les tests. Désactivables sans
+// redéploiement : `defaults.permissionPrompts: false` (ou celui du projet).
+const PERMISSION_PROMPTS = process.env.ORCH_PERM_DISABLE !== '1' &&
+  (project.permissionPrompts ?? config.defaults?.permissionPrompts ?? true) !== false;
+const PERMISSION_TIMEOUT_MS = Number(process.env.ORCH_PERM_TIMEOUT_MS) > 0
+  ? Number(process.env.ORCH_PERM_TIMEOUT_MS)
+  : Math.round(60_000 * (Number(project.permissionTimeoutMin) > 0 ? Number(project.permissionTimeoutMin)
+    : Number(config.defaults?.permissionTimeoutMin) > 0 ? Number(config.defaults.permissionTimeoutMin) : 5));
+
 // ============================================================================
 // FAILOVER CORE — deterministic, no IA in the loop. See top-of-file comment.
 // ============================================================================
@@ -1697,11 +1708,35 @@ function runClaude() {
     '--allowed-tools', tools,
     '--model', model,
     '--setting-sources', 'project,local',     // skip global user settings
-    '--strict-mcp-config',                    // no MCP servers
+    '--strict-mcp-config',                    // no MCP servers but ours (permissions, below)
     '--disable-slash-commands',               // no skills leaking in
   ];
   if (useStreamJsonInput) args.push('--input-format', 'stream-json');
   if (sessionId) args.push('--resume', sessionId);
+  // 0.45.0 — demandes d'autorisation interactives : au lieu de refuser sur-le-
+  // champ un outil non autorisé, le CLI demande à notre serveur MCP local
+  // (permission-mcp.mjs), qui attend la décision de l'utilisateur. Le seul
+  // serveur MCP du tour (--strict-mcp-config reste) ; son outil est masqué au
+  // model (--disallowed-tools : vérifié, le CLI l'appelle quand même).
+  if (PERMISSION_PROMPTS) {
+    args.push(
+      '--mcp-config', JSON.stringify({ mcpServers: { orch: { type: 'stdio', command: process.execPath, args: [path.join(__dirname, 'permission-mcp.mjs')] } } }),
+      '--permission-prompt-tool', 'mcp__orch__approve',
+      '--disallowed-tools', 'mcp__orch__approve',
+    );
+    Object.assign(env, {
+      ORCH_ROOT: ROOT,
+      ORCH_PERM_URL: `http://127.0.0.1:${process.env.ORCH_PORT || 7777}`,
+      ORCH_PERM_PROJECT: projectName,
+      ORCH_PERM_TIMEOUT_MS: String(PERMISSION_TIMEOUT_MS),
+      ORCH_PERM_MODEL: model,
+      ORCH_PERM_CWD: WORK_DIR,
+      ORCH_PERM_LOG: logPath,
+      ...(DUAL_BRANCH ? { ORCH_PERM_BRANCH: DUAL_BRANCH.role } : {}),
+    });
+    // Le CLI n'attend pas un outil MCP indéfiniment : marge au-delà du délai.
+    if (!env.MCP_TOOL_TIMEOUT) env.MCP_TOOL_TIMEOUT = String(PERMISSION_TIMEOUT_MS + 5 * 60_000);
+  }
 
   // CLAUDE_BIN env opt-in: when set, spawn that binary instead of `claude`.
   // Used by Phase 4.B/4.C harness to swap in the deterministic fake_claude

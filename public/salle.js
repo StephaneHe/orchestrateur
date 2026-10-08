@@ -80,6 +80,8 @@
    *  sans progrès. `pidAlive:null` ne produit JAMAIS « perdu ». */
   function healthFlag(r) {
     if (!r) return null;
+    // 0.45.0 : en pause volontaire, il attend VOTRE décision (jamais « sans progrès »).
+    if (r.awaitingPermission) return { kind: "perm", text: "🔐 attend autorisation · " + (r.awaitingPermission.tool || "outil") };
     if (r.deadInFlight === true) return { kind: "dead", text: "✗ processus perdu" };
     if (r.stalled) return { kind: "stall", text: "! sans progrès " + fmtAge(r.silentMs) };
     return null;
@@ -290,7 +292,7 @@
   // Bande d'attention — une ligne repliée, l'élément le plus grave lisible
   // sans clic. Priorité : question > processus perdu > échec > sans progrès.
   // ------------------------------------------------------------------------
-  const ATT_RANK = { question: 0, dead: 1, error: 2, stopped: 2, stall: 3 };
+  const ATT_RANK = { perm: -1, question: 0, dead: 1, error: 2, stopped: 2, stall: 3 };
 
   function attentionItems() {
     const out = [];
@@ -303,7 +305,7 @@
         continue;
       }
       const h = healthFlag(r);
-      if (h) { out.push({ kind: h.kind, name: m.name, mark: h.kind === "dead" ? "✗" : "!", text: h.text }); continue; }
+      if (h) { out.push({ kind: h.kind, name: m.name, mark: h.kind === "dead" ? "✗" : h.kind === "perm" ? "🔐" : "!", text: h.text }); continue; }
       if (m.state === "error" && m.stopped) {
         out.push({ kind: "stopped", name: m.name, mark: "■", text: "arrêté par le chef" + (m.stopped.reason ? " — " + m.stopped.reason : "") });
       } else if (m.state === "error") {
@@ -329,6 +331,8 @@
     const ne = items.filter(i => i.kind === "error").length;
     const ns = items.filter(i => i.kind === "stall").length;
     const nk = items.filter(i => i.kind === "stopped").length;
+    const np = items.filter(i => i.kind === "perm").length;
+    if (np) counts.push(`${np} autorisation${np > 1 ? "s" : ""} à décider`);
     if (nq) counts.push(`${nq} question${nq > 1 ? "s" : ""}`);
     if (nd) counts.push(`${nd} processus perdu${nd > 1 ? "s" : ""}`);
     if (ne) counts.push(`${ne} échec${ne > 1 ? "s" : ""}`);
@@ -337,7 +341,10 @@
     const top = items[0];
 
     const itemHtml = (it) => {
-      const acts = it.kind === "question"
+      const acts = it.kind === "perm"
+        ? `<button class="ai-act is-primary" data-perm-project="${esc(it.name)}" title="Voir tous les détails et décider">🔐 Décider</button>` +
+          `<button class="ai-act" data-open-musician="${esc(it.name)}">Ouvrir</button>`
+        : it.kind === "question"
         ? `<button class="ai-act is-primary" data-via-chef="${esc(it.name)}">Répondre via le chef</button>` +
           `<button class="ai-act" data-resolve-question="${esc(it.name)}" title="Déjà répondue ailleurs ou sans objet — aucun tour relancé">✓ Marquer comme répondue</button>` +
           `<button class="ai-act" data-open-musician="${esc(it.name)}">Ouvrir</button>`
@@ -394,7 +401,7 @@
   // pointeur survole le rail (« jamais sous le pointeur »).
   function railRank(m) {
     const r = snapRow(m.name);
-    if (r && (r.stalled || r.deadInFlight)) return 0;
+    if (r && (r.stalled || r.deadInFlight || r.awaitingPermission)) return 0;
     if (m.state === "error") return 1;
     if (m.state === "input") return 2;
     if (m.state === "live" || m.state === "think") return 3;
@@ -472,6 +479,9 @@
 
   /** Bouton « vu » d'un élément à examiner, ou "" (en vol : rien à acquitter). */
   function ackAction(m) {
+    if (snapRow(m.name)?.awaitingPermission) {
+      return `<button class="rr-ack" type="button" data-perm-project="${esc(m.name)}" title="Voir tous les détails et décider">🔐 Décider</button>`;
+    }
     if (m.state === "input") {
       return `<button class="rr-ack" type="button" data-resolve-question="${esc(m.name)}" title="Déjà répondue ailleurs ou sans objet — aucun tour relancé">✓ Répondue</button>`;
     }
@@ -490,7 +500,7 @@
     const examine = active.filter(m => {
       if (inFlight.includes(m)) {
         const r = snapRow(m.name);
-        return !!(r && (r.stalled || r.deadInFlight));
+        return !!(r && (r.stalled || r.deadInFlight || r.awaitingPermission));
       }
       // À EXAMINER = ce qui réclame une décision : question, échec, blocage
       // sur le chef, et tout ce qui est en vol mais sans progrès / PID mort.
@@ -1064,14 +1074,18 @@
       }
     }
     list = list.filter(d => !acked.has(String(d.toolId))).map(d => PD.enrich(d, systemById));
-    const html = list.map(d => {
+    box._denials = list;
+    box._project = m.name;
+    const html = list.map((d, i) => {
+      // 0.45.0 : un refus passé peut devenir une règle permanente (overlay de portée).
+      const forever = window.Permissions ? `<button class="dd-ack dd-forever" type="button" data-perm-forever="${i}" title="Créer une règle permanente : la prochaine fois, l'appel passera sans demande">Toujours autoriser à l'avenir</button>` : "";
       const todo = d.kind === "tool"
         ? `<button class="ev-perm-add-btn" data-project="${esc(m.name)}" data-tool="${esc(d.toolName)}" data-tool-ids="${esc(list.filter(x => x.kind === "tool" && x.toolName === d.toolName).map(x => x.toolId).join(","))}">+ Autoriser ${esc(d.toolName)}</button>`
         : "";
       return `<div class="dd-item" data-kind="${esc(d.kind)}" data-tool-id="${esc(d.toolId || "")}">🚫 <strong>${esc(d.toolName)}</strong> refusé ${esc(when)} : <code>${esc(d.preview)}</code>` +
         (d.reason ? `<div class="dd-reason">${esc(d.reason)}</div>` : "") +
         `<div class="dd-todo">${esc(PD.KIND_TEXT[d.kind] || "")}</div>` +
-        `<div class="dd-act">${todo}<button class="dd-ack" type="button" data-ack-denial="${esc(d.toolId || "")}" title="Ne plus afficher ce refus">✓ Vu</button></div></div>`;
+        `<div class="dd-act">${todo}<button class="dd-ack" type="button" data-ack-denial="${esc(d.toolId || "")}" title="Ne plus afficher ce refus">✓ Vu</button>${forever}</div></div>`;
     }).join("");
     if (box._html === html) return;
     box._html = html;
@@ -1262,6 +1276,10 @@
     $(".dive-denials", el)?.addEventListener("click", (e) => {
       const b = e.target.closest("[data-ack-denial]");
       if (b && dive.name) App.ackDenials(dive.name, String(b.dataset.ackDenial).split(",").filter(Boolean));
+      const f = e.target.closest("[data-perm-forever]");
+      const box = e.currentTarget;
+      const d = f && box._denials ? box._denials[Number(f.dataset.permForever)] : null;
+      if (d) global.Permissions?.openRuleDialog({ project: box._project, tool: d.toolName, input: d.input, toolIds: d.toolId ? [String(d.toolId)] : [] });
     });
     $(".dive-queue", el).addEventListener("click", (e) => {
       const b = e.target.closest("[data-queue-rm]");

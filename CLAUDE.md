@@ -169,8 +169,8 @@ with `NEEDS_USER_INPUT: <reformulated>` instead of `[ANSWER]`.
   sub-agents from global user config, we instead pass:
   - `--setting-sources project,local` (skips user-level hooks, skills,
     plugins, global settings)
-  - `--strict-mcp-config` (blocks all MCP servers — we pass no
-    `--mcp-config`)
+  - `--strict-mcp-config` (blocks all MCP servers except the one we pass:
+    since 0.45.0, only the local permission server `permission-mcp.mjs`)
   - `--disable-slash-commands` (no skills/slash commands)
   This satisfies the intent of "no global config leakage" while
   keeping OAuth auth working. Project CLAUDE.md and project `.claude/`
@@ -938,6 +938,77 @@ le meilleur des 2 ».
   - section « second » de `_test_model_routing.mjs` ;
   - HTTP `model-routing` ;
   - navigateur `models-dual`.
+
+## Demandes d'autorisation interactives (0.45.0)
+
+Demande utilisateur : « Je n'ai pas vu de moyen d'autoriser (1 fois, pour
+toujours) … En clickant dessus je dois voir un overlay avec tous les details.
+Il faut donc attendre ma reponse pendant au moins 5 minutes avant de passer. »
+
+- **Mécanisme** (vérifié sur CLI 2.1.283). `dispatch.mjs` (`runClaude`, tous
+  les tours claude : musiciens, chef, slots, branches du mode double) passe :
+  - `--mcp-config` (un seul serveur, `scripts/permission-mcp.mjs`) ;
+  - `--permission-prompt-tool mcp__orch__approve` ;
+  - `--disallowed-tools mcp__orch__approve` (le model ne voit pas l'outil ; le
+    CLI l'appelle quand même).
+
+  Le CLI appelle `approve {tool_name, input, tool_use_id}` et attend
+  `{behavior:'allow', updatedInput}` ou `{behavior:'deny', message}`. Une
+  attente de 5,5 min a été vérifiée ; `MCP_TOOL_TIMEOUT` est posé à
+  délai + 5 min.
+- **Délai** : `permissionTimeoutMin` du projet, puis de `defaults` (5 par
+  défaut). `ORCH_PERM_TIMEOUT_MS` sert aux tests. Désactivable par
+  `"permissionPrompts": false` (projet ou `defaults`) ou `ORCH_PERM_DISABLE=1`,
+  ce qui ramène l'ancien refus immédiat.
+- **Serveur** : `scripts/permission-store.mjs` (`createPermissionStore`,
+  `mountPermissionRoutes`, montées aussi par la suite de tests).
+  - Les demandes sont gardées en mémoire. Le MCP repose la même demande si le
+    serveur redémarre (404), avec la même échéance.
+  - Événements écrits dans le log du musicien : `system/permission_request`,
+    `notification/permission_decision` (`allow_once | allow_always | rule |
+    deny | expired`).
+  - Décision et règles : `sameOriginOnly`.
+  - **Serveur antérieur à 0.45.0** (route absente) : le MCP refuse aussitôt,
+    comme avant, en le disant. `dispatch.mjs` peut donc être actif avant le
+    redémarrage.
+- **Règles « toujours »** : `permission-rules.json` (racine, non versionné ;
+  jamais config.json).
+  - C'est l'orchestrateur qui les applique (`ruleMatches` de
+    `public/permission-core.js`), et non `.claude/settings.json`. Elles
+    marchent donc aussi pour les refus de l'analyse de sécurité du CLI
+    (commandes composites).
+  - Une règle de préfixe `Bash(x:*)` ne couvre **jamais** une commande
+    composite.
+- **Supervision** : l'état reste `live`, avec l'attribut `awaitingPermission`
+  (`deriveState`/`scanProject`).
+  - Jamais `stalled`.
+  - `fleet-status` garde `LIVE` (les `restart-when-idle*.ps1` du chef y
+    lisent « occupé ») et ajoute « ATTEND AUTORISATION — ne pas tuer ».
+  - `kill-stalled.mjs` sort en 3 sans rien tuer, sauf avec `--force`.
+- **Interface** : `public/permissions.js` + `permissions.css`.
+  - `#perm-band` : les cartes.
+  - `#perm-overlay` : les détails, la portée, le motif ; le menu ⋮ donne les
+    « Autorisations permanentes ».
+  - Les anciennes cartes de refus gardent « ✓ Vu » et gagnent « Toujours
+    autoriser à l'avenir ».
+  - Android 0.9.0 : `PermissionBand.kt`.
+- **Codex** : pas d'équivalent propre aujourd'hui.
+  - `codex exec` n'a aucun canal d'approbation externe. Le dispatch utilise
+    `--approve-for-me`, une revue automatique dans le bac à sable
+    workspace-write : ce qui sort du bac à sable est refusé par codex, sans
+    attente.
+  - Seul `codex app-server` (marqué *experimental* dans 0.154.0) envoie des
+    demandes d'approbation à un client. Le brancher remplacerait tout le
+    runner codex : à reprendre quand ce protocole sera stable.
+- **Limite connue** : les musiciens tournent sous le même compte Windows, et le
+  token gate est coupé. Un musicien qui a déjà Bash pourrait forger une
+  requête HTTP de décision : la protection est celle des clés API
+  (`sameOriginOnly`), pas une barrière absolue.
+- Recettes :
+  - `_test_permission_prompt.mjs` (faux claude `FAKE_CLAUDE_PERM`, qui lance
+    le vrai MCP) ;
+  - HTTP `permission-prompt` ;
+  - navigateur `permission-card`, `permission-deny` et `permission-mobile`.
 
 ## Attachments
 

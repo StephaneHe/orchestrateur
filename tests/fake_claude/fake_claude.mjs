@@ -27,10 +27,18 @@
 //   FAKE_CLAUDE_MERGE=1        relecture : fusionne les branches citées dans le
 //                              prompt (lignes BRANCHE_PRINCIPALE= / BRANCHE_SECONDE=)
 
+// Demandes d'autorisation (0.45.0), inactif par défaut :
+//   FAKE_CLAUDE_PERM='<Outil>|<entrée JSON>'  le tour appelle cet outil « non
+//     autorisé ». Avec --permission-prompt-tool + --mcp-config, on lance VRAIMENT
+//     le serveur MCP de --mcp-config et on attend sa réponse (comme le CLI) ;
+//     sinon refus immédiat, comme avant. Le texte final porte
+//     « PERM_RESULT: allow » ou « PERM_RESULT: deny: <message> ».
+
 import crypto from 'node:crypto';
 import fs     from 'node:fs';
 import path   from 'node:path';
-import { spawnSync } from 'node:child_process';
+import readline from 'node:readline';
+import { spawn, spawnSync } from 'node:child_process';
 
 const argv = process.argv.slice(2);
 
@@ -154,13 +162,40 @@ async function run() {
     await sleep(LATENCY);
   }
 
+  // 2b. Demande d'autorisation (FAKE_CLAUDE_PERM)
+  let permNote = '';
+  const permDenials = [];
+  if (process.env.FAKE_CLAUDE_PERM) {
+    const [permTool, ...rest] = process.env.FAKE_CLAUDE_PERM.split('|');
+    let permInput = {};
+    try { permInput = JSON.parse(rest.join('|') || '{}'); } catch { /* entrée vide */ }
+    const toolUseId = newId('toolu');
+    emit({ type: 'assistant', message: { content: [{ type: 'text', text: `Je vais utiliser ${permTool}.` }] } });
+    await sleep(LATENCY);
+    emit({ type: 'assistant', message: { content: [{ type: 'tool_use', id: toolUseId, name: permTool, input: permInput }] } });
+    let decision;
+    const promptTool = flag('--permission-prompt-tool');
+    const mcpConfig = flag('--mcp-config');
+    if (promptTool && mcpConfig) decision = await askMcp(mcpConfig, promptTool, { tool_name: permTool, input: permInput, tool_use_id: toolUseId });
+    else decision = { behavior: 'deny', message: `Claude requested permissions to use ${permTool}, but you haven't granted it yet.` };
+    if (decision.behavior === 'allow') {
+      emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: toolUseId, content: `fake ${permTool} exécuté` }] } });
+      permNote = '\nPERM_RESULT: allow';
+    } else {
+      emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: toolUseId, content: decision.message, is_error: true }] } });
+      permDenials.push({ tool_name: permTool, tool_use_id: toolUseId, tool_input: permInput });
+      permNote = `\nPERM_RESULT: deny: ${decision.message}`;
+    }
+    await sleep(LATENCY);
+  }
+
   // 3. Final assistant text
   emit({
     type: 'assistant',
     message: {
       ...(process.env.FAKE_CLAUDE_ECHO_MODEL === '1' ? { model: servedModel } : {}),
       content: [
-        { type: 'text', text: `fake reply to: ${userText.slice(0, 60)}${synthesisNote}` },
+        { type: 'text', text: `fake reply to: ${userText.slice(0, 60)}${synthesisNote}${permNote}` },
       ],
     },
   });
@@ -180,7 +215,8 @@ async function run() {
   emit({
     type: 'result',
     session_id: sessionId,
-    result: synthesisNote ? `fake result${synthesisNote}` : 'fake result',
+    result: (synthesisNote ? `fake result${synthesisNote}` : 'fake result') + permNote,
+    ...(process.env.FAKE_CLAUDE_PERM ? { permission_denials: permDenials } : {}),
     total_cost_usd: 0,
     duration_ms: elapsed,
     num_turns: 1,
@@ -190,6 +226,28 @@ async function run() {
   // Flush + exit cleanly.
   await new Promise(r => process.stdout.write('', r));
   process.exit(0);
+}
+
+/** Comme le CLI : lance le serveur MCP de --mcp-config, poignée de main, puis
+ *  tools/call de l'outil de --permission-prompt-tool ; renvoie sa décision. */
+async function askMcp(configJson, promptTool, args) {
+  let cfg;
+  try { cfg = JSON.parse(configJson); } catch { return { behavior: 'deny', message: 'mcp-config illisible' }; }
+  const [, server, toolName] = /^mcp__([^_]+)__(.+)$/.exec(promptTool) || [];
+  const srv = cfg.mcpServers?.[server];
+  if (!srv) return { behavior: 'deny', message: `serveur MCP ${server} absent` };
+  const child = spawn(srv.command, srv.args || [], { stdio: ['pipe', 'pipe', 'inherit'], env: process.env, windowsHide: true });
+  const rl = readline.createInterface({ input: child.stdout });
+  const waiting = new Map();
+  rl.on('line', (line) => { let m; try { m = JSON.parse(line); } catch { return; } if (m.id != null && waiting.has(m.id)) { waiting.get(m.id)(m); waiting.delete(m.id); } });
+  let seq = 0;
+  const call = (method, params) => new Promise((resolve) => { const id = seq++; waiting.set(id, resolve); child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n'); });
+  await call('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'fake-claude', version: '0' } });
+  child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
+  await call('tools/list', {});
+  const res = await call('tools/call', { name: toolName, arguments: args, _meta: { progressToken: 1 } });
+  child.kill();
+  try { return JSON.parse(res.result.content[0].text); } catch { return { behavior: 'deny', message: 'réponse MCP illisible' }; }
 }
 
 run().catch(e => {

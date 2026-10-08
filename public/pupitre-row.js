@@ -32,6 +32,8 @@
     // for both — only the visible label changes (state vocabulary is locked).
     if (r.deadInFlight) return { k: 'stalled', label: 'PID MORT', cls: 'st-stalled' };
     if (r.stalled) return { k: 'stalled', label: 'SANS PROGRÈS', cls: 'st-stalled' };
+    // 0.45.0 : en pause, il attend une autorisation de l'utilisateur.
+    if (r.awaitingPermission) return { k: 'input', label: 'ATTEND AUTORISATION', cls: 'st-input' };
     switch (r.state) {
       case 'live':   return { k: 'live',   label: 'EN COURS',        cls: 'st-live' };
       case 'think':  return { k: 'think',  label: 'RÉFLEXION',       cls: 'st-think' };
@@ -46,7 +48,7 @@
   // in-flight, then unread, idle last. Mirrors fleet-status-core's stall
   // signal — see scripts/fleet-status-core.mjs for the underlying derivation.
   function rank(r) {
-    if (r.stalled || r.deadInFlight) return 0;
+    if (r.stalled || r.deadInFlight || r.awaitingPermission) return 0;
     if (r.state === 'error') return 1;
     if (r.state === 'input') return 2;
     if (r.state === 'live' || r.state === 'think') return 3;

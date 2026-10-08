@@ -74,6 +74,7 @@
         toolId: b.tool_use_id || null,
         toolName: use && use.name ? use.name : null,
         preview: use ? inputPreview(use.input) : "",
+        input: use && use.input && typeof use.input === "object" ? use.input : null,
         reason: reasonOf(b),
       };
       if (isComplete(d)) out.push(d);
@@ -88,6 +89,7 @@
       toolId: p.tool_use_id || null,
       toolName: p.tool_name || null,
       preview: inputPreview(p.tool_input),
+      input: p.tool_input && typeof p.tool_input === "object" ? p.tool_input : null,
       reason: "",
     })).filter(isComplete);
   }

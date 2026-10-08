@@ -6,7 +6,10 @@
 // UI transitions out of `live`.
 //
 // Usage:
-//   node scripts/kill-stalled.mjs <projectName> [--reason "<motif>"]
+//   node scripts/kill-stalled.mjs <projectName> [--reason "<motif>"] [--force]
+//
+// 0.45.0 — refuse (exit 3) un musicien qui attend une autorisation de
+// l'utilisateur : il n'est pas bloqué. `--force` l'arrête quand même.
 //
 // 0.31.0 — the stop is shown as « Arrêté par le chef » (with the reason, when
 // given), not as a failure. A `logs/<project>.killed` marker is written BEFORE
@@ -28,12 +31,14 @@ const LOGS = path.join(ROOT, 'logs');
 
 const argv = process.argv.slice(2);
 const project = argv[0];
-const USAGE = 'usage: node scripts/kill-stalled.mjs <project> [--reason "<motif>"]';
+const USAGE = 'usage: node scripts/kill-stalled.mjs <project> [--reason "<motif>"] [--force]';
 if (!project || project.startsWith('--')) { console.error(USAGE); process.exit(64); }
 if (!/^[A-Za-z0-9._-]{1,64}$/.test(project)) { console.error(`invalid project name "${project}"`); process.exit(64); }
 let reason = '';
+let force = false;
 for (let i = 1; i < argv.length; i++) {
   if (argv[i] === '--reason' && i + 1 < argv.length) reason = argv[++i];
+  else if (argv[i] === '--force') force = true;
   else { console.error(USAGE); process.exit(64); }
 }
 reason = reason.replace(/\s+/g, ' ').trim().slice(0, 300);
@@ -41,6 +46,19 @@ reason = reason.replace(/\s+/g, ' ').trim().slice(0, 300);
 const pidPath = path.join(LOGS, `${project}.pid`);
 const logPath = path.join(LOGS, `${project}.jsonl`);
 const killedPath = path.join(LOGS, `${project}.killed`);
+
+// 0.45.0 : un tour qui attend une autorisation n'est pas bloqué, il attend
+// l'utilisateur (le délai le refusera de lui-même). On ne le tue pas par erreur.
+if (!force) {
+  const { scanProject } = await import('./fleet-status-core.mjs');
+  const snap = scanProject(project, LOGS);
+  if (snap.awaitingPermission) {
+    const p = snap.awaitingPermission;
+    console.error(`[kill-stalled] ${project} ATTEND UNE AUTORISATION (${p.tool} — ${p.preview}) : pas bloqué, il attend la décision de l'utilisateur` +
+      `${p.deadline ? ` (refus automatique dans ${Math.max(0, Math.round((p.deadline - Date.now()) / 1000))} s)` : ''}. Rien n'est tué. --force pour l'arrêter quand même.`);
+    process.exit(3);
+  }
+}
 
 let pid = null;
 try { pid = Number(fs.readFileSync(pidPath, 'utf8').trim()); } catch {}

@@ -11,6 +11,99 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-10-08
+
+Demande utilisateur : « Il faut revoir la boite de dialogue de demande
+d'autorisation. Je n'ai pas vu de moyen d'autoriser (1 fois, pour toujours).
+[…] En clickant dessus je dois voir un overlay avec tous les details. Il faut
+donc attendre ma reponse pendant au moins 5 minutes avant de passer. »
+
+### Added
+- (server) **Demandes d'autorisation interactives.** Chaque tour claude
+  (musiciens, chef et ses slots, branches du mode double) passe
+  `--permission-prompt-tool mcp__orch__approve` avec un serveur MCP local
+  (`scripts/permission-mcp.mjs`). Un outil non autorisé n'est plus refusé
+  sur-le-champ : le tour se met en pause et attend la décision.
+  - Délai : 5 min par défaut. Il se règle avec `permissionTimeoutMin` (projet,
+    puis `defaults` de config.json, en lecture seule) et
+    `ORCH_PERM_TIMEOUT_MS` pour les tests.
+  - Sans réponse : refus « expiré sans réponse ». Le model reçoit la consigne
+    de contourner ou de poser la question (`NEEDS_USER_INPUT`).
+  - L'outil MCP est masqué au model (`--disallowed-tools`), et c'est le seul
+    serveur MCP du tour (`--strict-mcp-config`).
+  - Désactivable sans redéploiement : `"permissionPrompts": false` (projet ou
+    `defaults`).
+- (server) Nouveaux modules `scripts/permission-store.mjs` et
+  `public/permission-core.js` (règles partagées par le serveur et le
+  navigateur). Routes :
+  - `POST /api/permission/request`, `GET /api/permission/:id`,
+    `POST /api/permission/:id/expire` : appelées par le tour ;
+  - `GET /api/permissions` et `GET /api/permission/:id/details` (entrée
+    complète, secrets masqués) ;
+  - `POST /api/permission/:id/decide`
+    (`allow_once | allow_always + rule | deny + message`) ;
+  - `GET|POST|DELETE /api/permission-rules`.
+
+  Les décisions et les règles exigent la même origine (`sameOriginOnly`, comme
+  les clés API).
+- (server) **Règles « toujours autoriser »** dans `permission-rules.json`
+  (racine, non versionné, écriture en temp + rename ; jamais config.json).
+  - Portées proposées : le motif (`Bash(git status:*)`, `Write(src/**)`,
+    `WebFetch(domain:x)`), l'appel exact, ou l'outil entier.
+  - Une règle de préfixe ne couvre jamais une commande composite (`&&`, `|`,
+    `;`, `$( )`, redirection…).
+  - Une règle choisie doit couvrir la demande qu'elle approuve (400 sinon).
+  - La fois suivante, l'appel passe sans demande et la décision « règle » est
+    journalisée.
+- (server) Journalisation dans le log du musicien : `system/permission_request`
+  et `notification/permission_decision`.
+  - Le chef est prévenu (`[AUTORISATION EN ATTENTE]`) pour le signaler à
+    l'utilisateur, sauf si la demande vient d'un chef.
+  - Notification de bureau Windows.
+- (viewer) **Bandeau 🔐** au-dessus de « À votre attention ».
+  - Une carte par demande : projet, outil, aperçu, risque, compte à rebours,
+    et les boutons « Autoriser une fois », « Toujours… » et « Refuser… ».
+  - Au clic, un **overlay** de détails : projet, model, tour, étape du
+    pipeline, répertoire de travail, raison de la demande, risque,
+    horodatage, compte à rebours, dernier message du model, et entrée
+    complète.
+  - Dans l'entrée complète : la commande avec opérateurs et options colorés,
+    un Write/Edit en diff, des blocs qui défilent.
+  - Plus, dans l'overlay : choix de la portée, motif de refus transmis au model.
+  - Lisible sur mobile (plein écran, cibles de 44 px).
+  - Notification de bureau du navigateur, et voix si la lecture automatique
+    est activée.
+  - Règles permanentes listées et révocables (menu ⋮ → « Autorisations
+    permanentes »).
+  - « À examiner », la bande d'attention et /pupitre montrent « 🔐 attend
+    autorisation » avec « Décider ».
+  - Le journal du musicien montre chaque demande et son issue.
+- (viewer) Les anciennes cartes de refus gardent « ✓ Vu » et gagnent
+  « Toujours autoriser à l'avenir ».
+- (android) 0.9.0 (versionCode 19) : bandeau d'autorisations avec compte à
+  rebours, « Une fois / Toujours… / Refuser… », et un écran de détails
+  complet (entrée en diff, portée, motif).
+- Tests :
+  - `scripts/_test_permission_prompt.mjs` : vrai `dispatch.mjs`, faux claude
+    qui lance le vrai serveur MCP (`FAKE_CLAUDE_PERM`), vraies routes ;
+  - parcours HTTP `permission-prompt` ;
+  - parcours navigateur `permission-card`, `permission-deny` et
+    `permission-mobile`.
+
+### Changed
+- (server) Supervision : un tour qui attend une autorisation garde l'état
+  `live`, avec l'attribut additif `awaitingPermission`.
+  - Il n'est jamais « sans progrès » (`stalled`).
+  - `fleet-status` affiche « ATTEND AUTORISATION … — ne pas tuer » : les
+    scripts restart-when-idle du chef le voient occupé.
+  - `kill-stalled.mjs` refuse de le tuer (code 3), sauf avec `--force`.
+
+### Security
+- Aucun secret en clair dans l'overlay ni dans les détails servis : clés
+  `sk-…`, `nvapi-…`, jetons GitHub, AWS et Slack, JWT, clés privées, hex de 48
+  caractères ou plus, et affectations `*_KEY=`, `token:`, `Authorization:`.
+  Au plus les 4 derniers caractères sont montrés.
+
 ## [0.44.0] - 2026-10-08
 
 Demande utilisateur : « On va introduire une nouvelle notion pour chaque

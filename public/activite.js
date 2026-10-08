@@ -216,6 +216,11 @@
         ${d.interrupted ? `<div class="jt-warn">✕ exécution interrompue avant la relecture — travail des branches archivé</div>` : ""}
         <ul>${row("principal", byRole("principal") || (d.principal ? { model: d.principal.model } : null))}${row("second", byRole("second") || (d.second ? { model: d.second.model } : null))}${d.review ? row("relecture", d.review) : ""}</ul></div>`;
     }
+    // Demandes d'autorisation du tour (0.45.0), avec leur issue.
+    const PERM_TXT = { allow_once: "autorisé une fois", allow_always: "toujours autorisé", rule: "règle permanente", deny: "refusé", expired: "expiré sans réponse" };
+    const perms = (t.permissions || []).length
+      ? `<ul class="jt-perms">${t.permissions.map(p => `<li data-decision="${esc(p.decision || "pending")}">🔐 <b>${esc(p.tool)}</b> <code>${esc(String(p.preview || "").slice(0, 80))}</code> — ${esc(p.decision ? PERM_TXT[p.decision] || p.decision : "en attente de votre décision")}${p.rule ? ` <span class="jt-dim">(${esc(p.rule)})</span>` : ""}${p.message ? ` — « ${esc(p.message)} »` : ""}</li>`).join("")}</ul>`
+      : "";
     const chips = [];
     for (const c of t.commits || []) chips.push(`<span class="jt-chip" title="${esc(c.msg || "")}">commit ${esc(c.sha)}</span>`);
     if (t.pushed) chips.push(`<span class="jt-chip">poussé</span>`);
@@ -231,7 +236,7 @@
           <span class="jt-outcome">${esc(word)}</span>
           <span class="jt-meta">${esc(meta)}</span>
         </header>
-        ${ask}${dual}${did}${q}
+        ${ask}${dual}${perms}${did}${q}
         ${chips.length ? `<div class="jt-chips">${chips.join("")}</div>` : ""}
         ${after.length ? `<div class="jt-after">${after.join(" · ")}</div>` : ""}
         ${toggleBtn}

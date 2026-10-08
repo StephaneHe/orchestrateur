@@ -11,6 +11,16 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { serverEnv } from './_regression_sandbox.mjs';
+
+/** Tour réel (copie de dispatch.mjs de l'instance + faux claude) qui demande
+ *  une autorisation et attend la décision prise dans le navigateur (0.45.0). */
+function permDispatch(sb, project, perm, extra = {}) {
+  const env = { ...serverEnv(sb.root, sb.port), FAKE_CLAUDE_LATENCY_MS: '20', ORCH_PERM_POLL_MS: '150', FAKE_CLAUDE_PERM: perm, ...extra };
+  const c = spawn(process.execPath, [path.join(sb.root, 'scripts', 'dispatch.mjs'), project, 'recette autorisation (navigateur)'], { cwd: sb.root, env, windowsHide: true });
+  return new Promise(r => c.on('exit', code => r(code)));
+}
 
 const PNG_1PX = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
 
@@ -1033,6 +1043,98 @@ export async function browserChecks(sb, t) {
     });
     await tmctx.close();
 
+    // ---------------- Autorisations interactives (0.45.0) ----------------
+    // Après la lecture audio : chaque demande prévient le chef (une ligne de plus
+    // dans son fil), ce qui décalerait la fenêtre de bulles qu'elle relit.
+    const pctx = await browser.newContext({ viewport: { width: 1600, height: 1000 }, locale: 'fr-FR' });
+    const pp = await pctx.newPage();
+    wire(pp);
+    const clk = (pg, sel) => pg.click(sel, { timeout: 8000 }).catch(e => { throw new Error(`clic « ${sel} » : ${String(e.message).split('\n')[0]}`); });
+    await pp.goto(`${sb.url}/?token=${sb.token}`);
+    await pp.locator('.brand').waitFor();
+    // 0.45.0 — exigence : « Je n'ai pas vu de moyen d'autoriser (1 fois, pour
+    // toujours) … En clickant dessus je dois voir un overlay avec tous les details. »
+    // Nettoyage entre parcours : aucun overlay ouvert ni demande en attente.
+    const clearPerms = async (pg) => {
+      await pg.evaluate(() => window.Permissions?.closeOverlay()).catch(() => {});
+      for (const p of (await api('/api/permissions').catch(() => ({}))).pending || []) {
+        await fetch(`${sb.url}/api/permission/${p.id}/decide`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ decision: 'deny' }) });
+      }
+    };
+    const readOmega = () => { try { return fs.readFileSync(path.join(sb.root, 'logs', 'omega.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return {}; } }); } catch { return []; } };
+    await check(B, 'permission-card', 'Autorisation en attente : carte 🔐 (projet, outil, risque, compte à rebours), clic → overlay avec l\'entrée COMPLÈTE en diff, secrets masqués, raison, dernier message ; « Toujours » avec portée → règle listée et révocable ; « Autoriser une fois » sur la carte', async () => {
+      if (!(await pp.locator('#perm-band').count())) NA('demandes interactives absentes de cet état du code');
+      await pp.bringToFront();
+      await setHash(pp, '#/');
+      const SECRET = 'sk-ant-api03-NAVIGATEURSECRET123456';
+      const content = `const cle = "${SECRET}";\n` + Array.from({ length: 80 }, (_, i) => `ligne ${i + 1}`).join('\n') + '\nDERNIERE-LIGNE';
+      const done1 = permDispatch(sb, 'omega', `Write|${JSON.stringify({ file_path: path.join(sb.root, 'projects', 'omega', 'src', 'config.js'), content })}`);
+      assert(await until(async () => visible(pp, '#perm-band .perm-card'), 15_000), 'carte absente');
+      const card = await pp.textContent('#perm-band .perm-card');
+      assert(/omega/.test(card) && /Write/.test(card) && /écriture/.test(card) && /\d:\d\d/.test(card), `carte incomplète : ${card}`);
+      const t1 = await pp.textContent('#perm-band .pc-left');
+      const t2 = await until(async () => { const x = await pp.textContent('#perm-band .pc-left'); return x !== t1 ? x : null; }, 4000);
+      assert(t2, `compte à rebours figé sur ${t1}`);
+      await shot(pp, 'permission-carte');
+      await clk(pp, '#perm-band .pc-main');
+      assert(await until(async () => visible(pp, '#perm-overlay .po-dialog .po-why'), 8000), 'overlay absent');
+      const ov = await pp.textContent('#perm-overlay .po-dialog');
+      assert(/DERNIERE-LIGNE/.test(ov) && /ligne 80/.test(ov), 'entrée incomplète dans l\'overlay');
+      assert(!ov.includes(SECRET), 'secret en clair dans l\'overlay');
+      assert(await pp.locator('#perm-overlay .pd-l.is-add').count() > 80, 'contenu non rendu en diff');
+      assert(/Pourquoi cette demande/.test(ov) && /Je vais utiliser Write/.test(ov) && /Répertoire de travail/.test(ov) && /Étape du pipeline/.test(ov), 'raison, dernier message ou métadonnées absents');
+      assert(await pp.getAttribute('#perm-overlay .po-dialog', 'role') === 'dialog', 'role=dialog');
+      await shot(pp, 'permission-overlay');
+      await pp.check('#perm-overlay input[name="po-rule"][value$="src/**)"]');
+      await clk(pp, '#perm-overlay [data-po-always]');
+      assert(await until(async () => !(await visible(pp, '#perm-overlay .po-dialog')), 5000), 'overlay non fermé après décision');
+      assert(await done1 === 0, 'le tour ne s\'est pas terminé');
+      assert(/PERM_RESULT: allow/.test(readOmega().filter(e => e.type === 'result').pop()?.result || ''), 'le tour n\'a pas continué');
+      const rules = await api('/api/permission-rules');
+      assert(rules.rules.omega?.some(r => r.rule === 'Write(src/**)'), `règle : ${JSON.stringify(rules.rules.omega)}`);
+      assert(await until(async () => !(await visible(pp, '#perm-band')), 5000), 'bandeau toujours visible');
+      // Règles listées et révocables (menu ⋮)
+      await clk(pp, '#btn-menu');
+      await clk(pp, '#topmenu [data-act="perm-rules"]');
+      assert(await until(async () => (await pp.locator('#perm-overlay [data-rule-revoke="Write(src/**)"]').count()) === 1, 5000), 'règle non listée');
+      await clk(pp, '#perm-overlay [data-rule-revoke="Write(src/**)"]');
+      assert(await until(async () => !(await api('/api/permission-rules')).rules.omega, 5000), 'règle non révoquée');
+      await pp.keyboard.press('Escape');
+      // « Autoriser une fois » directement sur la carte
+      const done2 = permDispatch(sb, 'omega', `Bash|${JSON.stringify({ command: 'npm install && npm run build' })}`);
+      assert(await until(async () => visible(pp, '#perm-band [data-perm-once]'), 15_000), 'carte 2 absente');
+      await clk(pp, '#perm-band [data-perm-once]');
+      assert(await done2 === 0 && /PERM_RESULT: allow/.test(readOmega().filter(e => e.type === 'result').pop()?.result || ''), '« une fois » sans effet');
+    });
+    await check(B, 'permission-deny', 'Autorisation : « Refuser… » → champ motif dans l\'overlay, motif transmis au model ; carte de refus passée → « Toujours autoriser à l\'avenir »', async () => {
+      if (!(await pp.locator('#perm-band').count())) NA('demandes interactives absentes de cet état du code');
+      await clearPerms(pp);
+      await pp.bringToFront();
+      const done = permDispatch(sb, 'omega', `Bash|${JSON.stringify({ command: 'rm -rf dist && git push --force' })}`);
+      const dcard = pp.locator('#perm-band .perm-card', { hasText: 'git push --force' });
+      assert(await until(async () => dcard.isVisible().catch(() => false), 15_000), 'carte absente');
+      assert(await pp.locator('#perm-band .perm-card').count() === 1, 'une carte déjà décidée est restée affichée');
+      assert(/destructif/.test(await dcard.textContent()) && await dcard.getAttribute('data-level') === 'high', `risque élevé non signalé : ${await dcard.textContent()}`);
+      await dcard.locator('[data-perm-deny]').click();
+      assert(await until(async () => pp.evaluate(() => document.activeElement?.id === 'po-reason'), 8000), 'champ motif non proposé');
+      await pp.fill('#po-reason', 'jamais de push forcé');
+      await clk(pp, '#perm-overlay [data-po-deny]');
+      assert(await done === 0, 'tour non terminé');
+      assert(/Motif de l'utilisateur : jamais de push forcé/.test(readOmega().filter(e => e.type === 'result').pop()?.result || ''), 'motif non transmis');
+      // L'ancienne carte de refus garde « ✓ Vu » et gagne « Toujours autoriser à l'avenir »
+      await pp.evaluate(() => window.App.openMusician('omega'));
+      assert(await until(async () => (await pp.locator('#dive .dive-denials [data-perm-forever]').count()) > 0, 8000), 'bouton « Toujours autoriser à l\'avenir » absent');
+      assert(await pp.locator('#dive .dive-denials [data-ack-denial]').count() > 0, '« ✓ Vu » disparu');
+      await pp.locator('#dive .dive-denials [data-perm-forever]').first().click();
+      assert(await until(async () => visible(pp, '#perm-overlay [data-rule-add]'), 5000), 'dialogue de portée absent');
+      await clk(pp, '#perm-overlay [data-rule-add]');
+      assert(await until(async () => (await api('/api/permission-rules')).rules.omega?.length === 1, 5000), 'règle non créée depuis l\'ancien refus');
+      await fetch(`${sb.url}/api/permission-rules`, { method: 'DELETE', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ project: 'omega', rule: (await api('/api/permission-rules')).rules.omega[0].rule }) });
+      await clearPerms(pp);
+      await setHash(pp, '#/');
+    });
+    await pctx.close();
+
     // ---------------------- Mobile ----------------------
     const mctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'fr-FR' });
     const m = await mctx.newPage();
@@ -1044,6 +1146,40 @@ export async function browserChecks(sb, t) {
       await m.click('#mobile-pilot');
       assert(await until(async () => visible(m, '#rail'), 5000), 'feuille du rail');
       await m.keyboard.press('Escape');
+    });
+    await check(B, 'permission-mobile', 'Autorisation · mobile : carte lisible, boutons ≥ 44 px, overlay plein écran sans débordement, décision possible', async () => {
+      if (!(await m.locator('#perm-band').count())) NA('demandes interactives absentes de cet état du code');
+      const done = permDispatch(sb, 'omega', `Edit|${JSON.stringify({ file_path: path.join(sb.root, 'projects', 'omega', 'a.js'), old_string: 'x = 1', new_string: 'x = 2' })}`);
+      assert(await until(async () => visible(m, '#perm-band .perm-card'), 15_000), 'carte absente');
+      const minH = await m.$$eval('#perm-band .pc-btn', bs => Math.min(...bs.map(b => b.getBoundingClientRect().height)));
+      assert(minH >= 44, `bouton de ${minH}px`);
+      try {
+        await m.locator('#perm-band .perm-card', { hasText: 'a.js' }).locator('.pc-main').click();
+        const ok = await until(async () => (await m.locator('#perm-overlay .pd-l.is-del').count()) > 0, 8000);
+        assert(ok, `overlay / diff absent : ${(await m.evaluate(() => document.querySelector('#perm-overlay')?.innerText || 'pas d\'overlay')).slice(0, 200)}`);
+        const box = await m.locator('#perm-overlay .po-dialog').boundingBox();
+        assert(box && box.width >= 389, `overlay de ${box && box.width}px`);
+        assert(await m.evaluate(() => document.documentElement.scrollWidth - window.innerWidth) <= 0, 'débordement horizontal');
+        await shot(m, 'permission-overlay-mobile');
+        // Aucune notification ne recouvre les boutons de décision.
+        await m.locator('#perm-overlay [data-po-deny]').scrollIntoViewIfNeeded();
+        const covered = await m.evaluate(() => [...document.querySelectorAll('#perm-overlay .po-acts button')].filter(b => {
+          const r = b.getBoundingClientRect();
+          if (r.bottom < 0 || r.top > innerHeight) return false;
+          const hit = document.elementFromPoint(r.left + r.width / 2, Math.min(innerHeight - 1, r.top + r.height / 2));
+          return !(hit && b.contains(hit));
+        }).map(b => b.textContent));
+        assert(!covered.length, `bouton(s) recouvert(s) : ${covered.join(', ')}`);
+        await m.locator('#perm-overlay [data-po-once]').scrollIntoViewIfNeeded();
+        await m.click('#perm-overlay [data-po-once]');
+        assert(await done === 0, 'décision mobile sans effet');
+      } finally {
+        // Jamais d'overlay ni de demande laissés derrière (parcours suivants).
+        await m.evaluate(() => window.Permissions?.closeOverlay());
+        for (const p of (await api('/api/permissions')).pending || []) {
+          await fetch(`${sb.url}/api/permission/${p.id}/decide`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ decision: 'deny' }) });
+        }
+      }
     });
     await check(B, 'mobile-journal', 'Mobile : cadres dans la feuille Pilotage, journal plein écran, aucun débordement', async () => {
       if (!(await m.evaluate(() => !!window.Activite))) NA('fonction absente de cet état du code');

@@ -935,6 +935,7 @@ class FleetStream {
       // dans /pupitre (onLive) — pas de reconstruction complète.
       App.noteMusicianEvent(m, raw);
       window.Salle?.onLiveEvent(m.name, raw);
+      window.Permissions?.onEvent(m.name, raw);
       // Conductor chat/reflection must observe every event, in order — but it's
       // infrequent vs. token deltas, so keep it synchronous.
       if (m.name === App.composer.CONDUCTOR) App.onConductorEvent(m, raw);
@@ -1571,6 +1572,7 @@ const App = {
       if (act === "briefing") this.openBriefing();
       if (act === "projects") window.Projets?.open();
       if (act === "models")   window.Models?.open();
+      if (act === "perm-rules") window.Permissions?.openRules();
     });
     document.addEventListener("click", (e) => {
       if (menu.hidden) return;
@@ -2850,6 +2852,7 @@ const App = {
       `<button class="ct-open-btn">Ouvrir ${esc(m.name)} →</button>` +
       (toolMissing ? `<button class="ct-add-btn" data-project="${esc(m.name)}" data-tool="${esc(d.toolName)}">+ Autoriser ${tLabel}</button>` : "") +
       `<button class="ct-ack-btn" title="Ne plus afficher ce refus">✓ Vu</button>` +
+      (window.Permissions ? `<button class="ct-forever-btn" title="Créer une règle permanente : la prochaine fois, l'appel passera sans demande">Toujours autoriser à l'avenir</button>` : "") +
       `</div>`;
     const dismiss = () => {
       toast.classList.remove("callback-toast--show");
@@ -2872,6 +2875,11 @@ const App = {
     toast.querySelector(".ct-ack-btn")?.addEventListener("click", (e) => {
       e.stopPropagation();
       App.ackDenials(m.name, [d.toolId]);
+      dismiss();
+    });
+    toast.querySelector(".ct-forever-btn")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      window.Permissions?.openRuleDialog({ project: m.name, tool: d.toolName, input: d.input, toolIds: d.toolId ? [String(d.toolId)] : [] });
       dismiss();
     });
     toast.addEventListener("click", dismiss);

@@ -199,6 +199,18 @@
         }
         return;
       }
+      // Demandes d'autorisation interactives (0.45.0) : chaque demande et sa
+      // décision (une fois, toujours, règle, refus, expiré sans réponse).
+      if ((t === "system" && ev.subtype === "permission_request") || (t === "notification" && ev.subtype === "permission_decision")) {
+        const tr = cur || last();
+        const p = ev.permission || {};
+        if (!tr) return;
+        if (!tr.permissions) tr.permissions = [];
+        let e = p.id ? tr.permissions.find(x => x.id === p.id) : null;
+        if (!e) { e = { id: p.id || null, tool: p.tool || "", preview: p.preview || "", decision: null }; tr.permissions.push(e); }
+        if (t === "notification") Object.assign(e, { decision: p.decision || null, rule: p.rule || null, message: p.message || null, by: p.by || null });
+        return;
+      }
       if (t === "system" && ev.subtype === "init") {
         // Un second init dans un tour ouvert (bascule de provider) reste le même
         // tour, sauf si une nouvelle demande sourcée l'a précédé.

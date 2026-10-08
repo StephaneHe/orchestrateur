@@ -4,7 +4,7 @@ A local Windows dashboard where one "conductor" AI session pilots a fleet of
 headless coding agents, one per project, with a live web viewer and an
 Android companion app.
 
-`version 0.44.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
+`version 0.45.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
 
 > **Status: active, personal project.** Built and used daily on a single
 > Windows machine. Pre-1.0: internal APIs and file formats can still change
@@ -108,6 +108,16 @@ one screen to watch the whole fleet.
   of each into the real repo and explains what it kept from each model. It
   never falls back to another model. If the second fails, the user is warned;
   if the principal fails, the turn pauses with a question.
+- **Interactive permission requests.** A tool that isn't allowed no longer
+  fails on the spot. Through the CLI's permission-prompt tool and a local MCP
+  server, the turn pauses (5 min by default, configurable) and a 🔐 card
+  appears with a countdown and three choices: allow once, always allow
+  (scoped rule, listed and revocable) or deny with a reason sent to the model.
+  Clicking the card opens an overlay with the full call (command, diff of a
+  write), the reason it was asked, a risk tag and the model's last message;
+  secrets are masked. With no answer, the request is denied as "expired"
+  and the model is told so. Works for every musician and the conductor, from
+  the dashboard and the Android app.
 - **Android companion app** (Kotlin + Jetpack Compose): fleet overview,
   per-agent detail, chat with the conductor.
 - **`/downloads` page** listing the Android builds of your projects, driven

@@ -42,7 +42,11 @@ function renderTable(rows) {
     ['SILENCE',   r => fmtAge(r.silentMs).padEnd(8)],
     ['FILE-AGE',  r => fmtAge(r.fileSilentMs).padEnd(8)],
     ['PID',       r => (r.pid ? String(r.pid) + (r.pidAlive ? ' alive' : ' dead') : '—').padEnd(12)],
-    ['NOTE',      r => r.needsInput ? `needs: ${r.needsInput}` : (r.stalled ? 'STALL — consider intervention' : '')],
+    // L'état reste LIVE pendant une attente d'autorisation (les scripts
+    // restart-when-idle du chef y lisent « occupé ») ; la note le précise.
+    ['NOTE',      r => r.awaitingPermission
+      ? `ATTEND AUTORISATION : ${r.awaitingPermission.tool} — ${String(r.awaitingPermission.preview || '').slice(0, 60)}${r.awaitingPermission.deadline ? ` (reste ${fmtAge(r.awaitingPermission.deadline - Date.now())})` : ''} — ne pas tuer`
+      : r.needsInput ? `needs: ${r.needsInput}` : (r.stalled ? 'STALL — consider intervention' : '')],
   ];
   const out = [cols.map(c => c[0]).join('  ')];
   for (const r of rows) out.push(cols.map(c => c[1](r)).join('  '));

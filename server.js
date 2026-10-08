@@ -64,6 +64,7 @@ import { trustWorkspace } from './scripts/workspace-trust.mjs';
 import { createModelRouting } from './scripts/model-routing.mjs';
 // Clés NVIDIA / OpenRouter saisies dans la page Models (0.43.0).
 import { createApiKeys } from './scripts/api-keys.mjs';
+import { createPermissionStore, mountPermissionRoutes } from './scripts/permission-store.mjs';
 // Pipelines, phase 1 (0.41.0) : chaque entrée est classée et journalisée, sans effet.
 import { createObserver, TerminalLineBuffer, ENTRY_KINDS } from './scripts/pipeline-observe.mjs';
 import os from 'node:os';
@@ -2596,6 +2597,65 @@ app.delete('/api/api-keys/:name', sameOriginOnly, (req, res) => {
   console.log(`[api-keys] ${req.params.name} retirée du .env`);
   res.json({ ok: true, key: r.key });
 });
+
+// ---------- Demandes d'autorisation interactives (0.45.0) --------------------
+//
+// Demande utilisateur : « Je n'ai pas vu de moyen d'autoriser (1 fois, pour
+// toujours) … En clickant dessus je dois voir un overlay avec tous les
+// details. Il faut donc attendre ma reponse pendant au moins 5 minutes avant de
+// passer. » Chaque tour claude (musiciens ET chef) passe `--permission-prompt-
+// tool mcp__orch__approve` : le CLI demande au lieu de refuser, permission-
+// mcp.mjs poste la demande ici et attend la décision. Décision : seulement depuis
+// le dashboard ou l'app (sameOriginOnly, comme les clés API).
+const PERMISSION_RULES_FILE = path.join(__dirname, 'permission-rules.json');
+function isConductorSlot(name) {
+  const c = conductorName();
+  return name === c || new RegExp(`^${c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-\\d+$`).test(name);
+}
+function permissionProjectInfo(name) {
+  if (!/^[A-Za-z0-9._-]{1,64}$/.test(String(name || ''))) return null;
+  const proj = config.projects.find(p => p.name === name)
+    || (isConductorSlot(name) ? config.projects.find(p => p.name === conductorName()) : null);
+  if (!proj) return null;
+  const allowed = String(proj.tools || config.defaults?.allowedTools || FALLBACK_TOOLS).split(',').map(s => s.trim()).filter(Boolean);
+  try {
+    const s = JSON.parse(fs.readFileSync(path.join(proj.path, '.claude', 'settings.json'), 'utf8'));
+    for (const r of s?.permissions?.allow || []) if (typeof r === 'string' && /^[A-Za-z_]\w*$/.test(r)) allowed.push(r);
+  } catch { /* pas de settings.json */ }
+  let turnPrompt = null, step = null;
+  try { turnPrompt = scanFleetMember(name).mission || null; } catch { /* log illisible */ }
+  try {
+    const last = pipelineObserver.recent(300).items.find(r => r.project === name);
+    if (last) step = `${last.pipeline}${last.mode ? ' · ' + last.mode : ''}`;
+  } catch { /* observation indisponible */ }
+  return { path: proj.path, allowedTools: allowed, turnPrompt, step };
+}
+const permissions = createPermissionStore({
+  rulesFile: PERMISSION_RULES_FILE,
+  projectInfo: permissionProjectInfo,
+  writeEvent(project, ev) {
+    try { fs.appendFileSync(path.join(LOGS_DIR, `${project}.jsonl`), JSON.stringify({ ...ev, timestamp: new Date().toISOString() }) + '\n'); }
+    catch (e) { debugLog(`[autorisation] écriture du log de ${project} impossible : ${e.message}`); }
+  },
+  onNew(req) {
+    const min = Math.max(1, Math.round((req.deadline - Date.now()) / 60000));
+    console.log(`[autorisation] ${req.project} attend : ${req.tool} — ${req.preview} (${min} min)`);
+    fireDesktopNotification(`${req.project} attend une autorisation`, `${req.tool} : ${req.preview}`);
+    // Le chef est prévenu pour le signaler à l'utilisateur (pas pour décider).
+    if (!isConductorSlot(req.project)) {
+      const text = `[AUTORISATION EN ATTENTE] ${req.project} attend la décision de l'utilisateur pour ${req.tool} : « ${req.preview} » ` +
+        `(risque ${req.risk.level} : ${req.risk.tags.join(', ')}). Son tour est en pause ${min} min, puis refus « expiré sans réponse ». ` +
+        `Signale-le à l'utilisateur : il décide depuis le dashboard (bandeau 🔐) ou l'app. Tu ne peux pas décider à sa place.`;
+      try {
+        fs.appendFileSync(path.join(LOGS_DIR, `${conductorName()}.jsonl`), '\n' + JSON.stringify({ type: 'user_prompt', text, source: 'permission', timestamp: new Date().toISOString() }) + '\n');
+      } catch (e) { debugLog(`[autorisation] notification du chef impossible : ${e.message}`); }
+    }
+  },
+  onDecided(req) {
+    console.log(`[autorisation] ${req.project} ${req.tool} → ${req.decision?.decision}${req.decision?.rule ? ' (règle ' + req.decision.rule + ')' : ''}`);
+  },
+});
+mountPermissionRoutes(app, express, permissions, { sameOriginOnly, projectInfo: permissionProjectInfo, log: (m) => console.log(m) });
 
 app.get('/api/model-routing', (req, res) => {
   const n = Math.min(500, Math.max(1, Number(req.query.history) || 50));

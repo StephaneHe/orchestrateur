@@ -39,7 +39,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { REPO, REGRESS_DIR, extractCode, startSandbox, waitUp } from './_regression_sandbox.mjs';
+import { REPO, REGRESS_DIR, extractCode, startSandbox, waitUp, serverEnv } from './_regression_sandbox.mjs';
 
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(n);
@@ -365,6 +365,62 @@ async function apiChecks(sb) {
     const huge = await post('/api/notify', { project: 'chef', text: 'x'.repeat(600 * 1024), source: 'regression' });
     assert(huge.status === 413, `corps de 600 Ko : HTTP ${huge.status} (413 attendu, jamais 500)`);
     return `${Buffer.byteLength(body)} octets livrés en un envoi`;
+  });
+  // 0.45.0 — exigence : « Je n'ai pas vu de moyen d'autoriser (1 fois, pour
+  // toujours) … un overlay avec tous les details … attendre ma reponse pendant
+  // au moins 5 minutes ». Copie de dispatch.mjs de l'instance + faux claude qui
+  // lance le vrai permission-mcp.mjs.
+  await check(S, 'permission-prompt', 'Autorisations interactives : tour en attente (carte, supervision, chef prévenu), détails complets masqués, une fois / refus motivé / toujours (puis sans demande) / expiration, origine étrangère 403', async () => {
+    if ((await get('/api/permissions')).status === 404) NA('route absente de cet état du code');
+    const runDispatch = (prompt, extra) => {
+      const env = { ...serverEnv(sb.root, sb.port), FAKE_CLAUDE_LATENCY_MS: '20', FAKE_CLAUDE_TOOL_USES: '0', ORCH_PERM_POLL_MS: '150', ...extra };
+      const c = spawn(process.execPath, [path.join(sb.root, 'scripts', 'dispatch.mjs'), 'omega', prompt], { cwd: sb.root, env, windowsHide: true });
+      let out = ''; c.stdout.on('data', d => { out += d; }); c.stderr.on('data', d => { out += d; });
+      return { c, done: new Promise(r => c.on('exit', code => r({ code, out }))) };
+    };
+    const pendingOmega = () => until(async () => (await json('/api/permissions')).pending.find(p => p.project === 'omega') || null, 20000);
+    const lastRes = () => readLog('omega').filter(e => e.type === 'result').pop()?.result || '';
+    const SECRET = 'sk-ant-api03-REGRESSIONSECRETVALUE77';
+    // 1. Une fois
+    let d = runDispatch('recette autorisation', { FAKE_CLAUDE_PERM: `Bash|${JSON.stringify({ command: `npm run build && node deploy.js --token ${SECRET} ${'y'.repeat(2500)} FIN` })}` });
+    let p = await pendingOmega();
+    assert(p && p.tool === 'Bash' && p.deadline - p.createdAt >= 5 * 60_000 - 1000, `carte : ${JSON.stringify(p)}`);
+    const det = await json(`/api/permission/${p.id}/details`);
+    const cmd = det.request.blocks.find(b => b.label === 'Commande')?.text || '';
+    assert(cmd.includes('y'.repeat(2500)) && cmd.endsWith('FIN'), 'entrée incomplète dans les détails');
+    assert(!JSON.stringify(det).includes(SECRET), 'secret en clair dans les détails');
+    const row = await until(async () => (await json('/api/pupitre')).fleet.find(r => r.name === 'omega' && r.awaitingPermission) || null, 8000);
+    assert(row && row.state === 'live' && !row.stalled, `pupitre : ${JSON.stringify(row && { s: row.state, a: row.awaitingPermission })}`);
+    assert(readLog('chef').some(e => e.type === 'user_prompt' && e.source === 'permission' && /omega/.test(e.text)), 'chef non prévenu');
+    const foreign = await fetch(`${sb.url}/api/permission/${p.id}/decide`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json', Origin: 'http://evil.example' }, body: JSON.stringify({ decision: 'allow_once' }) });
+    assert(foreign.status === 403, `origine étrangère : ${foreign.status}`);
+    assert((await post(`/api/permission/${p.id}/decide`, { decision: 'allow_once' })).status === 200, 'décision refusée');
+    let r = await d.done;
+    assert(r.code === 0 && /PERM_RESULT: allow/.test(lastRes()), `une fois : ${r.code} ${lastRes().slice(-120)}`);
+    // 2. Refus motivé
+    d = runDispatch('recette refus', { FAKE_CLAUDE_PERM: `Write|${JSON.stringify({ file_path: path.join(sb.root, '..', 'hors.txt'), content: 'x' })}` });
+    p = await pendingOmega();
+    await post(`/api/permission/${p.id}/decide`, { decision: 'deny', message: 'reste dans le projet' });
+    await d.done;
+    assert(/Motif de l'utilisateur : reste dans le projet/.test(lastRes()), `refus : ${lastRes().slice(-160)}`);
+    // 3. Toujours, puis sans demande
+    const perm = `Bash|${JSON.stringify({ command: 'git log --oneline' })}`;
+    d = runDispatch('recette toujours', { FAKE_CLAUDE_PERM: perm });
+    p = await pendingOmega();
+    assert(p.suggestions[0].rule === 'Bash(git log:*)', `portée : ${p.suggestions[0].rule}`);
+    assert((await post(`/api/permission/${p.id}/decide`, { decision: 'allow_always', rule: 'Bash(git log:*)' })).status === 200, 'toujours refusé');
+    await d.done;
+    const nReq = readLog('omega').filter(e => e.subtype === 'permission_request').length;
+    r = await runDispatch('recette règle', { FAKE_CLAUDE_PERM: perm }).done;
+    assert(r.code === 0 && /PERM_RESULT: allow/.test(lastRes()) && readLog('omega').filter(e => e.subtype === 'permission_request').length === nReq, 'la règle n\'a pas évité la demande');
+    assert((await json('/api/permission-rules')).rules.omega?.some(x => x.rule === 'Bash(git log:*)'), 'règle non listée');
+    const del = await fetch(`${sb.url}/api/permission-rules`, { method: 'DELETE', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ project: 'omega', rule: 'Bash(git log:*)' }) });
+    assert(del.status === 200, `révocation : ${del.status}`);
+    // 4. Expiration (délai court)
+    r = await runDispatch('recette expiration', { FAKE_CLAUDE_PERM: `Bash|${JSON.stringify({ command: 'mkdir a && cd a' })}`, ORCH_PERM_TIMEOUT_MS: '2000' }).done;
+    assert(r.code === 0 && /EXPIRÉE SANS RÉPONSE/.test(lastRes()), `expiration : ${lastRes().slice(-160)}`);
+    assert(readLog('omega').some(e => e.subtype === 'permission_decision' && e.permission?.decision === 'expired'), 'expiration non journalisée');
+    return '4 parcours : une fois, refus motivé, toujours puis sans demande, expiration';
   });
   await check(S, 'mark-read', 'Marquer lu (/api/mark-read) persiste le marqueur', async () => {
     const r = await post('/api/mark-read', { project: 'lambda' });

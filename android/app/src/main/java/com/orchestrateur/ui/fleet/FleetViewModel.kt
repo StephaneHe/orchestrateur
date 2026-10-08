@@ -161,6 +161,32 @@ class FleetViewModel(
     var newReportPending: Boolean by mutableStateOf(false)
         private set
 
+    /** Demandes d'autorisation en attente (serveur ≥ 0.45.0), relues avec le pupitre. */
+    val permissions = mutableStateListOf<com.orchestrateur.data.PermissionRequest>()
+    /** Décalage horloge téléphone − serveur, pour un compte à rebours juste. */
+    var serverSkewMs: Long by mutableStateOf(0L)
+        private set
+
+    private suspend fun refreshPermissions() {
+        val r = api.fetchPermissions() ?: return
+        if (r.now > 0) serverSkewMs = System.currentTimeMillis() - r.now
+        if (permissions.map { it.id } != r.pending.map { it.id }) {
+            permissions.clear()
+            permissions.addAll(r.pending)
+        }
+    }
+
+    suspend fun permissionDetails(id: String) = api.fetchPermissionDetails(id)
+
+    fun decidePermission(id: String, decision: String, rule: String? = null, message: String? = null, onDone: (Result<Unit>) -> Unit = {}) {
+        viewModelScope.launch {
+            val r = runCatching { api.decidePermission(id, decision, rule, message) }
+            if (r.isSuccess) permissions.removeAll { it.id == id }
+            runCatching { refreshPermissions() }
+            onDone(r)
+        }
+    }
+
     fun applyAnswerContext(ctx: AnswerContext?) { answerContext = ctx }
     fun markReportSeen() { newReportPending = false }
     fun signalNewReport() { newReportPending = true }
@@ -189,6 +215,7 @@ class FleetViewModel(
                     _noFailover.value = snap.noFailover
                     _telemetryFresh.value = true
                     _snapshotAt.value = System.currentTimeMillis()
+                    refreshPermissions()
                 } catch (_: Exception) {
                     // Keep the last snapshot on screen, but flag it as stale.
                     _telemetryFresh.value = false

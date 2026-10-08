@@ -1,0 +1,122 @@
+/* public/permissions.css — demandes d'autorisation interactives (0.45.0).
+   Polices en rem (réglage A− / A+). */
+
+.perm-band[hidden], .perm-overlay[hidden], .po-acts[hidden], .po-err[hidden] { display: none !important; }
+
+.perm-band {
+  display: flex; flex-direction: column; gap: 0.375rem;
+  margin: 0.375rem 0.75rem 0; padding: 0.5rem 0.625rem;
+  border: 1px solid #e8a15c; border-radius: 0.5rem;
+  background: rgba(232, 161, 92, 0.09);
+}
+.pb-head { font-size: 0.8125rem; font-weight: 600; color: #f2c38f; letter-spacing: 0.02em; }
+
+.perm-card {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;
+  padding: 0.375rem 0.5rem; border-radius: 0.375rem;
+  background: rgba(0, 0, 0, 0.25); border-left: 3px solid #e8a15c;
+}
+.perm-card[data-level="high"] { border-left-color: #ff5f56; }
+.perm-card[data-level="low"] { border-left-color: #6fcf97; }
+
+.pc-main {
+  flex: 1 1 22rem; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.5rem;
+  background: none; border: 0; color: inherit; text-align: left; cursor: pointer; padding: 0.125rem;
+  font: inherit; font-size: 0.8125rem;
+}
+.pc-main:hover .pc-preview, .pc-main:focus-visible .pc-preview { text-decoration: underline; }
+.pc-lock { font-size: 1rem; }
+.pc-branch { font-size: 0.6875rem; opacity: 0.8; }
+.pc-tool, .po-tool { font-family: "JetBrains Mono", monospace; color: #5ad1e8; font-weight: 600; }
+.pc-preview { font-family: "JetBrains Mono", monospace; font-size: 0.75rem; opacity: 0.9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40rem; }
+.pc-left, .po-left { font-family: "JetBrains Mono", monospace; font-size: 0.8125rem; padding: 0.0625rem 0.375rem; border-radius: 0.25rem; background: rgba(255, 255, 255, 0.08); }
+.pc-left.is-urgent, .po-left.is-urgent { background: #ff5f56; color: #0a0908; }
+
+.pr-risk { display: inline-flex; gap: 0.25rem; flex-wrap: wrap; }
+.pr-tag { font-size: 0.6875rem; padding: 0 0.3125rem; border-radius: 0.25rem; background: rgba(255, 255, 255, 0.1); }
+.pr-risk[data-level="high"] .pr-tag { background: rgba(255, 95, 86, 0.25); color: #ffb3ae; }
+.pr-risk[data-level="low"] .pr-tag { background: rgba(111, 207, 151, 0.2); color: #b9f0cf; }
+
+.pc-acts { display: flex; gap: 0.375rem; flex-wrap: wrap; }
+.pc-btn {
+  font: inherit; font-size: 0.8125rem; padding: 0.3125rem 0.625rem; border-radius: 0.3125rem;
+  border: 1px solid rgba(255, 255, 255, 0.25); background: rgba(255, 255, 255, 0.06); color: inherit; cursor: pointer;
+}
+.pc-btn:disabled { opacity: 0.5; cursor: default; }
+.pc-btn.is-allow { border-color: #6fcf97; color: #b9f0cf; }
+.pc-btn.is-always { border-color: #5ad1e8; color: #bdeef7; }
+.pc-btn.is-deny { border-color: #ff5f56; color: #ffb3ae; }
+
+/* ── Overlay ─────────────────────────────────────────────────────────────── */
+/* Au-dessus des toasts (callback-toast, z-index 9000) : une notification ne
+   doit jamais recouvrir les boutons de décision. */
+.perm-overlay { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center; }
+.po-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.6); }
+.po-dialog {
+  position: relative; width: min(56rem, 94vw); max-height: 92vh; display: flex; flex-direction: column;
+  background: #14110e; color: #eae3d9; border: 1px solid #e8a15c; border-radius: 0.625rem; box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.6);
+  font-size: 0.875rem;
+}
+.po-head { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem; border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
+.po-head h3 { flex: 1; margin: 0; font-size: 1rem; font-weight: 600; }
+.po-x { background: none; border: 0; color: inherit; font-size: 1.125rem; cursor: pointer; min-width: 2rem; min-height: 2rem; }
+.po-body { overflow: auto; padding: 0.75rem 1rem; display: flex; flex-direction: column; gap: 0.625rem; }
+.po-why { padding: 0.5rem 0.625rem; border-radius: 0.375rem; background: rgba(232, 161, 92, 0.12); }
+.po-riskline { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.po-meta { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 0.75rem; margin: 0; font-size: 0.8125rem; }
+.po-meta dt { opacity: 0.7; }
+.po-meta dd { margin: 0; word-break: break-word; }
+.po-h, .po-block h4 { margin: 0.25rem 0; font-size: 0.8125rem; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.8; }
+.po-pre {
+  margin: 0; padding: 0.5rem 0.625rem; max-height: 22rem; overflow: auto; white-space: pre; tab-size: 2;
+  font-family: "JetBrains Mono", monospace; font-size: 0.75rem; line-height: 1.45;
+  background: #0a0908; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 0.375rem;
+}
+.pd-text { white-space: pre-wrap; word-break: break-all; }
+.pd-l { display: inline-block; min-width: 100%; }
+.pd-l.is-add { background: rgba(111, 207, 151, 0.14); color: #b9f0cf; }
+.pd-l.is-del { background: rgba(255, 95, 86, 0.14); color: #ffb3ae; }
+.pd-op { color: #ff9e64; font-weight: 700; }
+.pd-flag { color: #5ad1e8; }
+.po-last { white-space: pre-wrap; padding: 0.5rem 0.625rem; border-left: 3px solid rgba(255, 255, 255, 0.2); max-height: 10rem; overflow: auto; font-size: 0.8125rem; }
+.po-note, .po-soft, .po-none { font-size: 0.75rem; opacity: 0.7; margin: 0; }
+.po-acts { display: flex; flex-direction: column; gap: 0.625rem; padding: 0.75rem 1rem; border-top: 1px solid rgba(255, 255, 255, 0.1); }
+.po-always { border: 1px solid rgba(90, 209, 232, 0.35); border-radius: 0.375rem; padding: 0.375rem 0.625rem 0.5rem; display: flex; flex-direction: column; gap: 0.25rem; }
+.po-always legend { font-size: 0.75rem; opacity: 0.85; padding: 0 0.25rem; }
+.po-scope { display: flex; gap: 0.5rem; align-items: baseline; font-size: 0.8125rem; cursor: pointer; }
+.po-scope code { font-size: 0.75rem; word-break: break-all; }
+.po-always .pc-btn { align-self: flex-start; margin-top: 0.25rem; }
+.po-deny { display: flex; flex-direction: column; gap: 0.25rem; }
+.po-deny label { font-size: 0.75rem; opacity: 0.85; }
+.po-deny textarea { font: inherit; font-size: 0.8125rem; background: #0a0908; color: inherit; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 0.3125rem; padding: 0.375rem; resize: vertical; }
+.po-deny .pc-btn { align-self: flex-start; }
+.po-err { color: #ffb3ae; font-size: 0.8125rem; }
+.po-decided { margin: 0 1rem 0.75rem; padding: 0.5rem 0.625rem; border-radius: 0.375rem; background: rgba(255, 255, 255, 0.08); }
+.po-foot { padding: 0 1rem 0.75rem; }
+.po-link { background: none; border: 0; color: #5ad1e8; text-decoration: underline; cursor: pointer; font: inherit; font-size: 0.8125rem; padding: 0; }
+.po-rules { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.375rem; }
+.po-rules li { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+body.perm-overlay-open { overflow: hidden; }
+
+/* Journal du musicien : demandes du tour et leur issue */
+.jt-perms { list-style: none; margin: 0.25rem 0; padding: 0; font-size: 0.75rem; }
+.jt-perms li[data-decision="expired"], .jt-perms li[data-decision="deny"] { color: #ffb3ae; }
+.jt-perms li[data-decision="pending"] { color: #f2c38f; }
+
+/* ── Mobile ──────────────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .perm-band { margin: 0.25rem 0.375rem 0; }
+  .pc-main { flex-basis: 100%; }
+  .pc-preview { max-width: 100%; white-space: normal; word-break: break-all; }
+  .pc-acts { width: 100%; }
+  .pc-btn { flex: 1 1 auto; min-height: 44px; }
+  /* Mobile : un seul défilement pour tout le dialogue — les détails d'abord,
+     les décisions ensuite (un pied fixe écrasait l'entrée complète). */
+  .po-dialog { width: 100vw; max-height: 100vh; height: 100%; border-radius: 0; overflow-y: auto; }
+  .po-body { overflow: visible; flex: none; }
+  .po-head { position: sticky; top: 0; background: #14110e; z-index: 1; }
+  .po-meta { grid-template-columns: 1fr; }
+  .po-meta dt { margin-top: 0.25rem; }
+  .po-x { min-width: 44px; min-height: 44px; }
+  .po-scope { min-height: 44px; align-items: center; }
+}
