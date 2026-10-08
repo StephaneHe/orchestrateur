@@ -11,6 +11,25 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.40.1] - 2026-10-08
+
+Demande utilisateur : « Il faut que toute entree dans l'orchestrateur passe par
+les pipelines decides dans la page Models, est-ce deja le cas ? Pour que chaque
+etape soit effectivement encadree par le bon modele. »
+
+### Added
+- `docs/PLAN-pipeline-enforcement.md` : plan (aucun code modifié). Il couvre :
+  - les 14 points d'entrée et leur rattachement à un pipeline ;
+  - le moteur d'exécution étape par étape, avec un model par étape ;
+  - les critères de sortie vérifiés par le code, notamment pour la boucle TDD ;
+  - le jeton d'étape, qui empêche tout contournement ;
+  - les coûts et latences, le pipeline léger, les phases et les questions à
+    trancher.
+
+  Mesure faite pour ce plan : `--resume` de la même session avec un autre
+  `--model` fonctionne (contexte conservé), mais réécrit environ 59 k tokens de
+  cache à chaque bascule.
+
 ## [0.40.0] - 2026-10-08
 
 Demandes utilisateur : « Oui, tous les pipeline. Fais en sorte que l'interface
