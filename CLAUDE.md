@@ -889,6 +889,56 @@ les pipelines decides dans la page Models ». Plan et décisions :
   - HTTP `pipeline-observe` ;
   - navigateur `observe-view` et `models-harness`.
 
+## Double model (0.44.0)
+
+Demande utilisateur : « on peut donner 2 models (1 par defaut), et si 2 sont
+precises, on lance la tache sur les 2, puis le 1er relis le tout pour en tirer
+le meilleur des 2 ».
+
+- **Page Models** : un menu « Principal » (`.mr-select`) et un menu « Second
+  (optionnel) » (`.mr-select2`, `data-role="second"`) par étape et par
+  variante.
+  - `PUT /api/model-routing/:task {…, role: 'second'}`, stocké dans
+    `assignments[case].second`.
+  - Mêmes validations que le principal. Le second exige un principal (409).
+    Retirer le principal retire le second.
+  - Si principal = second : réponse `warning`.
+- **Exécution** : `dispatch.mjs --model A --second-model B
+  [--second-provider] [--dual-mode action|judge]` délègue à
+  `scripts/dual-run.mjs`, **après** la file. Une demande mise en file garde
+  `secondModel`, `secondProvider` et `dualMode` (server.js : file, drain,
+  `spawnDirectDispatch`).
+  - Les branches sont des `dispatch.mjs --dual-branch <run>:<rôle> --dual-cwd
+    <worktree>` : log, session et `.pid` sous `logs/dual/<run>/`, jamais ceux
+    du musicien. `--dual-cwd` n'accepte que `logs/dual/wt/…`.
+  - La relecture est un `dispatch.mjs --dual-synthesis <run>`. Elle n'écrit
+    pas de `user_prompt` : elle prolonge le tour ouvert par le parent, donc
+    **un tour** au journal.
+  - Événements dans le log du musicien : `user_prompt.dual`, `dual_start`,
+    `dual_progress` (toutes les 60 s), `dual_branch_done`,
+    `dual_branch_failed`, `dual_review_start`, puis le result de la relecture
+    et `dual_summary`.
+  - Le journal (`turn-core.js`, `t.dual`) et le panneau (`activite.js`,
+    encadré « ×2 ») les lisent.
+- Refus avant toute écriture :
+  - projet sans git, NVIDIA / OpenRouter ou model incohérent avec son
+    provider → 64 ;
+  - dépôt non propre → 65.
+
+  Codes de fin : 0 relecture faite, 2 pause (le principal a échoué).
+- **Exécution interrompue** (parent tué) : au lancement double suivant sur le
+  même projet, `recoverInterrupted()` archive chaque branche `dual/*` restante
+  (non commité compris) en `logs/dual/<run>/<rôle>.interrupted.diff`, supprime
+  les worktrees et les branches, puis clôt le tour resté ouvert
+  (`system/dual_interrupted` et `result/error_dual_interrupted`).
+- Recettes :
+  - `_test_dual_model.mjs` : vrai dispatch, faux claude
+    (`FAKE_CLAUDE_ECHO_MODEL`, `FAKE_CLAUDE_WRITE`, `FAKE_CLAUDE_MERGE`,
+    `FAKE_CLAUDE_FAIL_MODEL`), copie git de `pipelineLab` ;
+  - section « second » de `_test_model_routing.mjs` ;
+  - HTTP `model-routing` ;
+  - navigateur `models-dual`.
+
 ## Attachments
 
 Images uploaded via the dashboard (paste / drag-drop / file picker) land in

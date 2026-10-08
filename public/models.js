@@ -139,6 +139,9 @@
   const slotById = (id) => st.routing?.slots?.find(s => s.id === id) || null;
   const assigned = (slot) => st.routing?.assignments?.[slot] || null;
   const valueOf = (slot) => { const a = assigned(slot); return a ? `${a.provider}|${a.model}` : ""; };
+  // Mode double model (0.44.0) : le second, optionnel, à côté du principal.
+  const secondOf = (slot) => assigned(slot)?.second || null;
+  const valueOf2 = (slot) => { const b = secondOf(slot); return b ? `${b.provider}|${b.model}` : ""; };
 
   function stepsOf(p) {
     const out = [];
@@ -225,8 +228,11 @@
   function fillSelect(sel) {
     const slot = slotById(sel.dataset.slot);
     if (!slot) return;
-    sel.innerHTML = optionsFor(slot);
-    const v = valueOf(slot.id);
+    const second = sel.dataset.role === "second";
+    sel.innerHTML = second
+      ? optionsFor(slot).replace(/^<option value="">[^<]*<\/option>/, '<option value="">(aucun — exécution simple)</option>')
+      : optionsFor(slot);
+    const v = second ? valueOf2(slot.id) : valueOf(slot.id);
     ensureOption(sel, v);
     sel.value = v;
     sel.dataset.filled = "1";
@@ -318,7 +324,7 @@
     if (!h.length) return '<p class="mr-empty">Aucun changement enregistré.</p>';
     return `<ol class="mr-hist-list">${h.map(e => `
       <li><time datetime="${esc(e.at)}">${esc(fmtTime(e.at))}</time>
-        <span class="mr-hist-task">${esc(slotLabel(e.task))}</span>
+        <span class="mr-hist-task">${esc(slotLabel(e.task))}${e.role === "second" ? ' <span class="mr-dual-badge">second</span>' : ""}</span>
         <span class="mr-hist-from">${esc(e.from || "(hérité)")}</span>
         <span aria-hidden="true">→</span><span class="sr-only">devient</span>
         <span class="mr-hist-to">${esc(e.to || "(hérité)")}</span>
@@ -581,8 +587,15 @@
 
   function selectHtml(slotId, label, isVariant) {
     const lazy = isVariant ? ' data-lazy="1"' : "";
-    return `<label class="mr-sel-label" for="mr-sel-${esc(slotId)}">${esc(label)}</label>
-      <select class="mr-select" id="mr-sel-${esc(slotId)}" data-slot="${esc(slotId)}"${lazy}></select>
+    // Principal (obligatoire, ou défaut du projet) et second (optionnel) : avec
+    // un second, la tâche tourne sur les deux puis le principal relit.
+    return `<div class="mr-sel-pair">
+        <div class="mr-sel-col"><label class="mr-sel-label" for="mr-sel-${esc(slotId)}">Principal · ${esc(label)}</label>
+          <select class="mr-select" id="mr-sel-${esc(slotId)}" data-slot="${esc(slotId)}"${lazy}></select></div>
+        <div class="mr-sel-col mr-sel-second"><label class="mr-sel-label" for="mr-sel2-${esc(slotId)}">Second (optionnel)</label>
+          <select class="mr-select2" id="mr-sel2-${esc(slotId)}" data-slot="${esc(slotId)}" data-role="second"${lazy}></select></div>
+      </div>
+      <p class="mr-dual-note" data-dual="${esc(slotId)}" hidden></p>
       <div class="mr-status" data-status="${esc(slotId)}" aria-live="polite"></div>`;
   }
 
@@ -616,7 +629,7 @@
         <summary><span class="mr-sym" aria-hidden="true">◇</span> Variantes (${variants.length})
           <span class="mr-dots" data-dots="${esc(slotId)}"></span></summary>
         ${variants.map(v => `<div class="mr-var" data-variant="${esc(v.id)}">
-          <div class="mr-var-head"><b>${esc(v.label)}</b>${v.custom ? ' <span class="mr-opt mr-custom">✦ ajouté</span>' : ""} <span class="mr-var-what">${esc(v.what || "")}</span></div>
+          <div class="mr-var-head"><b>${esc(v.label)}</b> <span class="mr-dual-badge" data-dualbadge="${esc(slotId)}.${esc(v.id)}" hidden title="Mode double : deux models en parallèle, puis relecture par le principal">×2</span>${v.custom ? ' <span class="mr-opt mr-custom">✦ ajouté</span>' : ""} <span class="mr-var-what">${esc(v.what || "")}</span></div>
           ${needHtml(v.need && v.need !== s.need ? v.need : null)}
           ${selectHtml(`${slotId}.${v.id}`, `Model — ${v.label}`, true)}
         </div>`).join("")}
@@ -627,6 +640,7 @@
       : "Action : lit, écrit ou exécute dans le projet — il faut un harnais d’agent"}">${s.judge ? "jugement" : "action"}</span>` : "";
     return `<article class="mr-card${s.optional ? " is-optional" : ""}" data-step="${esc(s.id)}" data-slot-card="${esc(slotId)}" data-kind="${isText ? (s.judge ? "judge" : "action") : "media"}">
       <header class="mr-card-head"><span class="mr-num">${esc(s.n)}</span><h3 class="mr-card-title">${esc(s.title)}</h3>${opt}${kind}
+        <span class="mr-dual-badge" data-dualbadge="${esc(slotId)}" hidden title="Mode double : deux models en parallèle, puis relecture par le principal">×2</span>
         <span class="mr-ptag" data-ptag="${esc(slotId)}"></span></header>
       <p class="mr-what">${esc(s.what)}</p>
       <p class="mr-ex"><b>Ex.</b> ${esc(s.example)}</p>
@@ -752,7 +766,7 @@
     panel.setAttribute("aria-labelledby", `mr-tab-${p.id}`);
     panel.dataset.pipeline = p.id;
     panel.innerHTML = panelHtml(p);
-    for (const sel of panel.querySelectorAll(".mr-select")) {
+    for (const sel of panel.querySelectorAll(".mr-select, .mr-select2")) {
       const det = sel.closest("details.mr-vars");
       if (!sel.dataset.lazy || !det || det.open) fillSelect(sel);
     }
@@ -810,6 +824,22 @@
         dots.innerHTML = vs.map(v => { const e = effective(v.id); return `<span class="mr-dot" data-provider="${e ? e.provider : ""}" title="${esc((slotById(v.id)?.label || v.id) + " : " + (e ? `${PLABEL[e.provider]} ${e.model}` : "défaut du projet"))}"></span>`; }).join("");
       }
     }
+    for (const sel2 of el.querySelectorAll(".mr-select2")) {
+      const has = !!assigned(sel2.dataset.slot);
+      sel2.disabled = !has;
+      sel2.title = has ? "Avec un second model, la tâche tourne sur les deux en parallèle, puis le principal relit et garde le meilleur." : "Choisissez d’abord le model principal de cette case.";
+    }
+    for (const b of el.querySelectorAll("[data-dualbadge]")) b.hidden = !secondOf(b.dataset.dualbadge);
+    for (const n of el.querySelectorAll("[data-dual]")) {
+      const a = assigned(n.dataset.dual), b = secondOf(n.dataset.dual);
+      n.hidden = !b;
+      if (!b) { n.textContent = ""; continue; }
+      const same = a && a.provider === b.provider && a.model === b.model;
+      n.dataset.same = same ? "1" : "";
+      n.textContent = same
+        ? "⚠ principal et second identiques : le mode double n’apporte presque rien."
+        : `×2 : ${shortModel(a)} et ${shortModel(b)} travaillent en parallèle, chacun de son côté, puis ${shortModel(a)} relit et garde le meilleur — coût ≈ ×2,5, durée ≈ la plus longue des deux + la relecture.`;
+    }
     for (const s of el.querySelectorAll("[data-status]")) {
       const id = s.dataset.status;
       s.innerHTML = statusHtml(id);
@@ -822,7 +852,8 @@
       for (const s of slots) { const a = assigned(s.id); const k = a ? a.provider : "inherit"; counts[k] = (counts[k] || 0) + 1; }
       d.innerHTML = `<b>Répartition :</b> ` + [...LLM, "local"].filter(k => counts[k]).map(k =>
         `<span class="mr-ptag" data-provider="${k}">${PSHORT[k]}</span> ${counts[k]}`).join(" · ")
-        + `${counts.inherit ? `${Object.keys(counts).length > 1 ? " · " : ""}<span class="mr-ptag">hérité</span> ${counts.inherit}` : ""}`;
+        + `${counts.inherit ? `${Object.keys(counts).length > 1 ? " · " : ""}<span class="mr-ptag">hérité</span> ${counts.inherit}` : ""}`
+        + (slots.some(s => secondOf(s.id)) ? ` · <span class="mr-dual-badge">×2</span> ${slots.filter(s => secondOf(s.id)).length}` : "");
     }
     adviceChecks(p);
     const hist = $(".mr-history", el);
@@ -858,11 +889,12 @@
   // ------------------------------------------------------------------------
   async function save(sel) {
     const slot = sel.dataset.slot;
-    const before = valueOf(slot);
+    const role = sel.dataset.role === "second" ? "second" : "principal";
+    const before = role === "second" ? valueOf2(slot) : valueOf(slot);
     const v = sel.value;
     if (v === before) return;
     const [provider, ...rest] = v.split("|");
-    const body = v ? { provider, model: rest.join("|") } : { default: true };
+    const body = { ...(v ? { provider, model: rest.join("|") } : { default: true }), ...(role === "second" ? { role } : {}) };
     st.status[slot] = { kind: "saving", text: "enregistrement…" };
     patch();
     try {
@@ -872,7 +904,10 @@
         body: JSON.stringify(body),
       });
       st.routing = await getJson("/api/model-routing");
-      st.status[slot] = { kind: "saved", text: `✓ enregistré · ${fmtTime(r.updatedAt || new Date().toISOString())}` };
+      st.status[slot] = { kind: "saved", text: `✓ enregistré${role === "second" ? " (second)" : ""} · ${fmtTime(r.updatedAt || new Date().toISOString())}${r.warning ? ` — ⚠ ${r.warning}` : ""}` };
+      // Le principal retiré emporte le second : le menu du second suit.
+      const s2 = root()?.querySelector(`.mr-select2[data-slot="${CSS.escape(slot)}"]`);
+      if (s2 && s2.dataset.filled) fillSelect(s2);
     } catch (e) {
       ensureOption(sel, before);
       sel.value = before;
@@ -949,7 +984,7 @@
     if (!el || el._wired) return;
     el._wired = true;
     el.addEventListener("change", (e) => {
-      const sel = e.target.closest(".mr-select");
+      const sel = e.target.closest(".mr-select, .mr-select2");
       if (sel) save(sel);
     });
     el.addEventListener("submit", (e) => {
@@ -962,7 +997,7 @@
       const det = e.target.closest?.("details.mr-vars");
       if (!det) return;
       const k = det.dataset.vars;
-      if (det.open) { st.openVariants.add(k); for (const s of det.querySelectorAll(".mr-select:not([data-filled])")) fillSelect(s); }
+      if (det.open) { st.openVariants.add(k); for (const s of det.querySelectorAll(".mr-select:not([data-filled]), .mr-select2:not([data-filled])")) fillSelect(s); }
       else st.openVariants.delete(k);
       lsSet(LS.open, [...st.openVariants].join(",") || null);
     }, true);

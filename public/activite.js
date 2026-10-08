@@ -200,6 +200,22 @@
       did = `<ul class="jt-did">${t.summary.map(s => `<li>${esc(s)}</li>`).join("")}</ul>`;
     }
     const q = t.outcome === "question" && t.question ? `<div class="jt-q">? ${esc(t.question)}</div>` : "";
+    // Mode double model (0.44.0) : chaque branche et la relecture, séparément.
+    let dual = "";
+    if (t.dual) {
+      const d = t.dual;
+      const cost = (c) => (Number.isFinite(c) ? ` · $${c.toFixed(2)}` : "");
+      const row = (label, b) => {
+        const st2 = !b ? "en cours" : b.status === "ok" ? "✓ terminée" : b.status === "running" ? "en cours" : `✕ échec${b.error ? " — " + b.error : ""}`;
+        return `<li data-dual-role="${esc(label)}"><b>${esc(label)}</b> ${esc(shortModel(b?.served || b?.model || ""))} · ${esc(st2)}${b && fmtDur(b.durationMs) ? " · " + esc(fmtDur(b.durationMs)) : ""}${esc(cost(b?.costUsd))}${b?.diffstat ? ` · <span class="jt-dim">${esc(b.diffstat)}</span>` : ""}</li>`;
+      };
+      const byRole = (r) => (d.branches || []).find(b => b.role === r) || null;
+      dual = `<div class="jt-dual"><span class="jt-k">×2 mode double</span>${d.sameModel ? ' <span class="jt-warn">principal = second</span>' : ""}
+        ${d.secondFailed ? `<div class="jt-warn">⚠ branche seconde en échec — relecture avec le seul principal</div>` : ""}
+        ${d.paused ? `<div class="jt-warn">⏸ pause : le principal a échoué, aucune relecture sans lui</div>` : ""}
+        ${d.interrupted ? `<div class="jt-warn">✕ exécution interrompue avant la relecture — travail des branches archivé</div>` : ""}
+        <ul>${row("principal", byRole("principal") || (d.principal ? { model: d.principal.model } : null))}${row("second", byRole("second") || (d.second ? { model: d.second.model } : null))}${d.review ? row("relecture", d.review) : ""}</ul></div>`;
+    }
     const chips = [];
     for (const c of t.commits || []) chips.push(`<span class="jt-chip" title="${esc(c.msg || "")}">commit ${esc(c.sha)}</span>`);
     if (t.pushed) chips.push(`<span class="jt-chip">poussé</span>`);
@@ -215,7 +231,7 @@
           <span class="jt-outcome">${esc(word)}</span>
           <span class="jt-meta">${esc(meta)}</span>
         </header>
-        ${ask}${did}${q}
+        ${ask}${dual}${did}${q}
         ${chips.length ? `<div class="jt-chips">${chips.join("")}</div>` : ""}
         ${after.length ? `<div class="jt-after">${after.join(" · ")}</div>` : ""}
         ${toggleBtn}

@@ -19,8 +19,18 @@
 //   FAKE_CLAUDE_TOOL_USES      number of synthetic tool_use rounds (default 1)
 // ============================================================================
 
+// Réglages du mode double model (0.44.0), tous optionnels et inactifs par défaut :
+//   FAKE_CLAUDE_ECHO_MODEL=1   annonce le model demandé (--model) au lieu de « fake-claude »
+//   FAKE_CLAUDE_WRITE=<rel>    écrit ce fichier dans le dossier courant ; « {model} »
+//                              y est remplacé (ex. notes/{model}.txt)
+//   FAKE_CLAUDE_FAIL_MODEL=<m> ce model échoue (aucun result, sortie 2)
+//   FAKE_CLAUDE_MERGE=1        relecture : fusionne les branches citées dans le
+//                              prompt (lignes BRANCHE_PRINCIPALE= / BRANCHE_SECONDE=)
+
 import crypto from 'node:crypto';
 import fs     from 'node:fs';
+import path   from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 const argv = process.argv.slice(2);
 
@@ -89,6 +99,8 @@ async function readUserTurn() {
 
 async function run() {
   const userText = await readUserTurn();
+  const askedModel = flag('--model');
+  const servedModel = process.env.FAKE_CLAUDE_ECHO_MODEL === '1' && askedModel ? askedModel : 'fake-claude';
 
   // 1. system/init
   emit({
@@ -96,9 +108,28 @@ async function run() {
     session_id: sessionId,
     cwd: process.cwd(),
     tools: ['Read', 'Edit', 'Write', 'Bash'],
-    model: 'fake-claude',
+    model: servedModel,
   });
   await sleep(LATENCY);
+
+  if (process.env.FAKE_CLAUDE_FAIL_MODEL && askedModel === process.env.FAKE_CLAUDE_FAIL_MODEL) {
+    emit({ type: 'system', subtype: 'error', session_id: sessionId, error: `FAKE_CLAUDE_FAIL_MODEL ${askedModel}` });
+    process.exit(2);
+  }
+  let synthesisNote = '';
+  const isSynthesis = /\[RELECTURE DOUBLE/.test(userText);
+  if (isSynthesis && process.env.FAKE_CLAUDE_MERGE === '1') {
+    const kept = [];
+    for (const [, label, br] of userText.matchAll(/BRANCHE_(PRINCIPALE|SECONDE)=(\S+)/g)) {
+      const r = spawnSync('git', ['-c', 'user.name=fake', '-c', 'user.email=fake@localhost', 'merge', '--no-edit', br], { cwd: process.cwd(), encoding: 'utf8' });
+      kept.push(`${label.toLowerCase()} (${br}) : ${r.status === 0 ? 'fusionnée' : 'non fusionnée'}`);
+    }
+    synthesisNote = `\n\n## Synthèse double\n${kept.map(k => `- ${k}`).join('\n')}`;
+  } else if (!isSynthesis && process.env.FAKE_CLAUDE_WRITE) {
+    const rel = process.env.FAKE_CLAUDE_WRITE.replace('{model}', askedModel || 'fake');
+    fs.mkdirSync(path.dirname(path.join(process.cwd(), rel)), { recursive: true });
+    fs.writeFileSync(path.join(process.cwd(), rel), `écrit par ${askedModel || 'fake'}\n`);
+  }
 
   // 2. Optional tool_use rounds
   for (let i = 0; i < TOOL_USES; i++) {
@@ -127,8 +158,9 @@ async function run() {
   emit({
     type: 'assistant',
     message: {
+      ...(process.env.FAKE_CLAUDE_ECHO_MODEL === '1' ? { model: servedModel } : {}),
       content: [
-        { type: 'text', text: `fake reply to: ${userText.slice(0, 60)}` },
+        { type: 'text', text: `fake reply to: ${userText.slice(0, 60)}${synthesisNote}` },
       ],
     },
   });
@@ -148,7 +180,7 @@ async function run() {
   emit({
     type: 'result',
     session_id: sessionId,
-    result: 'fake result',
+    result: synthesisNote ? `fake result${synthesisNote}` : 'fake result',
     total_cost_usd: 0,
     duration_ms: elapsed,
     num_turns: 1,

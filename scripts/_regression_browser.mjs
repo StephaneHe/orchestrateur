@@ -655,14 +655,14 @@ export async function browserChecks(sb, t) {
         const bad = await page.$$eval('#models .mr-panel .mr-card', cards => cards.map(c => {
           const t = c.querySelector('.mr-card-title')?.textContent.trim(), what = c.querySelector('.mr-what')?.textContent.trim(), ex = c.querySelector('.mr-ex')?.textContent.trim();
           const ref = c.classList.contains('mr-ref');
-          const menu = ref ? !!c.querySelector('.mr-goto') : !!c.querySelector(':scope > .mr-select');
+          const menu = ref ? !!c.querySelector('.mr-goto') : !!c.querySelector(':scope > .mr-select, :scope > .mr-sel-pair .mr-select');
           const vars = c.querySelectorAll('.mr-var').length, varSel = c.querySelectorAll('.mr-var .mr-select').length;
           return (!t || !what || !ex || !menu || vars !== varSel) ? `${c.dataset.step}` : null;
         }).filter(Boolean));
         assert(!bad.length, `${id} : étape(s) incomplète(s) ${bad.join(', ')}`);
         nSelects += await page.locator('#models .mr-panel .mr-select').count();
         // Menus des étapes texte : les 4 fournisseurs, OpenRouter grisé sans clé.
-        const groups = await page.$$eval('#models .mr-panel .mr-card > .mr-select[data-filled]', sels => sels.map(s => [...s.querySelectorAll('optgroup')].map(g => `${g.dataset.provider}:${g.disabled ? 'off' : 'on'}`).join(',')));
+        const groups = await page.$$eval('#models .mr-panel .mr-card > .mr-select[data-filled], #models .mr-panel .mr-card > .mr-sel-pair .mr-select[data-filled]', sels => sels.map(s => [...s.querySelectorAll('optgroup')].map(g => `${g.dataset.provider}:${g.disabled ? 'off' : 'on'}`).join(',')));
         for (const g of groups) assert(g.startsWith('anthropic:') && g.includes('openai:') && g.includes('nvidia:') && g.includes('openrouter:off'), `${id} : groupes ${g}`);
       }
       assert(nSelects >= 90, `${nSelects} menus au total`);
@@ -804,6 +804,38 @@ export async function browserChecks(sb, t) {
       assert(!v.slots.some(s => s.id === 'dev.vert.arejeter'), 'une lacune rejetée a ajouté une variante');
       fs.rmSync(path.join(sb.root, 'model-routing.json'), { force: true });
       await page.click('#models .mr-gaps-btn');
+      await setHash(page, '#/');
+    });
+    await check(B, 'models-dual', 'Mode double model : deux menus par étape et par variante (Principal, Second optionnel), second actif seulement avec un principal, badge ×2 et estimation, avertissement si identiques, persistance au rechargement, retrait', async () => {
+      if (!(await hasModels(page))) NA('vue absente de cet état du code');
+      await setHash(page, '#/models');
+      assert(await until(async () => (await page.locator('#models .mr-tab').count()) > 0, 10_000), 'vue');
+      if (!(await page.locator('#models .mr-select2').count())) NA('mode double absent de cet état du code');
+      await page.click('#models .mr-tab[data-pipeline="dev"]');
+      const pairs = await page.$$eval('#models .mr-panel .mr-card:not(.mr-ref)', cs => cs.map(c => !!c.querySelector(':scope > .mr-sel-pair .mr-select') && !!c.querySelector(':scope > .mr-sel-pair .mr-select2')));
+      assert(pairs.length && pairs.every(Boolean), 'une étape sans ses deux menus');
+      await page.click('#models .mr-card[data-step="vert"] .mr-vars > summary');
+      assert(await until(async () => (await page.locator('#models .mr-card[data-step="vert"] .mr-var .mr-select2[data-filled]').count()) === 5, 5000), 'variantes sans menu « second »');
+      const s2 = '#models .mr-select2[data-slot="dev.vert"]';
+      assert(await page.$eval(s2, s => s.disabled), 'second actif sans principal');
+      assert(/aucun — exécution simple/.test(await page.$eval(`${s2} option`, o => o.textContent)), 'option « aucun » absente');
+      await page.selectOption('#models .mr-select[data-slot="dev.vert"]', 'anthropic|claude-sonnet-5');
+      assert(await until(async () => !(await page.$eval(s2, s => s.disabled)), 5000), 'second toujours inactif avec un principal');
+      await page.selectOption(s2, 'openai|gpt-6-astra');
+      assert(await until(async () => /enregistré \(second\)/.test(await page.textContent('#models [data-status="dev.vert"]')), 5000), 'second non enregistré');
+      assert(await page.locator('#models .mr-card[data-step="vert"] [data-dualbadge="dev.vert"]:not([hidden])').count() === 1, 'badge ×2 absent');
+      assert(/×2 :[\s\S]*parallèle[\s\S]*relit[\s\S]*×2,5/.test(await page.textContent('#models [data-dual="dev.vert"]')), 'estimation coût / durée absente');
+      const srv = await api('/api/model-routing');
+      assert(srv.assignments['dev.vert']?.second?.model === 'gpt-6-astra' && srv.assignments['dev.vert'].model === 'claude-sonnet-5', 'serveur : principal ou second non enregistré');
+      await shot(page, 'models-dual');
+      await page.reload();
+      assert(await until(async () => (await page.inputValue(s2).catch(() => '')) === 'openai|gpt-6-astra', 10_000), 'second non relu après rechargement');
+      await page.selectOption(s2, 'anthropic|claude-sonnet-5');
+      assert(await until(async () => /identiques/.test(await page.textContent('#models [data-dual="dev.vert"]')), 5000), 'pas d’avertissement principal = second');
+      await page.selectOption('#models .mr-select[data-slot="dev.vert"]', '');
+      assert(await until(async () => !(await api('/api/model-routing')).assignments['dev.vert'], 5000), 'principal non retiré');
+      assert(await until(async () => (await page.$eval(s2, s => s.disabled)) && (await page.inputValue(s2)) === '', 5000), 'le second n’a pas suivi le retrait du principal');
+      await page.click('#models .mr-card[data-step="vert"] .mr-vars > summary');
       await setHash(page, '#/');
     });
     await check(B, 'api-keys-view', 'Clés API dans la page Models : NVIDIA et OpenRouter, état, champ masqué ; Enregistrer → « configurée », valeur jamais affichée ni gardée dans la page, groupe OpenRouter dégrisé pour le jugement ; Supprimer → « absente »', async () => {
@@ -1092,7 +1124,7 @@ export async function browserChecks(sb, t) {
       await sleep(300);
       const g = await m.evaluate(() => ({
         lefts: [...new Set([...document.querySelectorAll('#models .mr-flow > .mr-node > .mr-card, #models .mr-loop-flow .mr-card')].map(s => Math.round(s.getBoundingClientRect().left)))],
-        minSel: Math.min(...[...document.querySelectorAll('#models .mr-card > .mr-select')].map(s => s.getBoundingClientRect().height)),
+        minSel: Math.min(...[...document.querySelectorAll('#models .mr-card > .mr-select, #models .mr-card > .mr-sel-pair .mr-select')].map(s => s.getBoundingClientRect().height)),
         minTab: Math.min(...[...document.querySelectorAll('#models .mr-tab')].map(s => s.getBoundingClientRect().height)),
         overflow: document.documentElement.scrollWidth - window.innerWidth,
         tabsScroll: (() => { const t = document.querySelector('#models .mr-tabs'); return t.scrollWidth > t.clientWidth && getComputedStyle(t).overflowX === 'auto'; })(),

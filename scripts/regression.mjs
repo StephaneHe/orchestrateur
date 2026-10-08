@@ -466,6 +466,14 @@ async function apiChecks(sb) {
     const file = JSON.parse(fs.readFileSync(routingPath, 'utf8'));
     assert(file.assignments['dev.revue.code']?.model === 'claude-opus-5-5', 'model-routing.json sans le choix');
     assert(fs.readFileSync(cfgPath, 'utf8') === cfgBefore, 'config.json modifié');
+    // 0.44.0 — mode double model : second optionnel, mêmes règles, persistance.
+    if ((await put('dev.livrer.git', { provider: 'anthropic', model: 'claude-sonnet-5', role: 'second' })).status !== 400) {
+      assert((await put('dev.livrer.git', { provider: 'anthropic', model: 'claude-sonnet-5', role: 'second' })).status === 409, 'second accepté sans principal');
+      assert((await put('dev.revue.code', { provider: 'openai', model: 'gpt-6-astra', role: 'second' })).status === 200, 'second refusé');
+      assert((await json('/api/model-routing')).assignments['dev.revue.code']?.second?.model === 'gpt-6-astra', 'second non relu');
+      const same = await (await put('dev.revue.code', { provider: 'anthropic', model: 'claude-opus-5-5', role: 'second' })).json();
+      assert(/identiques/.test(same.warning || ''), 'pas d’avertissement principal = second');
+    }
     r = await put('dev.revue.code', { default: true });
     assert(r.status === 200 && !(await json('/api/model-routing')).assignments['dev.revue.code'], 'valeur héritée non appliquée');
     const h = (await json('/api/model-routing')).history;

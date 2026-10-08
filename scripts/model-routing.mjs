@@ -281,7 +281,13 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
    * `choice` = null → valeur héritée (étape, puis défaut du projet). Sinon
    * `{provider, model}`. Renvoie `{ok, status, error?, assignment?, changed?}`.
    */
-  function setAssignment(slotId, choice, by) {
+  /**
+   * `role` = 'principal' (défaut) ou 'second' (0.44.0, mode double model :
+   * « on peut donner 2 models (1 par defaut) »). Le second exige un principal
+   * sur la même case ; retirer le principal retire aussi le second.
+   */
+  function setAssignment(slotId, choice, by, role = 'principal') {
+    if (role !== 'principal' && role !== 'second') return { ok: false, status: 400, error: `rôle inconnu : ${role}` };
     const slot = effective().slots.find(s => s.id === slotId);
     if (!slot) return { ok: false, status: 404, error: `case inconnue : ${slotId}` };
     let next = null;
@@ -305,12 +311,30 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
       next = { provider, model };
     }
     const data = readRouting();
-    const prev = data.assignments[slotId] || null;
-    if (fmt(prev) === fmt(next)) return { ok: true, status: 200, assignment: next, changed: false, updatedAt: data.updatedAt };
+    const cur = data.assignments[slotId] || null;
+    const who = typeof by === 'string' ? by.slice(0, 40) : 'dashboard';
     const at = new Date().toISOString();
-    if (next) data.assignments[slotId] = { ...next, at };
-    else delete data.assignments[slotId];
-    data.history.push({ at, task: slotId, from: fmt(prev), to: fmt(next), by: typeof by === 'string' ? by.slice(0, 40) : 'dashboard' });
+    if (role === 'second') {
+      if (next && !cur) return { ok: false, status: 409, error: 'choisissez d’abord le model principal de cette case' };
+      const prevSecond = cur?.second || null;
+      if (fmt(prevSecond) === fmt(next)) return { ok: true, status: 200, assignment: cur, changed: false, updatedAt: data.updatedAt };
+      if (next) cur.second = { ...next, at };
+      else if (cur) delete cur.second;
+      data.history.push({ at, task: slotId, role: 'second', from: fmt(prevSecond), to: fmt(next), by: who });
+      if (data.history.length > HISTORY_MAX) data.history = data.history.slice(-HISTORY_MAX);
+      data.updatedAt = at;
+      writeRouting(data);
+      const sameModel = !!(next && cur && next.provider === cur.provider && next.model === cur.model);
+      return { ok: true, status: 200, assignment: data.assignments[slotId] || null, changed: true, updatedAt: at, ...(sameModel ? { warning: 'principal et second identiques : le mode double n’apporte presque rien' } : {}) };
+    }
+    const prev = cur ? { provider: cur.provider, model: cur.model } : null;
+    if (fmt(prev) === fmt(next)) return { ok: true, status: 200, assignment: cur, changed: false, updatedAt: data.updatedAt };
+    if (next) data.assignments[slotId] = { ...next, at, ...(cur?.second ? { second: cur.second } : {}) };
+    else {
+      if (cur?.second) data.history.push({ at, task: slotId, role: 'second', from: fmt(cur.second), to: null, by: `${who} (principal retiré)` });
+      delete data.assignments[slotId];
+    }
+    data.history.push({ at, task: slotId, from: fmt(prev), to: fmt(next), by: who });
     if (data.history.length > HISTORY_MAX) data.history = data.history.slice(-HISTORY_MAX);
     data.updatedAt = at;
     writeRouting(data);

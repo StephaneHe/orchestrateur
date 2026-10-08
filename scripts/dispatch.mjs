@@ -8,6 +8,27 @@
 //   node scripts/dispatch.mjs <projectName> "<prompt>"
 //   node scripts/dispatch.mjs <projectName> --prompt-stdin < /tmp/p.txt
 //
+// MODE DOUBLE MODEL (0.44.0) — deux models sur la même tâche, puis relecture :
+//
+//   node scripts/dispatch.mjs <projet> "<demande>" --model <principal> --second-model <second>
+//        [--provider claude|codex] [--second-provider claude|codex]   (déduit de l'id : gpt… → codex)
+//        [--dual-mode action|judge]                                   (défaut : action)
+//
+//   Les deux branches tournent EN PARALLÈLE et INDÉPENDAMMENT, chacune dans un
+//   git worktree (logs/dual/wt/<projet>/<rôle>), avec son log, sa session et son
+//   coût (logs/dual/<run>/). Puis le PRINCIPAL relit les deux résultats dans le
+//   vrai dépôt, fusionne la meilleure version et conclut par « ## Synthèse
+//   double ». Worktrees et branches git nettoyés ; l'archive reste
+//   (diffs, résumés, summary.json). Le dépôt doit être git et propre.
+//   - seconde en échec → relecture quand même + avertissement (log et chef) ;
+//   - principal en échec → pause avec question (NEEDS_USER_INPUT), jamais de
+//     substitution ;
+//   - `--dual-mode judge` : deux rapports et une synthèse, rien de fusionné ;
+//   - « model explicite = aucun fallback » pour les deux.
+//   Codes : 0 relecture faite, 2 pause (principal en échec), 64 refus
+//   (pas git, NVIDIA/OpenRouter, flags), 65 dépôt non propre.
+//   Détails : scripts/dual-run.mjs et docs/PLAN-pipeline-enforcement.md.
+//
 // Duties (per CLAUDE.md):
 //   1. Resolve the project from config.json (fail loudly if unknown).
 //   2. Scrub ANTHROPIC_API_KEY from the child env — subscription auth only.
@@ -132,7 +153,7 @@ if (argv.includes('--test-failover')) {
   await runFailoverSelfTest();   // never returns — exits with the test result
 }
 
-if (argv.length < 1) die('usage: node scripts/dispatch.mjs <project> "<prompt>" | --prompt-stdin [--callback <project>] [--source <project>] [--model <id>] [--provider claude|codex] [--queue-if-busy|--no-queue-if-busy] [--pool-assign] | --test-failover');
+if (argv.length < 1) die('usage: node scripts/dispatch.mjs <project> "<prompt>" | --prompt-stdin [--callback <project>] [--source <project>] [--model <id>] [--provider claude|codex] [--queue-if-busy|--no-queue-if-busy] [--pool-assign] [--new-session] [--second-model <id> [--second-provider claude|codex] [--dual-mode action|judge]] | --test-failover');
 
 const projectName = argv[0];
 
@@ -177,6 +198,34 @@ const providerOverride = takeFlagValue('--provider');
 if (providerOverride && !['claude', 'codex'].includes(providerOverride)) {
   die(`--provider must be "claude" or "codex" (got "${providerOverride}")`);
 }
+
+// ---------------------------------------------------------------------------
+// MODE DOUBLE MODEL (0.44.0) — voir scripts/dual-run.mjs
+// ---------------------------------------------------------------------------
+// Demande utilisateur : « on peut donner 2 models (1 par defaut), et si 2 sont
+// precises, on lance la tache sur les 2, puis le 1er relis le tout pour en tirer
+// le meilleur des 2 ». `--second-model` déclenche le mode : deux branches
+// indépendantes et isolées (worktree git chacune), puis la relecture par le
+// principal (`--model`), qui fusionne la meilleure version dans le vrai dépôt.
+// Les drapeaux `--dual-branch` / `--dual-cwd` / `--dual-synthesis` sont posés
+// par dual-run.mjs pour ses propres lancements, jamais à la main.
+const secondModel    = takeFlagValue('--second-model');
+const secondProvider = takeFlagValue('--second-provider');
+const dualMode       = takeFlagValue('--dual-mode') || 'action';
+const dualBranchArg  = takeFlagValue('--dual-branch');
+const dualCwdArg     = takeFlagValue('--dual-cwd');
+const dualSynthesis  = takeFlagValue('--dual-synthesis');
+const DUAL_RUN_RE = /^d-\d{8}T\d{6}-[a-z0-9]{4,8}$/;
+if (secondProvider && !['claude', 'codex'].includes(secondProvider)) die(`--second-provider must be "claude" or "codex" (got "${secondProvider}")`);
+if (!['action', 'judge'].includes(dualMode)) die(`--dual-mode must be "action" or "judge" (got "${dualMode}")`);
+if (secondModel && !modelOverride) die('--second-model exige un model principal explicite : --model <principal> --second-model <second>');
+let DUAL_BRANCH = null;   // { run, role } : ce processus est l'une des deux branches
+if (dualBranchArg) {
+  const m = /^(d-\d{8}T\d{6}-[a-z0-9]{4,8}):(principal|second)$/.exec(dualBranchArg);
+  if (!m) die(`--dual-branch invalide : ${dualBranchArg}`);
+  DUAL_BRANCH = { run: m[1], role: m[2] };
+}
+if (dualSynthesis && !DUAL_RUN_RE.test(dualSynthesis)) die(`--dual-synthesis invalide : ${dualSynthesis}`);
 
 // ---------------------------------------------------------------------------
 // --queue-if-busy (0.22.0)
@@ -231,7 +280,11 @@ const queueIdx = argv.indexOf('--queue-if-busy');
 if (queueIdx !== -1) argv.splice(queueIdx, 1);
 const CHEF_SLOT   = Number(process.env.DISPATCH_SLOT || 0) || null;
 const CHEF_TICKET = process.env.DISPATCH_TICKET || null;
-const queueIfBusy = noQueueIdx !== -1 ? false : (queueIdx !== -1 || CHEF_SLOT != null);
+// Les lancements internes du mode double ne passent jamais par la file : le
+// parent tient déjà la place du musicien.
+const queueIfBusy = (DUAL_BRANCH || dualSynthesis) ? false : noQueueIdx !== -1 ? false : (queueIdx !== -1 || CHEF_SLOT != null);
+// Une branche ne rend compte à personne : c'est la relecture qui rend compte.
+if (DUAL_BRANCH) callbackProject = null;
 
 let prompt = '';
 let imagePaths = [];   // populated when server passes attachment paths
@@ -349,12 +402,27 @@ fs.mkdirSync(LOGS, { recursive: true });
 // Kill-switch failover : si logs/no-failover existe, aucune bascule de modèle.
 const NO_FAILOVER = fs.existsSync(path.join(LOGS, 'no-failover'));
 
-const logPath     = path.join(LOGS, `${projectName}.jsonl`);
-const sessionPath = path.join(LOGS, `${projectName}.session`);
-const pidPath     = path.join(LOGS, `${projectName}.pid`);
+// Une BRANCHE du mode double ne touche à rien de ce qui appartient au musicien :
+// ni son log (le pump interpréterait son result comme la fin du tour), ni sa
+// session, ni son .pid. Tout va dans logs/dual/<run>/<role>.*, session neuve.
+const DUAL_DIR = DUAL_BRANCH ? path.join(LOGS, 'dual', DUAL_BRANCH.run) : null;
+if (DUAL_DIR) fs.mkdirSync(DUAL_DIR, { recursive: true });
+const logPath     = DUAL_DIR ? path.join(DUAL_DIR, `${DUAL_BRANCH.role}.jsonl`)   : path.join(LOGS, `${projectName}.jsonl`);
+const sessionPath = DUAL_DIR ? path.join(DUAL_DIR, `${DUAL_BRANCH.role}.session`) : path.join(LOGS, `${projectName}.session`);
+const pidPath     = DUAL_DIR ? path.join(DUAL_DIR, `${DUAL_BRANCH.role}.pid`)     : path.join(LOGS, `${projectName}.pid`);
 
 let sessionId = null;
-try { sessionId = fs.readFileSync(sessionPath, 'utf8').trim() || null; } catch {}
+if (!DUAL_BRANCH) { try { sessionId = fs.readFileSync(sessionPath, 'utf8').trim() || null; } catch {} }
+
+// Dossier de travail : celui du projet, sauf pour une branche du mode double
+// (sa copie isolée — un worktree sous logs/dual/wt/, rien d'autre n'est admis).
+let WORK_DIR = project.path;
+if (dualCwdArg) {
+  const wtRoot = path.resolve(LOGS, 'dual', 'wt') + path.sep;
+  const wanted = path.resolve(dualCwdArg);
+  if (!DUAL_BRANCH || !wanted.startsWith(wtRoot) || !fs.existsSync(wanted)) die(`--dual-cwd refusé : ${dualCwdArg}`);
+  WORK_DIR = wanted;
+}
 
 // ============================================================================
 // FAILOVER CORE — deterministic, no IA in the loop. See top-of-file comment.
@@ -769,6 +837,10 @@ function postQueueIfBusy() {
     if (videoPaths.length) payload.videoPaths      = videoPaths;
     // Déjà observée ici : le serveur ne la compte pas une seconde fois.
     if (obsId)             payload.obsId           = obsId;
+    // Mode double : la demande garde ses deux models en file d'attente.
+    if (secondModel)       payload.secondModel     = secondModel;
+    if (secondProvider)    payload.secondProvider  = secondProvider;
+    if (secondModel)       payload.dualMode        = dualMode;
     const body = Buffer.from(JSON.stringify(payload));
     const req = http.request({
       hostname: '127.0.0.1', port: 7777, path: '/api/dispatch', method: 'POST',
@@ -827,6 +899,22 @@ if (queueIfBusy && projectName !== CONDUCTOR) {
     }
     console.error(`[dispatch] ATTENTION : ${projectName} a un tour en cours (pid=${busyPid}) et le serveur est injoignable — dispatch direct malgré tout`);
   }
+}
+
+// ---------- mode double model (0.44.0) : délégation à dual-run.mjs ------------
+// Ici, après la file : un musicien occupé a reçu la demande en file (avec ses
+// deux models) et ce processus est déjà sorti.
+if (secondModel && !DUAL_BRANCH && !dualSynthesis) {
+  const { runDual } = await import('./dual-run.mjs');
+  const code = await runDual({
+    root: ROOT, logsDir: LOGS, config, project, projectName, prompt, promptForLog: prompt,
+    imagePaths, videoPaths,
+    principal: { model: modelOverride, provider },
+    second: { model: secondModel, provider: secondProvider || null },
+    mode: dualMode, callbackProject, sourceProject, obsId,
+    dispatchScript: fileURLToPath(import.meta.url),
+  });
+  process.exit(code);
 }
 
 // ---------- --new-session : archivage de la session courante -----------------
@@ -1021,7 +1109,18 @@ if (CHEF_SLOT != null) {
     if (CHEF_TICKET) userPromptEvent.callbackTicket = CHEF_TICKET;
   }
 }
-logStream.write(JSON.stringify(userPromptEvent) + '\n');
+// Mode double : une branche trace son rôle ; la relecture prolonge le tour que
+// le parent a ouvert (pas de second user_prompt, un seul tour au journal).
+if (DUAL_BRANCH) userPromptEvent.dual = { run: DUAL_BRANCH.run, role: DUAL_BRANCH.role, model, provider, modelSource: EXPLICIT_MODEL ? 'flag' : 'project' };
+if (dualSynthesis) {
+  logStream.write(JSON.stringify({
+    type: 'system', subtype: 'dual_review_start', dual: { run: dualSynthesis, role: 'relecture' },
+    model, provider, modelSource: EXPLICIT_MODEL ? 'flag' : 'project',
+    text: `relecture par le principal ${model}`, timestamp: new Date().toISOString(),
+  }) + '\n');
+} else {
+  logStream.write(JSON.stringify(userPromptEvent) + '\n');
+}
 
 /**
  * Échec d'un tour à model EXPLICITE (règle « aucun fallback »). Écrit la
@@ -1290,7 +1389,7 @@ function runCodex(isFailover = false) {
     '--approve-for-me',
     '--skip-git-repo-check',
     '--json',
-    '--cd', project.path,
+    '--cd', WORK_DIR,
     '--output-last-message', lastMsgPath,
     // Images are natively supported here, unlike the old path which dropped
     // them silently — matters when a failover replays a turn that had attachments.
@@ -1306,7 +1405,7 @@ function runCodex(isFailover = false) {
   let codexChild;
   try {
     codexChild = spawn(codexBinInfo.cmd, [...codexBinInfo.prefixArgs, ...codexArgs], {
-      cwd: project.path,
+      cwd: WORK_DIR,
       env,
       stdio: ['pipe', 'pipe', 'pipe'],   // stdin carries the prompt
       shell: false,
@@ -1658,7 +1757,7 @@ function runClaude() {
     spawnArgs = args;
   }
   const child = spawn(spawnCmd, spawnArgs, {
-    cwd: project.path,      // project CLAUDE.md and .claude/ load from here
+    cwd: WORK_DIR,          // project CLAUDE.md and .claude/ load from here
     env,
     stdio: [useStreamJsonInput ? 'pipe' : 'ignore', 'pipe', 'pipe'],
     shell: false,

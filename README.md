@@ -4,7 +4,7 @@ A local Windows dashboard where one "conductor" AI session pilots a fleet of
 headless coding agents, one per project, with a live web viewer and an
 Android companion app.
 
-`version 0.43.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
+`version 0.44.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
 
 > **Status: active, personal project.** Built and used daily on a single
 > Windows machine. Pre-1.0: internal APIs and file formats can still change
@@ -102,6 +102,12 @@ one screen to watch the whole fleet.
   `.env`, with save, test and delete. A key's value is never returned or
   logged (only its last 4 characters are shown), and no child process inherits
   it.
+- **Dual model.** Each step can have a principal and an optional second model.
+  `dispatch.mjs --model A --second-model B` runs both in parallel, each in its
+  own git worktree. The principal then reviews both results, merges the best
+  of each into the real repo and explains what it kept from each model. It
+  never falls back to another model. If the second fails, the user is warned;
+  if the principal fails, the turn pauses with a question.
 - **Android companion app** (Kotlin + Jetpack Compose): fleet overview,
   per-agent detail, chat with the conductor.
 - **`/downloads` page** listing the Android builds of your projects, driven

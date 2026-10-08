@@ -140,6 +140,7 @@ console.log('\n── 5. Migration de l’ancien format (0.39.0)');
   t('historique conservé et migration tracée', v.history.some(e => e.task === 'plan') && v.history.some(e => /migration/.test(e.by || '')));
   const again = make(dir).view();
   t('migration faite une seule fois', JSON.stringify(again.assignments) === JSON.stringify(v.assignments) && again.migration.at === v.migration.at);
+  t('mode double : les choix existants deviennent « principal », sans second, sans perte', Object.values(again.assignments).every(a => a.provider && a.model && !a.second) && Object.keys(again.assignments).length === Object.keys(v.assignments).length);
 }
 
 console.log('\n── 6. Enregistrement, validation, historique');
@@ -166,6 +167,23 @@ console.log('\n── 6. Enregistrement, validation, historique');
   t('NVIDIA pour classifier (Routage) → accepté', mr.setAssignment('routage.classifier', { provider: 'nvidia', model: 'z-ai/glm-5.3' }).ok);
   t('Anthropic / codex restent acceptés sur une étape d’action', mr.setAssignment('dev.vert', { provider: 'anthropic', model: 'claude-sonnet-5' }).ok);
   t('la vue expose les fournisseurs sans harnais', mr.view().agentHarness.nvidia === false && mr.view().agentHarness.openrouter === false && mr.view().agentHarness.anthropic === true);
+  // 0.44.0 — mode double model : un principal (obligatoire) et un second (optionnel).
+  t('second sans principal → 409', mr.setAssignment('dev.livrer.build', { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' }, 'dashboard', 'second').status === 409);
+  mr.setAssignment('dev.livrer.build', { provider: 'anthropic', model: 'claude-sonnet-5' });
+  const sec = mr.setAssignment('dev.livrer.build', { provider: 'openai', model: 'gpt-6-astra' }, 'dashboard', 'second');
+  t('second enregistré à côté du principal', sec.ok && sec.assignment.model === 'claude-sonnet-5' && sec.assignment.second?.model === 'gpt-6-astra');
+  t('second relu après écriture (persistance)', mr.view().assignments['dev.livrer.build'].second.model === 'gpt-6-astra');
+  t('second : mêmes règles de capacité (outillage NVIDIA en construction → 409)', mr.setAssignment('dev.livrer.build', { provider: 'nvidia', model: 'z-ai/glm-5.3' }, 'dashboard', 'second').status === 409);
+  t('second : mêmes règles de capacité (outil local pour du code → 400)', mr.setAssignment('dev.livrer.build', { provider: 'local', model: 'ffmpeg' }, 'dashboard', 'second').status === 400);
+  t('principal = second : accepté avec un avertissement', /identiques/.test(mr.setAssignment('dev.livrer.build', { provider: 'anthropic', model: 'claude-sonnet-5' }, 'dashboard', 'second').warning || ''));
+  mr.setAssignment('dev.livrer.build', { provider: 'openai', model: 'gpt-6-astra' }, 'dashboard', 'second');
+  t('changer le principal garde le second', mr.setAssignment('dev.livrer.build', { provider: 'anthropic', model: 'claude-opus-5-5' }).assignment.second?.model === 'gpt-6-astra');
+  t('l’historique distingue le second', mr.view().history.some(h => h.task === 'dev.livrer.build' && h.role === 'second' && h.to === 'openai:gpt-6-astra'));
+  t('retirer le second seulement', !mr.setAssignment('dev.livrer.build', null, 'dashboard', 'second').assignment.second && mr.view().assignments['dev.livrer.build'].model === 'claude-opus-5-5');
+  mr.setAssignment('dev.livrer.build', { provider: 'openai', model: 'gpt-6-astra' }, 'dashboard', 'second');
+  mr.setAssignment('dev.livrer.build', null);
+  t('retirer le principal retire aussi le second (tracé)', !mr.view().assignments['dev.livrer.build'] && mr.view().history.some(h => h.role === 'second' && /principal retiré/.test(h.by || '')));
+  t('rôle inconnu → 400', mr.setAssignment('dev.rouge', null, 'x', 'troisieme').status === 400);
   const a = mr.setAssignment('dev.rouge', { provider: 'openai', model: 'gpt-6-astra' }, 'chef');
   t('choix enregistré', a.ok && a.changed);
   t('écrit dans model-routing.json', JSON.parse(fs.readFileSync(path.join(dir, 'model-routing.json'), 'utf8')).assignments['dev.rouge'].model === 'gpt-6-astra');

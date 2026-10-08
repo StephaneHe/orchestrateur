@@ -697,6 +697,12 @@ div.jt-did { padding-left: 0; }
 .jt-did li { margin: 1px 0; }
 .jt-q { margin-top: 5px; font-size: 0.75rem; color: var(--st-input); }
 .jt-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+/* Mode double model (0.44.0) : deux branches et la relecture dans le tour. */
+.jt-dual { margin-top: 6px; padding: 5px 8px; border-left: 2px solid var(--st-unread); background: color-mix(in srgb, var(--st-unread) 6%, transparent); font-size: 0.75rem; }
+.jt-dual ul { margin: 3px 0 0; padding-left: 1.1em; }
+.jt-dual li { margin: 1px 0; }
+.jt-dual .jt-warn { color: var(--st-input); font-weight: 600; }
+.jt-dual .jt-dim { color: var(--fg-2); }
 .jt-chip {
   font-family: var(--font-mono); font-size: 0.625rem; color: var(--fg-1);
   border: 1px solid var(--card-border); border-radius: 10px; padding: 1px 7px;

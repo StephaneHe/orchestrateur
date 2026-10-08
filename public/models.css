@@ -364,6 +364,27 @@
   outline: 2px solid var(--st-unread); outline-offset: 2px;
 }
 
+/* ---------- Mode double model (0.44.0) ---------- */
+.mr-sel-pair { display: grid; grid-template-columns: 1fr; gap: 4px; }
+.mr-sel-col { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mr-sel-second .mr-sel-label { color: var(--st-unread); }
+.mr-select2 {
+  width: 100%; max-width: 100%; min-height: 30px;
+  font-family: var(--font-mono); font-size: 0.6875rem; color: var(--fg-1);
+  background: var(--input-bg); border: 1px dashed var(--st-unread); border-radius: 6px; padding: 4px 6px;
+}
+.mr-select2:disabled { opacity: 0.45; cursor: not-allowed; border-color: var(--input-border); }
+.mr-select2 option, .mr-select2 optgroup { background: var(--bg-1); color: var(--fg-0); }
+.mr-select2:focus-visible { outline: 2px solid var(--st-unread); outline-offset: 2px; }
+.mr-dual-badge {
+  display: inline-block; font-family: var(--font-mono); font-size: 0.625rem; font-weight: 700;
+  color: var(--bg-0); background: var(--st-unread); border-radius: 4px; padding: 0 5px; vertical-align: middle;
+}
+.mr-dual-badge[hidden] { display: none !important; }
+.mr-dual-note { margin: 0; font-size: 0.6875rem; line-height: 1.35; color: var(--st-unread); }
+.mr-dual-note[data-same="1"] { color: var(--st-input); font-weight: 600; }
+.mr-dual-note[hidden] { display: none !important; }
+
 /* ---------- Mobile : étapes empilées, flèches vers le bas ---------- */
 @media (max-width: 767.98px) {
   .mr-bar { padding: 8px 10px; }
@@ -381,7 +402,7 @@
   .mr-back, .mr-refresh, .mr-hist-btn, .mr-obs-btn, .mr-obs-reload, .mr-gaps-btn, .mr-gap-accept, .mr-gap-reject, .mr-goto, .mr-mig-ok,
   .mr-keys-btn, .mr-key-input, .mr-key-save, .mr-key-test, .mr-key-del { min-height: 44px; }
   .mr-obs-head { max-width: 12rem; }
-  .mr-select { min-height: 44px; font-size: 0.8125rem; }
+  .mr-select, .mr-select2 { min-height: 44px; font-size: 0.8125rem; }
   .mr-vars > summary { min-height: 44px; display: flex; align-items: center; }
   #btn-models { font-size: 0.625rem; padding: 6px 9px; letter-spacing: 0.04em; }
   #btn-models .pm-k { white-space: nowrap; }

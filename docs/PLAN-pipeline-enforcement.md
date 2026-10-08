@@ -267,6 +267,29 @@ Correspondance des outils du projet (`allowed-tools`) avec codex :
 
 Le `system/init` porte `provider: "nvidia" | "openrouter"`, `model` et `modelSource`. Le model réellement servi est relu dans le rollout codex, comme en 0.26.0. Il n'y a aucun repli.
 
+### 2.8 Double model (livré en 0.44.0)
+
+Demande utilisateur : « on peut donner 2 models (1 par défaut), et si 2 sont précisés, on lance la tâche sur les 2, puis le 1er relit le tout pour en tirer le meilleur des 2 ».
+
+- **Page Models** : chaque étape et chaque variante a un model **principal** (ou le défaut du projet) et un model **second**, optionnel.
+  - Le second n'est actif que si un principal est choisi.
+  - Mêmes règles de capacité que le principal : action / jugement, médias, outillage NVIDIA / OpenRouter.
+  - Badge **×2**, estimation affichée (« coût ≈ ×2,5, durée ≈ la plus longue des deux + la relecture ») et avertissement si principal = second.
+  - Stockage : `assignments[case].second` dans `model-routing.json`. Les choix existants restent des principaux, sans perte.
+  - Retirer le principal retire le second. L'historique distingue `role: "second"`.
+- **Exécution** (`scripts/dual-run.mjs`, appelé par `dispatch.mjs --model A --second-model B`, utilisable dès maintenant hors pipeline) :
+  1. **Isolation** : un `git worktree` par model, sous `logs/dual/wt/<projet>/<rôle>`, depuis le dernier commit. Le dépôt doit être git et propre. Chaque branche a son log, sa session et son `.pid` (`logs/dual/<run>/`) : le pump ne voit qu'**un** tour.
+  2. **Parallèle et indépendance** : aucune branche ne voit l'autre. Chacune est un `dispatch.mjs --model` explicite, donc soumise à « aucun fallback », et tracée (`system/init`, `dual_branch_done` : model, model servi, `modelSource`, statut, coût, durée, diffstat).
+  3. **Archive** : chaque branche est figée (commit dans son worktree), puis on garde `<rôle>.diff`, `<rôle>.result.md` et `summary.json`.
+  4. **Relecture par le principal** : un tour normal dans le vrai dépôt (`dual_review_start`). Il reçoit les deux résultats **par fichiers**, ce qui marche aussi avec un second codex. Il fusionne la meilleure version (merge, checkout de fichiers, réécriture), lance les tests de `.orchestrateur/pipeline.json`, commite, puis conclut par « ## Synthèse double » : ce qu'il retient de chacun, et pourquoi.
+  5. **Nettoyage** : worktrees et branches `dual/<run>/*` supprimés ; l'archive reste.
+- **Échecs** :
+  - Seconde en échec : la relecture a lieu avec ce qui existe. L'utilisateur est prévenu (`dual_branch_failed`, notification au chef, avertissement en tête de la synthèse).
+  - Principal en échec : **pause** (`NEEDS_USER_INPUT`), aucune relecture par un autre model. Le travail du second reste archivé.
+- **Jugement** (`--dual-mode judge`) : deux rapports, puis une synthèse ; rien n'est fusionné.
+- **Panneau du musicien** : le journal montre le tour avec un encadré « ×2 mode double ». Il donne le principal, le second et la relecture, chacun avec son model, son statut, sa durée et son coût. Le coût de la relecture est calculé par différence, car la session reprise cumule.
+- **Pour le futur moteur** : une étape dont la case a un second est exécutée par `runDual()`. Le moteur fournit `mode` (action / jugement) d'après l'étape, puis vérifie ses critères de sortie sur le résultat **fusionné** (§2.4). Les branches restent hors du log du musicien, comme aujourd'hui.
+
 ---
 
 ## 3. Garanties

@@ -786,6 +786,12 @@ function spawnDirectDispatch(name, prompt, attachmentPaths = [], videoPaths = []
   if (opts.noQueueIfBusy) args.push('--no-queue-if-busy');
   // Session neuve demandée (0.27.0) : le flag a voyagé avec l'entrée de file.
   if (opts.newSession) args.push('--new-session');
+  // Mode double model (0.44.0) : la demande garde ses deux models jusqu'au lancement.
+  if (typeof opts.secondModel === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/@+~-]{0,159}$/.test(opts.secondModel)) {
+    args.push('--second-model', opts.secondModel);
+    if (opts.secondProvider === 'claude' || opts.secondProvider === 'codex') args.push('--second-provider', opts.secondProvider);
+    if (opts.dualMode === 'judge') args.push('--dual-mode', 'judge');
+  }
 
   const child = spawn(process.execPath, args, {
     cwd: __dirname,
@@ -868,7 +874,7 @@ function drainAttempt(name, reason) {
     return;
   }
   drainPending.delete(name);
-  const { id, prompt, attachmentPaths, videoPaths, callback, source, model, provider, slot, ticket, newSession, obsId } = q.shift();
+  const { id, prompt, attachmentPaths, videoPaths, callback, source, model, provider, slot, ticket, newSession, obsId, secondModel, secondProvider, dualMode } = q.shift();
   if (q.length === 0) dispatchQueue.delete(name);
   persistQueue(name);
   drainLaunchedAt.set(name, Date.now());
@@ -877,7 +883,7 @@ function drainAttempt(name, reason) {
     ` attente-pid=${Date.now() - since}ms`;
   console.log(msg); debugLog(msg);
   spawnDirectDispatch(name, prompt, attachmentPaths, videoPaths,
-    { callback, source, model, provider, slot, ticket, newSession, obsId, noQueueIfBusy: true });
+    { callback, source, model, provider, slot, ticket, newSession, obsId, secondModel, secondProvider, dualMode, noQueueIfBusy: true });
 }
 
 const DRAIN_WAIT_STEP_MS = 1000;
@@ -2670,10 +2676,12 @@ app.put('/api/model-routing/:task', express.json({ limit: '4kb' }), async (req, 
     await modelRouting.getCatalog();
     const b = req.body || {};
     const choice = b.default === true || b.model == null || b.model === '' ? null : { provider: b.provider, model: b.model };
-    const r = modelRouting.setAssignment(req.params.task, choice, b.by);
+    // role : 'principal' (défaut) | 'second' — mode double model (0.44.0).
+    const role = b.role === 'second' ? 'second' : 'principal';
+    const r = modelRouting.setAssignment(req.params.task, choice, b.by, role);
     if (!r.ok) return res.status(r.status).json({ ok: false, error: r.error });
-    if (r.changed) console.log(`[model-routing] ${req.params.task} → ${choice ? `${choice.provider}:${choice.model}` : '(défaut du projet)'}`);
-    res.json({ ok: true, task: req.params.task, assignment: r.assignment, changed: r.changed, updatedAt: r.updatedAt });
+    if (r.changed) console.log(`[model-routing] ${req.params.task}${role === 'second' ? ' (second)' : ''} → ${choice ? `${choice.provider}:${choice.model}` : role === 'second' ? '(aucun second)' : '(défaut du projet)'}`);
+    res.json({ ok: true, task: req.params.task, role, assignment: r.assignment, changed: r.changed, updatedAt: r.updatedAt, ...(r.warning ? { warning: r.warning } : {}) });
   } catch (e) {
     debugLog(`[model-routing] ${e.message}`);
     res.status(500).json({ ok: false, error: 'enregistrement impossible' });
@@ -4713,6 +4721,9 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
       // --new-session : ne prend effet qu'au LANCEMENT de l'entrée (0.27.0).
       newSession: req.body?.newSession === true ? true : undefined,
       obsId: obsId || undefined,
+      secondModel:    typeof req.body?.secondModel === 'string' ? req.body.secondModel : undefined,
+      secondProvider: typeof req.body?.secondProvider === 'string' ? req.body.secondProvider : undefined,
+      dualMode:       req.body?.dualMode === 'judge' ? 'judge' : undefined,
     };
     if (busy) {
       const len = queuePush(name, entry);

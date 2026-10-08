@@ -171,9 +171,32 @@
       if (!ev || typeof ev !== "object" || ev.type === "stream_event") return;
       const t = ev.type;
       if (t === "user_prompt") {
-        if (ev.source) { pendingPrompt = ev; return; }
+        if (ev.source && !ev.dual) { pendingPrompt = ev; return; }
         if (cur && cur.outcome === "running") { cur.outcome = "interrupted"; cur.end = ev.timestamp || null; }
         open(ev, ev);
+        // Mode double model (0.44.0) : deux branches puis la relecture, un seul tour.
+        if (ev.dual) cur.dual = { run: ev.dual.run, mode: ev.dual.mode, principal: ev.dual.principal, second: ev.dual.second, sameModel: !!ev.dual.sameModel, branches: [], review: null };
+        return;
+      }
+      if (t === "system" && typeof ev.subtype === "string" && ev.subtype.startsWith("dual_")) {
+        const d = (cur && cur.dual) || (last() && last().dual);
+        if (!d) return;
+        if (ev.subtype === "dual_branch_done") {
+          d.branches = d.branches.filter(b => b.role !== (ev.dual && ev.dual.role));
+          d.branches.push({ role: ev.dual && ev.dual.role, model: ev.model, served: ev.served || null, provider: ev.provider, status: ev.status, error: ev.error || null, costUsd: ev.costUsd ?? null, durationMs: ev.durationMs ?? null, diffstat: ev.diffstat || null });
+        } else if (ev.subtype === "dual_branch_failed") {
+          d.secondFailed = ev.error || "échec";
+        } else if (ev.subtype === "dual_review_start") {
+          d.review = { model: ev.model, provider: ev.provider, status: "running" };
+        } else if (ev.subtype === "dual_summary") {
+          if (Array.isArray(ev.branches)) d.branches = ev.branches;
+          if (ev.review) d.review = ev.review;
+          if (ev.dual && ev.dual.paused) d.paused = true;
+          d.archive = ev.dual && ev.dual.archive;
+          d.totalMs = ev.totalMs ?? null;
+        } else if (ev.subtype === "dual_interrupted") {
+          d.interrupted = ev.text || "interrompue";
+        }
         return;
       }
       if (t === "system" && ev.subtype === "init") {

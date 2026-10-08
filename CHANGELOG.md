@@ -11,6 +11,59 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-10-08
+
+Demande utilisateur : « On va introduire une nouvelle notion pour chaque
+tache : on peut donner 2 models (1 par defaut), et si 2 sont precises, on lance
+la tache sur les 2, puis le 1er relis le tout pour en tirer le meilleur des 2. »
+
+### Added
+- (viewer) Page Models : par étape et par variante, un menu **« Principal »**
+  et un menu **« Second (optionnel) »** (vide par défaut = exécution simple).
+  - Badge **×2** sur la carte de l'étape quand un second est choisi.
+  - Note sous les menus : les deux models travaillent en parallèle, puis le
+    principal relit ; le coût et le temps valent environ ×2,5.
+  - Avertissement quand le principal et le second sont identiques.
+  - Le menu Second est désactivé tant qu'il n'y a pas de principal.
+- (server) `PUT /api/model-routing/:task {…, role: 'second'}`, stocké dans
+  `assignments[case].second`.
+  - Mêmes validations que le principal ; le second exige un principal (409).
+  - Retirer le principal retire aussi le second, et l'historique le trace.
+  - Les choix existants deviennent le principal, sans aucune perte.
+- (server) Exécution double : `dispatch.mjs --model A --second-model B
+  [--second-provider claude|codex] [--dual-mode action|judge]`, par le nouveau
+  `scripts/dual-run.mjs`.
+  - **Isolation** : un worktree git par model (`logs/dual/wt/…`), les deux
+    branches en parallèle. Chacune a son log, sa session et son `.pid` sous
+    `logs/dual/<run>/`, avec son `system/init` (model et `modelSource`).
+  - **Relecture** par le principal dans le vrai dépôt : il reçoit les deux
+    diffs et résumés par fichiers (un second codex convient donc), fusionne,
+    lance les tests et termine par « ## Synthèse double » (ce qu'il a retenu
+    de chacun, et pourquoi).
+  - Étape de jugement (`--dual-mode judge`) : deux rapports et une synthèse,
+    sans fusion.
+  - Aucun fallback, ni pour l'un ni pour l'autre model.
+  - Si le second échoue, la relecture a lieu quand même et l'utilisateur est
+    prévenu (`dual_branch_failed`, notification au chef).
+  - Si le principal échoue, le tour se met en pause avec une question
+    (`NEEDS_USER_INPUT`, sortie 2).
+  - Coût et durée par branche et pour la relecture (`dual_summary`,
+    `summary.json`). Les worktrees sont nettoyés, les diffs et résumés
+    archivés.
+  - Une exécution interrompue (parent tué) est reprise au lancement suivant :
+    son travail, y compris non commité, est archivé en `*.interrupted.diff`,
+    ses branches sont supprimées et son tour est clos.
+  - Refus avant toute écriture : projet sans git, NVIDIA ou OpenRouter (pas
+    encore d'outillage d'agent), ou model incohérent avec son provider → 64 ;
+    dépôt non propre → 65.
+  - La file, le drain et `spawnDirectDispatch` transportent `secondModel`,
+    `secondProvider` et `dualMode`.
+- (viewer) Journal du musicien : un seul tour, avec un encadré « ×2 » (les
+  branches, la relecture, les avertissements).
+- Tests : `scripts/_test_dual_model.mjs` (vrai `dispatch.mjs`, faux claude, copie
+  git du pilote), section « second » de `_test_model_routing.mjs`, parcours HTTP
+  `model-routing` et navigateur `models-dual`.
+
 ## [0.43.0] - 2026-10-08
 
 Demande utilisateur : « Utilises la meme clef, et prevois dans la page Models,
