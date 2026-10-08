@@ -25,7 +25,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
-import { PIPELINES, LEGACY_MAP, LOCAL_TOOLS, CAPS, slotsOf } from './model-pipelines.mjs';
+import { PIPELINES, LEGACY_MAP, LOCAL_TOOLS, CAPS, slotsOf, applyCustom } from './model-pipelines.mjs';
 
 export { PIPELINES, LEGACY_MAP, LOCAL_TOOLS, CAPS };
 
@@ -159,14 +159,115 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
       } catch { /* lecture seule : on sert quand même la version migrée */ }
       return m;
     }
+    // Tous les champs sont conservés (custom, gapDecisions…) : une écriture ne
+    // doit jamais perdre ce qu'une autre fonction a enregistré.
     return {
+      ...j,
       version: 2,
       updatedAt: j.updatedAt || null,
       assignments: j.assignments && typeof j.assignments === 'object' ? j.assignments : {},
       history: Array.isArray(j.history) ? j.history : [],
-      ...(j.migration ? { migration: j.migration } : {}),
     };
   }
+
+  /** Pipelines et cases effectifs : le code + les ajouts acceptés (custom). */
+  function effective(data = readRouting()) {
+    const pipelines = applyCustom(data.custom);
+    return { pipelines, slots: slotsOf(pipelines) };
+  }
+
+  /** Mots-clés des lacunes acceptées, pour le classifieur (pipeline-observe). */
+  function classifierExtras() {
+    const c = readRouting().custom || {};
+    return [
+      ...(c.pipelines || []).map(p => ({ pipeline: p.id, keywords: p.keywords || [] })),
+      ...(c.attach || []).map(a => ({ pipeline: a.pipeline, keywords: a.keywords || [] })),
+    ].filter(x => x.pipeline && x.keywords.length);
+  }
+
+  const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
+  const clean = (t, n = 160) => String(t ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+
+  /**
+   * Décision sur une lacune signalée (règle utilisateur du 2026-10-08) :
+   * « Accepter » applique la proposition (ou l'alternative) à la structure
+   * locale, puis l'utilisateur choisit le model de la nouvelle case ; « Rejeter »
+   * la retire de la liste. `gap` vient du journal d'observation, jamais du client.
+   */
+  function decideGap(gap, decision, { choice = 'primary', by = 'dashboard' } = {}) {
+    if (!gap?.key) return { ok: false, status: 404, error: 'lacune inconnue' };
+    const data = readRouting();
+    data.gapDecisions = data.gapDecisions || {};
+    if (data.gapDecisions[gap.key]) return { ok: false, status: 409, error: 'lacune déjà traitée' };
+    const at = new Date().toISOString();
+    if (decision === 'reject') {
+      data.gapDecisions[gap.key] = { decision: 'rejected', at, by: clean(by, 40) };
+      data.updatedAt = at;
+      writeRouting(data);
+      return { ok: true, status: 200, decision: 'rejected' };
+    }
+    if (decision !== 'accept') return { ok: false, status: 400, error: 'décision inconnue' };
+    const prop = choice === 'alternative' ? gap.alternative : gap.proposal;
+    if (!prop?.kind) return { ok: false, status: 400, error: 'aucune proposition à appliquer' };
+    const cur = effective(data);
+    const custom = data.custom = data.custom || {};
+    const keywords = (Array.isArray(prop.keywords) ? prop.keywords : []).map(k => clean(k, 30).toLowerCase()).filter(Boolean).slice(0, 6);
+    const head = clean(gap.entries?.[0]?.head || gap.why, 120);
+    let applied;
+    if (prop.kind === 'pipeline') {
+      let id = String(prop.id || '').toLowerCase();
+      if (!SLUG_RE.test(id)) return { ok: false, status: 400, error: 'identifiant de pipeline invalide' };
+      for (let i = 2; cur.pipelines.some(p => p.id === id); i++) id = `${String(prop.id).slice(0, 36)}-${i}`;
+      const label = clean(prop.label || id, 60);
+      custom.pipelines = custom.pipelines || [];
+      custom.pipelines.push({
+        id, label, icon: '✦', keywords,
+        purpose: `Ajouté depuis une lacune signalée et acceptée : « ${head} ».`,
+        when: `Demandes du type « ${head} ».`,
+        flow: [
+          { id: 'cadrer', n: '1', title: 'Cadrer', what: 'Préciser ce qui est attendu et comment le vérifier.', example: head, judge: true },
+          { id: 'realiser', n: '2', title: 'Réaliser', what: 'Faire le travail demandé.', example: head },
+          { id: 'verifier', n: '3', title: 'Vérifier', what: 'Contrôler le résultat contre ce qui a été cadré.', example: head, returns: [{ to: 'realiser', label: 'à reprendre → retour à 2' }] },
+          { id: 'livrer', n: '4', title: 'Livrer', what: 'Remettre le résultat, au bon endroit.', example: head },
+        ],
+      });
+      applied = { kind: 'pipeline', pipeline: id, slot: `${id}.realiser`, label };
+    } else if (prop.kind === 'rattachement') {
+      if (!cur.pipelines.some(p => p.id === prop.pipeline)) return { ok: false, status: 400, error: 'pipeline cible inconnu' };
+      custom.attach = custom.attach || [];
+      custom.attach.push({ pipeline: prop.pipeline, keywords, when: `« ${head} »` });
+      applied = { kind: 'rattachement', pipeline: prop.pipeline, slot: cur.slots.find(x => x.pipeline === prop.pipeline)?.id || null };
+    } else if (prop.kind === 'variante' || prop.kind === 'etape') {
+      const p = cur.pipelines.find(x => x.id === prop.pipeline);
+      const steps = p ? p.flow.flatMap(n => (n.kind === 'loop' ? n.steps : [n])) : [];
+      const target = steps.find(x => x.id === (prop.kind === 'variante' ? prop.step : prop.after));
+      if (!p || !target) return { ok: false, status: 400, error: 'étape cible inconnue' };
+      const id = String(prop.id || '').toLowerCase();
+      if (!SLUG_RE.test(id)) return { ok: false, status: 400, error: 'identifiant invalide' };
+      const label = clean(prop.label || id, 60);
+      if (prop.kind === 'variante') {
+        if ((target.variants || []).some(v => v.id === id)) return { ok: false, status: 409, error: 'variante déjà présente' };
+        custom.variants = custom.variants || [];
+        custom.variants.push({ pipeline: p.id, step: target.id, variant: { id, label, what: clean(prop.what || head) } });
+        applied = { kind: 'variante', pipeline: p.id, slot: `${p.id}.${target.id}.${id}`, label };
+      } else {
+        if (steps.some(x => x.id === id)) return { ok: false, status: 409, error: 'étape déjà présente' };
+        custom.steps = custom.steps || [];
+        custom.steps.push({ pipeline: p.id, after: target.id, step: { id, n: `${target.n}+`, title: label, what: clean(prop.what || head), example: head } });
+        applied = { kind: 'etape', pipeline: p.id, slot: `${p.id}.${id}`, label };
+      }
+    } else {
+      return { ok: false, status: 400, error: `sorte de proposition inconnue : ${prop.kind}` };
+    }
+    data.gapDecisions[gap.key] = { decision: 'accepted', choice, at, by: clean(by, 40), applied };
+    data.history.push({ at, task: applied.slot || applied.pipeline, from: null, to: `lacune acceptée : ${prop.text || prop.kind}`.slice(0, 200), by: clean(by, 40) });
+    if (data.history.length > HISTORY_MAX) data.history = data.history.slice(-HISTORY_MAX);
+    data.updatedAt = at;
+    writeRouting(data);
+    return { ok: true, status: 200, decision: 'accepted', applied };
+  }
+
+  function gapDecisions() { return readRouting().gapDecisions || {}; }
 
   function writeRouting(data) {
     const tmp = `${routingFile}.${process.pid}.tmp`;
@@ -181,7 +282,7 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
    * `{provider, model}`. Renvoie `{ok, status, error?, assignment?, changed?}`.
    */
   function setAssignment(slotId, choice, by) {
-    const slot = SLOTS.find(s => s.id === slotId);
+    const slot = effective().slots.find(s => s.id === slotId);
     if (!slot) return { ok: false, status: 404, error: `case inconnue : ${slotId}` };
     let next = null;
     if (choice) {
@@ -218,9 +319,10 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
 
   function view(historyN = 50) {
     const data = readRouting();
+    const eff = effective(data);
     return {
-      pipelines: PIPELINES,
-      slots: SLOTS,
+      pipelines: eff.pipelines,
+      slots: eff.slots,
       caps: CAPS,
       agentHarness: AGENT_HARNESS,
       harnessPending: HARNESS_PENDING_MSG,
@@ -453,5 +555,5 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
     return catalog;
   }
 
-  return { view, setAssignment, getCatalog, refresh, openrouterKey, routingFile, readRouting };
+  return { view, setAssignment, getCatalog, refresh, openrouterKey, routingFile, readRouting, effective, classifierExtras, decideGap, gapDecisions };
 }

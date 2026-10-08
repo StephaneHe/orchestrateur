@@ -467,10 +467,52 @@ export function stepsOf(p) {
   return out;
 }
 
+/**
+ * Pipelines effectifs = ceux du code + les ajouts ACCEPTÉS depuis la page
+ * Models (lacunes signalées, 0.42.0). Les ajouts vivent dans model-routing.json
+ * (`custom`), jamais dans ce fichier versionné :
+ *   pipelines : [{ id, label, icon, purpose, when, flow, keywords }]
+ *   steps     : [{ pipeline, after, step: { id, n, title, what, example } }]
+ *   variants  : [{ pipeline, step, variant: { id, label, what } }]
+ *   attach    : [{ pipeline, keywords, when }]   (description complétée)
+ * Un ajout qui ne trouve pas sa cible est ignoré (jamais d'exception).
+ */
+export function applyCustom(custom) {
+  const ps = JSON.parse(JSON.stringify(PIPELINES));
+  if (!custom || typeof custom !== 'object') return ps;
+  const find = (id) => ps.find(p => p.id === id);
+  const stepIn = (p, id) => stepsOf(p).find(s => s.id === id);
+  for (const cp of custom.pipelines || []) {
+    if (!cp?.id || find(cp.id) || !Array.isArray(cp.flow)) continue;
+    ps.push({ ...cp, custom: true });
+  }
+  for (const a of custom.attach || []) {
+    const p = find(a?.pipeline);
+    if (p && a.when && !String(p.when).includes(a.when)) p.when = `${p.when} Aussi : ${a.when}`;
+  }
+  for (const s of custom.steps || []) {
+    const p = find(s?.pipeline);
+    if (!p || !s.step?.id || stepIn(p, s.step.id)) continue;
+    const i = p.flow.findIndex(n => n.id === s.after || (n.kind === 'loop' && n.steps.some(x => x.id === s.after)));
+    p.flow.splice(i < 0 ? p.flow.length : i + 1, 0, { ...s.step, custom: true });
+  }
+  for (const v of custom.variants || []) {
+    const p = find(v?.pipeline);
+    const st = p && stepIn(p, v.step);
+    if (!st || st.ref || !v.variant?.id) continue;
+    st.variants = st.variants || [];
+    if (!st.variants.some(x => x.id === v.variant.id)) st.variants.push({ ...v.variant, custom: true });
+  }
+  for (const p of ps) {
+    for (const n of p.flow) for (const s of n.kind === 'loop' ? n.steps : [n]) if (JUDGE_STEPS.has(`${p.id}.${s.id}`)) s.judge = true;
+  }
+  return ps;
+}
+
 /** Cases assignables : `pipeline.étape` et `pipeline.étape.variante`. Les renvois n'en ont pas. */
-export function slotsOf() {
+export function slotsOf(pipelines = PIPELINES) {
   const slots = [];
-  for (const p of PIPELINES) {
+  for (const p of pipelines) {
     for (const s of stepsOf(p)) {
       if (s.ref) continue;
       const need = s.need || T;

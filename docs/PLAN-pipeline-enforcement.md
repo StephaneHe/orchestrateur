@@ -11,7 +11,7 @@
 > la flotte. Aucun pipeline, aucune étape, aucun contrôle de sortie.
 >
 > Ce document est un **plan**. Version de référence : 0.40.1. La **phase 1
-> (observation)** est livrée en **0.41.0** : chaque entrée est classée et
+> (observation)** est livrée en **0.41.0**, complétée en **0.42.0** (lacunes proposées, décision Q9) : chaque entrée est classée et
 > journalisée, sans changement de comportement (voir §5).
 
 ---
@@ -30,7 +30,8 @@ Réponses de l'utilisateur aux 9 questions du §6, avec l'interprétation du che
 | 6 | Projet pilote | Un projet de test **dédié** : **`pipelineLab`** (`I:\Dev\pipelineLab`), créé en 0.41.0 avec `new-project.mjs`. Il a des tests rapides (`npm test`, moins d'une seconde), une version visible, un CHANGELOG, un registre USER_REQUIREMENTS et un `.orchestrateur/pipeline.json`. |
 | 7 | NVIDIA / OpenRouter | « **Tous les models doivent pouvoir agir de manière identique.** NVIDIA et OpenRouter aussi doivent pouvoir avoir un outillage. » Ils ne sont **pas** retirés de la page Models. Ils sont marqués « 🔧 outillage en construction », et le serveur **refuse leur affectation à une étape d'action** (409) tant que l'outillage n'est pas livré (§2.7, phase 2). |
 | 8 | Model indisponible | **Pause.** |
-| 9 | Latence du Développement complet | *En attente* : l'utilisateur a demandé ce qu'est le mode léger et pourquoi la latence serait 3 à 5 fois plus longue. Le chef lui répond. |
+| 9 | Latence du Développement complet, et choix léger / complet | **« La réponse à ta question de classification : ok. »** Quand la classification **hésite** entre léger et complet pour une demande de développement, le mode retenu est **léger**. La bascule en **complet** est automatique si la demande s'avère plus grosse que prévu (garde-fou du §4). Appliqué au classifieur depuis 0.42.0 : `modeUncertain: true` dans le journal. |
+| — | **Nouvelle règle : les lacunes** (2026-10-08) | « Si il manque des tâches, ou une étape ne peut pas être classée en une tâche précise, il faut remonter l'information en proposant une solution. » Voir §1.4 ; appliqué en phase 1 depuis 0.42.0. |
 
 ---
 
@@ -88,6 +89,32 @@ Inventaire fait dans le code (`server.js`, `scripts/`, app Android, `ssh-server.
 - **Choix explicite** : il l'emporte toujours. Il passe par le sélecteur du composer ou de l'app, `--pipeline` sur `dispatch.mjs`, ou un préfixe du message (`/dev`, `/incident`, `/léger`, `/complet`…).
 - **En phase 1 (observation, 0.41.0)** : un classifieur **à règles** (`scripts/pipeline-observe.mjs`, `règles-v1`) classe toutes les entrées, sans coût ni latence. Il a été calé sur les vraies demandes du fleet. La classification par model ne remplacera ces règles qu'à la mise en service, après comparaison avec ce journal.
 - **Pipeline par défaut** quand rien n'est décidé : **Discussion** (lecture seule). Une demande mal classée ne modifie donc jamais rien. Q3.
+
+### 1.4 Lacunes : ne jamais forcer un classement, toujours proposer
+
+Règle utilisateur : « si il manque des tâches, ou une étape ne peut pas être classée en une tâche précise, il faut remonter l'information en proposant une solution ».
+
+- **Quand** :
+  - une entrée qui demande une **action** et ne correspond à aucun pipeline ;
+  - une entrée qui correspond **autant** à deux pipelines (« flou ») ;
+  - plus tard, une **étape** d'exécution qu'aucune étape ou variante ne couvre, signalée par le moteur ou par un musicien.
+
+  Une simple remarque ou une question n'est pas une lacune : la Discussion est sa vraie place.
+- **Ce qui se passe** :
+  - l'entrée est traitée en **Discussion** par défaut (décisions n° 1 et n° 3), sans classement forcé ;
+  - un **signalement de lacune** est enregistré : l'entrée, pourquoi elle ne rentre pas, une **proposition** concrète et une alternative.
+- **Les quatre sortes de proposition** :
+  - nouveau pipeline (Cadrer → Réaliser → Vérifier → Livrer, reconnu par les mots-clés de la demande) ;
+  - nouvelle étape (insérée après une étape existante) ;
+  - nouvelle variante d'une étape ;
+  - rattachement à un pipeline existant, avec sa description « Quand il s'applique » complétée et des mots-clés appris par le classifieur.
+- **Visibilité** :
+  - page Models : bouton **« Lacunes proposées (n) »**, et un badge ⚑ sur la pill « ⇄ Models » ;
+  - chaque lacune propose **Accepter**, **Accepter l'alternative** ou **Rejeter** ;
+  - notification au chef (log et bureau), une seule fois par lacune, pour qu'il la remonte à l'utilisateur.
+- **Accepter** ajoute la tâche à la structure **locale** (`model-routing.json` → `custom`, jamais au fichier versionné). La vue ouvre la nouvelle case, l'utilisateur choisit son model, et le classifieur reconnaît désormais la demande.
+- **Signalement explicite** : `POST /api/pipeline-gaps {text, why, proposal, alternative?}`. C'est le canal du futur moteur et des musiciens (« cette étape ne rentre dans aucune case »).
+- **Mesuré sur les 101 dernières vraies demandes au chef** : 9 % de lacunes, toutes pertinentes. Par exemple : achats et navigation sur le web, préparation de candidature, vérification des README. Le premier jet en signalait 40 % : l'utilisateur écrit souvent sans accents, d'où une comparaison désormais insensible aux accents ; et les remarques ne sont plus des lacunes.
 
 ---
 
@@ -328,13 +355,13 @@ Chaque phase suit le protocole 0.29.0 : tag `pre-pipeline-enforce-pN-v<X.Y.Z>`, 
 
 | Phase | Livrables | Critères de réussite | Tests (dont l'exigence utilisateur) | Effort | Model |
 |---|---|---|---|---|---|
-| **P1 — Observation** ✅ (0.41.0, livrée) | Chaque entrée E1 à E14 est classée (pipeline + mode) par un **classifieur à règles** (`scripts/pipeline-observe.mjs`, gratuit et instantané) et journalisée dans `logs/pipeline-observe.ndjson`, terminal interactif compris (ligne par ligne). Inclassable = Discussion. **Aucun changement de comportement.** Panneau « Observation » dans la page Models. Étapes action / jugement, et NVIDIA / OpenRouter marqués « outillage en construction » (refus 409 sur une étape d'action). Projet pilote `pipelineLab` | Chaque entrée observée une seule fois (l'identifiant suit l'entrée jusqu'au tour) ; le texte des tours est inchangé | `_test_pipeline_observe.mjs` (classification sur les vraies demandes du fleet, terminal, câblage de chaque entrée, vrai `dispatch.mjs`), HTTP `pipeline-observe`, navigateur `observe-view` et `models-harness` | fait | Opus |
-| **P2 — Outillage NVIDIA / OpenRouter** (0.42.0) | §2.7 : codex + OpenRouter (Responses), passerelle Responses → chat intégrée au serveur pour NVIDIA, outil `web_fetch` de la passerelle, correspondance des `allowed-tools` avec le bac à sable codex, `system/init` complet, vérification du model servi, aucun repli. `AGENT_HARNESS` passe à `true` fournisseur par fournisseur | Sur `pipelineLab`, un tour NVIDIA (kimi-k3) et un tour OpenRouter (avec la clé) **lisent un fichier, le modifient et lancent `npm test`**, avec un journal JSONL identique à un tour codex. Un model indisponible donne `fallback_refused`, pas de repli | `_test_responses_shim.mjs` (traduction SSE, appels d'outils en flux, erreurs), HTTP `harness-nvidia` (faux NVIDIA local), contrôle réel sur `pipelineLab` | 3 à 4 j | Opus |
-| **P3 — Moteur + Discussion + Dev léger, sur `pipelineLab`** (0.43.0) | Moteur d'exécution (`logs/runs/`), jeton d'étape, porte unique `startStep`, frise dans le journal, pause et escalade, **signaux de limite** (§2.5), avertissement « défaut du projet ». Classification par le model de `routage.classifier`, comparée au journal de la phase 1. Pipelines **Discussion** et **Développement léger** en service sur `pipelineLab` seulement | Sur le pilote, chaque tour porte `run/step/modelSource`, avec le bon model servi. Un `dispatch.mjs` lancé par un musicien est refusé. Un model indisponible met l'exécution en pause | HTTP `pipeline-run`, `pipeline-bypass`, `pipeline-unavailable`, `pipeline-limit-notice`. Navigateur `run-timeline` | 3 à 4 j | Opus |
-| **P4 — Développement complet** (0.44.0) | Boucle TDD pilotée (4a → 4b → 4c, un test à la fois), critères vérifiés (§2.4), revue → 4, limites et signaux, montée léger → complet. Toujours sur `pipelineLab` | Sur `pipelineLab` : 4a échoue réellement, 4b qui modifie le test est refusé, la suite passe à la sortie, la boucle s'arrête quand la liste est vide, chaque limite prévient l'utilisateur | `_test_pipeline_gates.mjs`, HTTP `pipeline-tdd`, `pipeline-limits` | 3 j | Opus (critères), Sonnet (intégration) |
-| **P5 — Toutes les entrées branchées** (0.45.0, Android 0.9.0) | Sélecteur de pipeline dans le composer et l'app, préfixes, `@musicien`, `sessions/new`, file, pool, réveil, relais. **Terminal interactif routé** (décision n° 1) : sa session devient une Discussion en lecture seule, et une ligne classée comme action est confirmée puis lancée en exécution du bon pipeline. Refus sans pipeline (sauf `--hors-pipeline` tracé). Contrat du chef mis à jour (dispatch vers le musicien Chef) | **Test de la demande utilisateur** : pour chaque entrée E1 à E14 de l'instance de test, le tour lancé appartient à une exécution et tourne sur le model de sa case. Aucune entrée ne lance de tour hors pipeline | HTTP `pipeline-all-entries`, navigateur `composer-pipeline` et `terminal-routing`, Android `assembleDebug` et un test de ViewModel | 3 j | Sonnet |
-| **P6 — Autres pipelines** (0.46.x) | Incident, Recherche, Audit, Rédaction, Maintenance, Nouveau projet, Données, Routage complet, puis **média** (outils locaux exécutés par le moteur, models spécialisés) | Chaque pipeline a ses critères et un parcours de test | Une recette par pipeline | 3 à 5 j | Sonnet (Opus pour l'audit) |
-| **P7 — Généralisation** (0.47.0) | Tous les projets en service, mode observation retiré, rapport de coûts réels par pipeline | Une semaine d'usage sans contournement, et des coûts conformes aux estimations à ± 50 % | Non-régression complète | 1 j | Sonnet |
+| **P1 — Observation** ✅ (0.41.0 + 0.42.0, livrée) | Chaque entrée E1 à E14 est classée (pipeline + mode) par un **classifieur à règles** (`scripts/pipeline-observe.mjs`, gratuit et instantané) et journalisée dans `logs/pipeline-observe.ndjson`, terminal interactif compris (ligne par ligne). Inclassable = Discussion. **Aucun changement de comportement.** Panneau « Observation » dans la page Models. Étapes action / jugement, et NVIDIA / OpenRouter marqués « outillage en construction » (refus 409 sur une étape d'action). Projet pilote `pipelineLab`. **0.42.0** : lacunes proposées (§1.4) et décision Q9 (hésitation → léger) | Chaque entrée observée une seule fois (l'identifiant suit l'entrée jusqu'au tour) ; le texte des tours est inchangé | `_test_pipeline_observe.mjs` (classification sur les vraies demandes du fleet, terminal, câblage de chaque entrée, vrai `dispatch.mjs`), HTTP `pipeline-observe`, navigateur `observe-view` et `models-harness` | fait | Opus |
+| **P2 — Outillage NVIDIA / OpenRouter** (0.43.0) | §2.7 : codex + OpenRouter (Responses), passerelle Responses → chat intégrée au serveur pour NVIDIA, outil `web_fetch` de la passerelle, correspondance des `allowed-tools` avec le bac à sable codex, `system/init` complet, vérification du model servi, aucun repli. `AGENT_HARNESS` passe à `true` fournisseur par fournisseur | Sur `pipelineLab`, un tour NVIDIA (kimi-k3) et un tour OpenRouter (avec la clé) **lisent un fichier, le modifient et lancent `npm test`**, avec un journal JSONL identique à un tour codex. Un model indisponible donne `fallback_refused`, pas de repli | `_test_responses_shim.mjs` (traduction SSE, appels d'outils en flux, erreurs), HTTP `harness-nvidia` (faux NVIDIA local), contrôle réel sur `pipelineLab` | 3 à 4 j | Opus |
+| **P3 — Moteur + Discussion + Dev léger, sur `pipelineLab`** (0.44.0) | Moteur d'exécution (`logs/runs/`), jeton d'étape, porte unique `startStep`, frise dans le journal, pause et escalade, **signaux de limite** (§2.5), avertissement « défaut du projet ». Classification par le model de `routage.classifier`, comparée au journal de la phase 1. Pipelines **Discussion** et **Développement léger** en service sur `pipelineLab` seulement | Sur le pilote, chaque tour porte `run/step/modelSource`, avec le bon model servi. Un `dispatch.mjs` lancé par un musicien est refusé. Un model indisponible met l'exécution en pause | HTTP `pipeline-run`, `pipeline-bypass`, `pipeline-unavailable`, `pipeline-limit-notice`. Navigateur `run-timeline` | 3 à 4 j | Opus |
+| **P4 — Développement complet** (0.45.0) | Boucle TDD pilotée (4a → 4b → 4c, un test à la fois), critères vérifiés (§2.4), revue → 4, limites et signaux, montée léger → complet. Toujours sur `pipelineLab` | Sur `pipelineLab` : 4a échoue réellement, 4b qui modifie le test est refusé, la suite passe à la sortie, la boucle s'arrête quand la liste est vide, chaque limite prévient l'utilisateur | `_test_pipeline_gates.mjs`, HTTP `pipeline-tdd`, `pipeline-limits` | 3 j | Opus (critères), Sonnet (intégration) |
+| **P5 — Toutes les entrées branchées** (0.46.0, Android 0.9.0) | Sélecteur de pipeline dans le composer et l'app, préfixes, `@musicien`, `sessions/new`, file, pool, réveil, relais. **Terminal interactif routé** (décision n° 1) : sa session devient une Discussion en lecture seule, et une ligne classée comme action est confirmée puis lancée en exécution du bon pipeline. Refus sans pipeline (sauf `--hors-pipeline` tracé). Contrat du chef mis à jour (dispatch vers le musicien Chef) | **Test de la demande utilisateur** : pour chaque entrée E1 à E14 de l'instance de test, le tour lancé appartient à une exécution et tourne sur le model de sa case. Aucune entrée ne lance de tour hors pipeline | HTTP `pipeline-all-entries`, navigateur `composer-pipeline` et `terminal-routing`, Android `assembleDebug` et un test de ViewModel | 3 j | Sonnet |
+| **P6 — Autres pipelines** (0.47.x) | Incident, Recherche, Audit, Rédaction, Maintenance, Nouveau projet, Données, Routage complet, puis **média** (outils locaux exécutés par le moteur, models spécialisés) | Chaque pipeline a ses critères et un parcours de test | Une recette par pipeline | 3 à 5 j | Sonnet (Opus pour l'audit) |
+| **P7 — Généralisation** (0.48.0) | Tous les projets en service, mode observation retiré, rapport de coûts réels par pipeline | Une semaine d'usage sans contournement, et des coûts conformes aux estimations à ± 50 % | Non-régression complète | 1 j | Sonnet |
 
 **Retour arrière** : à chaque phase, le tag, plus le drapeau `enforcement` vidé. Sans redéploiement, le comportement redevient celui d'avant (un tour, un model).
 
@@ -342,7 +369,7 @@ Chaque phase suit le protocole 0.29.0 : tag `pre-pipeline-enforce-pN-v<X.Y.Z>`, 
 
 ## 6. Questions à trancher par l'utilisateur
 
-> **Réponses reçues le 2026-10-08** : voir « Décisions du 2026-10-08 » en tête du document. Seule la n° 9 est encore ouverte.
+> **Réponses reçues le 2026-10-08** : voir « Décisions du 2026-10-08 » en tête du document. Toutes sont tranchées (n° 9 comprise).
 
 1. **Aucune exception ?** Le terminal interactif `/ws/pty` et `dispatch.mjs` lancé à la main doivent-ils aussi passer par un pipeline ? Garde-t-on une échappatoire d'urgence `--hors-pipeline "raison"`, tracée et visible ?
 2. **Cases non affectées** : faut-il utiliser le défaut du projet (avec le failover actuel), ou **bloquer** l'étape tant que la page Models ne lui a pas donné de model ?

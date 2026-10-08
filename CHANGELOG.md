@@ -11,6 +11,61 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-10-08
+
+Demandes utilisateur : « La reponse a ta question de classification : ok. » et
+« si il manque des taches, ou une etape ne peut pas etre classee en une tache
+precise, il faut remonter l'information en proposant une solution ».
+
+### Added
+- (server) **Lacunes de pipeline proposées.** Une entrée qui demande une action
+  sans correspondre à aucun pipeline, ou qui correspond autant à deux pipelines,
+  n'est **pas classée de force**.
+  - Elle est traitée en Discussion, et un **signalement** est enregistré : la
+    raison, une **proposition** concrète et une alternative. Les sortes de
+    proposition : nouveau pipeline, nouvelle étape, nouvelle variante, ou
+    rattachement avec la description complétée.
+  - Une remarque ou une question n'est pas une lacune.
+  - Le signalement est notifié **une fois au chef** (log et bureau), qu'il
+    vienne du serveur ou de `dispatch.mjs` (balayage du journal toutes les
+    minutes).
+- (server) Routes :
+  - `GET /api/pipeline-gaps` (ouvertes et décidées) ;
+  - `POST /api/pipeline-gaps/:key/accept {choice: primary|alternative}` et
+    `/reject` ;
+  - `POST /api/pipeline-gaps {text, why, proposal, alternative?}`, pour le
+    signalement explicite d'une étape sans case (futur moteur, musiciens).
+- (server) **Accepter** ajoute la tâche à la structure **locale**
+  (`model-routing.json` → `custom`, avec la décision dans `gapDecisions`),
+  jamais au fichier versionné. Les pipelines effectifs sont ceux du code plus
+  les ajouts (`applyCustom`). Le classifieur apprend les mots-clés acceptés et
+  reconnaît désormais la demande.
+- (viewer) Page Models :
+  - bouton **« Lacunes proposées (n) »**, mis en évidence, et badge **⚑** sur
+    la pill « ⇄ Models » ;
+  - chaque lacune affiche la demande, le nombre d'occurrences, la raison et la
+    proposition, avec Accepter, Accepter l'alternative ou Rejeter ;
+  - après une acceptation, l'onglet du pipeline s'ouvre et la nouvelle case
+    est mise en évidence (« ✦ ajouté »), menu prêt pour choisir son model.
+  - Le panneau Observation marque « ⚑ lacune proposée » et « mode incertain →
+    léger ».
+- Tests : suite `_test_pipeline_gaps.mjs` (42), parcours HTTP `pipeline-gaps`
+  et navigateur `gaps-view`.
+
+### Changed
+- (server) **Décision Q9** : quand la classification hésite entre léger et
+  complet pour du développement, le mode retenu est **léger**
+  (`modeUncertain: true`). La bascule en complet viendra du garde-fou du moteur
+  si la demande grossit.
+- (server) Le classifieur compare règles et texte **sans les accents**, car
+  l'utilisateur écrit souvent « deploiement » ou « fonctionalite ». Il ignore un
+  préfixe « projet : » et reconnaît les formes réellement tapées (« rajoutes »,
+  « fais moi un site », « fenetre », « ne marche plus »…).
+  - Mesuré sur les 101 dernières demandes au chef : 9 % de lacunes, toutes
+    pertinentes (contre 40 % au premier jet).
+- `docs/PLAN-pipeline-enforcement.md` : décision Q9, règle des lacunes (§1.4),
+  phases suivantes décalées d'une version.
+
 ## [0.41.0] - 2026-10-08
 
 Pipelines, **phase 1 : observation**. Demande utilisateur : « Il faut que toute

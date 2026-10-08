@@ -48,6 +48,11 @@
     showObs: false,            // panneau « Observation » (phase 1 des pipelines)
     obs: null,
     obsError: null,
+    showGaps: false,           // panneau « Lacunes proposées » (0.42.0)
+    gaps: null,
+    gapsError: null,
+    gapNotice: null,           // message après Accepter / Rejeter
+    highlight: null,           // case à mettre en évidence (lacune acceptée)
     gPending: 0,
   };
 
@@ -332,7 +337,8 @@
         <td title="${esc(o.entryKinds?.[r.entry] || r.entry)}">${esc(r.entry)}</td>
         <td>${esc(r.project || "—")}${r.target ? ` → ${esc(r.target)}` : ""}${r.caller ? ` <span class="mr-obs-dim">(par ${esc(r.caller)})</span>` : ""}</td>
         <td><b>${esc(pipelineLabel(r.pipeline))}</b>${r.mode ? ` · ${esc(r.mode === "leger" ? "léger" : r.mode)}` : ""}
-          ${r.explicit ? '<span class="mr-obs-tag">explicite</span>' : ""}${r.unclassifiable ? '<span class="mr-obs-tag mr-warn">inclassable → Discussion</span>' : ""}</td>
+          ${r.explicit ? '<span class="mr-obs-tag">explicite</span>' : ""}${r.unclassifiable ? '<span class="mr-obs-tag mr-warn">inclassable → Discussion</span>' : ""}
+          ${r.modeUncertain ? '<span class="mr-obs-tag">mode incertain → léger</span>' : ""}${r.gap ? '<span class="mr-obs-tag mr-warn">⚑ lacune proposée</span>' : ""}</td>
         <td class="mr-obs-dim">${esc(r.confidence || "")}</td>
         <td class="mr-obs-head" title="${esc((r.reasons || []).join(" ; "))}">${esc(r.head || "")}</td>
       </tr>`).join("");
@@ -359,6 +365,100 @@
     const box = root()?.querySelector(".mr-obs");
     if (box) box.innerHTML = '<h2 class="mr-h2">Classifications récentes</h2>' + obsHtml();
     patch();
+  }
+
+  // --- Lacunes proposées (0.42.0) : rien n'est forcé, tout est proposé ---
+  function gapProposalHtml(p, key, choice) {
+    if (!p) return "";
+    const kind = { pipeline: "nouveau pipeline", variante: "nouvelle variante", etape: "nouvelle étape", rattachement: "rattachement" }[p.kind] || p.kind;
+    return `<div class="mr-gap-prop" data-choice="${choice}">
+      <span class="mr-gap-kind">${esc(kind)}</span> ${esc(p.text || "")}
+      <button type="button" class="mr-gap-accept" data-gap="${esc(key)}" data-choice="${choice}">✓ ${choice === "primary" ? "Accepter" : "Accepter l’alternative"}</button>
+    </div>`;
+  }
+
+  function gapsHtml() {
+    if (st.gapsError) return `<p class="mr-error" role="alert">${esc(st.gapsError)}</p>`;
+    const g = st.gaps;
+    if (!g) return '<p class="mr-empty">Chargement des lacunes…</p>';
+    const notice = st.gapNotice ? `<p class="mr-gap-notice" role="status">${esc(st.gapNotice)}</p>` : "";
+    const open = (g.open || []).map(x => `<article class="mr-gap" data-gap-key="${esc(x.key)}">
+        <header><b>« ${esc(x.entries?.[0]?.head || "")} »</b>
+          <span class="mr-obs-dim">${esc(x.entries?.[0]?.entry || "")}${x.entries?.[0]?.project ? " · " + esc(x.entries[0].project) : ""}
+          · ${x.count} fois · ${esc(fmtTime(x.lastAt))}</span></header>
+        <p class="mr-gap-why">${esc(x.why || "")} — traitée en ${esc(pipelineLabel(x.entries?.[0]?.pipeline || "discussion"))} en attendant.</p>
+        ${gapProposalHtml(x.proposal, x.key, "primary")}
+        ${gapProposalHtml(x.alternative, x.key, "alternative")}
+        <button type="button" class="mr-gap-reject" data-gap="${esc(x.key)}">✕ Rejeter</button>
+      </article>`).join("");
+    const decided = (g.decided || []).map(x => `<li>${esc(x.entries?.[0]?.head || x.key)} —
+        <b>${x.decision?.decision === "accepted" ? "acceptée" : "rejetée"}</b>${x.decision?.applied ? ` (${esc(x.decision.applied.kind)} ${esc(x.decision.applied.label || x.decision.applied.pipeline || "")})` : ""}</li>`).join("");
+    return `${notice}<p class="mr-obs-intro">Quand une demande ou une étape ne rentre dans aucun pipeline, ou seulement de façon floue,
+        elle n’est <b>pas classée de force</b> : elle est traitée en Discussion et une <b>proposition</b> arrive ici (et au chef).
+        Accepter ajoute la tâche à la structure ; il reste à lui choisir un model.</p>
+      ${open || '<p class="mr-empty">Aucune lacune ouverte.</p>'}
+      ${decided ? `<details class="mr-gap-decided"><summary>Déjà traitées (${g.decided.length})</summary><ul>${decided}</ul></details>` : ""}`;
+  }
+
+  function syncGapBadges() {
+    const n = st.gaps?.open?.length || 0;
+    const el = root();
+    const b = el && $(".mr-gaps-btn", el);
+    if (b) {
+      b.textContent = n ? `Lacunes proposées (${n})` : "Lacunes proposées";
+      b.classList.toggle("has-gaps", n > 0);
+      b.setAttribute("aria-expanded", st.showGaps ? "true" : "false");
+    }
+    const pill = document.querySelector("#btn-models .pm-k");
+    if (pill) pill.textContent = n ? `⇄ Models · ${n} ⚑` : "⇄ Models";
+    const box = el && $(".mr-gaps", el);
+    if (box) box.hidden = !st.showGaps;
+  }
+
+  async function loadGaps() {
+    try {
+      st.gaps = await getJson("/api/pipeline-gaps");
+      st.gapsError = null;
+    } catch (e) {
+      st.gapsError = e.status === 404
+        ? "Le serveur ne connaît pas encore les lacunes : il doit être redémarré (version ≥ 0.42.0)."
+        : `Chargement impossible : ${e.message}`;
+    }
+    const box = root()?.querySelector(".mr-gaps");
+    if (box) box.innerHTML = '<h2 class="mr-h2">Lacunes proposées</h2>' + gapsHtml();
+    syncGapBadges();
+  }
+
+  async function decideGap(key, action, choice) {
+    try {
+      const r = await getJson(`/api/pipeline-gaps/${encodeURIComponent(key)}/${action}`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify(action === "accept" ? { choice } : {}),
+      });
+      if (action === "accept" && r.applied) {
+        st.routing = await getJson("/api/model-routing");
+        st.optionsCache.clear();
+        const a = r.applied;
+        st.gapNotice = `✓ Acceptée : ${a.kind} « ${a.label || a.pipeline} » ajouté au pipeline ${pipelineLabel(a.pipeline)} — choisissez son model ci-dessous.`;
+        if (a.slot) {
+          const parts = a.slot.split(".");
+          if (parts.length === 3) st.openVariants.add(parts.slice(0, 2).join("."));
+          st.highlight = a.slot;
+        }
+        st.pipeline = a.pipeline;
+        lsSet(LS.pipeline, a.pipeline);
+        await loadGaps();
+        renderShell();
+        const sel = a.slot && root().querySelector(`.mr-select[data-slot="${CSS.escape(a.slot)}"]`);
+        if (sel) { sel.closest(".mr-card, .mr-var")?.classList.add("is-new"); sel.scrollIntoView?.({ block: "center" }); sel.focus(); }
+      } else {
+        st.gapNotice = "✕ Lacune rejetée : rien n’est ajouté.";
+        await loadGaps();
+      }
+    } catch (e) {
+      st.gapNotice = `Échec : ${e.message}`;
+      await loadGaps();
+    }
   }
 
   function migrationHtml() {
@@ -392,7 +492,8 @@
 
   function stepCard(p, s, ctx) {
     const slotId = `${p.id}.${s.id}`;
-    const opt = s.optional ? `<span class="mr-opt">${esc(s.optional)}</span>` : "";
+    const opt = (s.optional ? `<span class="mr-opt">${esc(s.optional)}</span>` : "")
+      + (s.custom || p.custom ? '<span class="mr-opt mr-custom" title="Ajouté depuis une lacune acceptée">✦ ajouté</span>' : "");
     const incoming = ctx.incoming[s.id] || [];
     const ret = (s.returns || []).map(r => {
       const target = ctx.byId[r.to];
@@ -419,7 +520,7 @@
         <summary><span class="mr-sym" aria-hidden="true">◇</span> Variantes (${variants.length})
           <span class="mr-dots" data-dots="${esc(slotId)}"></span></summary>
         ${variants.map(v => `<div class="mr-var" data-variant="${esc(v.id)}">
-          <div class="mr-var-head"><b>${esc(v.label)}</b> <span class="mr-var-what">${esc(v.what || "")}</span></div>
+          <div class="mr-var-head"><b>${esc(v.label)}</b>${v.custom ? ' <span class="mr-opt mr-custom">✦ ajouté</span>' : ""} <span class="mr-var-what">${esc(v.what || "")}</span></div>
           ${needHtml(v.need && v.need !== s.need ? v.need : null)}
           ${selectHtml(`${slotId}.${v.id}`, `Model — ${v.label}`, true)}
         </div>`).join("")}
@@ -528,6 +629,9 @@
       <section class="mr-history" ${st.showHistory ? "" : "hidden"} aria-label="Historique des changements">
         <h2 class="mr-h2">Historique</h2>${historyHtml()}
       </section>
+      <section class="mr-gaps" ${st.showGaps ? "" : "hidden"} aria-label="Lacunes proposées">
+        <h2 class="mr-h2">Lacunes proposées</h2>${gapsHtml()}
+      </section>
       <section class="mr-obs" ${st.showObs ? "" : "hidden"} aria-label="Classifications récentes des entrées">
         <h2 class="mr-h2">Classifications récentes</h2>${obsHtml()}
       </section>
@@ -582,6 +686,7 @@
     }
     const obsBox = $(".mr-obs", el);
     if (obsBox) obsBox.hidden = !st.showObs;
+    syncGapBadges();
     const rb = $(".mr-refresh", el);
     rb.disabled = st.refreshing;
     rb.textContent = st.refreshing ? "↻ Rafraîchissement…" : "↻ Rafraîchir les listes";
@@ -711,10 +816,11 @@
     syncEntryPoints();
     if (!st.routing) {
       renderShell();
-      load(false).then(renderShell);
+      load(false).then(renderShell).then(loadGaps);
     } else {
       // Retour sur la vue : relire les choix (un autre navigateur a pu changer).
       getJson("/api/model-routing").then(r => { st.routing = r; patch(); }).catch(() => {});
+      loadGaps();
     }
     return true;
   }
@@ -761,6 +867,11 @@
       if (e.target.closest(".mr-hist-btn")) { st.showHistory = !st.showHistory; patch(); return; }
       if (e.target.closest(".mr-obs-btn")) { st.showObs = !st.showObs; patch(); if (st.showObs) loadObs(); return; }
       if (e.target.closest(".mr-obs-reload")) { loadObs(); return; }
+      if (e.target.closest(".mr-gaps-btn")) { st.showGaps = !st.showGaps; st.gapNotice = null; syncGapBadges(); if (st.showGaps) loadGaps(); return; }
+      const acc = e.target.closest(".mr-gap-accept");
+      if (acc) { acc.disabled = true; decideGap(acc.dataset.gap, "accept", acc.dataset.choice); return; }
+      const rej = e.target.closest(".mr-gap-reject");
+      if (rej) { rej.disabled = true; decideGap(rej.dataset.gap, "reject"); return; }
       const tab = e.target.closest(".mr-tab");
       if (tab) { selectPipeline(tab.dataset.pipeline); return; }
       const go = e.target.closest(".mr-goto");
@@ -797,6 +908,11 @@
     readUrlParam();
     syncEntryPoints();
     wire();
+    // Badge « ⚑ » de la pill : les lacunes ouvertes se voient sans ouvrir la vue.
+    if (enabled()) {
+      loadGaps();
+      setInterval(() => { if (!document.hidden && enabled()) loadGaps(); }, 60_000);
+    }
   }
 
   global.Models = {

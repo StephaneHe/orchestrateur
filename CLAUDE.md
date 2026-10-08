@@ -836,6 +836,33 @@ les pipelines decides dans la page Models ». Plan et décisions :
     voir le plan §2.7).
 - Projet pilote dédié : `pipelineLab` (`I:\Dev\pipelineLab`, `npm test`), le
   seul projet où les phases suivantes seront mises en service d'abord.
+- **Décision Q9 (0.42.0)** : quand la classification hésite entre léger et
+  complet pour du développement, le mode est **léger** (`modeUncertain`). Le
+  classifieur compare tout **sans accents**, car l'utilisateur tape souvent sans.
+- **Lacunes (0.42.0)**. Règle utilisateur : « si il manque des taches, ou une
+  etape ne peut pas etre classee en une tache precise, il faut remonter
+  l'information en proposant une solution ».
+  - **Détection** : `detectGap()` dans `pipeline-observe.mjs`.
+    - Il y a lacune pour une demande d'**action** qu'aucun pipeline ne
+      reconnaît, ou pour un classement flou (égalité entre deux pipelines).
+    - Les remarques, les questions et les messages internes (`[…]`, réponses
+      relayées) ne sont pas des lacunes.
+    - Le signalement est porté par l'enregistrement d'observation (`gap`), avec
+      une proposition et une alternative.
+  - **Lecture et décisions** :
+    - `GET /api/pipeline-gaps` regroupe les signalements par clé ;
+    - les décisions vont dans `model-routing.json` (`gapDecisions`) ;
+    - **Accepter** écrit l'ajout dans `custom` (pipelines, steps, variants,
+      attach), appliqué par `applyCustom()` de `model-pipelines.mjs`. Le
+      fichier versionné n'est jamais touché.
+  - **Notification** : une seule fois par lacune au chef (`source:
+    'pipeline-gap'`), par `observeEntry` ou par un balayage toutes les 60 s
+    pour celles vues par `dispatch.mjs`. Au démarrage, ce qui est déjà connu
+    n'est pas re-signalé.
+  - **Signalement explicite** : `POST /api/pipeline-gaps`, proposition
+    validée (`kind`, identifiants en slug).
+  - Recettes : `_test_pipeline_gaps.mjs`, HTTP `pipeline-gaps`, navigateur
+    `gaps-view`.
 - Recettes :
   - `_test_pipeline_observe.mjs` : vraies demandes du fleet, terminal, câblage
     de chaque entrée, vrai `dispatch.mjs` ;

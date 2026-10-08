@@ -770,6 +770,42 @@ export async function browserChecks(sb, t) {
       await page.selectOption('#models .mr-select[data-slot="dev.revue"]', '');
       await setHash(page, '#/');
     });
+    await check(B, 'gaps-view', 'Lacunes proposées : badge dans la page Models et sur la pill, liste avec proposition et alternative, « Accepter » ajoute l’étape et ouvre sa case pour choisir le model, « Rejeter » la retire', async () => {
+      if (!(await hasModels(page))) NA('vue absente de cet état du code');
+      const probe = await fetch(`${sb.url}/api/pipeline-gaps`, { headers: H });
+      if (probe.status === 404) NA('lacunes absentes de cet état du code');
+      const report = (body) => fetch(`${sb.url}/api/pipeline-gaps`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      await report({ text: 'surveiller la santé de l’app après publication', why: 'aucune étape après « Livrer »',
+        proposal: { kind: 'etape', pipeline: 'dev', after: 'livrer', id: 'surveiller', label: 'Surveiller', text: 'nouvelle étape « Surveiller » après 6 Livrer' } });
+      await report({ text: 'lacune de recette à rejeter', proposal: { kind: 'variante', pipeline: 'dev', step: 'vert', id: 'arejeter', text: 'variante à rejeter' } });
+      await setHash(page, '#/');
+      await page.reload();
+      assert(await until(async () => /⚑/.test(await page.textContent('#btn-models')), 10_000), 'pas de badge ⚑ sur la pill « Models »');
+      await page.click('#btn-models');
+      assert(await until(async () => (await page.locator('#models .mr-tab').count()) > 0, 10_000), 'vue');
+      assert(await until(async () => /Lacunes proposées \(\d+\)/.test(await page.textContent('#models .mr-gaps-btn')), 8000), 'compteur de lacunes absent');
+      assert(await page.$eval('#models .mr-gaps-btn', b => b.classList.contains('has-gaps')), 'badge non mis en évidence');
+      await page.click('#models .mr-gaps-btn');
+      const card = page.locator('#models .mr-gap', { hasText: 'surveiller la santé' });
+      assert(await until(async () => (await card.count()) === 1, 5000), 'lacune absente de la liste');
+      assert(/nouvelle étape/.test(await card.textContent()) && (await card.locator('.mr-gap-accept').count()) >= 1 && (await card.locator('.mr-gap-reject').count()) === 1, 'proposition ou boutons absents');
+      await card.locator('.mr-gap-accept[data-choice="primary"]').click();
+      assert(await until(async () => (await page.locator('#models .mr-card[data-slot-card="dev.surveiller"]').count()) === 1, 8000), 'étape non ajoutée au pipeline');
+      assert(await page.getAttribute('#models .mr-panel', 'data-pipeline') === 'dev', 'onglet du pipeline non ouvert');
+      assert(await page.$eval('#models .mr-card[data-slot-card="dev.surveiller"]', c => c.classList.contains('is-new') && !!c.querySelector('.mr-custom')), 'nouvelle case non mise en évidence');
+      assert(/choisissez son model/.test(await page.textContent('#models .mr-gaps')), 'message « choisissez son model » absent');
+      await page.selectOption('#models .mr-select[data-slot="dev.surveiller"]', 'anthropic|claude-sonnet-5');
+      assert(await until(async () => /enregistré/.test(await page.textContent('#models [data-status="dev.surveiller"]')), 5000), 'model non enregistré sur la nouvelle étape');
+      await shot(page, 'lacunes');
+      const rej = page.locator('#models .mr-gap', { hasText: 'lacune de recette à rejeter' });
+      await rej.locator('.mr-gap-reject').click();
+      assert(await until(async () => (await page.locator('#models .mr-gap', { hasText: 'lacune de recette à rejeter' }).count()) === 0, 5000), 'lacune rejetée toujours listée');
+      const v = await api('/api/model-routing');
+      assert(!v.slots.some(s => s.id === 'dev.vert.arejeter'), 'une lacune rejetée a ajouté une variante');
+      fs.rmSync(path.join(sb.root, 'model-routing.json'), { force: true });
+      await page.click('#models .mr-gaps-btn');
+      await setHash(page, '#/');
+    });
     await check(B, 'observe-view', 'Pipelines, phase 1 : panneau « Observation » — classifications récentes (entrée, projet, pipeline, mode, inclassable = Discussion), mention « rien n’est encore imposé »', async () => {
       if (!(await hasModels(page))) NA('vue absente de cet état du code');
       await setHash(page, '#/models');

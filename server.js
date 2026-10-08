@@ -81,7 +81,12 @@ const SECRETS_DIR     = path.join(__dirname, 'secrets');
 const PKG_VERSION     = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version;
 // Pipelines, phase 1 (observation) : créé avant tout ce qui peut lancer un tour
 // au démarrage (réveil réhydraté, file, pool).
-const pipelineObserver = createObserver({ logsDir: LOGS_DIR });
+// Les mots-clés des lacunes acceptées (page Models) complètent le classifieur.
+// `modelRouting` est défini plus bas : avant lui, aucune règle ajoutée.
+const pipelineObserver = createObserver({
+  logsDir: LOGS_DIR,
+  extraRules: () => (typeof modelRouting === 'undefined' ? [] : modelRouting.classifierExtras()),
+});
 const OBS_ID_RE = /^obs-[a-z0-9-]{4,40}$/;
 // Outils d'un musicien quand config.json n'a pas de defaults.allowedTools.
 // Règle utilisateur (0.28.0) : « tous les projets doivent avoir droit au web et
@@ -689,9 +694,48 @@ loadWakeFromDisk();
 // pipeline-observe.ndjson), sans rien changer. L'identifiant suit l'entrée
 // jusqu'au tour (ORCH_OBS_ID) pour qu'elle ne soit comptée qu'une fois.
 function observeEntry(o) {
-  try { return pipelineObserver.record(o).id; }
-  catch (e) { debugLog(`[observe] ${e.message}`); return null; }
+  try {
+    const rec = pipelineObserver.record(o);
+    if (rec.gap) notifyGap(rec);
+    return rec.id;
+  } catch (e) { debugLog(`[observe] ${e.message}`); return null; }
 }
+
+// ── Lacunes de pipeline (0.42.0) ─────────────────────────────────────────────
+// Règle utilisateur : « si il manque des taches, ou une etape ne peut pas etre
+// classee en une tache precise, il faut remonter l'information en proposant une
+// solution ». Une lacune NOUVELLE est signalée une fois au chef (log + bureau),
+// qu'elle vienne du serveur ou de dispatch.mjs (balayage du journal).
+const notifiedGaps = new Set();
+function notifyGap(rec) {
+  const g = rec.gap;
+  if (!g?.key || notifiedGaps.has(g.key)) return;
+  notifiedGaps.add(g.key);
+  const text =
+    `[LACUNE DE PIPELINE] « ${String(rec.head || '').slice(0, 160)} » (${rec.entry}${rec.project ? `, ${rec.project}` : ''}) — ` +
+    `${g.why}. Traitée en ${rec.pipeline}. Proposition : ${g.proposal?.text || '—'}` +
+    (g.alternative ? `. Alternative : ${g.alternative.text}` : '') +
+    `. À accepter ou rejeter dans la page Models → « Lacunes ». Remonte-la à l'utilisateur.`;
+  try {
+    fs.appendFileSync(path.join(LOGS_DIR, `${conductorName()}.jsonl`),
+      '\n' + JSON.stringify({ type: 'user_prompt', text, timestamp: new Date().toISOString(), source: 'pipeline-gap' }) + '\n');
+    fireDesktopNotification('pipeline-gap', `Lacune de pipeline : ${String(rec.head || '').slice(0, 80)}`);
+    console.log(`[pipeline-gap] ${g.key} signalée au chef`);
+  } catch (e) { debugLog(`[pipeline-gap] ${e.message}`); }
+}
+function sweepGaps(notify) {
+  try {
+    const { open, decided } = pipelineObserver.gaps({});
+    for (const g of [...open, ...decided]) {
+      if (notifiedGaps.has(g.key)) continue;
+      if (!notify) { notifiedGaps.add(g.key); continue; }
+      const e = g.entries?.[g.entries.length - 1] || {};
+      notifyGap({ gap: g, head: e.head, entry: e.entry, project: e.project, pipeline: e.pipeline });
+    }
+  } catch (e) { debugLog(`[pipeline-gap] balayage : ${e.message}`); }
+}
+sweepGaps(false);   // au démarrage : ce qui est déjà connu n'est pas re-signalé
+setInterval(() => sweepGaps(true), 60_000).unref?.();
 function clientOf(req) {
   return /okhttp|dalvik|android/i.test(req.get('user-agent') || '') ? 'android' : 'dashboard';
 }
@@ -2511,6 +2555,59 @@ app.get('/api/model-catalog', async (req, res) => {
 app.get('/api/pipeline-observe', (req, res) => {
   const n = Math.min(500, Math.max(1, Number(req.query.n) || 100));
   res.json({ ok: true, mode: 'observation', classifier: 'règles-v1', entryKinds: ENTRY_KINDS, ...pipelineObserver.recent(n) });
+});
+
+// Lacunes signalées (0.42.0) : liste, acceptation, rejet, signalement.
+app.get('/api/pipeline-gaps', (req, res) => {
+  res.json({ ok: true, ...pipelineObserver.gaps(modelRouting.gapDecisions()) });
+});
+function findOpenGap(key) {
+  return pipelineObserver.gaps(modelRouting.gapDecisions()).open.find(g => g.key === key) || null;
+}
+app.post('/api/pipeline-gaps/:key/accept', express.json({ limit: '2kb' }), (req, res) => {
+  const gap = findOpenGap(req.params.key);
+  if (!gap) return res.status(404).json({ ok: false, error: 'lacune inconnue ou déjà traitée' });
+  const r = modelRouting.decideGap(gap, 'accept', { choice: req.body?.choice === 'alternative' ? 'alternative' : 'primary', by: req.body?.by });
+  if (!r.ok) return res.status(r.status).json({ ok: false, error: r.error });
+  console.log(`[pipeline-gap] ${gap.key} acceptée → ${r.applied.kind} ${r.applied.slot || r.applied.pipeline}`);
+  res.json({ ok: true, applied: r.applied });
+});
+app.post('/api/pipeline-gaps/:key/reject', express.json({ limit: '2kb' }), (req, res) => {
+  const gap = findOpenGap(req.params.key);
+  if (!gap) return res.status(404).json({ ok: false, error: 'lacune inconnue ou déjà traitée' });
+  const r = modelRouting.decideGap(gap, 'reject', { by: req.body?.by });
+  if (!r.ok) return res.status(r.status).json({ ok: false, error: r.error });
+  res.json({ ok: true });
+});
+// Signalement explicite (chef, musicien, futur moteur : « cette étape ne rentre
+// dans aucune case »), avec sa proposition.
+const GAP_KINDS = new Set(['pipeline', 'variante', 'etape', 'rattachement']);
+const GAP_SLUG = /^[a-z0-9][a-z0-9-]{0,39}$/;
+function cleanProposal(p) {
+  if (!p || !GAP_KINDS.has(p.kind)) return null;
+  const out = { kind: p.kind, text: String(p.text || '').slice(0, 300) };
+  for (const k of ['id', 'pipeline', 'step', 'after']) if (p[k] != null) { if (!GAP_SLUG.test(String(p[k]))) return null; out[k] = String(p[k]); }
+  for (const k of ['label', 'what']) if (p[k] != null) out[k] = String(p[k]).slice(0, 160);
+  if (Array.isArray(p.keywords)) out.keywords = p.keywords.map(x => String(x).slice(0, 30)).slice(0, 6);
+  if ((p.kind === 'pipeline' || p.kind === 'variante' || p.kind === 'etape') && !out.id) return null;
+  if (!out.text) out.text = `${p.kind} ${out.id || out.pipeline || ''}`.trim();
+  return out;
+}
+app.post('/api/pipeline-gaps', express.json({ limit: '8kb' }), (req, res) => {
+  const b = req.body || {};
+  const text = typeof b.text === 'string' ? b.text.trim() : '';
+  if (!text) return res.status(400).json({ ok: false, error: 'text requis' });
+  if (b.project && !config.projects.some(p => p.name === b.project)) return res.status(404).json({ ok: false, error: 'projet inconnu' });
+  const proposal = cleanProposal(b.proposal);
+  if (!proposal) return res.status(400).json({ ok: false, error: 'proposition invalide (kind : pipeline | variante | etape | rattachement)' });
+  const alternative = b.alternative ? cleanProposal(b.alternative) : null;
+  const key = `signale:${crypto.createHash('sha1').update(text).digest('hex').slice(0, 16)}`;
+  const id = observeEntry({
+    entry: 'signalement', project: b.project || null, text,
+    caller: typeof b.by === 'string' ? b.by.slice(0, 40) : undefined,
+    gap: { key, reason: 'signalée', why: String(b.why || 'étape ou tâche sans case précise').slice(0, 300), proposal, ...(alternative ? { alternative } : {}) },
+  });
+  res.status(201).json({ ok: true, key, obsId: id });
 });
 
 app.put('/api/model-routing/:task', express.json({ limit: '4kb' }), async (req, res) => {

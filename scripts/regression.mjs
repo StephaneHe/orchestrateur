@@ -524,6 +524,47 @@ async function apiChecks(sb) {
     assert(v.mode === 'observation' && v.items.length && v.counts.byPipeline && v.entryKinds['terminal'], 'route /api/pipeline-observe incomplète');
     return `${recs.length} entrées observées : ${[...new Set(recs.map(x => x.entry))].join(', ')}`;
   });
+  await check(S, 'pipeline-gaps', 'Lacunes de pipeline : une entrée inclassable est traitée en Discussion ET produit un signalement avec proposition, notifié au chef ; « Accepter » ajoute bien l’étape (choix du model ensuite), « Rejeter » n’ajoute rien ; signalement explicite d’une étape sans case', async () => {
+    const first = await get('/api/pipeline-gaps');
+    if (first.status === 404) NA('lacunes absentes de cet état du code');
+    const routingPath = path.join(sb.root, 'model-routing.json');
+    const text = 'planifie mes vacances en Italie avec un budget serré';
+    // lambda : fixture sans état à préserver (beta porte la question des parcours « attention »).
+    let r = await post('/api/dispatch', { project: 'lambda', prompt: text, queueIfBusy: true });
+    assert(r.status === 202, `dispatch : ${r.status}`);
+    const open = async () => (await json('/api/pipeline-gaps')).open;
+    assert(await until(async () => (await open()).some(g => g.entries?.[0]?.head === text), 8000), 'aucun signalement pour l’entrée inclassable');
+    const gap = (await open()).find(g => g.entries[0].head === text);
+    assert(gap.reason === 'aucun-pipeline' && gap.entries[0].pipeline === 'discussion', 'l’entrée n’est pas traitée en Discussion');
+    assert(gap.proposal?.kind === 'pipeline' && gap.proposal.text && gap.alternative?.kind === 'rattachement', `proposition : ${JSON.stringify(gap.proposal)}`);
+    assert(await until(() => readLog('chef').some(e => e.type === 'user_prompt' && e.source === 'pipeline-gap' && e.text.includes(text.slice(0, 30))), 5000), 'le chef n’a pas été notifié');
+    // Accepter → le pipeline et ses cases existent, le model se choisit ensuite.
+    r = await post(`/api/pipeline-gaps/${encodeURIComponent(gap.key)}/accept`, { choice: 'primary' });
+    const acc = await r.json();
+    assert(r.status === 200 && acc.applied?.slot, `accepter : ${r.status} ${JSON.stringify(acc)}`);
+    const v = await json('/api/model-routing');
+    assert(v.pipelines.some(p => p.id === acc.applied.pipeline) && v.slots.some(s => s.id === acc.applied.slot), 'le pipeline accepté n’apparaît pas');
+    const put = (slot, body) => fetch(`${sb.url}/api/model-routing/${slot}`, { method: 'PUT', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    assert((await put(acc.applied.slot, { provider: 'anthropic', model: 'claude-sonnet-5' })).status === 200, 'model refusé sur la nouvelle case');
+    assert(!(await open()).some(g => g.key === gap.key), 'la lacune acceptée reste ouverte');
+    assert((await post(`/api/pipeline-gaps/${encodeURIComponent(gap.key)}/accept`, {})).status === 404, 'double acceptation possible');
+    // Signalement explicite d'une étape sans case, puis Accepter / Rejeter.
+    r = await post('/api/pipeline-gaps', { text: 'publier l’APK sur le Play Store', project: 'alpha', why: 'aucune variante de « Livrer » ne couvre la publication sur un store',
+      proposal: { kind: 'variante', pipeline: 'dev', step: 'livrer', id: 'store', label: 'Publication store', text: 'ajouter la variante « Publication store » à 6 Livrer' } });
+    assert(r.status === 201, `signalement : ${r.status}`);
+    const key2 = (await r.json()).key;
+    assert((await post(`/api/pipeline-gaps/${encodeURIComponent(key2)}/accept`, {})).status === 200, 'variante non acceptée');
+    assert((await json('/api/model-routing')).slots.some(s => s.id === 'dev.livrer.store'), 'variante absente après acceptation');
+    r = await post('/api/pipeline-gaps', { text: 'trier les photos du téléphone par lieu', proposal: { kind: 'etape', pipeline: 'images', after: 'cadrer', id: 'trier', label: 'Trier', text: 'nouvelle étape « Trier » après Cadrer' } });
+    const key3 = (await r.json()).key;
+    assert((await post(`/api/pipeline-gaps/${encodeURIComponent(key3)}/reject`, {})).status === 200, 'rejet refusé');
+    assert(!(await json('/api/model-routing')).slots.some(s => s.id === 'images.trier'), 'une lacune rejetée a ajouté une étape');
+    assert((await post('/api/pipeline-gaps', { text: 'x', proposal: { kind: 'etape', pipeline: 'dev', after: 'livrer', id: '../x' } })).status === 400, 'proposition invalide acceptée');
+    assert((await post('/api/pipeline-gaps', { text: 'x', proposal: { kind: 'inconnu' } })).status === 400, 'sorte inconnue acceptée');
+    // L'instance repart sans structure ajoutée pour les parcours navigateur.
+    fs.rmSync(routingPath, { force: true });
+    return `proposition « ${gap.proposal.kind} » acceptée → ${acc.applied.slot}`;
+  });
   await check(S, 'sse', 'Flux temps réel /api/sse/fleet : une ligne de log arrive au client', async () => {
     const ac = new AbortController();
     const res = await fetch(`${sb.url}/api/sse/fleet`, { headers: H, signal: ac.signal });
