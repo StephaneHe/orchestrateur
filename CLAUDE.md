@@ -939,6 +939,52 @@ le meilleur des 2 ».
   - HTTP `model-routing` ;
   - navigateur `models-dual`.
 
+## Pipelines obligatoires — phase 2 : outillage NVIDIA / OpenRouter (0.47.0)
+
+Demande utilisateur (2026-10-09) : « est-ce que l'on utilise les pipeline
+specifies plutot ? Sinon, il faut faire en sorte que ces pipelines soient
+obligatoirement utlises. » Les phases 2 à 7 de `docs/PLAN-pipeline-enforcement.md`
+sont lancées dans l'ordre. Ce paragraphe décrit la phase 2. L'état et la phase
+suivante sont tenus dans le plan.
+
+- **codex = harnais unique hors Claude.** Usage : `dispatch.mjs <p> "<demande>"
+  --provider nvidia|openrouter --model <éditeur/model>`.
+  - Le model est toujours explicite : sans lui, exit 64, sauf
+    `nvidiaModel` / `openrouterModel` dans le projet.
+  - Erreur d'API → `fallback_refused` + `error_model_unavailable` (pause,
+    décision n° 8), aucun repli.
+- **OpenRouter** : en direct, en Responses.
+  - La clé (`.env`) va seulement à ce fils, via `env_key`.
+  - `ORCH_OPENROUTER_BASE_URL` sert aux tests.
+- **NVIDIA** : passerelle `scripts/responses-gateway.mjs`
+  (`mountGatewayRoutes`, routes `/api/llm-gateway/nvidia[-web]/v1/…`).
+  - Boucle locale seulement ; jeton `derivedToken(root, 'gateway')`
+    (`scripts/local-secret.mjs`, secret `.orchestrateur-secret`, gitignoré).
+  - Clé NVIDIA côté serveur seulement.
+  - **NVIDIA est appelé sans flux** : en flux, kimi-k3 laissait fuir ses jetons
+    de modèle.
+  - Messages assistant consécutifs fusionnés ; outils « namespace » et
+    `web_search` natif retirés ; `web_fetch` servi par la passerelle si le
+    projet a droit au web.
+  - `ORCH_GATEWAY_UPSTREAM_NVIDIA` sert aux tests.
+- Clé et jeton exclus des commandes du model : motifs par défaut de codex, plus
+  `shell_environment_policy.exclude`.
+- Bac à sable selon les `allowed-tools` : `-s read-only` sans Edit, Write ni
+  Bash. Le bac à sable Windows `elevated` vient du `config.toml` du poste : sans
+  lui, chaque commande passe par le relecteur automatique de
+  `--approve-for-me`, qui appelle le même fournisseur.
+- `AGENT_HARNESS` vaut true pour nvidia et openrouter. La règle « en
+  construction » reste disponible.
+- **Dispatch serveur pas encore redémarré** : la route de la passerelle n'existe
+  pas. Un tour `--provider nvidia` échoue alors en `fallback_refused`
+  (passerelle 404). OpenRouter marche sans redémarrage.
+- **Disponibilité NVIDIA** (2026-10-09) : la cascade du failover est presque
+  morte (n° 2 et n° 4 retirés, n° 3 en 500, n° 1 kimi-k3 très lent). Voir le
+  plan, §2.7.
+- Recettes :
+  - `_test_responses_shim.mjs` (bout en bout réel avec faux fournisseurs) ;
+  - HTTP `harness-nvidia`.
+
 ## Suggestions de models de l'étude comparative (0.46.0)
 
 Demande utilisateur (« Continue », à la proposition du chef) : afficher dans la

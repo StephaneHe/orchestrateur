@@ -139,7 +139,7 @@ console.log('\n── 6. Refus, avant toute écriture');
   const ng = sandbox({ gitRepo: false });
   t('projet sans git → 64 (isolation impossible)', run(ng, ['x', '--model', P, '--second-model', S]).status === 64);
   const sb2 = sandbox();
-  t('second NVIDIA / OpenRouter → 64 (outillage en construction)', run(sb2, ['x', '--model', P, '--second-model', 'moonshotai/kimi-k3']).status === 64);
+  t('second « éditeur/model » sans --second-provider nvidia|openrouter → 64 (fournisseur ambigu)', run(sb2, ['x', '--model', P, '--second-model', 'moonshotai/kimi-k3']).status === 64);
   t('--second-model sans --model → 64', run(sb2, ['x', '--second-model', S]).status === 64);
   t('aucune écriture dans le log après un refus', events(sb2).length === 0);
   const sb3 = sandbox();

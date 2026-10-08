@@ -63,6 +63,7 @@ import { trustWorkspace } from './scripts/workspace-trust.mjs';
 // Vue « Models par tâche » (0.39.0) : catalogue + model-routing.json.
 import { createModelRouting, incompatibility } from './scripts/model-routing.mjs';
 import { createRecommendations } from './scripts/model-reco.mjs';
+import { mountGatewayRoutes } from './scripts/responses-gateway.mjs';
 // Clés NVIDIA / OpenRouter saisies dans la page Models (0.43.0).
 import { createApiKeys } from './scripts/api-keys.mjs';
 import { createPermissionStore, mountPermissionRoutes } from './scripts/permission-store.mjs';
@@ -2269,6 +2270,9 @@ app.get('/downloads/:project/doc/:id/raw', (req, res) => {
 // the viewer having to append ?token=… to every URL.
 app.use((req, res, next) => {
   if (!TOKEN_GATE_ENABLED) return next();   // gate disabled — Tailscale-only access
+  // La passerelle de codex a son propre contrôle, plus strict (boucle locale +
+  // jeton dérivé du secret) : codex n'envoie qu'un en-tête Authorization.
+  if (req.path.startsWith('/api/llm-gateway/')) return next();
   const header = req.header('x-orchestrator-token');
   const query  = typeof req.query?.token === 'string' ? req.query.token : null;
   const cookie = parseCookieToken(req.headers.cookie);
@@ -2720,6 +2724,30 @@ app.post('/api/model-routing/apply-suggestions', sameOriginOnly, express.json({ 
     debugLog(`[model-reco] ${e.message}`);
     res.status(500).json({ ok: false, error: 'application impossible' });
   }
+});
+
+// ── Passerelle Responses → chat/completions (phase 2, 0.47.0) ───────────────
+// codex (harnais unique hors Claude) → ce serveur → NVIDIA. Boucle locale
+// seulement, jeton dérivé du secret local (le token gate est coupé : on ne
+// s'appuie pas sur lui). La clé NVIDIA ne quitte jamais ce processus.
+// `nvidia-web` : même chose, avec l'outil web_fetch servi ici (projet qui a
+// droit au web).
+function readDotEnvKey(name) {
+  try {
+    const m = new RegExp(`^\\s*${name}\\s*=\\s*(.+)$`, 'm').exec(fs.readFileSync(path.join(__dirname, '.env'), 'utf8'));
+    return m ? m[1].trim().replace(/^["']|["']$/g, '') : '';
+  } catch { return ''; }
+}
+mountGatewayRoutes(app, express, {
+  root: __dirname,
+  upstreams: {
+    nvidia: () => ({
+      url: `${(process.env.ORCH_GATEWAY_UPSTREAM_NVIDIA || 'https://integrate.api.nvidia.com/v1').replace(/\/+$/, '')}/chat/completions`,
+      key: BOOT_PROVIDER_KEYS.NVIDIA_API_KEY || readDotEnvKey('NVIDIA_API_KEY') || (process.env.ORCH_GATEWAY_UPSTREAM_NVIDIA ? 'fixture' : ''),
+      stream: false,   // voir responses-gateway.mjs : le flux NVIDIA abîme les appels d'outils
+    }),
+  },
+  log: (m) => debugLog(m),
 });
 
 // Classifications récentes (phase 1 des pipelines, observation seule).

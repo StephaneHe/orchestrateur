@@ -94,12 +94,17 @@ function nvidiaCaps(id) {
 // par projet, traçage system/init). NVIDIA et OpenRouter : outillage en
 // construction (docs/PLAN-pipeline-enforcement.md, phase « Outillage ») — ils
 // restent proposés, mais seulement pour les étapes de jugement.
-export const AGENT_HARNESS = { anthropic: true, openai: true, nvidia: false, openrouter: false };
+// 0.47.0 (phase 2) : NVIDIA et OpenRouter tournent dans codex (harnais unique
+// hors Claude) — NVIDIA par la passerelle Responses → chat du serveur,
+// OpenRouter en direct. Vérifié réellement le 2026-10-08 (lecture, écriture,
+// commandes, journal identique, aucun repli). La règle « en construction »
+// reste pour tout futur fournisseur mis à false.
+export const AGENT_HARNESS = { anthropic: true, openai: true, nvidia: true, openrouter: true };
 export const HARNESS_PENDING_MSG = 'outillage d’agent en construction : NVIDIA et OpenRouter ne peuvent pas encore lire, écrire ni exécuter — étapes de jugement seulement';
 
 /** Une case accepte-t-elle ce model / cet outil ? Renvoie null si oui, sinon la raison. */
-export function incompatibility(need, provider, entry, slot) {
-  if (need.llm === 'text' && slot && !slot.judge && AGENT_HARNESS[provider] === false) return HARNESS_PENDING_MSG;
+export function incompatibility(need, provider, entry, slot, harness = AGENT_HARNESS) {
+  if (need.llm === 'text' && slot && !slot.judge && harness[provider] === false) return HARNESS_PENDING_MSG;
   if (provider === 'local') {
     if (!need.local?.length) return 'aucun outil local ne convient à cette étape';
     if (!entry) return null;

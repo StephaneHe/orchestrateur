@@ -202,9 +202,9 @@ scenario('codex : choix du model (flag > projet > défaut config > config.toml d
   // Résolution : on évalue l'expression RÉELLE de runCodex avec des entrées pilotées.
   const a = D.indexOf('const { model: codexModel, source: codexModelSource } = isFailover');
   const b = D.indexOf(';', D.indexOf("{ model: null, source: 'codex-config' }", a)) + 1;
-  const resolve = (isFailover, modelOverride, project, config) =>
-    new Function('isFailover', 'modelOverride', 'project', 'config', 'FAILOVER_CODEX_MODEL',
-      `${D.slice(a, b)}\nreturn { codexModel, codexModelSource };`)(isFailover, modelOverride, project, config, 'gpt-5.6-sol');
+  const resolve = (isFailover, modelOverride, project, config, harness = null) =>
+    new Function('isFailover', 'modelOverride', 'project', 'config', 'FAILOVER_CODEX_MODEL', 'harness',
+      `${D.slice(a, b)}\nreturn { codexModel, codexModelSource };`)(isFailover, modelOverride, project, config, 'gpt-5.6-sol', harness);
   let x = resolve(false, 'gpt-6-astra', {}, { defaults: {} });
   ok(x.codexModel === 'gpt-6-astra' && x.codexModelSource === 'flag', '--model explicite gagne');
   x = resolve(false, 'gpt-6-astra', { codexModel: 'gpt-5.5' }, { defaults: { codexModel: 'gpt-5.6-luna' } });
@@ -219,6 +219,11 @@ scenario('codex : choix du model (flag > projet > défaut config > config.toml d
   ok(x.codexModel === 'gpt-5.6-sol' && x.codexModelSource === 'failover', 'failover : inchangé, et le --model Claude du dispatch n’atteint jamais codex');
   x = resolve(true, null, { codexModel: 'gpt-5.5' }, { defaults: {} });
   ok(x.codexModel === 'gpt-5.5', 'failover : le codexModel configuré garde la priorité (comme avant)');
+  // 0.47.0 — harnais NVIDIA / OpenRouter : --model, sinon <provider>Model du projet, jamais codexModel.
+  x = resolve(false, null, { codexModel: 'gpt-5.5', nvidiaModel: 'moonshotai/kimi-k3' }, { defaults: { codexModel: 'gpt-5.6-luna' } }, 'nvidia');
+  ok(x.codexModel === 'moonshotai/kimi-k3' && x.codexModelSource === 'project', 'harnais NVIDIA : nvidiaModel du projet, jamais le codexModel');
+  x = resolve(false, 'deepseek/deepseek-v4.1-flash', {}, { defaults: {} }, 'openrouter');
+  ok(x.codexModel === 'deepseek/deepseek-v4.1-flash' && x.codexModelSource === 'flag', 'harnais OpenRouter : --model explicite');
   ok(!D.split('\n').some(l => /'gpt-4o'/.test(l) && !/^\s*\/\//.test(l)), "plus aucun 'gpt-4o' codé en dur (hors commentaires)");
   ok(/\.\.\.\(codexModel \? \['--model', codexModel\] : \[\]\)/.test(D), '--model n’est passé à codex que s’il est résolu');
 

@@ -273,8 +273,9 @@ scenario('dispatch.mjs — flags consommés et garde-fous du pool');
   let r = run(['projetInexistant', '--model', 'claude-opus-5', '--provider', 'codex', 'bonjour']);
   ok(/unknown project "projetInexistant"/.test(r.stderr), '--model/--provider sont consommés (le projet reste le 1er positionnel)');
 
-  r = run(['projetInexistant', '--provider', 'nvidia', 'bonjour']);
-  ok(r.status === 64 && /--provider must be/.test(r.stderr), '--provider n’accepte que claude|codex');
+  // 0.47.0 : nvidia et openrouter sont des fournisseurs outillés (harnais codex).
+  r = run(['projetInexistant', '--provider', 'mistral', 'bonjour']);
+  ok(r.status === 64 && /--provider must be/.test(r.stderr), '--provider n’accepte que claude|codex|nvidia|openrouter');
 
   r = run(['chef', 'bonjour'], { DISPATCH_SLOT: '1', DISPATCH_TICKET: 'm-1-aaaa' });
   ok(r.status === 65 && /délégation chef → chef/.test(r.stderr), 'un chef ne délègue pas à « chef » en P0-A (refus clair, pas un suicide de tour)');

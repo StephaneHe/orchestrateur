@@ -4,7 +4,7 @@ A local Windows dashboard where one "conductor" AI session pilots a fleet of
 headless coding agents, one per project, with a live web viewer and an
 Android companion app.
 
-`version 0.46.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
+`version 0.47.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
 
 > **Status: active, personal project.** Built and used daily on a single
 > Windows machine. Pre-1.0: internal APIs and file formats can still change
@@ -108,6 +108,12 @@ one screen to watch the whole fleet.
   of each into the real repo and explains what it kept from each model. It
   never falls back to another model. If the second fails, the user is warned;
   if the principal fails, the turn pauses with a question.
+- **Every model can act.** NVIDIA and OpenRouter models run inside the codex
+  harness, exactly like codex itself: they read and write files and run
+  commands, with the same sandbox, log format and "no fallback" rule.
+  OpenRouter is called directly; NVIDIA (chat/completions only) goes through a
+  Responses → chat gateway built into the server, on loopback, with a token
+  derived from a local secret. Provider keys never reach the model's commands.
 - **Model suggestions from a comparative study.** Each step and variant of the
   Models page shows a suggested principal model, an alternative, the report's
   confidence level and its justification, read from a versioned data file

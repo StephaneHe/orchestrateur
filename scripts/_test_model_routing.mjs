@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createModelRouting, PIPELINES, SLOTS, LEGACY_MAP, HISTORY_MAX, incompatibility } from './model-routing.mjs';
+import { createModelRouting, PIPELINES, SLOTS, LEGACY_MAP, HISTORY_MAX, incompatibility, AGENT_HARNESS } from './model-routing.mjs';
 import { JUDGE_STEPS } from './model-pipelines.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -161,20 +161,30 @@ console.log('\n── 6. Enregistrement, validation, historique');
   t('ffmpeg pour la découpe vidéo → accepté', mr.setAssignment('video.monter.decoupe', { provider: 'local', model: 'ffmpeg' }).ok);
   t('synthèse du navigateur pour le TTS → acceptée', mr.setAssignment('audio.traiter.tts', { provider: 'local', model: 'web-speech' }).ok);
   t('vision NVIDIA pour la vérification visuelle → acceptée', mr.setAssignment('images.verifier', { provider: 'nvidia', model: 'nvidia/vila' }).ok);
-  // Réponse utilisateur n° 7 : NVIDIA / OpenRouter gardés, outillage en construction.
+  // Réponse utilisateur n° 7 : « tous les models doivent pouvoir agir de manière
+  // identique ». 0.41.0 → 0.46.0 : outillage en construction (409 sur une étape
+  // d'action) ; depuis 0.47.0, NVIDIA et OpenRouter tournent dans codex.
+  const harnessOn = AGENT_HARNESS.nvidia === true;
   const harness = mr.setAssignment('dev.vert', { provider: 'nvidia', model: 'z-ai/glm-5.3' });
-  t('NVIDIA sur une étape d’action (4b) → 409 « outillage en construction »', harness.status === 409 && /outillage/.test(harness.error));
+  t(harnessOn ? 'NVIDIA sur une étape d’action (4b) → accepté (outillé : harnais codex)' : 'NVIDIA sur une étape d’action (4b) → 409 « outillage en construction »',
+    harnessOn ? harness.ok : (harness.status === 409 && /outillage/.test(harness.error)), JSON.stringify(harness));
+  // La règle « en construction » reste en place pour tout fournisseur sans harnais.
+  const actionSlot = SLOTS.find(s => s.id === 'dev.vert');
+  t('règle conservée : un fournisseur sans harnais est refusé sur une étape d’action, accepté sur un jugement',
+    /outillage/.test(incompatibility(actionSlot.need, 'nvidia', null, actionSlot, { nvidia: false }) || '') &&
+    incompatibility(SLOTS.find(s => s.id === 'dev.revue.code').need, 'nvidia', null, SLOTS.find(s => s.id === 'dev.revue.code'), { nvidia: false }) === null);
   t('NVIDIA sur une étape de jugement (revue) → accepté', mr.setAssignment('dev.revue.code', { provider: 'nvidia', model: 'z-ai/glm-5.3' }).ok);
   t('NVIDIA pour classifier (Routage) → accepté', mr.setAssignment('routage.classifier', { provider: 'nvidia', model: 'z-ai/glm-5.3' }).ok);
   t('Anthropic / codex restent acceptés sur une étape d’action', mr.setAssignment('dev.vert', { provider: 'anthropic', model: 'claude-sonnet-5' }).ok);
-  t('la vue expose les fournisseurs sans harnais', mr.view().agentHarness.nvidia === false && mr.view().agentHarness.openrouter === false && mr.view().agentHarness.anthropic === true);
+  t('la vue expose l’état d’outillage de chaque fournisseur', mr.view().agentHarness.nvidia === harnessOn && mr.view().agentHarness.openrouter === harnessOn && mr.view().agentHarness.anthropic === true);
   // 0.44.0 — mode double model : un principal (obligatoire) et un second (optionnel).
   t('second sans principal → 409', mr.setAssignment('dev.livrer.build', { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' }, 'dashboard', 'second').status === 409);
   mr.setAssignment('dev.livrer.build', { provider: 'anthropic', model: 'claude-sonnet-5' });
   const sec = mr.setAssignment('dev.livrer.build', { provider: 'openai', model: 'gpt-6-astra' }, 'dashboard', 'second');
   t('second enregistré à côté du principal', sec.ok && sec.assignment.model === 'claude-sonnet-5' && sec.assignment.second?.model === 'gpt-6-astra');
   t('second relu après écriture (persistance)', mr.view().assignments['dev.livrer.build'].second.model === 'gpt-6-astra');
-  t('second : mêmes règles de capacité (outillage NVIDIA en construction → 409)', mr.setAssignment('dev.livrer.build', { provider: 'nvidia', model: 'z-ai/glm-5.3' }, 'dashboard', 'second').status === 409);
+  t('second : mêmes règles de capacité que le principal (outillage NVIDIA)', (() => { const r = mr.setAssignment('dev.livrer.build', { provider: 'nvidia', model: 'z-ai/glm-5.3' }, 'dashboard', 'second'); return harnessOn ? r.ok : r.status === 409; })());
+  mr.setAssignment('dev.livrer.build', { provider: 'openai', model: 'gpt-6-astra' }, 'dashboard', 'second');
   t('second : mêmes règles de capacité (outil local pour du code → 400)', mr.setAssignment('dev.livrer.build', { provider: 'local', model: 'ffmpeg' }, 'dashboard', 'second').status === 400);
   t('principal = second : accepté avec un avertissement', /identiques/.test(mr.setAssignment('dev.livrer.build', { provider: 'anthropic', model: 'claude-sonnet-5' }, 'dashboard', 'second').warning || ''));
   mr.setAssignment('dev.livrer.build', { provider: 'openai', model: 'gpt-6-astra' }, 'dashboard', 'second');

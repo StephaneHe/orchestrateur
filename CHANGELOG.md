@@ -11,6 +11,55 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.47.0] - 2026-10-09
+
+Phase 2 des pipelines obligatoires. Demande utilisateur : « est-ce que l'on
+utilise les pipeline specifies plutot ? Sinon, il faut faire en sorte que ces
+pipelines soient obligatoirement utlises. » Prérequis, selon la décision n° 7 :
+« tous les models doivent pouvoir agir de manière identique ».
+
+### Added
+- (server) **Outillage NVIDIA et OpenRouter.** codex devient le harnais unique
+  de tout ce qui n'est pas Claude : mêmes outils (lecture, écriture,
+  commandes), même journal JSONL, même traçage, aucun repli.
+  - `dispatch.mjs --provider nvidia|openrouter --model <éditeur/model>` (aussi
+    `nvidiaModel` / `openrouterModel` du projet, et `--second-provider` pour le
+    double model).
+  - Le `system/init` porte `provider`, `harness: "codex"`, `model`,
+    `modelSource`, `sandbox` et `webSearch`. Le model servi est vérifié dans la
+    rollout codex.
+  - Le bac à sable codex suit les `allowed-tools` du projet : lecture seule
+    sans Edit, Write ni Bash.
+- (server) **Passerelle Responses → chat/completions** intégrée
+  (`scripts/responses-gateway.mjs`, routes `/api/llm-gateway/<fournisseur>/v1/…`)
+  pour NVIDIA, qui ne parle que chat/completions.
+  - Boucle locale seulement ; jeton dérivé du nouveau secret local
+    `.orchestrateur-secret` (gitignoré) ; la clé NVIDIA ne quitte pas le
+    serveur.
+  - Outil `web_fetch` servi par la passerelle pour un projet qui a droit au
+    web ; il refuse la machine locale et le réseau local.
+  - NVIDIA est appelé sans flux, puis le flux Responses est reconstitué. Les
+    outils sans objet pour codex sont filtrés.
+- `scripts/local-secret.mjs` (secret local et dérivés HMAC, base des futurs
+  jetons d'étape).
+- Tests : `scripts/_test_responses_shim.mjs` (44 contrôles, dont un bout en
+  bout réel codex → passerelle → faux NVIDIA, et codex → faux OpenRouter) et
+  le parcours HTTP `harness-nvidia`.
+
+### Changed
+- (viewer) Page Models : NVIDIA et OpenRouter ne sont plus « 🔧 outillage en
+  construction ». Ils sont proposés sur les étapes d'action
+  (`AGENT_HARNESS` à true). La règle reste en place pour un futur fournisseur
+  sans harnais.
+- (server) Le token gate, s'il est réactivé, laisse passer
+  `/api/llm-gateway/*`, qui a son propre contrôle (boucle locale + jeton
+  dérivé).
+
+### Security
+- Ni la clé OpenRouter ni le jeton de la passerelle ne sont visibles des
+  commandes du model. codex les exclut par motif ; c'est vérifié réellement et
+  doublé par `shell_environment_policy.exclude`.
+
 ## [0.46.0] - 2026-10-08
 
 Demande utilisateur (« Continue », à la proposition du chef) : appliquer à la

@@ -13,6 +13,12 @@
 > Ce document est un **plan**. Version de référence : 0.40.1. La **phase 1
 > (observation)** est livrée en **0.41.0**, complétée en **0.42.0** (lacunes proposées, décision Q9) : chaque entrée est classée et
 > journalisée, sans changement de comportement (voir §5).
+>
+> **2026-10-09 — exigence renouvelée** : « est-ce que l'on utilise les
+> pipeline specifies plutot ? Sinon, il faut faire en sorte que ces pipelines
+> soient obligatoirement utlises. » Les phases 2 à 7 sont lancées dans l'ordre.
+> **Phase 2 (outillage NVIDIA / OpenRouter) livrée en 0.47.0** (§2.7, « État
+> livré »). Prochaine : phase 3 (moteur).
 
 ---
 
@@ -267,6 +273,34 @@ Correspondance des outils du projet (`allowed-tools`) avec codex :
 
 Le `system/init` porte `provider: "nvidia" | "openrouter"`, `model` et `modelSource`. Le model réellement servi est relu dans le rollout codex, comme en 0.26.0. Il n'y a aucun repli.
 
+#### État livré (0.47.0, 2026-10-09)
+
+- **Usage** : `dispatch.mjs <p> "<demande>" --provider nvidia|openrouter --model <éditeur/model>`.
+  - Le model est toujours explicite ; sans lui, refus (exit 64).
+  - Le double model accepte `--second-provider nvidia|openrouter`.
+  - `AGENT_HARNESS` passe à `true` pour les deux : la page Models les propose sur les étapes d'action.
+- **OpenRouter** : codex en direct, en Responses.
+  - La clé du `.env` va seulement à ce fils, par `env_key`.
+  - Essai réel sur `pipelineLab` (`deepseek/deepseek-v4.1-flash`) : lecture, modification, `npm test`, `model_verified`. Le journal est identique à un tour codex.
+- **NVIDIA** : passerelle `scripts/responses-gateway.mjs`, montée dans le serveur (`/api/llm-gateway/nvidia[-web]/v1/{models,responses}`).
+  - Boucle locale seulement.
+  - Jeton = HMAC du secret local `.orchestrateur-secret` (nouveau, gitignoré). Le secret brut ne sort jamais.
+  - La clé NVIDIA reste dans le serveur.
+  - Route exemptée du token gate, car son contrôle est plus strict.
+- **Constats des essais réels** :
+  - codex déclare beaucoup d'outils « namespace » (sous-agents, applis ChatGPT) et un `web_search` natif. La passerelle les retire. Il reste environ 8,9 k tokens d'entrée par appel, contre environ 30 k en direct sur OpenRouter.
+  - **Deux messages assistant consécutifs** (texte, puis appels) dérèglent kimi-k3 : la passerelle les fusionne.
+  - **En flux, NVIDIA laisse fuir les jetons de modèle** de kimi-k3 (`<|open|>`, `<|close|>`) au lieu d'appels d'outils propres. Sans flux, la même requête rend des `tool_calls` nets. La passerelle appelle donc NVIDIA **sans flux** et reconstitue le flux Responses.
+  - **Disponibilité NVIDIA (2026-10-09)** : `kimi-k3` répond, très lentement (≈ 100 s par appel, des 504 après 5 min, que codex relance) ; `deepseek-v4.1-flash` répond en ≈ 4 min. **Dans la cascade du failover, n° 2 `deepseek-v4-pro-0813` et n° 4 `deepseek-v4-flash-0731` sont retirés (410), et n° 3 `nemotron-3-ultra` répond 500.** Le failover NVIDIA sous limite Claude est donc presque mort : à revoir (hors périmètre de cette phase).
+  - codex n'expose ni la clé ni le jeton aux commandes du model : exclusion par motif `*KEY*` / `*TOKEN*`, vérifiée réellement, et doublée par `shell_environment_policy.exclude`.
+  - `--approve-for-me` confie les approbations à un relecteur automatique, qui appelle **le même fournisseur**. Avec le bac à sable Windows `elevated` du poste, les écritures dans le projet ne demandent pas d'approbation. Une action hors bac à sable est jugée par ce relecteur ; une réponse illisible vaut refus, ce qui est sûr.
+- **Limites connues** :
+  - OpenRouter n'a pas de recherche web dans codex : `web_search=live` est un outil OpenAI. Il faudrait la passerelle (`web_fetch`) pour lui.
+  - `web_fetch` n'est servi par la passerelle que s'il est le seul appel d'un tour.
+- **Tests** :
+  - `scripts/_test_responses_shim.mjs` : traduction, flux, erreurs, `web_fetch`, routes, et bout en bout réel (vrai `dispatch.mjs`, vrai codex, vraie passerelle, faux NVIDIA ; vrai codex et faux OpenRouter) ;
+  - HTTP `harness-nvidia`.
+
 ### 2.8 Double model (livré en 0.44.0)
 
 Demande utilisateur : « on peut donner 2 models (1 par défaut), et si 2 sont précisés, on lance la tâche sur les 2, puis le 1er relit le tout pour en tirer le meilleur des 2 ».
@@ -381,7 +415,7 @@ Chaque phase suit le protocole 0.29.0 : tag `pre-pipeline-enforce-pN-v<X.Y.Z>`, 
 | Phase | Livrables | Critères de réussite | Tests (dont l'exigence utilisateur) | Effort | Model |
 |---|---|---|---|---|---|
 | **P1 — Observation** ✅ (0.41.0 + 0.42.0, livrée) | Chaque entrée E1 à E14 est classée (pipeline + mode) par un **classifieur à règles** (`scripts/pipeline-observe.mjs`, gratuit et instantané) et journalisée dans `logs/pipeline-observe.ndjson`, terminal interactif compris (ligne par ligne). Inclassable = Discussion. **Aucun changement de comportement.** Panneau « Observation » dans la page Models. Étapes action / jugement, et NVIDIA / OpenRouter marqués « outillage en construction » (refus 409 sur une étape d'action). Projet pilote `pipelineLab`. **0.42.0** : lacunes proposées (§1.4) et décision Q9 (hésitation → léger) | Chaque entrée observée une seule fois (l'identifiant suit l'entrée jusqu'au tour) ; le texte des tours est inchangé | `_test_pipeline_observe.mjs` (classification sur les vraies demandes du fleet, terminal, câblage de chaque entrée, vrai `dispatch.mjs`), HTTP `pipeline-observe`, navigateur `observe-view` et `models-harness` | fait | Opus |
-| **P2 — Outillage NVIDIA / OpenRouter** (0.43.0) | §2.7 : codex + OpenRouter (Responses), passerelle Responses → chat intégrée au serveur pour NVIDIA, outil `web_fetch` de la passerelle, correspondance des `allowed-tools` avec le bac à sable codex, `system/init` complet, vérification du model servi, aucun repli. `AGENT_HARNESS` passe à `true` fournisseur par fournisseur | Sur `pipelineLab`, un tour NVIDIA (kimi-k3) et un tour OpenRouter (avec la clé) **lisent un fichier, le modifient et lancent `npm test`**, avec un journal JSONL identique à un tour codex. Un model indisponible donne `fallback_refused`, pas de repli | `_test_responses_shim.mjs` (traduction SSE, appels d'outils en flux, erreurs), HTTP `harness-nvidia` (faux NVIDIA local), contrôle réel sur `pipelineLab` | 3 à 4 j | Opus |
+| **P2 — Outillage NVIDIA / OpenRouter** ✅ (livrée en 0.47.0, voir §2.7 « État livré ») | §2.7 : codex + OpenRouter (Responses), passerelle Responses → chat intégrée au serveur pour NVIDIA, outil `web_fetch` de la passerelle, correspondance des `allowed-tools` avec le bac à sable codex, `system/init` complet, vérification du model servi, aucun repli. `AGENT_HARNESS` passe à `true` fournisseur par fournisseur | Sur `pipelineLab`, un tour NVIDIA (kimi-k3) et un tour OpenRouter (avec la clé) **lisent un fichier, le modifient et lancent `npm test`**, avec un journal JSONL identique à un tour codex. Un model indisponible donne `fallback_refused`, pas de repli | `_test_responses_shim.mjs` (traduction SSE, appels d'outils en flux, erreurs), HTTP `harness-nvidia` (faux NVIDIA local), contrôle réel sur `pipelineLab` | 3 à 4 j | Opus |
 | **P3 — Moteur + Discussion + Dev léger, sur `pipelineLab`** (0.44.0) | Moteur d'exécution (`logs/runs/`), jeton d'étape, porte unique `startStep`, frise dans le journal, pause et escalade, **signaux de limite** (§2.5), avertissement « défaut du projet ». Classification par le model de `routage.classifier`, comparée au journal de la phase 1. Pipelines **Discussion** et **Développement léger** en service sur `pipelineLab` seulement | Sur le pilote, chaque tour porte `run/step/modelSource`, avec le bon model servi. Un `dispatch.mjs` lancé par un musicien est refusé. Un model indisponible met l'exécution en pause | HTTP `pipeline-run`, `pipeline-bypass`, `pipeline-unavailable`, `pipeline-limit-notice`. Navigateur `run-timeline` | 3 à 4 j | Opus |
 | **P4 — Développement complet** (0.45.0) | Boucle TDD pilotée (4a → 4b → 4c, un test à la fois), critères vérifiés (§2.4), revue → 4, limites et signaux, montée léger → complet. Toujours sur `pipelineLab` | Sur `pipelineLab` : 4a échoue réellement, 4b qui modifie le test est refusé, la suite passe à la sortie, la boucle s'arrête quand la liste est vide, chaque limite prévient l'utilisateur | `_test_pipeline_gates.mjs`, HTTP `pipeline-tdd`, `pipeline-limits` | 3 j | Opus (critères), Sonnet (intégration) |
 | **P5 — Toutes les entrées branchées** (0.46.0, Android 0.9.0) | Sélecteur de pipeline dans le composer et l'app, préfixes, `@musicien`, `sessions/new`, file, pool, réveil, relais. **Terminal interactif routé** (décision n° 1) : sa session devient une Discussion en lecture seule, et une ligne classée comme action est confirmée puis lancée en exécution du bon pipeline. Refus sans pipeline (sauf `--hors-pipeline` tracé). Contrat du chef mis à jour (dispatch vers le musicien Chef) | **Test de la demande utilisateur** : pour chaque entrée E1 à E14 de l'instance de test, le tour lancé appartient à une exécution et tourne sur le model de sa case. Aucune entrée ne lance de tour hors pipeline | HTTP `pipeline-all-entries`, navigateur `composer-pipeline` et `terminal-routing`, Android `assembleDebug` et un test de ViewModel | 3 j | Sonnet |

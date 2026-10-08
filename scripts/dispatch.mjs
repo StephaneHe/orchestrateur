@@ -126,6 +126,7 @@ import http from 'node:http';
 import https from 'node:https';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { derivedToken } from './local-secret.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // DISPATCH_ROOT_FOR_TESTS : racine alternative (config.json, logs/, .env)
@@ -195,8 +196,10 @@ function takeFlagValue(flag) {
 }
 const modelOverride    = takeFlagValue('--model');
 const providerOverride = takeFlagValue('--provider');
-if (providerOverride && !['claude', 'codex'].includes(providerOverride)) {
-  die(`--provider must be "claude" or "codex" (got "${providerOverride}")`);
+// 0.47.0 (phase 2 des pipelines) : nvidia et openrouter passent par codex,
+// harnais unique hors Claude — mêmes outils, même journal, aucun repli.
+if (providerOverride && !['claude', 'codex', 'nvidia', 'openrouter'].includes(providerOverride)) {
+  die(`--provider must be "claude", "codex", "nvidia" or "openrouter" (got "${providerOverride}")`);
 }
 
 // ---------------------------------------------------------------------------
@@ -216,7 +219,7 @@ const dualBranchArg  = takeFlagValue('--dual-branch');
 const dualCwdArg     = takeFlagValue('--dual-cwd');
 const dualSynthesis  = takeFlagValue('--dual-synthesis');
 const DUAL_RUN_RE = /^d-\d{8}T\d{6}-[a-z0-9]{4,8}$/;
-if (secondProvider && !['claude', 'codex'].includes(secondProvider)) die(`--second-provider must be "claude" or "codex" (got "${secondProvider}")`);
+if (secondProvider && !['claude', 'codex', 'nvidia', 'openrouter'].includes(secondProvider)) die(`--second-provider must be "claude", "codex", "nvidia" or "openrouter" (got "${secondProvider}")`);
 if (!['action', 'judge'].includes(dualMode)) die(`--dual-mode must be "action" or "judge" (got "${dualMode}")`);
 if (secondModel && !modelOverride) die('--second-model exige un model principal explicite : --model <principal> --second-model <second>');
 let DUAL_BRANCH = null;   // { run, role } : ce processus est l'une des deux branches
@@ -357,6 +360,15 @@ const provider = providerOverride || project.provider || config.defaults?.provid
 // moindre écriture de log.
 const CLAUDE_MODEL_RE = /^(claude|opus|sonnet|haiku|fable)\b/i;
 const OPENAI_MODEL_RE = /^(gpt|o\d|codex)\b/i;
+// NVIDIA et OpenRouter : leurs identifiants sont « éditeur/model » ; le model
+// est toujours explicite (--model, ou nvidiaModel / openrouterModel du projet).
+const HARNESS_PROVIDER = provider === 'nvidia' || provider === 'openrouter';
+if (HARNESS_PROVIDER && !modelOverride && !project[`${provider}Model`]) {
+  die(`--provider ${provider} : précise le model (--model éditeur/model), il n'y a pas de défaut`, 64);
+}
+if (HARNESS_PROVIDER && modelOverride && !/^[A-Za-z0-9][A-Za-z0-9._:\/@+~-]{0,159}$/.test(modelOverride)) {
+  die(`--model ${modelOverride} : identifiant invalide`, 64);
+}
 if (modelOverride && provider === 'codex' && CLAUDE_MODEL_RE.test(modelOverride)) {
   die(`--model ${modelOverride} est un model Claude : avec --provider codex, passe un model OpenAI ` +
     `(ex. gpt-6-astra, gpt-5.6-sol) ou omets --model pour le défaut de codex (config.toml)`);
@@ -627,6 +639,15 @@ function nvidiaFailoverConfig() {
 
 /** Read NVIDIA_API_KEY from process.env first, then I:\orchestrateur\.env.
  *  NEVER logged. Returns the key string or null. */
+/** Clé d'un fournisseur : environnement du parent, sinon .env (jamais affichée). */
+function loadProviderKey(name) {
+  if (process.env[name] && process.env[name].trim()) return process.env[name].trim();
+  try {
+    const m = new RegExp(`^\\s*${name}\\s*=\\s*(.+)$`, 'm').exec(fs.readFileSync(path.join(ROOT, '.env'), 'utf8'));
+    return m ? m[1].trim().replace(/^["']|["']$/g, '') : '';
+  } catch { return ''; }
+}
+
 function loadNvidiaKey() {
   if (process.env.NVIDIA_API_KEY && process.env.NVIDIA_API_KEY.trim()) {
     return process.env.NVIDIA_API_KEY.trim();
@@ -1340,11 +1361,17 @@ function runCodex(isFailover = false) {
   //   · leg de failover : INCHANGÉ — codexModel configuré > FAILOVER_CODEX_MODEL.
   //     Le `--model` d'un dispatch Claude qui bascule en failover est un model
   //     Claude : il ne doit jamais atteindre codex.
+  // Harnais (0.47.0) : NVIDIA et OpenRouter tournent DANS codex, avec leur
+  // fournisseur déclaré par -c model_providers.* (NVIDIA via la passerelle du
+  // serveur, qui traduit Responses → chat/completions ; OpenRouter en direct).
+  const harness = !isFailover && HARNESS_PROVIDER ? provider : null;
+  const runLabel = harness || 'codex';
   const { model: codexModel, source: codexModelSource } = isFailover
     ? (project.codexModel || config.defaults?.codexModel
         ? { model: project.codexModel || config.defaults.codexModel, source: project.codexModel ? 'project' : 'defaults' }
         : { model: FAILOVER_CODEX_MODEL, source: 'failover' })
     : modelOverride          ? { model: modelOverride,              source: 'flag' }
+    : harness                ? { model: project[`${harness}Model`], source: 'project' }   // jamais codexModel pour NVIDIA / OpenRouter
     : project.codexModel     ? { model: project.codexModel,         source: 'project' }
     : config.defaults?.codexModel ? { model: config.defaults.codexModel, source: 'defaults' }
     : { model: null, source: 'codex-config' };
@@ -1353,13 +1380,51 @@ function runCodex(isFailover = false) {
   const loggedCodexModel = codexModel || readCodexConfigModel() || 'défaut codex (config.toml illisible)';
   const fakeSid    = `codex-${crypto.randomUUID()}`;
 
+  const codexWeb = /\b(WebSearch|WebFetch)\b/.test(tools);
+  // Correspondance des outils du projet avec le bac à sable codex (plan §2.7) :
+  // sans Edit/Write/Bash, le projet est en lecture seule.
+  const canWrite = /\b(Edit|Write|Bash)\b/.test(tools);
+  const harnessCfg = [];
+  let harnessError = null;
+  if (harness === 'openrouter') {
+    const key = loadProviderKey('OPENROUTER_API_KEY');
+    if (!key) harnessError = 'clé OpenRouter absente (page Models → Clés API)';
+    else env.OPENROUTER_API_KEY = key;   // ce fils seulement : codex en a besoin pour appeler OpenRouter
+    harnessCfg.push('-c', 'model_provider=openrouter',
+      '-c', 'model_providers.openrouter.name="OpenRouter"',
+      // ORCH_OPENROUTER_BASE_URL : faux OpenRouter local de la suite de tests.
+      '-c', `model_providers.openrouter.base_url="${process.env.ORCH_OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1'}"`,
+      '-c', 'model_providers.openrouter.wire_api="responses"',
+      '-c', 'model_providers.openrouter.env_key="OPENROUTER_API_KEY"');
+  } else if (harness === 'nvidia') {
+    try { env.ORCH_GATEWAY_TOKEN = derivedToken(ROOT, 'gateway'); } catch (e) { harnessError = `jeton de passerelle indisponible : ${e.message}`; }
+    harnessCfg.push('-c', 'model_provider=orchnv',
+      '-c', 'model_providers.orchnv.name="NVIDIA (passerelle de l\'orchestrateur)"',
+      '-c', `model_providers.orchnv.base_url="http://127.0.0.1:${process.env.ORCH_PORT || 7777}/api/llm-gateway/${codexWeb ? 'nvidia-web' : 'nvidia'}/v1"`,
+      '-c', 'model_providers.orchnv.wire_api="responses"',
+      '-c', 'model_providers.orchnv.env_key="ORCH_GATEWAY_TOKEN"');
+  }
+  // Les commandes du model ne voient jamais la clé ni le jeton (codex les
+  // exclut déjà par motif *KEY*/*TOKEN* ; vérifié réellement le 2026-10-08).
+  if (harness) harnessCfg.push('-c', 'shell_environment_policy.exclude=["OPENROUTER_API_KEY","ORCH_GATEWAY_TOKEN","NVIDIA_API_KEY"]');
+
   logStream.write(JSON.stringify({
     type: 'system', subtype: 'init', session_id: fakeSid,
-    provider: 'codex', failover: isFailover || undefined,
+    provider: runLabel, ...(harness ? { harness: 'codex' } : {}), failover: isFailover || undefined,
     model: loggedCodexModel, modelSource: codexModelSource,
-    webSearch: /\b(WebSearch|WebFetch)\b/.test(tools) ? 'live' : 'défaut codex (projet sans outils web)',
+    sandbox: canWrite ? 'workspace-write' : 'read-only',
+    webSearch: harness === 'nvidia' ? (codexWeb ? 'web_fetch (passerelle)' : 'aucun (projet sans outils web)')
+      : harness === 'openrouter' ? 'aucun (OpenRouter : pas de recherche web dans codex)'
+      : codexWeb ? 'live' : 'défaut codex (projet sans outils web)',
     timestamp: new Date().toISOString(),
   }) + '\n');
+  if (harnessError) {
+    if (EXPLICIT_MODEL) { failExplicitModel(harnessError); return; }
+    logStream.write(JSON.stringify({ type: 'result', subtype: 'error', is_error: true, result: harnessError, session_id: fakeSid, provider: runLabel, num_turns: 1, timestamp: new Date().toISOString() }) + '\n');
+    try { fs.unlinkSync(pidPath); } catch {}
+    endLogAndExit(1);
+    return;
+  }
 
   // Where codex writes its final assistant message. Authoritative source for
   // the synthetic `result` text — more reliable than reassembling it from the
@@ -1392,12 +1457,14 @@ function runCodex(isFailover = false) {
   // (WebFetch/WebSearch) a la recherche live ; sinon on ne passe rien et codex
   // garde son défaut. La recherche est un outil côté serveur OpenAI : le bac à
   // sable workspace-write ne la bloque pas, et aucune clé n'est transmise.
-  const codexWeb = /\b(WebSearch|WebFetch)\b/.test(tools);
   const codexArgs = [
     'exec',
     ...(codexModel ? ['--model', codexModel] : []),   // absent ⇒ codex applique son config.toml
-    ...(codexWeb ? ['-c', 'web_search=live'] : []),
-    '--approve-for-me',
+    ...harnessCfg,
+    // La recherche live est un outil côté serveur OpenAI : seulement pour codex/OpenAI.
+    ...(codexWeb && !harness ? ['-c', 'web_search=live'] : []),
+    // --approve-for-me implique workspace-write ; sans outil d'écriture : lecture seule.
+    ...(canWrite ? ['--approve-for-me'] : ['-s', 'read-only']),
     '--skip-git-repo-check',
     '--json',
     '--cd', WORK_DIR,
@@ -1430,7 +1497,7 @@ function runCodex(isFailover = false) {
       type: 'result', subtype: 'error', is_error: true,
       result: `codex spawn failed: ${err.message}`,
       session_id: fakeSid, usage: {},
-      provider: 'codex', failover: isFailover || undefined,
+      provider: runLabel, failover: isFailover || undefined,
       timestamp: new Date().toISOString(),
     }) + '\n');
     try { fs.unlinkSync(pidPath); } catch {}
@@ -1477,7 +1544,7 @@ function runCodex(isFailover = false) {
     logStream.write(JSON.stringify({
       type: 'assistant',
       message: { role: 'assistant', content: blocks },
-      provider: 'codex', timestamp: new Date().toISOString(),
+      provider: runLabel, timestamp: new Date().toISOString(),
     }) + '\n');
   }
 
@@ -1628,6 +1695,14 @@ function runCodex(isFailover = false) {
 
     if (isErr && !finalText) finalText = codexErrorMsg || `codex exited with code ${code}${signal ? ` (signal ${signal})` : ''}`;
 
+    // Harnais NVIDIA / OpenRouter : le model est toujours explicite. Une erreur
+    // d'API (model inconnu, limite, fournisseur injoignable) n'a aucun repli :
+    // fallback_refused, puis la pause côté chef (décision n° 8).
+    if (harness && (codexTurnFailed || codexErrorMsg) && !signal) {
+      try { fs.unlinkSync(lastMsgPath); } catch {}
+      if (EXPLICIT_MODEL) { failExplicitModel(`${harness} : ${codexErrorMsg || 'tour codex en échec'}`, { thread_id: codexThreadId }); return; }
+    }
+
     // Model EXPLICITE (hors failover) : codex a-t-il servi CE model ?
     if (!isFailover && EXPLICIT_MODEL) {
       const v = verifyCodexRollout(codexThreadId, EXPLICIT_MODEL);
@@ -1639,7 +1714,7 @@ function runCodex(isFailover = false) {
       try {
         logStream.write(JSON.stringify({
           type: 'system', subtype: v.ok ? 'model_verified' : 'model_unverified',
-          model_requested: EXPLICIT_MODEL, provider: 'codex',
+          model_requested: EXPLICIT_MODEL, provider: runLabel,
           ...(v.ok ? { model_served: v.served } : { reason: v.why }),
           timestamp: new Date().toISOString(),
         }) + '\n');
@@ -1661,7 +1736,8 @@ function runCodex(isFailover = false) {
       usage: codexUsage
         ? { input_tokens: codexUsage.input_tokens ?? 0, output_tokens: codexUsage.output_tokens ?? 0 }
         : {},
-      provider: 'codex',
+      provider: runLabel,
+      ...(harness ? { harness: 'codex' } : {}),
       model: loggedCodexModel,
       failover: isFailover || undefined,
       timestamp: new Date().toISOString(),
@@ -2100,7 +2176,7 @@ function runClaude() {
 // readClaudeLimitFlag() deletes an expired flag as a side effect, so the
 // third case is also the automatic return to Claude at reset time.
 
-if (provider === 'codex') {
+if (provider === 'codex' || HARNESS_PROVIDER) {
   runCodex(false);
 } else {
   const limitedUntil = readClaudeLimitFlag();

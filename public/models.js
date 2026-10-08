@@ -327,7 +327,9 @@
         <li><span class="mr-ptag" data-provider="anthropic">ANT</span><span class="mr-ptag" data-provider="openai">OAI</span><span class="mr-ptag" data-provider="nvidia">NV</span><span class="mr-ptag" data-provider="openrouter">OR</span><span class="mr-ptag" data-provider="local">LOCAL</span> couleur = fournisseur choisi (bordure de l’étape)</li>
         <li><span class="mr-sym">💡</span> conseil (non imposé) · <span class="mr-sym">⚠</span> conseil non suivi</li>
         <li><span class="mr-kind" data-kind="action">action</span> lit, écrit ou exécute dans le projet · <span class="mr-kind" data-kind="judge">jugement</span> rend un avis sur un texte fourni</li>
-        <li><span class="mr-sym">🔧</span> outillage en construction : NVIDIA et OpenRouter, étapes de jugement seulement pour l’instant</li>
+        ${Object.entries(st.routing?.agentHarness || {}).some(([, v]) => v === false)
+          ? `<li><span class="mr-sym">🔧</span> outillage en construction : ${esc(Object.entries(st.routing.agentHarness).filter(([, v]) => v === false).map(([k]) => PLABEL[k] || k).join(" et "))}, étapes de jugement seulement pour l’instant</li>`
+          : `<li><span class="mr-sym">🔧</span> tous les fournisseurs sont outillés : NVIDIA et OpenRouter agissent comme Claude et codex (harnais codex)</li>`}
       </ul></details>`;
   }
 

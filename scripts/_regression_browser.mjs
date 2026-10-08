@@ -771,10 +771,18 @@ export async function browserChecks(sb, t) {
       const g = (slot) => page.$eval(`#models .mr-select[data-slot="${slot}"]`, s => [...s.querySelectorAll('optgroup')].map(x => ({ p: x.dataset.provider, off: x.disabled, n: x.children.length, l: x.label })));
       const act = await g('dev.vert'), jug = await g('dev.revue');
       const nvA = act.find(x => x.p === 'nvidia'), nvJ = jug.find(x => x.p === 'nvidia');
-      assert(nvA && nvA.off && /outillage en construction/.test(nvA.l) && nvA.n > 0, `étape d'action : ${JSON.stringify(nvA)}`);
+      // 0.47.0 : outillés (harnais codex) → proposés aussi sur une étape d'action.
+      const harnessOn = (await api('/api/model-routing')).agentHarness?.nvidia === true;
+      if (harnessOn) {
+        assert(nvA && !nvA.off && !/outillage/.test(nvA.l) && nvA.n > 0, `étape d'action, NVIDIA outillé : ${JSON.stringify(nvA)}`);
+        assert(!/outillage en construction/.test(act.find(x => x.p === 'openrouter').l), 'OpenRouter encore « en construction »');
+        assert(!/outillage en construction/.test(await page.textContent('#models .mr-legend')), 'légende : « en construction » alors que tout est outillé');
+      } else {
+        assert(nvA && nvA.off && /outillage en construction/.test(nvA.l) && nvA.n > 0, `étape d'action : ${JSON.stringify(nvA)}`);
+        assert(/outillage en construction/.test(act.find(x => x.p === 'openrouter').l) || /clé non configurée/.test(act.find(x => x.p === 'openrouter').l), 'OpenRouter non signalé');
+        assert(/outillage/.test(await page.textContent('#models .mr-legend')), 'légende sans l’outillage en construction');
+      }
       assert(nvJ && !nvJ.off && nvJ.n > 0, `étape de jugement : ${JSON.stringify(nvJ)}`);
-      assert(/outillage en construction/.test(act.find(x => x.p === 'openrouter').l) || /clé non configurée/.test(act.find(x => x.p === 'openrouter').l), 'OpenRouter non signalé');
-      assert(/outillage/.test(await page.textContent('#models .mr-legend')), 'légende sans l’outillage en construction');
       await page.selectOption('#models .mr-select[data-slot="dev.revue"]', 'nvidia|z-ai/glm-5.3');
       assert(await until(async () => /enregistré/.test(await page.textContent('#models [data-status="dev.revue"]')), 5000), 'NVIDIA non enregistré sur la revue');
       await page.selectOption('#models .mr-select[data-slot="dev.revue"]', '');

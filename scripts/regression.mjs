@@ -39,6 +39,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { REPO, REGRESS_DIR, extractCode, startSandbox, waitUp, serverEnv } from './_regression_sandbox.mjs';
 
 const argv = process.argv.slice(2);
@@ -513,10 +514,14 @@ async function apiChecks(sb) {
     assert((await put('video.monter.decoupe', { provider: 'local', model: 'ffmpeg' })).status === 200, 'ffmpeg refusé pour la découpe');
     assert((await put('audio.traiter.stt', { provider: 'local', model: 'whisper' })).status === 200, 'whisper local refusé pour la transcription');
     assert((await put('images.verifier', { provider: 'nvidia', model: 'meta/llama-3.2-90b-vision-instruct' })).status === 200, 'model vision refusé pour la vérification visuelle');
-    // 0.41.0 — NVIDIA / OpenRouter : outillage d'agent en construction.
+    // 0.41.0 — NVIDIA / OpenRouter : outillage d'agent en construction (409 sur
+    // une étape d'action). 0.47.0 — outillés (harnais codex) : acceptés.
     const hv = await put('dev.vert', { provider: 'nvidia', model: 'z-ai/glm-5.3' });
     if (Array.isArray(v.slots) && 'judge' in (v.slots[0] || {})) {
-      assert(hv.status === 409 && /outillage/.test((await hv.json()).error || ''), `NVIDIA accepté sur une étape d'action (${hv.status})`);
+      if (v.agentHarness?.nvidia === true) {
+        assert(hv.status === 200, `NVIDIA outillé mais refusé sur une étape d'action (${hv.status})`);
+        await put('dev.vert', { default: true });
+      } else assert(hv.status === 409 && /outillage/.test((await hv.json()).error || ''), `NVIDIA accepté sur une étape d'action (${hv.status})`);
       assert((await put('routage.classifier', { provider: 'nvidia', model: 'z-ai/glm-5.3' })).status === 200, 'NVIDIA refusé sur une étape de jugement');
       await put('routage.classifier', { default: true });
     }
@@ -585,6 +590,27 @@ async function apiChecks(sb) {
     assert(foreign.status === 403, `origine étrangère : ${foreign.status}`);
     fs.rmSync(routingPath, { force: true });
     return `${reco.counts.withSuggestion} cases avec suggestion, ${reco.counts.applicable} applicables, ${ap.applied.length} cases vides remplies`;
+  });
+  // 0.47.0 — phase 2 des pipelines : NVIDIA / OpenRouter outillés (décision n° 7 :
+  // « tous les models doivent pouvoir agir de manière identique »).
+  await check(S, 'harness-nvidia', 'Outillage NVIDIA / OpenRouter : passerelle Responses → chat montée dans le serveur (boucle locale, jeton dérivé du secret local, 401 / 404 / 503 explicites), fournisseurs outillés acceptés sur une étape d\'action', async () => {
+    const probe = await get('/api/llm-gateway/nvidia/v1/models', {});
+    if (probe.status === 404 && !/fournisseur/.test(await probe.text())) NA('passerelle absente de cet état du code');
+    const { derivedToken } = await import(pathToFileURL(path.join(sb.root, 'scripts', 'local-secret.mjs')).href);
+    const auth = { authorization: `Bearer ${derivedToken(sb.root, 'gateway')}` };
+    assert((await get('/api/llm-gateway/nvidia/v1/models', {})).status === 401, 'sans jeton ≠ 401');
+    assert((await get('/api/llm-gateway/nvidia/v1/models', { authorization: 'Bearer ' + 'a'.repeat(64) })).status === 401, 'mauvais jeton ≠ 401');
+    assert((await get('/api/llm-gateway/nvidia/v1/models', auth)).status === 200, 'jeton dérivé refusé');
+    assert((await get('/api/llm-gateway/inconnu/v1/models', auth)).status === 404, 'fournisseur inconnu ≠ 404');
+    const r = await fetch(`${sb.url}/api/llm-gateway/nvidia/v1/responses`, { method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify({ model: 'moonshotai/kimi-k3', input: [] }) });
+    assert(r.status === 503 && /clé NVIDIA absente/.test(await r.text()), `instance sans clé NVIDIA : ${r.status}`);
+    const v = await json('/api/model-routing');
+    assert(v.agentHarness?.nvidia === true && v.agentHarness?.openrouter === true, `fournisseurs non outillés : ${JSON.stringify(v.agentHarness)}`);
+    const put = (slot, body) => fetch(`${sb.url}/api/model-routing/${encodeURIComponent(slot)}`, { method: 'PUT', headers: { ...H, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    assert((await put('dev.vert', { provider: 'nvidia', model: 'z-ai/glm-5.3' })).status === 200, 'NVIDIA refusé sur une étape d’action');
+    await put('dev.vert', { default: true });
+    fs.rmSync(path.join(sb.root, 'model-routing.json'), { force: true });
+    return 'passerelle montée et protégée ; NVIDIA / OpenRouter acceptés sur une étape d’action';
   });
   await check(S, 'pipeline-observe', 'Pipelines, phase 1 (observation) : chaque entrée (composer → chef, @musicien, app Android, musicien direct, dispatch.mjs via la file, notify, session neuve) est classée et journalisée une seule fois, inclassable = Discussion, aucun changement de comportement', async () => {
     const first = await get('/api/pipeline-observe?n=5');
@@ -698,7 +724,10 @@ async function apiChecks(sb) {
     assert(c.providers.openrouter.keyPresent === true && c.providers.openrouter.disabled === false, 'OpenRouter encore grisé avec la clé');
     const put = (slot, body) => keyReq('PUT', `/api/model-routing/${slot}`, body);
     assert((await put('routage.classifier', { provider: 'openrouter', model: 'qwen/qwen3-coder' })).status === 200, 'OpenRouter refusé sur une étape de jugement avec la clé');
-    assert((await put('dev.vert', { provider: 'openrouter', model: 'qwen/qwen3-coder' })).status === 409, 'OpenRouter accepté sur une étape d’action (outillage en construction)');
+    const harnessOn = (await json('/api/model-routing')).agentHarness?.openrouter === true;
+    const orAction = await put('dev.vert', { provider: 'openrouter', model: 'qwen/qwen3-coder' });
+    assert(orAction.status === (harnessOn ? 200 : 409), harnessOn ? `OpenRouter outillé mais refusé sur une étape d’action (${orAction.status})` : 'OpenRouter accepté sur une étape d’action (outillage en construction)');
+    await put('dev.vert', { default: true });
     await put('routage.classifier', { default: true });
     // Tester, refuser, protéger.
     r = await keyReq('POST', '/api/api-keys/openrouter/test');

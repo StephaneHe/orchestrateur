@@ -200,8 +200,10 @@ export async function runDual(o) {
 
   // ── Garde-fous, avant toute écriture ──────────────────────────────────────
   for (const [role, b] of [['principal', principal], ['second', second]]) {
-    if (String(b.model).includes('/')) {
-      console.error(`[double] refusé : ${role} « ${b.model} » — NVIDIA / OpenRouter n'ont pas encore d'outillage d'agent (en construction).`);
+    // 0.47.0 : NVIDIA / OpenRouter ont un harnais (codex). Leurs identifiants
+    // « éditeur/model » sont ambigus entre les deux : le provider doit être dit.
+    if (String(b.model).includes('/') && b.provider !== 'nvidia' && b.provider !== 'openrouter') {
+      console.error(`[double] refusé : ${role} « ${b.model} » — précise le fournisseur (--${role === 'second' ? 'second-' : ''}provider nvidia|openrouter).`);
       return 64;
     }
     if (b.provider === 'claude' && OPENAI_RE.test(b.model)) { console.error(`[double] refusé : ${role} « ${b.model} » est un model OpenAI : provider codex attendu.`); return 64; }
