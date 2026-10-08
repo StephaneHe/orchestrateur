@@ -18,6 +18,8 @@
 <link rel="stylesheet" href="./salle.css?v=0.35.0">
 <!-- v0.29.0 — vue « Projets » (désactivable : config.json ui.projectsView=false ou ?projets=0) -->
 <link rel="stylesheet" href="./projets.css?v=0.34.0">
+<!-- v0.39.0 — vue « Models par tâche » (désactivable : ui.modelRouting=false ou ?models=0) -->
+<link rel="stylesheet" href="./models.css?v=0.39.0">
 </head>
 <body data-theme="cinematic">
 
@@ -43,7 +45,9 @@
     <div class="topbar-actions">
       <button id="btn-projects" class="pill pill-projects" type="button" aria-pressed="false"
               title="Statut de chacun des projets (g puis p)"><span class="pp-k">▦ Projets</span></button>
-      <button id="btn-search" class="pill" title="Chercher un musicien (parkés inclus)">Musiciens / chercher</button>
+      <button id="btn-models" class="pill pill-models" type="button" aria-pressed="false"
+              title="Models par type de tâche (g puis m)"><span class="pm-k">⇄ Models</span></button>
+      <button id="btn-search" class="pill" title="Chercher un musicien">Musiciens / chercher</button>
       <span id="conn-status" class="pill conn-ok" title="État du flux temps réel">
         <span class="conn-dot"></span><span class="conn-text">connexion…</span>
       </span>
@@ -61,6 +65,7 @@
   <div id="topmenu" class="topmenu" hidden>
     <button class="tm-item" data-act="add">+ Projet</button>
     <button class="tm-item" data-act="projects">Projets — statut de chacun</button>
+    <button class="tm-item" data-act="models">Models par tâche</button>
     <button class="tm-item" data-act="briefing">Briefing de l'orchestre</button>
     <a class="tm-item" href="/pupitre">Pupitre (tableau de santé)</a>
     <a class="tm-item" href="/downloads">Téléchargements</a>
@@ -154,6 +159,19 @@
         </section>
       </div>
       <div class="pv-live sr-only" aria-live="polite"></div>
+    </section>
+
+    <!-- Vue « Models par tâche » (#/models, 0.39.0) — remplace fil + rail -->
+    <section id="models" class="models" hidden aria-labelledby="mr-title">
+      <div class="mr-bar">
+        <button class="mr-back" type="button" title="Retour au fil du chef (Échap)">‹ Salle</button>
+        <h1 id="mr-title" class="mr-title">Models par tâche</h1>
+        <span class="mr-summary" aria-live="polite"></span>
+        <button class="mr-refresh" type="button" title="Relire les listes des fournisseurs">↻ Rafraîchir les listes</button>
+        <button class="mr-hist-btn" type="button" aria-expanded="false">Historique</button>
+      </div>
+      <p class="mr-note">Choix enregistrés pour plus tard : les tours en cours ne les utilisent pas encore.</p>
+      <div class="mr-body"></div>
     </section>
 
     <!-- Level 2 — musician dive, routed by hash (#/m/<name>) ----------- -->
@@ -347,8 +365,9 @@
 <script src="./turn-core.js?v=0.35.0"></script>
 <script src="./tts.js?v=0.35.0"></script>
 <script src="./activite.js?v=0.33.0"></script>
-<script src="./salle.js?v=0.33.0"></script>
+<script src="./salle.js?v=0.39.0"></script>
 <script src="./projets.js?v=0.31.0"></script>
-<script src="./app.js?v=0.35.0"></script>
+<script src="./models.js?v=0.39.0"></script>
+<script src="./app.js?v=0.39.0"></script>
 </body>
 </html>

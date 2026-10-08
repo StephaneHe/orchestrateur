@@ -1,0 +1,174 @@
+/* ============================================================================
+   public/models.css — v0.39.0 vue « Models par tâche » (#/models)
+   Jetons PHOSPHOR existants : les palettes suivent d'elles-mêmes. Le
+   fournisseur n'est jamais porté par la couleur seule : étiquette en clair.
+   Polices en rem uniquement (réglage de taille du texte, 0.34.0).
+   ============================================================================ */
+
+.models[hidden], .mr-history[hidden], #btn-models[hidden] { display: none !important; }
+
+.models {
+  --prov-anthropic: var(--st-think);
+  --prov-openai: var(--st-live);
+  --prov-nvidia: var(--st-unread);
+  --prov-openrouter: #b48cff;
+  flex: 1 1 auto; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
+  background: var(--bg-0);
+  border-left: 1px solid var(--card-border);
+  border-right: 1px solid var(--card-border);
+}
+
+.main-row.is-models > .conductor-view,
+.main-row.is-models > .rail { display: none !important; }
+
+.pill-models { cursor: pointer; }
+.pill-models[aria-pressed="true"] { background: var(--card-bg-hover); border-color: var(--st-think); }
+
+/* ---------- Barre ---------- */
+.mr-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--card-border);
+  background: var(--bg-1);
+  position: sticky; top: 0; z-index: 2;
+}
+.mr-back, .mr-refresh, .mr-hist-btn {
+  font-family: var(--font-mono); font-size: 0.75rem; color: var(--fg-1);
+  background: transparent; border: 1px solid var(--card-border); border-radius: 6px;
+  padding: 6px 10px; cursor: pointer; min-height: 32px;
+}
+.mr-back:hover, .mr-refresh:hover, .mr-hist-btn:hover { background: var(--card-bg-hover); color: var(--fg-0); }
+.mr-refresh:disabled { opacity: 0.6; cursor: progress; }
+.mr-hist-btn[aria-expanded="true"] { border-color: var(--st-think); color: var(--fg-0); }
+.mr-title {
+  margin: 0; font-family: var(--font-display); font-size: 0.9375rem; font-weight: 600;
+  letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg-0);
+}
+.mr-summary { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--fg-1); flex: 1 1 auto; }
+.mr-back:focus-visible, .mr-refresh:focus-visible, .mr-hist-btn:focus-visible,
+.mr-select:focus-visible, .pill-models:focus-visible {
+  outline: 2px solid var(--st-unread); outline-offset: 2px;
+}
+.mr-note {
+  margin: 0; padding: 6px 16px; font-size: 0.6875rem; color: var(--fg-2);
+  border-bottom: 1px solid var(--card-border);
+}
+
+.mr-body { flex: 1 1 auto; overflow-y: auto; padding: 10px 16px 28px; }
+.mr-empty { color: var(--fg-2); font-size: 0.75rem; }
+.mr-error { color: var(--st-error); font-size: 0.8125rem; border: 1px solid var(--st-error); border-radius: 6px; padding: 8px 10px; }
+.mr-warn { color: var(--st-input); font-weight: 600; }
+
+/* ---------- Sources ---------- */
+.mr-sources {
+  list-style: none; margin: 0 0 12px; padding: 0;
+  display: flex; flex-wrap: wrap; gap: 6px 14px;
+  font-family: var(--font-mono); font-size: 0.6875rem; color: var(--fg-2);
+}
+.mr-src b { color: var(--fg-1); font-weight: 600; }
+
+/* ---------- Étiquette fournisseur ---------- */
+.mr-ptag {
+  display: inline-block; font-family: var(--font-mono); font-size: 0.625rem; font-weight: 600;
+  letter-spacing: 0.06em; padding: 1px 6px; border-radius: 4px;
+  border: 1px solid var(--card-border); color: var(--fg-2);
+}
+.mr-ptag[data-provider="anthropic"]  { color: var(--prov-anthropic);  border-color: var(--prov-anthropic); }
+.mr-ptag[data-provider="openai"]     { color: var(--prov-openai);     border-color: var(--prov-openai); }
+.mr-ptag[data-provider="nvidia"]     { color: var(--prov-nvidia);     border-color: var(--prov-nvidia); }
+.mr-ptag[data-provider="openrouter"] { color: var(--prov-openrouter); border-color: var(--prov-openrouter); }
+
+/* ---------- Historique ---------- */
+.mr-history {
+  margin: 0 0 14px; padding: 8px 12px;
+  background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px;
+}
+.mr-h2 { margin: 0 0 6px; font-family: var(--font-mono); font-size: 0.6875rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--fg-1); }
+.mr-hist-list { margin: 0; padding: 0; list-style: none; max-height: 16rem; overflow-y: auto; }
+.mr-hist-list li {
+  display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline;
+  font-family: var(--font-mono); font-size: 0.6875rem; color: var(--fg-1);
+  padding: 3px 0; border-bottom: 1px dashed var(--card-border);
+}
+.mr-hist-list time { color: var(--fg-2); min-width: 7.5em; }
+.mr-hist-task { color: var(--fg-0); }
+.mr-hist-from { color: var(--fg-2); text-decoration: line-through; }
+.mr-hist-to { color: var(--st-live); }
+
+/* ---------- Flux : étapes successives ---------- */
+.mr-flow {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-wrap: wrap; align-items: stretch; gap: 14px 34px;
+}
+.mr-stage {
+  position: relative; flex: 1 1 0; min-width: 0;
+  display: flex; flex-direction: column; gap: 8px;
+}
+/* Flèche vers l'étape suivante (sur la droite). */
+.mr-stage:not(:last-child)::after {
+  content: "→"; position: absolute; right: -26px; top: 2px;
+  font-family: var(--font-mono); font-size: 1.125rem; color: var(--st-think); opacity: 0.8;
+}
+.mr-stage-head {
+  margin: 0; display: flex; align-items: center; gap: 8px;
+  padding-bottom: 6px; border-bottom: 2px solid var(--st-think);
+  font-family: var(--font-display); font-size: 0.8125rem; font-weight: 600;
+  letter-spacing: 0.12em; text-transform: uppercase; color: var(--fg-0);
+}
+.mr-step {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.6rem; height: 1.6rem; border-radius: 50%;
+  background: var(--st-think); color: var(--bg-0);
+  font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; letter-spacing: 0;
+}
+.mr-stage-count { margin-left: auto; font-family: var(--font-mono); font-size: 0.625rem; color: var(--fg-2); letter-spacing: 0; }
+.mr-cards { display: flex; flex-direction: column; gap: 8px; }
+
+/* ---------- Carte ---------- */
+.mr-card {
+  background: var(--card-bg); border: 1px solid var(--card-border);
+  border-left: 3px solid var(--fg-3); border-radius: 8px;
+  padding: 8px 10px; display: flex; flex-direction: column; gap: 5px;
+}
+.mr-card[data-provider="anthropic"]  { border-left-color: var(--prov-anthropic); }
+.mr-card[data-provider="openai"]     { border-left-color: var(--prov-openai); }
+.mr-card[data-provider="nvidia"]     { border-left-color: var(--prov-nvidia); }
+.mr-card[data-provider="openrouter"] { border-left-color: var(--prov-openrouter); }
+.mr-card-head { display: flex; align-items: baseline; gap: 6px; }
+.mr-num { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--fg-2); min-width: 1.4em; }
+.mr-card-title { margin: 0; font-size: 0.8125rem; font-weight: 600; color: var(--fg-0); flex: 1 1 auto; min-width: 0; }
+.mr-desc { margin: 0; font-size: 0.6875rem; line-height: 1.35; color: var(--fg-1); }
+.mr-select {
+  width: 100%; max-width: 100%; min-height: 32px;
+  font-family: var(--font-mono); font-size: 0.75rem; color: var(--fg-0);
+  background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 6px;
+  padding: 5px 6px;
+}
+.mr-select option, .mr-select optgroup { background: var(--bg-1); color: var(--fg-0); }
+.mr-select optgroup[disabled] { color: var(--fg-3); }
+.mr-status { min-height: 1em; font-family: var(--font-mono); font-size: 0.625rem; color: var(--fg-2); }
+.mr-status[data-kind="saved"]  { color: var(--st-live); }
+.mr-status[data-kind="saving"] { color: var(--st-think); }
+.mr-status[data-kind="error"]  { color: var(--st-error); }
+
+/* ---------- Écrans moyens : 3 étapes par ligne ---------- */
+@media (max-width: 1399.98px) {
+  .mr-stage { flex: 0 0 calc((100% - 68px) / 3); }
+  .mr-stage:nth-child(3n)::after { content: none; }
+}
+
+/* ---------- Mobile : étapes empilées, flèche vers le bas ---------- */
+@media (max-width: 767.98px) {
+  .mr-bar { padding: 8px 10px; }
+  .mr-body { padding: 8px 10px 24px; }
+  .mr-flow { flex-direction: column; flex-wrap: nowrap; gap: 30px; }
+  .mr-stage { flex: 0 0 auto; }
+  .mr-stage:not(:last-child)::after {
+    content: "↓"; right: auto; left: 50%; top: auto; bottom: -26px; transform: translateX(-50%);
+  }
+  .mr-back, .mr-refresh, .mr-hist-btn { min-height: 44px; }
+  .mr-select { min-height: 44px; font-size: 0.8125rem; }
+  #btn-models { font-size: 0.625rem; padding: 6px 9px; letter-spacing: 0.04em; }
+  #btn-models .pm-k { white-space: nowrap; }
+}

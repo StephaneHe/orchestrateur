@@ -203,6 +203,7 @@ function writeFixtures(root, keepAlivePid) {
   fs.writeFileSync(path.join(root, 'builds', 'alpha', 'latest.apk'), Buffer.from('PK\u0003\u0004fake-apk'));
 
   fs.writeFileSync(path.join(root, '.token'), crypto.randomBytes(32).toString('hex'));
+  modelCatalogFixtures(root);
   fleetFixtures(root, keepAlivePid);
 }
 
@@ -220,9 +221,34 @@ function listenerPids(port) {
   return [...out];
 }
 
+/** Listes de models de la vue « Models par tâche » (0.39.0) : aucun réseau. */
+function modelCatalogFixtures(root) {
+  const dir = path.join(root, '.model-catalog-fixtures');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'models_cache.json'), JSON.stringify({
+    fetched_at: '2026-10-01T00:00:00Z',
+    models: [
+      { slug: 'gpt-6-astra', visibility: 'list', priority: 1, description: 'Frontier' },
+      { slug: 'gpt-5.6-sol', visibility: 'list', priority: 4 },
+      { slug: 'gpt-reserve', visibility: 'hide', priority: 3 },
+    ],
+  }));
+  fs.writeFileSync(path.join(dir, 'nvidia.json'), JSON.stringify({ data: [
+    { id: 'moonshotai/kimi-k3' }, { id: 'nvidia/nemotron-3-ultra-550b-a55b' },
+    { id: 'z-ai/glm-5.3' }, { id: 'nvidia/nemotron-3-embed-1b' },
+  ] }));
+  fs.writeFileSync(path.join(dir, 'openrouter.json'), JSON.stringify({ data: [
+    { id: 'anthropic/claude-haiku-5.5', supported_parameters: ['tools'] },
+    { id: 'qwen/qwen3-coder', supported_parameters: ['tools', 'temperature'] },
+    { id: 'some/no-tools-model', supported_parameters: ['temperature'] },
+  ] }));
+}
+
 export function serverEnv(root, port) {
   const env = { ...process.env };
   delete env.ANTHROPIC_API_KEY;
+  // Clé OpenRouter : toujours « absente » dans l'instance de test (état connu).
+  delete env.OPENROUTER_API_KEY;
   delete env.DISPATCH_ROOT_FOR_TESTS;
   delete env.DISPATCH_SLOT;
   Object.assign(env, {
@@ -233,6 +259,7 @@ export function serverEnv(root, port) {
     ORCH_PORT: String(port),
     // add-tool also marks the workspace trusted: never in the real ~/.claude.json.
     ORCH_CLAUDE_JSON: path.join(root, '.claude.json'),
+    MODEL_CATALOG_FIXTURES: path.join(root, '.model-catalog-fixtures'),
   });
   return env;
 }

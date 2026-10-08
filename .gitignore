@@ -68,6 +68,10 @@ tools/
 # Config locale (chemins et noms de projets privés) — modèle : config.example.json
 config.json
 
+# Choix « Models par tâche » (0.39.0), écrits par le serveur — local
+model-routing.json
+model-routing.json.*.tmp
+
 # Captures d'écran de l'UI réelle (conversations, noms de projets)
 docs/*.png
 docs/**/captures/

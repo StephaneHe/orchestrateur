@@ -1081,6 +1081,7 @@ const App = {
     this.wireOverlays();
     window.Salle?.init();
     window.Projets?.init();
+    window.Models?.init();
     window.addEventListener("resize", () => { this.relayout(); this.renderChat(); });
 
     await this.loadConfig();
@@ -1169,7 +1170,7 @@ const App = {
         }
       }
       this.renderFleet(cfg.projects || []);
-      window.Projets?.applyUi(cfg.ui); window.Activite?.applyUi(cfg.ui); window.Tts?.applyUi(cfg.ui);
+      window.Projets?.applyUi(cfg.ui); window.Activite?.applyUi(cfg.ui); window.Tts?.applyUi(cfg.ui); window.Models?.applyUi(cfg.ui);
     } catch (err) {
       console.error("[app] config fetch failed", err);
       $("#empty-hint").hidden = false;
@@ -1189,7 +1190,7 @@ const App = {
       if (!resp.ok) return;
       cfg = await resp.json();
     } catch { return; }
-    window.Projets?.applyUi(cfg.ui); window.Activite?.applyUi(cfg.ui); window.Tts?.applyUi(cfg.ui);   // `ui` rechargé à chaud (config.json)
+    window.Projets?.applyUi(cfg.ui); window.Activite?.applyUi(cfg.ui); window.Tts?.applyUi(cfg.ui); window.Models?.applyUi(cfg.ui);   // `ui` rechargé à chaud (config.json)
     const projects = cfg.projects || [];
     const wanted = new Set(projects.map(p => p.name));
     let changed = false;
@@ -1569,6 +1570,7 @@ const App = {
       if (act === "add")      this.openAdd();
       if (act === "briefing") this.openBriefing();
       if (act === "projects") window.Projets?.open();
+      if (act === "models")   window.Models?.open();
     });
     document.addEventListener("click", (e) => {
       if (menu.hidden) return;
@@ -3386,7 +3388,7 @@ const App = {
     const snap = this.pupitreSnapshot;
     if (!snap || !Array.isArray(snap.fleet)) return;
     const S = window.Salle;
-    window.Projets?.applyUi(snap.ui); window.Activite?.applyUi(snap.ui); window.Tts?.applyUi(snap.ui);
+    window.Projets?.applyUi(snap.ui); window.Activite?.applyUi(snap.ui); window.Tts?.applyUi(snap.ui); window.Models?.applyUi(snap.ui);
     window.Projets?.render();
     S?.renderRail();
     S?.renderAttention();

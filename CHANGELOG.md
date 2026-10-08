@@ -11,6 +11,50 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-10-08
+
+Demande utilisateur : une interface, accessible depuis l'orchestrateur, qui
+montre clairement l'enchaînement des tâches, avec sur chacune un model à
+choisir dans un menu déroulant parmi Anthropic, OpenAI, NVIDIA et OpenRouter.
+
+### Added
+- (server) Vue **« Models par tâche »** (`#/models`, pill « ⇄ Models », menu ⋮,
+  raccourci `g` puis `m`). Les 20 types de tâche sont placés dans un flux de
+  6 étapes successives : Réfléchir → Écrire → Corriger → Vérifier → Livrer /
+  opérer → Écrire sur le code. Sur PC, les étapes sont en colonnes de gauche à
+  droite ; sur mobile, elles sont empilées. Chaque carte a un menu déroulant
+  groupé par fournisseur, avec « (défaut du projet) », et un indicateur
+  « ✓ enregistré ». Un historique des changements est disponible (date,
+  ancien → nouveau).
+- (server) `GET /api/model-catalog[?refresh=1]` sert les listes de models :
+  - Anthropic : identifiants vérifiés avec la CLI claude ;
+  - OpenAI : `models_cache.json` de codex ;
+  - NVIDIA : cascade du failover lue dans `dispatch.mjs`, plus la liste
+    publique `integrate.api.nvidia.com`, sans clé ;
+  - OpenRouter : liste publique `openrouter.ai`, sans clé, limitée aux models
+    qui savent appeler des outils.
+
+  Le bouton « ↻ Rafraîchir les listes » les relit. Une source injoignable
+  garde sa dernière liste connue. Un model du failover NVIDIA absent du
+  catalogue est signalé.
+- (server) `GET /api/model-routing` et `PUT /api/model-routing/:task
+  {provider, model} | {default: true}` enregistrent les choix dans
+  **`model-routing.json`**, qui n'est pas `config.json` et n'est pas versionné.
+  L'écriture se fait en temp + rename, avec validation du type, du fournisseur
+  et du model, et un historique borné à 500 entrées.
+- Clé OpenRouter : seule sa présence est rapportée (variable d'environnement ou
+  `.env` de l'orchestrateur), jamais sa valeur. Sans clé, le groupe OpenRouter
+  est grisé « clé non configurée » et le serveur refuse ce choix (409).
+- Désactivable à chaud : `config.json` → `"ui": {"modelRouting": false}`, ou
+  `?models=0` pour un navigateur.
+- Tests : suite `_test_model_routing.mjs`, parcours HTTP `model-routing`,
+  parcours navigateur `models-view` et `models-mobile` (listes de fixtures,
+  aucun réseau dans l'instance de test).
+
+### Changed
+- Titre du bouton « Musiciens / chercher » : la mention « parkés inclus »,
+  restée de la 0.38.0, est retirée.
+
 ## [0.38.1] - 2026-10-08
 
 Demande utilisateur : « Je voudrais rajouter un mode discussion sur

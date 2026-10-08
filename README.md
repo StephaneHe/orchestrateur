@@ -4,7 +4,7 @@ A local Windows dashboard where one "conductor" AI session pilots a fleet of
 headless coding agents, one per project, with a live web viewer and an
 Android companion app.
 
-`version 0.38.1` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
+`version 0.39.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
 
 > **Status: active, personal project.** Built and used daily on a single
 > Windows machine. Pre-1.0: internal APIs and file formats can still change
@@ -77,6 +77,14 @@ one screen to watch the whole fleet.
   settings. It uses the browser's own speech synthesis (Web Speech API):
   local, free, no cloud service. Markdown, code blocks, links and long
   identifiers are cleaned up before speaking.
+- **Models per task type.** A view shows 20 coding task types along six
+  successive stages (think → write → fix → verify → ship → document). Each
+  task gets a model from a drop-down grouped by provider (Anthropic, OpenAI
+  via codex, NVIDIA, OpenRouter). The lists come from the codex model cache and
+  the public NVIDIA / OpenRouter catalogues, and can be refreshed. Choices are
+  saved, with history, to a local `model-routing.json`. Keys are never
+  displayed: only "present / absent" is shown. The choices are recorded only;
+  dispatch does not use them yet.
 - **Android companion app** (Kotlin + Jetpack Compose): fleet overview,
   per-agent detail, chat with the conductor.
 - **`/downloads` page** listing the Android builds of your projects, driven

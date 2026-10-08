@@ -691,7 +691,7 @@
     const dive = document.getElementById("dive");
     if (!rail) return;
     const diveOpen = dive && !dive.hidden;
-    if (global.Projets?.isOpen) { rail.hidden = true; return; }   // la vue Projets remplace fil + rail
+    if (global.Projets?.isOpen || global.Models?.isOpen) { rail.hidden = true; return; }   // ces vues remplacent fil + rail
     if (isMobile()) rail.hidden = !railState.open || diveOpen;
     else rail.hidden = !!diveOpen;   // le volet REMPLACE le rail sur desktop
   }
@@ -840,13 +840,23 @@
     // v0.29.0 — niveau « Projets » (public/projets.js). Désactivé (config ou
     // ?projets=0) : le lien renvoie au fil, rien d'autre ne change.
     const P = global.Projets;
+    const M = global.Models;   // 0.39.0 — « Models par tâche » (public/models.js)
     if (String(location.hash || "") === "#/projets") {
       if (dive.name) closeDive();
+      if (M) M.hide();
       if (!P || !P.show()) location.replace("#/");
       syncRailVisibility();
       return;
     }
+    if (String(location.hash || "") === "#/models") {
+      if (dive.name) closeDive();
+      if (P) P.hide(false);
+      if (!M || !M.show()) location.replace("#/");
+      syncRailVisibility();
+      return;
+    }
     const want = parseHash();
+    if (M) M.hide();
     if (P) P.hide(!want);   // retour au fil = dernier niveau « salle » ; un volet ne change rien
     if (want && App.musicians.has(want)) {
       if (dive.name !== want) openDive(want);

@@ -623,6 +623,54 @@ export async function browserChecks(sb, t) {
       fs.writeFileSync(fc, JSON.stringify(cfg, null, 2) + '\n');
       assert(await until(async () => (await page.locator('.rail-card').count()) > 0, 15_000), 'cadres non rétablis');
     });
+    // ---------------- Models par tâche (0.39.0) ----------------
+    // Exigence utilisateur : flux visuel des étapes, un menu de model par tâche
+    // groupé Anthropic / OpenAI / NVIDIA / OpenRouter, choix enregistré et relu.
+    const hasModels = async (pg) => (await pg.locator('#btn-models').count()) > 0;
+    await check(B, 'models-view', 'Models par tâche : 6 étapes dans l\'ordre, 20 cartes, menu à 4 groupes (OpenRouter grisé sans clé), choix enregistré puis relu après rechargement, historique', async () => {
+      if (!(await hasModels(page))) NA('vue absente de cet état du code');
+      await setHash(page, '#/');
+      await page.click('#btn-models');
+      assert(await until(async () => (await hash(page)) === '#/models' && await visible(page, '#models'), 5000), 'la pill n\'ouvre pas la vue');
+      assert(await until(async () => (await page.locator('#models .mr-card').count()) === 20, 10_000), `cartes : ${await page.locator('#models .mr-card').count()}`);
+      assert(!(await visible(page, '#rail')) && !(await visible(page, '#conductor-view')), 'le fil ou le rail reste affiché');
+      const stages = await page.$$eval('#models .mr-stage .mr-stage-name', els => els.map(e => e.textContent.trim()));
+      assert(stages.join(' > ') === 'Réfléchir > Écrire > Corriger > Vérifier > Livrer / opérer > Écrire sur le code', `étapes : ${stages.join(' > ')}`);
+      const perStage = await page.$$eval('#models .mr-stage', els => els.map(e => e.querySelectorAll('.mr-card').length));
+      assert(perStage.join(',') === '3,5,3,4,3,2', `cartes par étape : ${perStage}`);
+      // Desktop large : les 6 étapes sur une seule ligne, de gauche à droite.
+      const tops = await page.$$eval('#models .mr-stage', els => els.map(e => Math.round(e.getBoundingClientRect().top)));
+      const lefts = await page.$$eval('#models .mr-stage', els => els.map(e => Math.round(e.getBoundingClientRect().left)));
+      assert(new Set(tops).size === 1 && lefts.every((x, i) => i === 0 || x > lefts[i - 1]), `flux non horizontal : top=${tops} left=${lefts}`);
+      const groups = await page.$$eval('#models .mr-select', sels => sels.map(s => [...s.querySelectorAll('optgroup')].map(g => `${g.dataset.provider}:${g.disabled ? 'off' : 'on'}:${g.children.length}`)));
+      assert(groups.length === 20, `${groups.length} menus`);
+      for (const g of groups) {
+        assert(g.map(x => x.split(':')[0]).join(',') === 'anthropic,openai,nvidia,openrouter', `groupes : ${g}`);
+        assert(g[3].startsWith('openrouter:off'), `OpenRouter devrait être grisé sans clé : ${g[3]}`);
+        assert(g.slice(0, 3).every(x => x.split(':')[1] === 'on' && Number(x.split(':')[2]) > 0), `groupe vide ou grisé : ${g}`);
+      }
+      const orLabel = await page.$eval('#models .mr-select optgroup[data-provider="openrouter"]', g => g.label);
+      assert(/clé non configurée/.test(orLabel), `libellé OpenRouter : ${orLabel}`);
+      assert(/clé non configurée/.test(await page.textContent('#models .mr-sources')), 'état de la clé absent des sources');
+      const defOpt = await page.$eval('#models .mr-select[data-task="plan"] option', o => ({ v: o.value, t: o.textContent }));
+      assert(defOpt.v === '' && /défaut du projet/.test(defOpt.t), 'option « (défaut du projet) » absente');
+      await page.selectOption('#models .mr-select[data-task="plan"]', 'openai|gpt-6-astra');
+      assert(await until(async () => /enregistré/.test(await page.textContent('#models .mr-card[data-task="plan"] .mr-status')), 5000), 'indicateur « enregistré » absent');
+      assert(await page.getAttribute('#models .mr-card[data-task="plan"]', 'data-provider') === 'openai', 'carte pas marquée OpenAI');
+      const srv = await api('/api/model-routing');
+      assert(srv.assignments.plan?.provider === 'openai' && srv.assignments.plan?.model === 'gpt-6-astra', 'serveur : choix non enregistré');
+      await page.reload();
+      assert(await until(async () => (await page.locator('#models .mr-card').count()) === 20, 10_000), 'vue non rouverte au rechargement');
+      assert(await until(async () => (await page.inputValue('#models .mr-select[data-task="plan"]')) === 'openai|gpt-6-astra', 5000), 'choix non relu après rechargement');
+      await page.selectOption('#models .mr-select[data-task="plan"]', '');
+      assert(await until(async () => !(await api('/api/model-routing')).assignments.plan, 5000), '« (défaut du projet) » non enregistré');
+      await page.click('#models .mr-hist-btn');
+      assert(await until(async () => /gpt-6-astra/.test(await page.textContent('#models .mr-history')), 3000), 'historique sans le changement');
+      await shot(page, 'models-desktop', { fullPage: true });
+      await page.keyboard.press('Escape');
+      assert(await until(async () => (await hash(page)) === '#/' && !(await visible(page, '#models')), 3000), 'Échap ne revient pas au fil');
+    });
+
     await ctx.close();
 
     // ---------------- Lecture audio (0.35.0) — doublure de speechSynthesis ----------------
@@ -847,6 +895,29 @@ export async function browserChecks(sb, t) {
       await m.setViewportSize({ width: 390, height: 2200 });
       await sleep(300);
       return `${g.n} tuiles`;
+    });
+    await check(B, 'models-mobile', 'Models par tâche · mobile : étapes empilées, aucun défilement horizontal, menus ≥ 44 px, lisible à 150 %', async () => {
+      if (!(await hasModels(m))) NA('vue absente de cet état du code');
+      await m.setViewportSize({ width: 390, height: 844 });
+      await setHash(m, '#/models');
+      assert(await until(async () => (await m.locator('#models .mr-card').count()) === 20, 10_000), 'cartes');
+      const g = await m.evaluate(() => ({
+        lefts: [...new Set([...document.querySelectorAll('#models .mr-stage')].map(s => Math.round(s.getBoundingClientRect().left)))],
+        minSel: Math.min(...[...document.querySelectorAll('#models .mr-select')].map(s => s.getBoundingClientRect().height)),
+        overflow: document.documentElement.scrollWidth - window.innerWidth,
+      }));
+      assert(g.lefts.length === 1, `étapes non empilées : ${g.lefts}`);
+      assert(g.overflow <= 0, `débordement horizontal ${g.overflow}px`);
+      assert(g.minSel >= 44, `menu de ${g.minSel}px`);
+      await shot(m, 'models-mobile');
+      for (let i = 0; i < 6; i++) { const b = m.locator('#text-size [data-ts="1"]'); if (await b.isEnabled()) await b.click(); }
+      await sleep(300);
+      const over = await m.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      const wide = await m.evaluate(() => [...document.querySelectorAll('#models .mr-card')].filter(c => c.getBoundingClientRect().right > window.innerWidth + 0.5).length);
+      await shot(m, 'models-mobile-150');
+      await m.click('#text-size [data-ts="0"]');
+      assert(over <= 0 && wide === 0, `à 150 % : débordement ${over}px, ${wide} carte(s) hors écran`);
+      await setHash(m, '#/');
     });
     await mctx.close();
 

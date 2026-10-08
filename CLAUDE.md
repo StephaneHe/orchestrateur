@@ -732,6 +732,58 @@ d'autre ». Un projet remis en activité restait hors de la liste principale.
   copie du config.json d'avant est dans
   `.tmp/config.before-remove-parked.json` (locale, non versionnée).
 
+## Models par tâche (0.39.0)
+
+Demande utilisateur : une interface accessible depuis l'orchestrateur, qui
+représente clairement l'enchaînement des tâches, et où l'on assigne à chaque
+tâche un model, dans un menu déroulant, parmi Anthropic, OpenAI, NVIDIA et
+OpenRouter.
+
+- Vue `#/models` (`public/models.js` + `models.css`). On l'ouvre par :
+  - la pill « ⇄ Models » ;
+  - le menu ⋮ ;
+  - `g` puis `m`.
+
+  Elle présente 20 types de tâche, répartis en 6 étapes successives
+  (`TASK_TYPES` et `STAGES` de `scripts/model-routing.mjs`, découpage proposé
+  par le chef). Le flux est horizontal sur PC (3 étapes par ligne sous
+  1400 px) et empilé sur mobile.
+- **Phase 1 = interface et enregistrement seulement.** `dispatch.mjs` ne lit
+  pas encore `model-routing.json`. Ne pas brancher sans demande.
+- Listes de models (`GET /api/model-catalog[?refresh=1]`, cache dans
+  `logs/model-catalog.cache.json`) :
+  - **Anthropic** : liste `ANTHROPIC_VERIFIED`, mise à jour à la main. Il n'existe
+    aucune liste publique sans clé API, et aucune clé payante ne doit être
+    ajoutée.
+  - **OpenAI** : `models_cache.json` de codex (`CODEX_HOME` respecté).
+  - **NVIDIA** : cascade de `nvidiaFailoverConfig()` (lue dans `dispatch.mjs`,
+    source unique), plus la liste publique `/v1/models`, sans clé. Les models
+    de la cascade absents du catalogue sont signalés.
+  - **OpenRouter** : liste publique, sans clé, filtrée sur `tools`.
+
+  Une source injoignable garde sa dernière liste connue (`stale`).
+- **Clés** : seule la présence de la clé OpenRouter est rapportée
+  (`OPENROUTER_API_KEY` dans l'environnement du serveur ou dans le `.env` de
+  l'orchestrateur), jamais sa valeur. Sans clé, le groupe est grisé et le
+  `PUT` renvoie 409. Les `.env` des autres projets ne sont jamais lus.
+- Enregistrement : `PUT /api/model-routing/:task {provider, model}` ou
+  `{default:true}`.
+  - Les choix vont dans **`model-routing.json`** (racine, non versionné), et
+    jamais dans config.json, qui est partagé par plusieurs chefs.
+  - Écriture en temp + rename, avec un historique `{at, task, from, to, by}`
+    borné à 500 entrées.
+  - Tout est validé : type, fournisseur, identifiant, et présence dans la
+    liste quand celle-ci est connue.
+- Désactiver à chaud : `"ui": {"modelRouting": false}`, ou `?models=0` pour un
+  seul navigateur.
+- Recettes :
+  - `_test_model_routing.mjs` ;
+  - HTTP `model-routing` ;
+  - navigateur `models-view` et `models-mobile`.
+
+  L'instance de test lit des listes de fixtures (`MODEL_CATALOG_FIXTURES`),
+  sans réseau, et sans clé OpenRouter.
+
 ## Attachments
 
 Images uploaded via the dashboard (paste / drag-drop / file picker) land in

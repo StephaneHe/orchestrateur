@@ -52,6 +52,8 @@ import { scanProject as scanFleetMember, isPhantomResult, isQuestionResolved, is
 // Registre /downloads relu à chaud depuis downloads.json (0.23.0).
 import { createDownloadsRegistry, VERSION_NAME_RE } from './scripts/downloads-registry.mjs';
 import { trustWorkspace } from './scripts/workspace-trust.mjs';
+// Vue « Models par tâche » (0.39.0) : catalogue + model-routing.json.
+import { createModelRouting } from './scripts/model-routing.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -2448,8 +2450,49 @@ function uiFlags() {
     railCards: config.ui?.railCards !== false,
     // 0.35.0 — lecture audio des réponses du chef.
     tts: config.ui?.tts !== false,
+    // 0.39.0 — vue « Models par tâche ».
+    modelRouting: config.ui?.modelRouting !== false,
   };
 }
+
+// ── Models par tâche (0.39.0) ───────────────────────────────────────────────
+// Enregistrement seulement : dispatch.mjs ne lit pas encore model-routing.json.
+// Fichier dédié, écrit ici seul (temp + rename) — config.json est partagé par
+// plusieurs chefs.
+const modelRouting = createModelRouting({
+  root: __dirname,
+  cacheFile: path.join(LOGS_DIR, 'model-catalog.cache.json'),
+});
+
+app.get('/api/model-routing', (req, res) => {
+  const n = Math.min(500, Math.max(1, Number(req.query.history) || 50));
+  res.json({ ok: true, ...modelRouting.view(n) });
+});
+
+app.get('/api/model-catalog', async (req, res) => {
+  try {
+    const catalog = await modelRouting.getCatalog({ refresh: req.query.refresh === '1' });
+    res.json({ ok: true, ...catalog });
+  } catch (e) {
+    debugLog(`[model-catalog] ${e.message}`);
+    res.status(500).json({ ok: false, error: 'catalogue indisponible' });
+  }
+});
+
+app.put('/api/model-routing/:task', express.json({ limit: '4kb' }), async (req, res) => {
+  try {
+    await modelRouting.getCatalog();
+    const b = req.body || {};
+    const choice = b.default === true || b.model == null || b.model === '' ? null : { provider: b.provider, model: b.model };
+    const r = modelRouting.setAssignment(req.params.task, choice, b.by);
+    if (!r.ok) return res.status(r.status).json({ ok: false, error: r.error });
+    if (r.changed) console.log(`[model-routing] ${req.params.task} → ${choice ? `${choice.provider}:${choice.model}` : '(défaut du projet)'}`);
+    res.json({ ok: true, task: req.params.task, assignment: r.assignment, changed: r.changed, updatedAt: r.updatedAt });
+  } catch (e) {
+    debugLog(`[model-routing] ${e.message}`);
+    res.status(500).json({ ok: false, error: 'enregistrement impossible' });
+  }
+});
 
 // Fleet-global provider availability, read cheaply per request.
 function readNoFailover() { return fs.existsSync(path.join(LOGS_DIR, 'no-failover')); }
