@@ -46,7 +46,12 @@ function renderTable(rows) {
     // restart-when-idle du chef y lisent « occupé ») ; la note le précise.
     ['NOTE',      r => r.awaitingPermission
       ? `ATTEND AUTORISATION : ${r.awaitingPermission.tool} — ${String(r.awaitingPermission.preview || '').slice(0, 60)}${r.awaitingPermission.deadline ? ` (reste ${fmtAge(r.awaitingPermission.deadline - Date.now())})` : ''} — ne pas tuer`
-      : r.needsInput ? `needs: ${r.needsInput}` : (r.stalled ? 'STALL — consider intervention' : '')],
+      : r.needsInput ? `needs: ${r.needsInput}`
+      : r.stalled ? 'STALL — consider intervention'
+      // 0.47.2 : attente d'un fournisseur lent et tours d'essai, sans alarme.
+      : [r.testRun && (r.state === 'live' || r.state === 'think') ? `🧪 test : ${r.testRun.label}` : '',
+         r.waitingProvider ? `⏳ attend ${r.waitingProvider.provider || 'le fournisseur'} depuis ${fmtAge(r.waitingProvider.sinceMs)}` : '',
+         r.stopped ? `■ arrêté (${r.stopped.by})${r.stopped.reason ? ` — ${r.stopped.reason}` : ''}` : ''].filter(Boolean).join(' · ')],
   ];
   const out = [cols.map(c => c[0]).join('  ')];
   for (const r of rows) out.push(cols.map(c => c[1](r)).join('  '));

@@ -30,6 +30,9 @@
     // A confirmed-dead producer is stronger evidence than mere silence, so it
     // must win over "sans progrès" (STALLED). The data-state key stays 'stalled'
     // for both — only the visible label changes (state vocabulary is locked).
+    // 0.47.2 : un tour d'essai n'est jamais rouge, même interrompu ou silencieux.
+    var inFlight = r.state === 'live' || r.state === 'think';
+    if (r.testRun && inFlight) return { k: 'live', label: r.deadInFlight ? 'TEST INTERROMPU' : 'TEST EN COURS', cls: 'st-live' };
     if (r.deadInFlight) return { k: 'stalled', label: 'PID MORT', cls: 'st-stalled' };
     if (r.stalled) return { k: 'stalled', label: 'SANS PROGRÈS', cls: 'st-stalled' };
     // 0.45.0 : en pause, il attend une autorisation de l'utilisateur.
@@ -38,7 +41,9 @@
       case 'live':   return { k: 'live',   label: 'EN COURS',        cls: 'st-live' };
       case 'think':  return { k: 'think',  label: 'RÉFLEXION',       cls: 'st-think' };
       case 'input':  return { k: 'input',  label: 'RÉPONSE REQUISE', cls: 'st-input' };
-      case 'error':  return { k: 'error',  label: 'ÉCHEC',           cls: 'st-error' };
+      case 'error':  return r.stopped
+        ? { k: 'error', label: 'ARRÊTÉ', cls: 'st-idle' }
+        : { k: 'error',  label: 'ÉCHEC',           cls: 'st-error' };
       case 'unread': return { k: 'unread', label: 'TERMINÉ · non lu', cls: 'st-unread' };
       default:       return { k: 'idle',   label: 'PRÊT',            cls: 'st-idle' };
     }
@@ -48,7 +53,7 @@
   // in-flight, then unread, idle last. Mirrors fleet-status-core's stall
   // signal — see scripts/fleet-status-core.mjs for the underlying derivation.
   function rank(r) {
-    if (r.stalled || r.deadInFlight || r.awaitingPermission) return 0;
+    if (r.awaitingPermission || (!r.testRun && (r.stalled || r.deadInFlight))) return 0;
     if (r.state === 'error') return 1;
     if (r.state === 'input') return 2;
     if (r.state === 'live' || r.state === 'think') return 3;

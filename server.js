@@ -2401,7 +2401,7 @@ function scanProjectState(name) {
       if (isConductorStop(ev)) {
         stopped = stopInfo(ev);
         state = 'error';
-        lastLine = stopped.reason || 'arrêté par le chef';
+        lastLine = stopped.reason || globalThis.TurnCore.stopWord(stopped).toLowerCase();
       } else if (isErr && ev.synthetic) {
         state = 'idle';
       } else if (isErr) {
@@ -3775,7 +3775,7 @@ function reduceMusician(name, ev) {
     // "attend le chef" instead of the misleading "terminé".
     const asksChef = NEEDS_CHEF_RE.test(lastAssistantText || '')
       || (typeof ev.result === 'string' && NEEDS_CHEF_RE.test(ev.result));
-    if (isConductorStop(ev))    { stopped = stopInfo(ev); state = 'error'; lastLine = stopped.reason || 'arrêté par le chef'; awaitingChef = false; }
+    if (isConductorStop(ev))    { stopped = stopInfo(ev); state = 'error'; lastLine = stopped.reason || globalThis.TurnCore.stopWord(stopped).toLowerCase(); awaitingChef = false; }
     else if (isErr && ev.synthetic)  { state = 'idle'; awaitingChef = false; }
     else if (isErr)             { state = 'error'; lastLine = ev.subtype || 'échec du tour'; awaitingChef = false; }
     else if (needs)             { state = 'input'; lastLine = needs[1].trim().slice(0, 600); awaitingChef = false; }

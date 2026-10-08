@@ -203,7 +203,9 @@ export async function handleResponses({ body, upstream, res, fetch: fetchImpl = 
   let usageTotal = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
   let served = null;
   const messages = chat.messages;
+  let roundStart = Date.now();
   for (let round = 0; round <= maxWebRounds; round++) {
+    roundStart = Date.now();
     // `stream: false` côté fournisseur (NVIDIA) : en flux, kimi-k3 laissait
     // fuir ses jetons de modèle (« <|open|> », « <|close|> ») au lieu d'appels
     // d'outils propres ; sans flux, la même requête rend des tool_calls nets
@@ -295,7 +297,11 @@ export async function handleResponses({ body, upstream, res, fetch: fetchImpl = 
   res.end();
   return { ok: true, served, usage: usageTotal };
 
-  function fail(status, message) {
+  function fail(status, message0) {
+    // La durée de l'appel, pour un échec lisible côté dashboard
+    // (« ✕ échec : NVIDIA 504 après 5 min 00 s », dispatch.mjs).
+    const s = Math.round((Date.now() - roundStart) / 1000);
+    const message = `${message0} (après ${s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, '0')} s`})`;
     log(`[passerelle] ${message}`);
     if (!started) {
       res.writeHead(status >= 400 ? status : 502, { 'content-type': 'application/json' });

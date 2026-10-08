@@ -40,7 +40,7 @@
   };
 
   function label(m) {
-    if (m.state === "error" && m.stopped) return "Arrêté par le chef";
+    if (m.state === "error" && m.stopped) return global.TurnCore?.stopWord ? global.TurnCore.stopWord(m.stopped) : "Arrêté par le chef";
     if (m.state === "unread" && m.awaitingChef) return "Attend le chef";
     return LABEL[m.state] || LABEL.idle;
   }
@@ -82,9 +82,19 @@
     if (!r) return null;
     // 0.45.0 : en pause volontaire, il attend VOTRE décision (jamais « sans progrès »).
     if (r.awaitingPermission) return { kind: "perm", text: "🔐 attend autorisation · " + (r.awaitingPermission.tool || "outil") };
+    // 0.47.2 : un tour d'ESSAI n'est jamais une alarme (« ce n'aurait pas dû
+    // être affiché en rouge »), même interrompu ou silencieux.
+    const inFlight = r.state === "live" || r.state === "think";
+    if (r.testRun && inFlight && r.deadInFlight === true) return { kind: "test", neutral: true, text: "🧪 test interrompu — processus arrêté" };
+    if (r.testRun && inFlight && r.stalled) return { kind: "test", neutral: true, text: "🧪 test en cours — silence " + fmtAge(r.silentMs) };
     if (r.deadInFlight === true) return { kind: "dead", text: "✗ processus perdu" };
     if (r.stalled) return { kind: "stall", text: "! sans progrès " + fmtAge(r.silentMs) };
     return null;
+  }
+  /** Vrai incident de santé (rouge) : PID mort sans result, stall réel. */
+  function alarming(r) {
+    const h = healthFlag(r);
+    return !!h && !h.neutral && (h.kind === "dead" || h.kind === "stall");
   }
 
   // ------------------------------------------------------------------------
@@ -259,7 +269,8 @@
     const snap = App.pupitreSnapshot;
     const banners = [];
 
-    const dead = (snap?.fleet || []).filter(r => r.deadInFlight === true);
+    // Un essai interrompu n'est pas un incident (0.47.2).
+    const dead = (snap?.fleet || []).filter(r => r.deadInFlight === true && !r.testRun);
     if (dead.length) {
       banners.push({ kind: "lost", text: `✗ processus perdu — ${dead.map(r => r.name).join(", ")}` });
     }
@@ -305,9 +316,10 @@
         continue;
       }
       const h = healthFlag(r);
+      if (h && h.neutral) continue;   // tour d'essai : rien à examiner
       if (h) { out.push({ kind: h.kind, name: m.name, mark: h.kind === "dead" ? "✗" : h.kind === "perm" ? "🔐" : "!", text: h.text }); continue; }
       if (m.state === "error" && m.stopped) {
-        out.push({ kind: "stopped", name: m.name, mark: "■", text: "arrêté par le chef" + (m.stopped.reason ? " — " + m.stopped.reason : "") });
+        out.push({ kind: "stopped", name: m.name, mark: "■", text: label(m).toLowerCase() + (m.stopped.reason ? " — " + m.stopped.reason : "") });
       } else if (m.state === "error") {
         out.push({ kind: "error", name: m.name, mark: "✕", text: m.lastLine || "échec du tour" });
       }
@@ -401,7 +413,7 @@
   // pointeur survole le rail (« jamais sous le pointeur »).
   function railRank(m) {
     const r = snapRow(m.name);
-    if (r && (r.stalled || r.deadInFlight || r.awaitingPermission)) return 0;
+    if (r && (alarming(r) || r.awaitingPermission)) return 0;
     if (m.state === "error") return 1;
     if (m.state === "input") return 2;
     if (m.state === "live" || m.state === "think") return 3;
@@ -446,9 +458,12 @@
     const h = healthFlag(r);
     const stale = snapStale();
     const bits = [];
-    if (h) {
+    if (h && !h.neutral) {
       bits.push(`<span class="rr-warn">${esc(h.text)}</span>`);
+    } else if (h) {
+      bits.push(`<span class="rr-soft">${esc(h.text)}</span>`);
     } else if (r && (m.state === "live" || m.state === "think")) {
+      if (r.testRun) bits.push(esc("🧪 test en cours"));
       const act = r.activity ? String(r.activity).slice(0, 48) : "";
       const turn = r.turnElapsedMs != null ? fmtAge(r.turnElapsedMs) : null;
       if (act) bits.push(esc(act));
@@ -463,7 +478,7 @@
       bits.push(`<span class="rr-soft">${esc(m.lastLine.slice(0, 50))}</span>`);
     }
     if (stale) bits.push(`<span class="rr-soft">(données anciennes)</span>`);
-    const alert = h ? " is-alert" : "";
+    const alert = alarming(r) || (h && h.kind === "perm") ? " is-alert" : "";
     const stoppedAttr = m.stopped && m.state === "error" ? ' data-stopped="1"' : "";
     const row = `<button class="rail-row${alert}" data-state="${esc(m.state)}" data-name="${esc(m.name)}"${stoppedAttr} type="button">
         <span class="rr-dot"></span>
@@ -500,7 +515,7 @@
     const examine = active.filter(m => {
       if (inFlight.includes(m)) {
         const r = snapRow(m.name);
-        return !!(r && (r.stalled || r.deadInFlight || r.awaitingPermission));
+        return !!(r && (alarming(r) || r.awaitingPermission));
       }
       // À EXAMINER = ce qui réclame une décision : question, échec, blocage
       // sur le chef, et tout ce qui est en vol mais sans progrès / PID mort.
@@ -771,7 +786,7 @@
       if (r?.turnElapsedMs != null) bits.push(fmtAge(r.turnElapsedMs));
       if (r?.activity) bits.push(String(r.activity).slice(0, 40));
       text = esc(bits.join(" · "));
-      if (h) text += ` · <span class="mr-warn">${esc(h.text)}</span>`;
+      if (h) text += h.neutral ? ` · ${esc(h.text)}` : ` · <span class="mr-warn">${esc(h.text)}</span>`;
     }
 
     const goto = it.outcome
@@ -982,7 +997,7 @@
     const st = $(".dive-state", el);
     const h = healthFlag(r);
     st.innerHTML = m
-      ? `${esc(glyph(m))} ${esc(label(m))}` + (h ? ` · <span style="color:var(--st-error)">${esc(h.text)}</span>` : "")
+      ? `${esc(glyph(m))} ${esc(label(m))}` + (h ? (h.neutral ? ` · ${esc(h.text)}` : ` · <span style="color:var(--st-error)">${esc(h.text)}</span>`) : "")
       : "—";
     // Question en attente : on peut l'acquitter d'ici. Déjà acquittée : on
     // garde la trace (note) tant que le musicien n'a pas repris la main.
@@ -1404,7 +1419,7 @@
     renderChefStatus, renderSysBanner, renderAttention, renderRail, renderMobilePilot,
     syncRailVisibility, toggleRailSheet, openSearch, renderSearch,
     missionsHtml, orchestraActivityHtml, extractDispatches, findMission,
-    label, glyph, fmtAge, snapRow, snapStale, snapAgeMs, healthFlag, railRank,
+    label, glyph, fmtAge, snapRow, snapStale, snapAgeMs, healthFlag, alarming, railRank,
     goBack,
     get diveName() { return dive.name; },
     set returnFocus(el) { dive.returnFocus = el; },

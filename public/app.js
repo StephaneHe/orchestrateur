@@ -261,7 +261,7 @@ class Musician {
       if (window.TurnCore?.isConductorStop(raw)) {
         this.stopped = window.TurnCore.stopInfo(raw);
         this.awaitingChef = false;
-        this.lastLine = this.stopped.reason || "arrêté par le chef";
+        this.lastLine = this.stopped.reason || (globalThis.TurnCore?.stopWord ? globalThis.TurnCore.stopWord(this.stopped).toLowerCase() : "arrêté par le chef");
         this.setState("error");
       } else if (isErr && raw.synthetic) {
         // Synthetic interrupts (orchestrator restart / child crash) — no question was asked.

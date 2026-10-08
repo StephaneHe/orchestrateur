@@ -988,6 +988,37 @@ suivante sont tenus dans le plan.
   - `_test_responses_shim.mjs` (bout en bout réel avec faux fournisseurs) ;
   - HTTP `harness-nvidia`.
 
+## Rouge = vrai incident ; arrêts, essais et attentes neutres (0.47.2)
+
+Remarque utilisateur : « Si il n'y a pas eu de probleme, ca n'aurait pas du
+etre affiche en rouge: piplineLab ne repond pas ou processus perdu ».
+
+- **Rouge réservé** à un PID mort sans result et à un stall réel :
+  `Salle.alarming(r)`. Le rail, les cadres, l'attention, le bandeau, la vue
+  Projets, le pupitre et le volet passent tous par là (ou par
+  `healthFlag(r).neutral`).
+- **Arrêt volontaire** : `kill-stalled.mjs <p> --by chef|supervision|test|utilisateur
+  --reason "…"` écrit `stopped_by`. Les libellés viennent de
+  `TurnCore.stopWord` et `stopText` (« ■ Arrêté par la supervision — motif »).
+  L'état reste `error`, en gris.
+- **Tour d'essai** : `dispatch.mjs … --test "<libellé>"` (ou
+  `ORCH_TEST_LABEL`, retiré de l'env des fils) pose `user_prompt.test`. Le
+  champ additif `testRun` est affiché « 🧪 test en cours » ou « 🧪 test
+  interrompu », jamais en rouge. **Tout tour lancé pour essai par un Claude
+  ou un test doit porter `--test`.**
+- **Battements** (`runCodex`) : `system/heartbeat {provider, waitingMs,
+  intervalMs, text}` quand codex se tait depuis `ORCH_HEARTBEAT_MS` (30 s).
+  `lastMeaningful` les ignore. `scanProject` en tire `waitingProvider` : avec
+  un battement frais (moins de max(2,5 × intervalle, 90 s)), il n'y a pas de
+  stall jusqu'à `PROVIDER_WAIT_MAX_MS` (20 min).
+- **Échec fournisseur** : `providerFailureText()` met « ✕ échec : NVIDIA 504
+  après 5 min 00 s » en tête du result. La passerelle ajoute « (après N) » à
+  ses erreurs.
+- Recettes : `_test_neutral_stop.mjs` charge les vrais `salle.js`,
+  `projets.js` et `pupitre-row.js` dans un bac à sable vm, et fait tourner le
+  vrai dispatch avec une doublure de codex. S'y ajoute la section 3 de
+  `_test_responses_shim.mjs`.
+
 ## Suggestions de models de l'étude comparative (0.46.0)
 
 Demande utilisateur (« Continue », à la proposition du chef) : afficher dans la

@@ -662,7 +662,7 @@
   font-family: var(--font-mono); font-size: 0.625rem; color: var(--fg-2);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.rail-card[data-kind="stopped"] { --state-color: var(--fg-2); }
+.rail-card[data-kind="stopped"], .rail-card[data-kind="test"] { --state-color: var(--fg-2); }
 
 /* Journal d'activité du volet */
 .dive-pane[hidden], .dive-tab[hidden] { display: none; }

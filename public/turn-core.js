@@ -59,6 +59,23 @@
     const reason = typeof ev.reason === "string" && ev.reason.trim() ? ev.reason.trim() : "";
     return { by: ev.stopped_by || "chef", reason, ts: ev.timestamp || null };
   }
+  // 0.47.2 — demande utilisateur : « Si il n'y a pas eu de probleme, ca n'aurait
+  // pas du etre affiche en rouge ». Un arrêt VOLONTAIRE (chef, supervision,
+  // essai, utilisateur) s'affiche neutre, avec son auteur et son motif.
+  const STOP_BY = { chef: "par le chef", supervision: "par la supervision", test: "(essai)", utilisateur: "par l'utilisateur" };
+  function stopWord(stop) {
+    return `Arrêté ${STOP_BY[stop && stop.by] || (stop && stop.by ? `par ${stop.by}` : "par le chef")}`;
+  }
+  /** « ■ Arrêté par le chef — motif ». */
+  function stopText(stop) {
+    return `■ ${stopWord(stop)}${stop && stop.reason ? ` — ${stop.reason}` : ""}`;
+  }
+  /** Tour d'essai (dispatch.mjs --test "<libellé>") : jamais affiché en rouge. */
+  function testInfo(ev) {
+    const t = ev && ev.test;
+    if (!t) return null;
+    return { label: typeof t === "string" ? t : (t.label || "essai"), by: (t && t.by) || null };
+  }
 
   // --------------------------------------------------------------------------
   // Résumés
@@ -158,6 +175,7 @@
         summary: [], question: "", durationMs: null, costUsd: null,
         commits: [], pushed: false, versions: [], urls: [],
         stop: null, ack: null, resolved: null, tools: 0,
+        test: promptEv ? testInfo(promptEv) : null,
       };
       turns.push(cur);
       if (turns.length > max) turns.splice(0, turns.length - max);
@@ -318,7 +336,7 @@
 
   g.TurnCore = {
     isAcknowledged, isQuestionResolved, isConductorStop, isPhantomResult,
-    isResultError, isTurnStart, stopInfo,
+    isResultError, isTurnStart, stopInfo, stopWord, stopText, testInfo,
     summarizePrompt, summarizeResult, cleanPrompt, createJournal, FULL_MAX,
   };
 })(typeof globalThis !== "undefined" ? globalThis : window);

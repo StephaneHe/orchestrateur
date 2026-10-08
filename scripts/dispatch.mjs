@@ -218,6 +218,10 @@ const dualMode       = takeFlagValue('--dual-mode') || 'action';
 const dualBranchArg  = takeFlagValue('--dual-branch');
 const dualCwdArg     = takeFlagValue('--dual-cwd');
 const dualSynthesis  = takeFlagValue('--dual-synthesis');
+// 0.47.2 — tour d'ESSAI (outillage, recette) : affiché « 🧪 test en cours »,
+// jamais en rouge, même si son processus est arrêté. `ORCH_TEST_LABEL` pour
+// les scripts de test qui lancent dispatch.mjs.
+const testLabel      = (takeFlagValue('--test') || process.env.ORCH_TEST_LABEL || '').replace(/\s+/g, ' ').trim().slice(0, 120) || null;
 const DUAL_RUN_RE = /^d-\d{8}T\d{6}-[a-z0-9]{4,8}$/;
 if (secondProvider && !['claude', 'codex', 'nvidia', 'openrouter'].includes(secondProvider)) die(`--second-provider must be "claude", "codex", "nvidia" or "openrouter" (got "${secondProvider}")`);
 if (!['action', 'judge'].includes(dualMode)) die(`--dual-mode must be "action" or "judge" (got "${dualMode}")`);
@@ -1058,6 +1062,8 @@ delete env.NVIDIA_API_KEY;
 // Même règle pour la clé OpenRouter (0.43.0) : seuls nos modules la lisent,
 // depuis .env ; aucun fils (claude, codex) n'en hérite.
 delete env.OPENROUTER_API_KEY;
+// Un dispatch lancé PAR ce tour n'est pas un essai : le marquage ne se transmet pas.
+delete env.ORCH_TEST_LABEL;
 
 // ---------- shared log setup ------------------------------------------------
 
@@ -1117,6 +1123,7 @@ if (Number.isFinite(inheritedWakeGen) && inheritedWakeGen > 0) {
 }
 // Diagnostic en une ligne : le tour de chef dit lui-même qu'il est en rapport seul.
 if (POOL_ASSIGN && process.env.DISPATCH_REPORT_ONLY === '1') userPromptEvent.reportOnly = true;
+if (testLabel) userPromptEvent.test = { label: testLabel };
 // Trace du --new-session : ce tour ne reprend PAS la session précédente.
 if (NEW_SESSION && provider === 'claude') {
   userPromptEvent.newSession = true;
@@ -1174,11 +1181,37 @@ function killedByConductor(since) {
   } catch { return false; }
 }
 
+/** « 5 min 03 s », « 42 s ». */
+function fmtDur(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m} min${s % 60 ? ` ${String(s % 60).padStart(2, '0')} s` : ''}` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')}`;
+}
+
+/**
+ * Échec d'un fournisseur, lisible tel quel (0.47.2) : « ✕ échec : NVIDIA 504
+ * après 5 min », plutôt qu'un message brut ou, pire, un « processus perdu ».
+ * La durée vient de la passerelle quand elle la donne (« après 5 min 00 s »),
+ * sinon c'est la durée du tour.
+ */
+function providerFailureText(label, msg, elapsedMs) {
+  const s = String(msg || '');
+  const code = (/\bHTTP (\d{3})\b/.exec(s) || /\b(4\d\d|5\d\d)\b/.exec(s) || [])[1];
+  const after = (/après (\d+ (?:min|s|h)[^—)\n]*)/.exec(s) || [])[1];
+  const when = after ? after.trim() : fmtDur(elapsedMs);
+  if (code) return `✕ échec : ${label} ${code} après ${when}`;
+  const short = s.replace(/\s+/g, ' ').trim().slice(0, 160);
+  return `✕ échec : ${label}${short ? ` — ${short}` : ''} (après ${when})`;
+}
+
 let explicitFailed = false;
 function failExplicitModel(reason, extra = {}) {
   if (explicitFailed) return;
   explicitFailed = true;
-  const cause = `model demandé ${EXPLICIT_MODEL} indisponible : ${reason} — aucun fallback (règle utilisateur)`;
+  const { headline, ...rest } = extra;
+  extra = rest;
+  const cause = `${headline ? `${headline} — ` : ''}model demandé ${EXPLICIT_MODEL} indisponible : ${reason} — aucun fallback (règle utilisateur)`;
   console.error(`[dispatch] fallback refusé : model explicite ${EXPLICIT_MODEL} — ${reason}`);
   try {
     logStream.write(JSON.stringify({
@@ -1506,6 +1539,29 @@ function runCodex(isFailover = false) {
   }
   try { fs.writeFileSync(pidPath, String(codexChild.pid)); } catch {}
 
+  // 0.47.2 — BATTEMENTS. codex n'écrit rien tant que le fournisseur génère
+  // (NVIDIA par la passerelle : plusieurs minutes par appel). Sans signe de
+  // vie, la supervision prenait ce silence pour un « sans progrès » rouge. Le
+  // battement dit « j'attends le fournisseur depuis N » ; la supervision ne
+  // compte le silence qu'à partir du dernier battement (fleet-status-core).
+  const PROVIDER_LABEL = { nvidia: 'NVIDIA', openrouter: 'OpenRouter', codex: 'OpenAI (codex)' }[runLabel] || runLabel;
+  const HEARTBEAT_MS = Number(process.env.ORCH_HEARTBEAT_MS) > 0 ? Number(process.env.ORCH_HEARTBEAT_MS) : 30_000;
+  let codexLastOutAt = Date.now();
+  const codexStartedAt = Date.now();
+  const heartbeat = setInterval(() => {
+    const waited = Date.now() - codexLastOutAt;
+    if (waited < HEARTBEAT_MS) return;
+    try {
+      logStream.write(JSON.stringify({
+        type: 'system', subtype: 'heartbeat', provider: runLabel,
+        waitingMs: waited, intervalMs: HEARTBEAT_MS,
+        text: `en attente de ${PROVIDER_LABEL} depuis ${fmtDur(waited)}`,
+        timestamp: new Date().toISOString(),
+      }) + '\n');
+    } catch {}
+  }, HEARTBEAT_MS);
+  heartbeat.unref?.();
+
   // Feed the prompt and close stdin so codex stops waiting for more input.
   try { codexChild.stdin.end(prompt); } catch {}
 
@@ -1631,6 +1687,7 @@ function runCodex(isFailover = false) {
   }
 
   codexChild.stdout.on('data', (chunk) => {
+    codexLastOutAt = Date.now();
     codexStdoutTail += chunk.toString('utf8');
     const lines = codexStdoutTail.split(/\r?\n/);
     codexStdoutTail = lines.pop() ?? '';
@@ -1670,6 +1727,7 @@ function runCodex(isFailover = false) {
   function finishCodex(code, signal) {
     if (codexDone) return;
     codexDone = true;
+    clearInterval(heartbeat);
 
     // Drain a trailing partial line (no newline before EOF).
     if (codexStdoutTail.trim()) {
@@ -1698,10 +1756,14 @@ function runCodex(isFailover = false) {
     // Harnais NVIDIA / OpenRouter : le model est toujours explicite. Une erreur
     // d'API (model inconnu, limite, fournisseur injoignable) n'a aucun repli :
     // fallback_refused, puis la pause côté chef (décision n° 8).
+    // 0.47.2 : l'échec se lit tel quel (« ✕ échec : NVIDIA 504 après 5 min »),
+    // jamais comme un processus perdu.
+    const failHead = isErr && !signal ? providerFailureText(PROVIDER_LABEL, codexErrorMsg, Date.now() - codexStartedAt) : null;
     if (harness && (codexTurnFailed || codexErrorMsg) && !signal) {
       try { fs.unlinkSync(lastMsgPath); } catch {}
-      if (EXPLICIT_MODEL) { failExplicitModel(`${harness} : ${codexErrorMsg || 'tour codex en échec'}`, { thread_id: codexThreadId }); return; }
+      if (EXPLICIT_MODEL) { failExplicitModel(`${harness} : ${codexErrorMsg || 'tour codex en échec'}`, { thread_id: codexThreadId, headline: failHead }); return; }
     }
+    if (failHead && !/^✕ échec/.test(finalText)) finalText = `${failHead}${finalText ? ` — ${finalText}` : ''}`;
 
     // Model EXPLICITE (hors failover) : codex a-t-il servi CE model ?
     if (!isFailover && EXPLICIT_MODEL) {

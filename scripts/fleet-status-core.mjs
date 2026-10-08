@@ -91,6 +91,9 @@ export function tailLines(filePath) {
   return { lines: raw.filter(Boolean), mtimeMs: st.mtimeMs, size };
 }
 
+/** Battement de dispatch.mjs (0.47.2) : « j'attends le fournisseur ». */
+export function isHeartbeat(ev) { return ev?.type === 'system' && ev.subtype === 'heartbeat'; }
+
 export function lastMeaningful(lines) {
   // Walk backwards for the most recent non-partial, parseable event.
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -98,12 +101,29 @@ export function lastMeaningful(lines) {
       const ev = JSON.parse(lines[i]);
       if (!ev || typeof ev !== 'object') continue;
       if (ev.type === 'stream_event') continue; // partials are not "progress"
+      if (isHeartbeat(ev)) continue;            // un signe de vie n'est pas un progrès
       if (isPhantomResult(ev)) continue;        // not a turn end (see above)
       return ev;
     } catch { /* skip corrupt */ }
   }
   return null;
 }
+
+/** Dernier battement postérieur au dernier vrai événement, ou null. */
+export function lastHeartbeat(lines) {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let ev; try { ev = JSON.parse(lines[i]); } catch { continue; }
+    if (!ev || typeof ev !== 'object' || ev.type === 'stream_event') continue;
+    if (isHeartbeat(ev)) return ev;
+    return null;
+  }
+  return null;
+}
+
+// Un fournisseur sans flux (codex, passerelle) peut se taire plusieurs minutes
+// par appel : tant que ses battements arrivent, ce n'est pas un stall… jusqu'à
+// ce plafond, au-delà duquel une attente devient anormale.
+export const PROVIDER_WAIT_MAX_MS = 20 * 60_000;
 
 export function lastAny(lines) {
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -135,10 +155,13 @@ export function deriveState(lines) {
   // 0.45.0 : demandes d'autorisation sans décision du tour en cours. Le tour est
   // en PAUSE volontaire (il attend l'utilisateur) : ni bloqué, ni au repos.
   const permPending = new Map();
+  // 0.47.2 : le dernier tour est-il un essai (dispatch.mjs --test) ?
+  let testRun = null;
 
   for (const ln of lines) {
     let ev; try { ev = JSON.parse(ln); } catch { continue; }
     if (isPhantomResult(ev)) continue;   // mini-tour rejoué par le CLI, pas une fin de tour
+    if (ev?.type === 'user_prompt' && !ev.source) testRun = TurnCore.testInfo(ev);
     if (ev?.type === 'system' && ev.subtype === 'permission_request' && ev.permission?.id) {
       permPending.set(ev.permission.id, { id: ev.permission.id, tool: ev.permission.tool, preview: ev.permission.preview || '',
         toolUseId: ev.permission.toolUseId || null, deadline: ev.permission.deadline || null, risk: ev.permission.risk || null });
@@ -217,6 +240,7 @@ export function deriveState(lines) {
   return {
     state, lastAssistantText, turnStartTs, model, provider, awaitingChef, resolution,
     stopped: state === 'error' ? stopped : null, acknowledged, awaitingPermission,
+    testRun,
   };
 }
 
@@ -326,14 +350,23 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
   const { lines, mtimeMs, size } = tailLines(logPath);
   const last = lastMeaningful(lines);
   const tail = lastAny(lines);
-  const { state, lastAssistantText, turnStartTs, model, provider, awaitingChef, resolution, stopped, acknowledged, awaitingPermission } = deriveState(lines);
+  const { state, lastAssistantText, turnStartTs, model, provider, awaitingChef, resolution, stopped, acknowledged, awaitingPermission, testRun } = deriveState(lines);
   const now = Date.now();
   const lastMeaningfulTs = last?.timestamp ? Date.parse(last.timestamp) : (mtimeMs || 0);
   const silentMs = now - (lastMeaningfulTs || now);
   const fileSilentMs = now - (mtimeMs || now);
   const inFlight = state === 'live' || state === 'think';
+  // Battement frais = le tour attend son fournisseur (pas un stall), jusqu'au
+  // plafond. Battements arrêtés = le silence redevient suspect.
+  const hb = inFlight ? lastHeartbeat(lines) : null;
+  const hbTs = hb?.timestamp ? Date.parse(hb.timestamp) : 0;
+  const hbFresh = !!hb && now - hbTs < Math.max(2.5 * (hb.intervalMs || 30_000), 90_000);
+  const waitingProvider = hbFresh
+    ? { provider: hb.provider || null, sinceMs: (hb.waitingMs || 0) + (now - hbTs), text: hb.text || null }
+    : null;
   // Un tour qui attend une autorisation se tait par construction : pas un stall.
-  const stalled = inFlight && !awaitingPermission && silentMs >= STALL_SILENCE_MS;
+  const stalled = inFlight && !awaitingPermission && silentMs >= STALL_SILENCE_MS &&
+    !(waitingProvider && waitingProvider.sinceMs < PROVIDER_WAIT_MAX_MS);
   const pid = readPid(name, logsDir);
   const alive = pid ? pidAlive(pid) : null;
   const lastKind = lastKindOf(last, tail);
@@ -362,12 +395,16 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
     // Additif 0.45.0 : {id, tool, preview, deadline, risk, count} tant qu'une
     // demande d'autorisation attend l'utilisateur (l'état reste `live`).
     awaitingPermission,
+    // Additifs 0.47.2 : attente d'un fournisseur sans flux (battements), et
+    // tour d'essai ({label}) — tous deux affichés neutres, jamais en rouge.
+    waitingProvider,
+    testRun,
     stalled,
     // Dead process while the log still says a turn is running — a stronger,
     // separate stall signal (the child was SIGKILLed or crashed silently).
     deadInFlight: inFlight && pid != null && alive === false,
     lastKind,
-    activity: activityPreview(last, lastAssistantText),
+    activity: waitingProvider?.text ? `⏳ ${waitingProvider.text.replace(/depuis .*$/, `depuis ${fmtAge(waitingProvider.sinceMs)}`)}` : activityPreview(last, lastAssistantText),
     silentMs,
     fileSilentMs,
     turnElapsedMs,

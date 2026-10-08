@@ -185,7 +185,9 @@
       ? `<button class="jt-toggle" type="button" data-jt-toggle="${esc(key)}" aria-expanded="${open ? "true" : "false"}" aria-controls="${fid}">${open ? "▾ Réduire" : "▸ Afficher tout"}</button>`
       : "";
     let word = o.word;
+    if (t.outcome === "stopped" && t.stop && global.TurnCore?.stopWord) word = global.TurnCore.stopWord(t.stop).toLowerCase();
     if (t.outcome === "error" && t.subtype) word += ` · ${t.subtype}`;
+    if (t.test) word = `🧪 ${word} · test « ${t.test.label} »`;
     const meta = [fmtDur(t.durationMs), Number.isFinite(t.costUsd) ? `$${t.costUsd.toFixed(2)}` : null, shortModel(t.model) || null]
       .filter(Boolean).join(" · ");
     const ask = t.prompt
@@ -195,7 +197,7 @@
     if (t.outcome === "running") {
       did = `<div class="jt-did">en cours · ${t.tools} appel${t.tools > 1 ? "s" : ""} d'outil</div>`;
     } else if (t.outcome === "stopped") {
-      did = `<div class="jt-did">${esc(t.stop?.reason || "arrêté par la supervision du chef (motif non précisé)")}</div>`;
+      did = `<div class="jt-did">${esc(t.stop?.reason || "motif non précisé")}</div>`;
     } else if (t.summary && t.summary.length) {
       did = `<ul class="jt-did">${t.summary.map(s => `<li>${esc(s)}</li>`).join("")}</ul>`;
     }

@@ -11,6 +11,36 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.47.2] - 2026-10-09
+
+Remarque utilisateur : « Si il n'y a pas eu de probleme, ca n'aurait pas du
+etre affiche en rouge: piplineLab ne repond pas ou processus perdu ».
+
+### Added
+- (server) Battements : pendant un tour codex (OpenAI, NVIDIA par la
+  passerelle, OpenRouter), `dispatch.mjs` écrit `system/heartbeat` dans le log
+  du musicien tant que le fournisseur ne répond pas (toutes les 30 s,
+  `ORCH_HEARTBEAT_MS` pour les tests). Le texte dit « en attente de NVIDIA
+  depuis 3 min 30 s ».
+- (server) Tours d'essai : `dispatch.mjs --test "<libellé>"` (ou
+  `ORCH_TEST_LABEL`) marque le `user_prompt` (`test.label`). Un tour d'essai
+  s'affiche « 🧪 test en cours », jamais en rouge, même interrompu.
+- (server) `kill-stalled.mjs --by chef|supervision|test|utilisateur` : auteur
+  de l'arrêt (`stopped_by`), affiché « ■ Arrêté par la supervision — motif ».
+
+### Changed
+- (server) Le seuil de stall s'appuie sur les battements : un tour qui attend
+  son fournisseur avec des battements frais n'est pas « sans progrès »
+  (plafond 20 min). Battements arrêtés = stall, comme avant. `fleet-status`
+  garde l'état LIVE et ajoute « ⏳ attend nvidia depuis … ».
+- (server) Le rouge est réservé aux vrais incidents (PID mort sans result,
+  stall réel) dans le rail, les cadres, la bande d'attention, le bandeau
+  système, la vue Projets, le pupitre et le volet. Un arrêt volontaire est
+  neutre et porte son auteur et son motif, aussi dans le journal d'activité.
+- (server) Échec d'un fournisseur lisible : « ✕ échec : NVIDIA 504 après
+  5 min 00 s » en tête du result ; la passerelle ajoute la durée de l'appel à
+  ses messages d'erreur.
+
 ## [0.47.1] - 2026-10-09
 
 ### Fixed

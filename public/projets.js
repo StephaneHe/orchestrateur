@@ -41,6 +41,7 @@
     error:    { glyph: "✕", word: "Échec",                  state: "error" },
     stopped:  { glyph: "■", word: "Arrêté par le chef",     state: "error" },
     stall:    { glyph: "!", word: "Sans progrès",           state: "live" },
+    test:     { glyph: "🧪", word: "Test en cours",          state: "live" },
     live:     { glyph: "●", word: "En cours",               state: "live" },
     think:    { glyph: "◐", word: "Réflexion",              state: "think" },
     chef:     { glyph: "⇄", word: "Attend le chef",         state: "unread" },
@@ -120,6 +121,8 @@
     if (h && h.kind === "dead")      return { group: "attention", kind: "dead",     rank: 1 };
     if (m.state === "error")         return { group: "attention", kind: m.stopped ? "stopped" : "error", rank: 2 };
     if (h && h.kind === "stall")     return { group: "attention", kind: "stall",    rank: 3 };
+    // 0.47.2 : un tour d'essai (même interrompu ou silencieux) reste neutre.
+    if (inFlight && r?.testRun)      return { group: "active",    kind: "test",     rank: 0 };
     if (inFlight)                    return { group: "active",    kind: m.state,    rank: 0 };
     // `awaitingChef` n'est connu du client qu'en direct (SSE) ; après un
     // rechargement, l'instantané serveur (deriveState) le porte.
@@ -134,7 +137,13 @@
   function describe(m, r) {
     const c = classify(m, r);
     const k = KIND[c.kind] || KIND.idle;
-    return { kind: c.kind, group: c.group, glyph: k.glyph, word: k.word };
+    return { kind: c.kind, group: c.group, glyph: k.glyph, word: wordOf(c.kind, m) };
+  }
+
+  /** Mot affiché : « Arrêté par la supervision », « Arrêté (essai) »… (0.47.2). */
+  function wordOf(kind, m) {
+    if (kind === "stopped" && m?.stopped && global.TurnCore?.stopWord) return global.TurnCore.stopWord(m.stopped);
+    return (KIND[kind] || KIND.idle).word;
   }
 
   function recvElapsed() {
@@ -183,6 +192,10 @@
       case "dead":     return "le tour n'a plus de processus" + (r?.activity ? " · " + clean(r.activity) : "");
       case "stall":    return clean(r?.activity || m.lastLine) || "aucun événement récent";
       case "live":     return clean(r?.activity || m.lastLine || r?.mission) || "démarrage…";
+      case "test": {
+        const h = global.Salle ? global.Salle.healthFlag(r) : null;
+        return (r?.testRun?.label ? r.testRun.label + " · " : "") + (h ? h.text : clean(r?.activity || m.lastLine) || "démarrage…");
+      }
       case "think":    return clean(r?.activity && r.activity !== "(réflexion…)" ? r.activity : "") || "réflexion…";
       case "chef":     return "décision demandée au chef" + (m.lastLine ? " · " + clean(m.lastLine) : "");
       case "queued": {
@@ -202,7 +215,7 @@
   function ageOf(m, r, kind) {
     const el = recvElapsed();
     if (kind === "stall" && r?.silentMs != null) return { text: "silence " + fmtDur(r.silentMs + el), live: true };
-    if ((kind === "live" || kind === "think" || kind === "dead") && r?.turnElapsedMs != null) {
+    if ((kind === "live" || kind === "think" || kind === "dead" || kind === "test") && r?.turnElapsedMs != null) {
       return { text: "tour " + fmtDur(r.turnElapsedMs + el), live: true };
     }
     const ts = lastActivityAt(m, r);
@@ -250,7 +263,7 @@
     const f = st.filter.trim().toLowerCase();
     if (!f) return true;
     return it.m.name.toLowerCase().includes(f) || it.line.toLowerCase().includes(f) ||
-      KIND[it.kind].word.toLowerCase().includes(f);
+      wordOf(it.kind, it.m).toLowerCase().includes(f);
   }
 
   function tileHtml(it) {
@@ -264,7 +277,7 @@
     if (it.isChef) chips.push(`<span class="pv-chip pv-chip-badge">CHEF</span>`);
     const mdl = shortModel(r);
     if (mdl) chips.push(`<span class="pv-chip pv-chip-model" title="${esc(mdl.title)}">${esc(mdl.text)}</span>`);
-    const word = k.word;
+    const word = wordOf(it.kind, it.m);
     return `<span class="pv-glyph" aria-hidden="true">${esc(k.glyph)}</span>` +
       `<span class="pv-name">${esc(it.m.name)}</span>` +
       `<span class="pv-word">${esc(word)}</span>` +
@@ -277,7 +290,7 @@
   function ariaLabel(it) {
     const k = KIND[it.kind];
     const age = ageOf(it.m, it.r, it.kind);
-    const bits = [it.m.name, k.word, it.line, age.text];
+    const bits = [it.m.name, wordOf(it.kind, it.m), it.line, age.text];
     const q = it.r?.queueDepth || 0;
     if (q) bits.push(`${q} en file`);
     if (it.r?.callbackTo) bits.push(`rapport promis à ${it.r.callbackTo}`);

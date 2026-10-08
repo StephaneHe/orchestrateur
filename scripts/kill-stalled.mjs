@@ -31,16 +31,20 @@ const LOGS = path.join(ROOT, 'logs');
 
 const argv = process.argv.slice(2);
 const project = argv[0];
-const USAGE = 'usage: node scripts/kill-stalled.mjs <project> [--reason "<motif>"] [--force]';
+const USAGE = 'usage: node scripts/kill-stalled.mjs <project> [--reason "<motif>"] [--by chef|supervision|test|utilisateur] [--force]';
 if (!project || project.startsWith('--')) { console.error(USAGE); process.exit(64); }
 if (!/^[A-Za-z0-9._-]{1,64}$/.test(project)) { console.error(`invalid project name "${project}"`); process.exit(64); }
 let reason = '';
 let force = false;
+// 0.47.2 : qui arrête (affiché « ■ Arrêté par … — motif », neutre, jamais rouge).
+let by = 'chef';
 for (let i = 1; i < argv.length; i++) {
   if (argv[i] === '--reason' && i + 1 < argv.length) reason = argv[++i];
+  else if (argv[i] === '--by' && i + 1 < argv.length) by = argv[++i];
   else if (argv[i] === '--force') force = true;
   else { console.error(USAGE); process.exit(64); }
 }
+if (!['chef', 'supervision', 'test', 'utilisateur'].includes(by)) { console.error(USAGE); process.exit(64); }
 reason = reason.replace(/\s+/g, ' ').trim().slice(0, 300);
 
 const pidPath = path.join(LOGS, `${project}.pid`);
@@ -84,14 +88,15 @@ try {
     type: 'result',
     subtype: 'error_killed_by_conductor',
     is_error: true,
-    stopped_by: 'chef',
+    stopped_by: by,
     ...(reason ? { reason } : {}),
     timestamp: new Date().toISOString(),
     duration_ms: 0,
-    result: `Turn terminated by conductor supervision (killed pid ${pid ?? 'unknown'})${reason ? ` — ${reason}` : ''}.`,
+    result: `Turn terminated by ${by === 'chef' ? 'conductor supervision' : by} (killed pid ${pid ?? 'unknown'})${reason ? ` — ${reason}` : ''}.`,
   }) + '\n');
 } catch (e) {
   console.error(`[kill-stalled] could not append terminal event: ${e.message}`);
 }
 
-console.log(`killed ${project} (pid ${pid ?? '—'}), log marked « arrêté par le chef »${reason ? ` — ${reason}` : ''}`);
+const BY_WORD = { chef: 'par le chef', supervision: 'par la supervision', test: '(essai)', utilisateur: "par l'utilisateur" };
+console.log(`killed ${project} (pid ${pid ?? '—'}), log marked « arrêté ${BY_WORD[by]} »${reason ? ` — ${reason}` : ''}`);

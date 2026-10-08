@@ -131,6 +131,10 @@ console.log('\n── 3. Erreurs : jamais de repli, l\'erreur remonte telle quel
   const unreachable = async () => { throw new Error('ECONNREFUSED'); };
   const r2 = await handleResponses({ body: { model: 'm', input: [] }, upstream: { url: 'http://x', key: 'k' }, res: res2, fetch: unreachable });
   t('fournisseur injoignable → 502', !r2.ok && res2.status === 502);
+  // 0.47.2 : la durée accompagne l'erreur (« ✕ échec : NVIDIA 504 après … »).
+  const res3 = fakeRes();
+  await handleResponses({ body: { model: 'm', input: [] }, upstream: { url: 'http://x', key: 'k' }, res: res3, fetch: scriptedFetch([{ status: 504, message: 'Gateway Timeout' }]) });
+  t('504 du fournisseur → message avec la durée « (après N s) »', res3.status === 504 && /\(après \d+ (s|min)/.test(res3.chunks.join('')), res3.chunks.join('').slice(0, 200));
 }
 
 console.log('\n── 4. web_fetch servi par la passerelle');
