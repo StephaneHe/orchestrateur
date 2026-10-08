@@ -11,6 +11,17 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.38.1] - 2026-10-08
+
+Demande utilisateur : « Je voudrais rajouter un mode discussion sur
+l'orchestrateur. Fais moi un plan ».
+
+### Added
+- `docs/PLAN-mode-discussion.md` : plan du mode discussion (interprétations,
+  recommandation fils + chef en lecture seule, garde-fous par
+  `--disallowed-tools`, passage à l'action, phases, questions à trancher).
+  Aucun code modifié.
+
 ## [0.38.0] - 2026-10-05
 
 Demande utilisateur : « [un projet] était un projet mis de côté, maintenant
