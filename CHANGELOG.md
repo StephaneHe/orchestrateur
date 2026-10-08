@@ -11,6 +11,74 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-10-08
+
+Demande utilisateur (« Continue », à la proposition du chef) : appliquer à la
+page Models la recommandation consolidée de l'étude comparative des models
+(rapport `comparaison-models-2026-10.md`, commit a8c5cc2), **en suggestions**,
+sans toucher aux choix existants.
+
+### Added
+- **`data/model-recommendations.json`**, un fichier de données versionné
+  produit à partir du rapport. Il contient :
+  - les 25 étapes du rapport, chacune avec un principal suggéré, des
+    alternatives, une confiance, une section et une justification ;
+  - les 102 cases des 13 pipelines, reliées à leur étape ;
+  - les models retirés, dominés et annoncés.
+
+  À régénérer à la prochaine étude. Aucune valeur n'est codée en dur dans le
+  JS. Un fichier mal formé est refusé en entier.
+- (server) `scripts/model-reco.mjs` ;
+  `GET /api/model-recommendations` (une suggestion par case, avec son
+  applicabilité ici, l'âge du rapport et des compteurs) ;
+  `POST /api/model-routing/apply-suggestions {mode: one|empty, slots?,
+  dryRun?}`, réservé à la même origine.
+  - `empty` ne touche **jamais** une case déjà choisie.
+  - Une variante dont la suggestion est celle de son étape reste vide : elle
+    hérite déjà.
+  - Chaque application est inscrite dans l'historique (« suggestion du
+    rapport »).
+- (viewer) Sur chaque étape et chaque variante :
+  - un bloc « 💡 Suggestion » : principal suggéré (avec l'effort conseillé),
+    alternative ou cible (« gpt-6.1-sol, cible, pas encore dans codex →
+    aujourd'hui … ») et niveau de confiance ;
+  - les badges « non tranché » (Discussion, Refactor, Recherche, Rédaction)
+    et « extrapolé » ;
+  - un « Pourquoi ? » avec la justification et la source (date, section,
+    commit) ;
+  - l'état : « ✓ suivie », « votre choix est différent (conservé) » ou « non
+    applicable ici » avec la raison ;
+  - « Appliquer la suggestion », avec confirmation et Annuler.
+- (viewer) En tête de page, un encadré avec la date du rapport, le nombre de
+  cases avec suggestion (102/102, dont 94 applicables ici) et le bouton
+  « Appliquer les suggestions aux étapes vides seulement » (le plan est montré
+  avant de confirmer, avec Annuler). Un avertissement « à refaire d'ici 1-2
+  mois » apparaît à partir de 30 jours, « dépassé » à 60 jours.
+- `claude-haiku-5-5` dans la liste Anthropic. Revérifié avec la CLI : modelUsage
+  `claude-haiku-5-5`, `is_error` false.
+- Tests :
+  - `scripts/_test_model_reco.mjs` ;
+  - parcours HTTP `model-reco` ;
+  - parcours navigateur `models-reco` et `models-reco-mobile`.
+
+### Changed
+- (server) Le catalogue servi applique les règles de l'étude :
+  - `gpt-reserve` et `gpt-5.5` sont retirés des menus ;
+  - opus-5, opus-4-8, fable-5, sonnet-5, haiku-4-5 et gpt-5.6-sol sont marqués
+    « dominé », avec la raison et la source en info-bulle ;
+  - `gpt-6.1-sol` et `gpt-6-luna` sont affichés « annoncé, pas encore
+    disponible dans codex » et ne sont pas sélectionnables (409 côté
+    serveur). Ils deviennent sélectionnables d'eux-mêmes dès qu'ils
+    apparaissent dans `~/.codex/models_cache.json`.
+- (viewer) Un choix existant sur un model retiré est conservé et affiché
+  « ⚠ obsolète », avec un avertissement sur la carte.
+
+### Fixed
+- (viewer) `ensureOption` levait une exception en insérant une option hors
+  liste avant une option rangée dans un groupe. Le rendu de l'onglet
+  s'arrêtait alors. Le cas ne s'était jamais produit avant les choix
+  « obsolètes ».
+
 ## [0.45.0] - 2026-10-08
 
 Demande utilisateur : « Il faut revoir la boite de dialogue de demande

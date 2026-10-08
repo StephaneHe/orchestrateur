@@ -4,7 +4,7 @@ A local Windows dashboard where one "conductor" AI session pilots a fleet of
 headless coding agents, one per project, with a live web viewer and an
 Android companion app.
 
-`version 0.45.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
+`version 0.46.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
 
 > **Status: active, personal project.** Built and used daily on a single
 > Windows machine. Pre-1.0: internal APIs and file formats can still change
@@ -108,6 +108,14 @@ one screen to watch the whole fleet.
   of each into the real repo and explains what it kept from each model. It
   never falls back to another model. If the second fails, the user is warned;
   if the principal fails, the turn pauses with a question.
+- **Model suggestions from a comparative study.** Each step and variant of the
+  Models page shows a suggested principal model, an alternative, the report's
+  confidence level and its justification, read from a versioned data file
+  (`data/model-recommendations.json`). Retired models are hidden (an existing
+  choice is kept and flagged as obsolete), dominated ones are dimmed with the
+  reason, and announced ones become selectable once codex lists them.
+  Nothing changes until the user clicks "apply" (per step, or "empty steps
+  only"), with confirmation and history.
 - **Interactive permission requests.** A tool that isn't allowed no longer
   fails on the spot. Through the CLI's permission-prompt tool and a local MCP
   server, the turn pauses (5 min by default, configurable) and a 🔐 card

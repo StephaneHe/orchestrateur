@@ -478,7 +478,10 @@ async function apiChecks(sb) {
     const c = await json('/api/model-catalog');
     assert(['anthropic', 'openai', 'nvidia', 'openrouter', 'local'].every(p => Array.isArray(c.providers[p]?.models)), 'fournisseur manquant');
     assert(c.providers.anthropic.models.every(m => m.caps.includes('vision') && !m.caps.includes('image-gen')), 'capacités Anthropic');
-    assert(c.providers.openai.models.map(m => m.id).join(',') === 'gpt-6-astra,gpt-reserve,gpt-5.6-sol', `OpenAI : ${c.providers.openai.models.map(m => m.id)}`);
+    // 0.46.0 : gpt-reserve retiré (étude comparative, demande utilisateur), les
+    // annoncés ajoutés non sélectionnables. Avant : la liste brute de codex.
+    const oaiIds = c.providers.openai.models.map(m => m.id + (m.unavailable ? '(annoncé)' : '')).join(',');
+    assert(oaiIds === (Array.isArray(c.removed) ? 'gpt-6-astra,gpt-5.6-sol,gpt-6.1-sol(annoncé),gpt-6-luna(annoncé)' : 'gpt-6-astra,gpt-reserve,gpt-5.6-sol'), `OpenAI : ${oaiIds}`);
     const nv = c.providers.nvidia.models;
     assert(nv[0].id === 'moonshotai/kimi-k3' && nv.some(m => m.missing) && !nv.some(m => /embed/.test(m.id)), 'NVIDIA : cascade, signalement, filtre');
     assert(nv.find(m => m.id === 'meta/llama-3.2-90b-vision-instruct')?.caps.includes('vision'), 'NVIDIA : vision non détectée');
@@ -539,6 +542,49 @@ async function apiChecks(sb) {
     // L'instance repart propre pour les parcours navigateur.
     fs.rmSync(routingPath, { force: true });
     return `${v.pipelines.length} pipelines, ${v.slots.length} cases, ${loc.filter(t => t.installed).length} outils locaux`;
+  });
+  // 0.46.0 — demande : appliquer la recommandation de l'étude comparative EN
+  // SUGGESTIONS, sans toucher aux choix de l'utilisateur.
+  await check(S, 'model-reco', 'Suggestions de l\'étude comparative : une par case, haiku-5-5 présent, gpt-reserve et gpt-5.5 absents, annoncés non sélectionnables, aucun choix modifié sans action, « cases vides seulement » ne touche que les vides, historique', async () => {
+    const r0 = await get('/api/model-recommendations');
+    if (r0.status === 404) NA('suggestions absentes de cet état du code');
+    const routingPath = path.join(sb.root, 'model-routing.json');
+    const reco = await r0.json();
+    const v = await json('/api/model-routing');
+    assert(reco.ok && reco.counts.withSuggestion === v.slots.length && v.slots.every(s => reco.slots[s.id]), `suggestions : ${JSON.stringify(reco.counts)}`);
+    assert(reco.report.date === '2026-10-08' && reco.age?.level, 'date / âge du rapport');
+    assert(['discussion', 'refactor', 'recherche', 'redaction'].every(k => Object.values(reco.slots).some(s => s.step === k && s.undecided)), 'étapes non tranchées non signalées');
+    const c = await json('/api/model-catalog');
+    assert(c.providers.anthropic.models.some(m => m.id === 'claude-haiku-5-5'), 'claude-haiku-5-5 absent');
+    assert(!c.providers.openai.models.some(m => m.id === 'gpt-reserve' || m.id === 'gpt-5.5'), 'gpt-reserve / gpt-5.5 encore listés');
+    assert(c.providers.anthropic.models.find(m => m.id === 'claude-opus-5')?.dominated?.source, 'dominé non marqué');
+    const put = (slot, body) => fetch(`${sb.url}/api/model-routing/${encodeURIComponent(slot)}`, { method: 'PUT', headers: { ...H, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    assert((await put('dev.vert.migration', { provider: 'openai', model: 'gpt-6.1-sol' })).status === 409, 'model annoncé accepté');
+    assert((await put('dev.vert', { provider: 'openai', model: 'gpt-reserve' })).status === 400, 'model retiré accepté');
+    // Un choix de l'utilisateur, et un choix obsolète écrit avant le retrait.
+    assert((await put('dev.concevoir', { provider: 'openai', model: 'gpt-6-astra' })).status === 200, 'choix utilisateur');
+    const f = JSON.parse(fs.readFileSync(routingPath, 'utf8'));
+    f.assignments['maintenance.dette'] = { provider: 'openai', model: 'gpt-5.5', at: '2026-10-01T00:00:00Z' };
+    fs.writeFileSync(routingPath, JSON.stringify(f));
+    const before = JSON.stringify((await json('/api/model-routing')).assignments);
+    await json('/api/model-recommendations');
+    assert(JSON.stringify((await json('/api/model-routing')).assignments) === before, 'lire les suggestions a modifié un choix');
+    const dry = await (await post('/api/model-routing/apply-suggestions', { mode: 'empty', dryRun: true })).json();
+    assert(dry.ok && dry.plan.length > 0 && !dry.plan.some(p => p.slot === 'dev.concevoir' || p.slot === 'maintenance.dette'), `plan : ${JSON.stringify(dry).slice(0, 200)}`);
+    assert(JSON.stringify((await json('/api/model-routing')).assignments) === before, 'dryRun a écrit');
+    const ap = await (await post('/api/model-routing/apply-suggestions', { mode: 'empty' })).json();
+    const after = await json('/api/model-routing?history=500');
+    assert(ap.applied.length === dry.plan.length && !ap.failed.length, `appliqué ${ap.applied.length}/${dry.plan.length}, échecs ${JSON.stringify(ap.failed).slice(0, 200)}`);
+    assert(after.assignments['dev.concevoir'].model === 'gpt-6-astra' && after.assignments['maintenance.dette'].model === 'gpt-5.5', 'un choix existant a été modifié');
+    assert(after.assignments['dev.comprendre']?.model === 'claude-opus-5-5', 'case vide non remplie');
+    assert(after.history.filter(h => /suggestion du rapport/.test(h.by || '')).length === ap.applied.length, 'historique incomplet');
+    const one = await (await post('/api/model-routing/apply-suggestions', { mode: 'one', slots: ['dev.concevoir'] })).json();
+    assert(one.applied[0]?.from === 'openai:gpt-6-astra' && (await json('/api/model-routing')).assignments['dev.concevoir'].model === 'claude-opus-5-5', 'application d\'une case');
+    assert((await post('/api/model-routing/apply-suggestions', { mode: 'one', slots: [] })).status === 400, 'mode one sans case accepté');
+    const foreign = await fetch(`${sb.url}/api/model-routing/apply-suggestions`, { method: 'POST', headers: { ...H, 'content-type': 'application/json', Origin: 'http://evil.example' }, body: JSON.stringify({ mode: 'empty' }) });
+    assert(foreign.status === 403, `origine étrangère : ${foreign.status}`);
+    fs.rmSync(routingPath, { force: true });
+    return `${reco.counts.withSuggestion} cases avec suggestion, ${reco.counts.applicable} applicables, ${ap.applied.length} cases vides remplies`;
   });
   await check(S, 'pipeline-observe', 'Pipelines, phase 1 (observation) : chaque entrée (composer → chef, @musicien, app Android, musicien direct, dispatch.mjs via la file, notify, session neuve) est classée et journalisée une seule fois, inclassable = Discussion, aucun changement de comportement', async () => {
     const first = await get('/api/pipeline-observe?n=5');

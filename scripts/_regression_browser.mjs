@@ -848,6 +848,94 @@ export async function browserChecks(sb, t) {
       await page.click('#models .mr-card[data-step="vert"] .mr-vars > summary');
       await setHash(page, '#/');
     });
+    // 0.46.0 — demande : recommandation de l'étude comparative affichée EN
+    // SUGGESTIONS sur chaque étape, sans toucher aux choix de l'utilisateur.
+    await check(B, 'models-reco', 'Suggestions de l\'étude comparative : sur CHAQUE étape et variante (confiance, alternative, justification, source), date du rapport, « non tranché » signalé ; menus sans gpt-reserve ni gpt-5.5, avec claude-haiku-5-5, dominés atténués avec raison, annoncés non sélectionnables ; choix obsolète conservé et signalé ; rien de modifié sans clic ; Appliquer (confirmation, Annuler, historique) ; « étapes vides seulement » ne touche que les vides', async () => {
+      if (!(await hasModels(page))) NA('vue absente de cet état du code');
+      const routingPath = path.join(sb.root, 'model-routing.json');
+      fs.rmSync(routingPath, { force: true });
+      // Avant d'ouvrir : un choix de l'utilisateur et un choix sur un model retiré.
+      fs.writeFileSync(routingPath, JSON.stringify({ version: 2, updatedAt: '2026-10-01T00:00:00Z', history: [], assignments: {
+        'dev.concevoir': { provider: 'openai', model: 'gpt-6-astra', at: '2026-10-01T00:00:00Z' },
+        'maintenance.dette': { provider: 'openai', model: 'gpt-5.5', at: '2026-10-01T00:00:00Z' },
+      } }));
+      await page.reload();
+      await page.locator('.brand').waitFor();
+      await setHash(page, '#/models');
+      assert(await until(async () => (await page.locator('#models .mr-tab').count()) > 0, 10_000), 'vue');
+      if (!(await until(async () => (await page.locator('#models .mr-reco-box').count()) > 0, 6000))) NA('suggestions absentes de cet état du code');
+      const box = await page.textContent('#models .mr-reco-box');
+      assert(/8 octobre 2026/.test(box) && /a8c5cc2/.test(box) && /102 cases sur 102/.test(box), `encadré : ${box.replace(/\s+/g, ' ').slice(0, 200)}`);
+      // Sur CHAQUE pipeline, chaque étape et chaque variante a son bloc de suggestion.
+      const tabs = await page.$$eval('#models .mr-tab', ts => ts.map(t => t.dataset.pipeline));
+      let seen = 0;
+      for (const id of tabs) {
+        await page.click(`#models .mr-tab[data-pipeline="${id}"]`);
+        await until(async () => (await page.getAttribute('#models .mr-panel', 'data-pipeline')) === id, 3000);
+        const r = await page.$$eval('#models .mr-panel [data-reco]', bs => bs.map(b => ({ id: b.dataset.reco, ok: !b.hidden && !!b.querySelector('.mr-reco-main') && !!b.querySelector('.mr-reco-conf') && !!b.querySelector('.mr-reco-why') && !!b.querySelector('[data-reco-apply]') })));
+        const bad = r.filter(x => !x.ok).map(x => x.id);
+        assert(r.length && !bad.length, `${id} : bloc absent ou incomplet pour ${bad.join(', ')}`);
+        seen += r.length;
+      }
+      assert(seen === 102, `${seen} blocs au lieu de 102`);
+      await page.click('#models .mr-tab[data-pipeline="discussion"]');
+      assert(await page.locator('#models .mr-panel .mr-reco-und').count() > 0, '« non tranché » non signalé (Discussion)');
+      await page.click('#models .mr-tab[data-pipeline="dev"]');
+      await until(async () => (await page.getAttribute('#models .mr-panel', 'data-pipeline')) === 'dev', 3000);
+      await page.locator('#models [data-reco="dev.concevoir"] .mr-reco-why > summary').click();
+      const why = await page.textContent('#models [data-reco="dev.concevoir"] .mr-reco-why');
+      assert(/§2\.1/.test(why) && /Source : rapport du 2026-10-08/.test(why) && /architecture/.test(why), `justification / source absentes : ${why.slice(0, 160)}`);
+      // Menus.
+      const opts = await page.$$eval('#models .mr-select[data-slot="dev.comprendre"] option', os => os.map(o => ({ v: o.value, t: o.textContent, d: o.disabled, title: o.title, dom: o.dataset.dominated })));
+      assert(!opts.some(o => /gpt-reserve|gpt-5\.5$/.test(o.v)), 'gpt-reserve ou gpt-5.5 dans un menu');
+      assert(opts.some(o => o.v === 'anthropic|claude-haiku-5-5' && !o.d), 'claude-haiku-5-5 absent ou désactivé');
+      const dom = opts.find(o => o.v === 'anthropic|claude-opus-5');
+      assert(dom && dom.dom === '1' && /Dominé par claude-opus-5-5/.test(dom.title) && /source/.test(dom.title), `dominé : ${JSON.stringify(dom)}`);
+      assert(opts.some(o => o.v === 'openai|gpt-6.1-sol' && o.d && /annoncé, pas encore disponible dans codex/.test(o.t)), 'gpt-6.1-sol non signalé « annoncé »');
+      // Choix existants : intacts à l'ouverture ; l'obsolète est conservé et signalé.
+      const a0 = (await api('/api/model-routing')).assignments;
+      assert(a0['dev.concevoir'].model === 'gpt-6-astra' && a0['maintenance.dette'].model === 'gpt-5.5' && Object.keys(a0).length === 2, 'ouvrir la vue a modifié un choix');
+      assert(await page.inputValue('#models .mr-select[data-slot="dev.concevoir"]') === 'openai|gpt-6-astra', 'choix utilisateur non affiché');
+      assert(/votre choix est différent \(conservé\)/.test(await page.textContent('#models [data-reco="dev.concevoir"]')), 'écart avec la suggestion non signalé');
+      await page.click('#models .mr-tab[data-pipeline="maintenance"]');
+      assert(await until(async () => /obsolète/.test(await page.textContent('#models [data-obsolete-warn="maintenance.dette"]').catch(() => '')), 5000), 'choix obsolète non signalé');
+      assert(/⚠ obsolète : gpt-5\.5/.test(await page.$eval('#models .mr-select[data-slot="maintenance.dette"] option:checked', o => o.textContent)), 'option obsolète non marquée');
+      // Appliquer une case : confirmation, Annuler ne change rien, Confirmer applique.
+      await page.click('#models .mr-tab[data-pipeline="dev"]');
+      await page.click('#models [data-reco-apply="dev.concevoir"]');
+      assert(await until(async () => /Remplacer votre choix/.test(await page.textContent('#models [data-reco="dev.concevoir"] .mr-reco-confirm').catch(() => '')), 5000), 'pas de confirmation');
+      await page.click('#models [data-reco="dev.concevoir"] .mr-reco-cancel');
+      await sleep(300);
+      assert((await api('/api/model-routing')).assignments['dev.concevoir'].model === 'gpt-6-astra' && !(await page.locator('#models .mr-reco-confirm').count()), 'Annuler a modifié le choix');
+      await page.click('#models [data-reco-apply="dev.concevoir"]');
+      await page.locator('#models [data-reco="dev.concevoir"] .mr-reco-ok-btn:not([disabled])').click();
+      assert(await until(async () => (await api('/api/model-routing')).assignments['dev.concevoir']?.model === 'claude-opus-5-5', 5000), 'suggestion non appliquée');
+      assert(await until(async () => (await page.inputValue('#models .mr-select[data-slot="dev.concevoir"]')) === 'anthropic|claude-opus-5-5', 5000), 'menu non mis à jour');
+      assert(/✓ suivie/.test(await page.textContent('#models [data-reco="dev.concevoir"]')), '« suivie » absent');
+      // « Étapes vides seulement » : un choix utilisateur reste intact.
+      await page.selectOption('#models .mr-select[data-slot="dev.livrer"]', 'openai|gpt-6-astra');
+      assert(await until(async () => (await api('/api/model-routing')).assignments['dev.livrer']?.model === 'gpt-6-astra', 5000), 'choix utilisateur non enregistré');
+      const before = (await api('/api/model-routing')).assignments;
+      await page.click('#models .mr-reco-empty');
+      assert(await until(async () => /case\(s\) vide\(s\) recevront la suggestion/.test(await page.textContent('#models .mr-reco-box .mr-reco-confirm').catch(() => '')), 5000), 'pas de confirmation globale');
+      await shot(page, 'models-reco-confirmation');
+      await page.click('#models .mr-reco-box .mr-reco-cancel');
+      await sleep(300);
+      assert(JSON.stringify((await api('/api/model-routing')).assignments) === JSON.stringify(before), 'Annuler a modifié des choix');
+      await page.click('#models .mr-reco-empty');
+      await page.locator('#models .mr-reco-box .mr-reco-ok-btn:not([disabled])').click();
+      assert(await until(async () => /case\(s\) vide\(s\) remplie\(s\)/.test(await page.textContent('#models .mr-reco-wrap').catch(() => '')), 8000), 'pas de compte rendu');
+      const after = (await api('/api/model-routing?history=500'));
+      for (const [k, a] of Object.entries(before)) assert(after.assignments[k]?.model === a.model, `case déjà choisie modifiée : ${k}`);
+      assert(after.assignments['dev.comprendre']?.model === 'claude-opus-5-5' && after.assignments['routage.lire']?.model === 'claude-haiku-5-5', 'cases vides non remplies');
+      assert(!after.assignments['dev.comprendre.codebase'], 'variante qui hérite déjà remplie inutilement');
+      assert(after.history.some(h => /cases vides/.test(h.by || '')) && after.history.some(h => h.task === 'dev.concevoir' && /suggestion du rapport/.test(h.by || '')), 'historique sans les suggestions');
+      await shot(page, 'models-reco');
+      fs.rmSync(routingPath, { force: true });
+      await page.reload();
+      await page.locator('.brand').waitFor();
+      await setHash(page, '#/');
+    });
     await check(B, 'api-keys-view', 'Clés API dans la page Models : NVIDIA et OpenRouter, état, champ masqué ; Enregistrer → « configurée », valeur jamais affichée ni gardée dans la page, groupe OpenRouter dégrisé pour le jugement ; Supprimer → « absente »', async () => {
       if (!(await hasModels(page))) NA('vue absente de cet état du code');
       await setHash(page, '#/models');
@@ -1250,6 +1338,24 @@ export async function browserChecks(sb, t) {
       await m.setViewportSize({ width: 390, height: 2200 });
       await sleep(300);
       return `${g.n} tuiles`;
+    });
+    await check(B, 'models-reco-mobile', 'Suggestions · mobile : encadré et blocs lisibles, boutons « Appliquer » ≥ 44 px, aucun débordement', async () => {
+      if (!(await hasModels(m))) NA('vue absente de cet état du code');
+      await m.setViewportSize({ width: 390, height: 844 });
+      await setHash(m, '#/models');
+      assert(await until(async () => (await m.locator('#models .mr-tab').count()) === 13, 10_000), 'onglets');
+      if (!(await until(async () => (await m.locator('#models .mr-reco-box').count()) > 0, 6000))) NA('suggestions absentes de cet état du code');
+      await m.click('#models .mr-tab[data-pipeline="dev"]');
+      await sleep(300);
+      const g = await m.evaluate(() => ({
+        minBtn: Math.min(...[...document.querySelectorAll('#models .mr-reco-apply, #models .mr-reco-empty')].filter(b => b.offsetParent).map(b => b.getBoundingClientRect().height)),
+        overflow: document.documentElement.scrollWidth - window.innerWidth,
+        blocks: document.querySelectorAll('#models .mr-panel [data-reco] .mr-reco-main').length,
+      }));
+      assert(g.blocks > 0 && g.minBtn >= 44 && g.overflow <= 0, `mobile : ${JSON.stringify(g)}`);
+      await m.locator('#models .mr-card[data-step="comprendre"] .mr-reco').first().scrollIntoViewIfNeeded();
+      await shot(m, 'models-reco-mobile');
+      await setHash(m, '#/');
     });
     await check(B, 'models-mobile', 'Models par tâche · mobile : onglets défilants, étapes et boucle empilées, aucun débordement, menus et onglets ≥ 44 px, lisible à 150 %', async () => {
       if (!(await hasModels(m))) NA('vue absente de cet état du code');

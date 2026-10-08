@@ -75,7 +75,8 @@ console.log('\n── 2. Catalogue et capacités');
   const dir = sandbox();
   const mr = make(dir);
   const c = await mr.getCatalog({ refresh: true });
-  t('Anthropic : 8 models, vision, sans génération d’image', c.providers.anthropic.models.length === 8 && c.providers.anthropic.models.every(m => m.caps.includes('vision') && !m.caps.includes('image-gen')));
+  // 0.46.0 : claude-haiku-5-5 ajouté (demande utilisateur, étude comparative).
+  t('Anthropic : 9 models dont claude-haiku-5-5, vision, sans génération d’image', c.providers.anthropic.models.length === 9 && c.providers.anthropic.models.some(m => m.id === 'claude-haiku-5-5') && c.providers.anthropic.models.every(m => m.caps.includes('vision') && !m.caps.includes('image-gen')));
   t('OpenAI : models_cache de codex, vision lue dans input_modalities', c.providers.openai.models.map(m => m.id).join() === 'gpt-6-astra' && c.providers.openai.models[0].caps.includes('vision'));
   const nv = c.providers.nvidia.models;
   t('NVIDIA : la cascade du failover en tête', nv[0].id === 'moonshotai/kimi-k3' && nv[0].cascade === 1);

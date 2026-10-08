@@ -61,7 +61,8 @@ import { scanProject as scanFleetMember, isPhantomResult, isQuestionResolved, is
 import { createDownloadsRegistry, VERSION_NAME_RE } from './scripts/downloads-registry.mjs';
 import { trustWorkspace } from './scripts/workspace-trust.mjs';
 // Vue « Models par tâche » (0.39.0) : catalogue + model-routing.json.
-import { createModelRouting } from './scripts/model-routing.mjs';
+import { createModelRouting, incompatibility } from './scripts/model-routing.mjs';
+import { createRecommendations } from './scripts/model-reco.mjs';
 // Clés NVIDIA / OpenRouter saisies dans la page Models (0.43.0).
 import { createApiKeys } from './scripts/api-keys.mjs';
 import { createPermissionStore, mountPermissionRoutes } from './scripts/permission-store.mjs';
@@ -2548,10 +2549,17 @@ function uiFlags() {
 // Enregistrement seulement : dispatch.mjs ne lit pas encore model-routing.json.
 // Fichier dédié, écrit ici seul (temp + rename) — config.json est partagé par
 // plusieurs chefs.
+// Suggestions de l'étude comparative (0.46.0) : data/model-recommendations.json,
+// relu dès que son mtime change (comme downloads.json).
+const modelReco = createRecommendations({
+  file: path.join(__dirname, 'data', 'model-recommendations.json'),
+  now: () => (process.env.MODEL_RECO_NOW ? Date.parse(process.env.MODEL_RECO_NOW) : Date.now()),
+});
 const modelRouting = createModelRouting({
   root: __dirname,
   cacheFile: path.join(LOGS_DIR, 'model-catalog.cache.json'),
   env: { ...process.env, ...BOOT_PROVIDER_KEYS },
+  catalogRules: () => modelReco.catalogRules(),
 });
 
 // ── Clés API (0.43.0) ────────────────────────────────────────────────────────
@@ -2669,6 +2677,48 @@ app.get('/api/model-catalog', async (req, res) => {
   } catch (e) {
     debugLog(`[model-catalog] ${e.message}`);
     res.status(500).json({ ok: false, error: 'catalogue indisponible' });
+  }
+});
+
+// Suggestions (0.46.0) : affichées, jamais appliquées sans clic.
+app.get('/api/model-recommendations', async (req, res) => {
+  try {
+    const catalog = await modelRouting.getCatalog();
+    const v = modelReco.view(modelRouting.effective().slots, catalog, incompatibility);
+    if (!v.ok) return res.status(503).json({ ok: false, error: v.error });
+    res.json(v);
+  } catch (e) {
+    debugLog(`[model-reco] ${e.message}`);
+    res.status(500).json({ ok: false, error: 'suggestions indisponibles' });
+  }
+});
+// Appliquer : une case (clic « Appliquer la suggestion ») ou les cases VIDES
+// seulement. `dryRun` renvoie le plan pour la confirmation, sans rien écrire.
+app.post('/api/model-routing/apply-suggestions', sameOriginOnly, express.json({ limit: '16kb' }), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const mode = b.mode === 'empty' ? 'empty' : b.mode === 'one' ? 'one' : null;
+    if (!mode) return res.status(400).json({ ok: false, error: 'mode attendu : one | empty' });
+    const wanted = Array.isArray(b.slots) ? b.slots.map(String).slice(0, 200) : [];
+    if (mode === 'one' && wanted.length !== 1) return res.status(400).json({ ok: false, error: 'mode one : une case exactement' });
+    const catalog = await modelRouting.getCatalog();
+    const resolved = modelReco.resolve(modelRouting.effective().slots, catalog, incompatibility);
+    if (!resolved.ok) return res.status(503).json({ ok: false, error: resolved.error });
+    const { plan, skipped } = modelReco.applyPlan(resolved.slots, modelRouting.readRouting().assignments, { mode, slots: wanted });
+    if (b.dryRun) return res.json({ ok: true, dryRun: true, mode, plan, skipped });
+    const date = modelReco.load().data?.report?.date || '';
+    // L'historique borne `by` à 40 caractères : libellés courts, lisibles en entier.
+    const by = mode === 'empty' ? 'suggestion du rapport, cases vides' : `suggestion du rapport ${date}`;
+    const applied = [], failed = [];
+    for (const p of plan) {
+      const r = modelRouting.setAssignment(p.slot, { provider: p.provider, model: p.model }, by);
+      (r.ok ? applied : failed).push(r.ok ? p : { ...p, error: r.error });
+    }
+    console.log(`[model-reco] ${mode} : ${applied.length} case(s) appliquée(s), ${failed.length} en échec, ${skipped.length} laissée(s)`);
+    res.json({ ok: true, mode, applied, failed, skipped });
+  } catch (e) {
+    debugLog(`[model-reco] ${e.message}`);
+    res.status(500).json({ ok: false, error: 'application impossible' });
   }
 });
 

@@ -1,0 +1,288 @@
+{
+  "schema": 1,
+  "about": "Suggestions de la page Models, tirées d'une étude comparative. Données seulement : à régénérer à la prochaine étude (même forme). Aucun choix de l'utilisateur n'est modifié sans clic de sa part.",
+  "report": {
+    "title": "Comparaison de deux études « quel modèle pour quelle tâche » (octobre 2026)",
+    "file": "reports/comparaison-models-2026-10.md",
+    "commit": "a8c5cc2",
+    "date": "2026-10-08",
+    "author": "rédigé par Claude Fable 5.1 (Anthropic), qui arbitre entre une étude Anthropic et une étude OpenAI : conflit d'intérêt déclaré, arbitrages appuyés sur des mesures tierces",
+    "warnAfterDays": 30,
+    "staleAfterDays": 60,
+    "redoHint": "à refaire d'ici 1-2 mois (Haiku 5.5 et Mistral Large 4 n'avaient que quelques jours ; génération GPT-6 absente de codex)"
+  },
+  "catalog": {
+    "remove": [
+      { "provider": "openai", "model": "gpt-reserve", "reason": "slug masqué du cache codex : quota de secours « Luna Reserve » sur GPT-5.6 Luna, pas un modèle à sélectionner", "source": "§5.3 ; cache codex 2026-10-08 ; github.com/openai/codex/issues/41520" },
+      { "provider": "openai", "model": "gpt-5.5", "reason": "retiré de ChatGPT et de Codex le 2026-10-14 (remplacé par gpt-6-astra ou gpt-5.6-sol)", "source": "§5.3 ; learn.chatgpt.com/docs/models ; page de dépréciations OpenAI" }
+    ],
+    "dominated": [
+      { "provider": "anthropic", "model": "claude-opus-5", "by": "claude-opus-5-5", "reason": "plus cher ($5/$25 contre $4/$20) et moins bon (Terminal-Bench 4 : 53,5 % contre 65,2 %)", "source": "§5.4 ; Vals Terminal-Bench 4.0 (2026-10-07) ; prix Anthropic" },
+      { "provider": "anthropic", "model": "claude-opus-4-8", "by": "claude-opus-5-5", "reason": "plus cher ($5/$25 contre $4/$20), génération précédente", "source": "§5.4 ; prix Anthropic" },
+      { "provider": "anthropic", "model": "claude-fable-5", "by": "claude-fable-5-1", "reason": "même prix ; Terminal-Bench 4 : 41,4 % contre 58,1 %", "source": "§5.4 ; Vals Terminal-Bench 4.0 (2026-10-07)" },
+      { "provider": "anthropic", "model": "claude-sonnet-5", "by": "claude-sonnet-5-5", "reason": "même prix, aucune mesure 2026, lecture du cache 2× plus chère", "source": "§5.4 ; prix Anthropic" },
+      { "provider": "anthropic", "model": "claude-haiku-4-5-20251001", "by": "claude-haiku-5-5", "reason": "10× plus cher sous 100K tokens ; à garder seulement pour les prompts de plus de 100K si le prix ×5 de Haiku 5.5 pose problème", "source": "§5.4 ; prix Anthropic" },
+      { "provider": "openai", "model": "gpt-5.6-sol", "by": "gpt-6-astra (qualité) et gpt-6.1-sol (coût, quand il sera dans codex)", "reason": "Terminal-Bench 4 : 37,9 % à $7,98/tâche contre gpt-6-astra 59,6 % à $9,58 ; décrit « older generation » par codex", "source": "§5.4 ; Vals Terminal-Bench 4.0 (2026-10-07) ; cache codex" }
+    ],
+    "announced": [
+      { "provider": "openai", "model": "gpt-6.1-sol", "note": "annoncé, pas encore disponible dans codex (API OpenAI seulement, déploiement progressif) — meilleur coût par tâche mesuré ($1,72 sur Terminal-Bench 4)", "source": "§5.2 ; developers.openai.com/api/docs/models/gpt-6.1-sol" },
+      { "provider": "openai", "model": "gpt-6-luna", "note": "annoncé, pas encore disponible dans codex (API OpenAI seulement) — concurrent direct de claude-haiku-5-5 au même prix", "source": "§5.2 ; developers.openai.com/api/docs/models/gpt-6-luna" }
+    ]
+  },
+  "steps": {
+    "comprendre": {
+      "label": "Comprendre", "confidence": "élevée", "section": "§1",
+      "principal": { "provider": "anthropic", "model": "claude-opus-5-5", "effort": "medium" },
+      "alternatives": [ { "provider": "anthropic", "model": "claude-fable-5-1", "note": "si la base est vaste ou inconnue" } ],
+      "why": "Accord des deux études. Opus 5.5 est n° 1 des agrégats tiers (Artificial Analysis 58, Epoch 167)."
+    },
+    "concevoir": {
+      "label": "Concevoir", "confidence": "moyenne", "section": "§2.1",
+      "principal": { "provider": "anthropic", "model": "claude-opus-5-5", "effort": "high, puis xhigh" },
+      "alternatives": [ { "provider": "anthropic", "model": "claude-fable-5-1", "note": "si le cas reste ambigu après Opus" } ],
+      "why": "La doc Claude Code associe `opus` aux décisions d'architecture. L'advisor Fable n'apporte ≈1,7 point que pour 2,1× le coût, soit un cran d'effort de plus. Aucune mesure tierce propre à la conception."
+    },
+    "liste-tests": {
+      "label": "Liste de tests", "confidence": "faible à moyenne", "section": "§2.2",
+      "principal": { "provider": "anthropic", "model": "claude-opus-5-5", "effort": "medium" },
+      "alternatives": [ { "provider": "openai", "model": "gpt-6.1-sol", "target": true, "today": { "provider": "anthropic", "model": "claude-sonnet-5-5", "note": "seulement sous relecture humaine" } } ],
+      "why": "Sonnet 5.5 a inventé les valeurs attendues de tests (revue Wiegold, 2026-09-30). Aucun benchmark ne mesure la dérivation de cas de test. GPT-6.1 Sol : 55 % sur Terminal-Bench 4 à $1,72/tâche, mais absent de codex."
+    },
+    "rouge": {
+      "label": "Rouge (test qui échoue)", "confidence": "moyenne", "section": "§2.3",
+      "principal": { "provider": "anthropic", "model": "claude-opus-5-5", "effort": "low" },
+      "alternatives": [ { "provider": "anthropic", "model": "claude-sonnet-5-5", "note": "avec relecture humaine des valeurs attendues" } ],
+      "why": "« Opus 5.5 on Low seems smarter, cheaper, and faster than sonnet on medium » (HN, 2026-09-28). Sur Terminal-Bench 4, coût par tâche Opus $13,20 contre Sonnet $16,51."
+    },
+    "vert-simple": {
+      "label": "Vert — simple", "confidence": "moyenne", "section": "§2.4",
+      "principal": { "provider": "anthropic", "model": "claude-sonnet-5-5" },
+      "alternatives": [ { "provider": "anthropic", "model": "claude-haiku-5-5", "note": "petit diff, tests présents, escalade sur échec" } ],
+      "why": "Sonnet 5.5 est presque au niveau d'Opus sur Terminal-Bench 4. Haiku 5.5 : 90,4 % sur Vibe Code Bench à 1/5 du coût, mais 35 % sur Terminal-Bench 4. GPT-6 Luna (choix de l'étude OpenAI) est absent de codex."
+    },
+    "vert-complexe": {
+      "label": "Vert — complexe", "confidence": "élevée", "section": "§1",
+      "principal": { "provider": "anthropic", "model": "claude-opus-5-5", "effort": "high, puis xhigh" },
+      "alternatives": [ { "provider": "openai", "model": "gpt-6-astra" } ],
+      "why": "Accord des deux études. Opus 5.5 mène Terminal-Bench 4 (65,2 %) ; gpt-6-astra est la meilleure alternative OpenAI disponible."
+    },
+    "vert-mecanique": {
+      "label": "Vert — mécanique", "confidence": "moyenne", "section": "§2.5",
+      "principal": { "provider": "anthropic", "model": "claude-haiku-5-5", "note": "qui pilote un codemod / une transformation d'AST" },
+      "alternatives": [ { "provider": "openai", "model": "gpt-6-luna", "target": true, "today": { "provider": "openai", "model": "gpt-5.6-luna" } } ],
+      "why": "Même prix que GPT-6 Luna, même rôle ; Luna est absent de codex. Avis praticiens en faveur de Haiku en capacité. Méthode retenue des deux études : transformation déterministe pilotée par le modèle."
+    },
+    "vert-refactoring": {
+      "label": "Vert — refactoring", "confidence": "moyenne", "section": "§2.6",
+      "principal": { "provider": "anthropic", "model": "claude-opus-5-5", "effort": "medium", "note": "refactoring multi-modules" },
+      "alternatives": [ { "provider": "anthropic", "model": "claude-sonnet-5-5", "note": "refactoring local" } ],
+      "why": "Dépend de l'échelle. Anthropic cite le « large-scale refactoring » pour Opus 5.5 ; aucune mesure tierce spécifique."
+    },
+    "vert-migration": {
+      "label": "Vert — migration", "confidence": "moyenne à élevée", "section": "§2.7",
+      "principal": { "provider": "anthropic", "model": "claude-sonnet-5-5" },
+      "alternatives": [ { "provider": "openai", "model": "gpt-6.1-sol", "target": true, "note": "10× moins cher", "today": { "provider": "openai", "model": "gpt-6-astra" } } ],
+      "why": "Vals Code Migration (2026-10-06) : Sonnet 5.5 69,8 % > Astra 67,7 % > Opus 5.5 66,7 % > Sol 6.1 65,1 % ($6,51, 12× moins cher que Sonnet) ; Fable 5.1 54,6 %. Réserve : migration de langage, pas de framework."
+    },
+    "refactor": {
+      "label": "Refactor (TDD)", "confidence": "faible", "section": "§2.15", "undecided": true,
+      "principal": { "provider": "anthropic", "model": "claude-opus-5-5", "effort": "low" },
+      "alternatives": [ { "provider": "anthropic", "model": "claude-sonnet-5-5" } ],
+      "why": "Aucune mesure directe. Coût par tâche (Terminal-Bench 4) et avis praticiens en faveur d'Opus low."
+    },
+    "revue": {
+      "label": "Revue", "confidence": "moyenne", "section": "§1",
+      "principal": { "provider": "openai", "model": "gpt-6-astra", "note": "pour du code écrit par Claude ; pour du code GPT, claude-opus-5-5. Avis consultatif : le modèle principal ou l'humain tranche" },
+      "alternatives": [ { "provider": "anthropic", "model": "claude-opus-5-5", "note": "relecteur quand le code a été écrit par GPT" }, { "provider": "anthropic", "model": "claude-fable-5-1", "note": "relecture dans un contexte vierge" } ],
+      "why": "Accord des deux études sur le principe de l'autre famille. Revue croisée (arXiv 2607.21656) : Claude relisant Codex 71,6 → 89,7 %."
+    },
+    "livrer": {
+      "label": "Livrer", "confidence": "moyenne", "section": "§2.8",
+      "principal": { "provider": "anthropic", "model": "claude-sonnet-5-5", "note": "avec les scripts de CI" },
+      "alternatives": [ { "provider": "anthropic", "model": "claude-haiku-5-5" } ],
+      "why": "Tâches cadrées. GPT-6.1 Sol (choix de l'étude OpenAI pour le coût) est absent de codex ; GPT-5.6 Terra n'a aucune mesure 2026."
+    },
+    "documenter": {
+      "label": "Documenter", "confidence": "élevée", "section": "§1",
+      "principal": { "provider": "anthropic", "model": "claude-sonnet-5-5" },
+      "alternatives": [ { "provider": "anthropic", "model": "claude-haiku-5-5", "note": "résumés courts (changelog, rapport)" }, { "provider": "anthropic", "model": "claude-opus-5-5", "note": "documentation d'architecture" } ],
+      "why": "Accord des deux études."
+    },
+    "discussion": {
+      "label": "Discussion", "confidence": "moyenne", "section": "§2.9", "undecided": true,
+      "principal": { "provider": "anthropic", "model": "claude-opus-5-5", "effort": "medium" },
+      "alternatives": [ { "provider": "anthropic", "model": "claude-sonnet-5-5", "note": "si la latence prime (1,4× plus rapide)" } ],
+      "why": "Les deux sont défendables : Opus low est moins cher par tâche que Sonnet medium, Sonnet est plus rapide. Choix de cohérence, pas une victoire mesurée."
+    },
+    "routage": {
+      "label": "Routage", "confidence": "élevée", "section": "§2.5",
+      "principal": { "provider": "anthropic", "model": "claude-haiku-5-5", "effort": "low", "note": "après des règles déterministes" },
+      "alternatives": [ { "provider": "openai", "model": "gpt-6-luna", "target": true, "today": { "provider": "openai", "model": "gpt-5.6-luna" } } ],
+      "why": "Règles d'abord, puis un niveau bon marché (méthode des deux études). Haiku 5.5 vérifié existant ; GPT-6 Luna absent de codex. Attention : Haiku 5.5 passe à $0,50/$2,50 au-delà de 100K tokens de prompt."
+    },
+    "incident": {
+      "label": "Incident", "confidence": "moyenne", "section": "§2.10",
+      "principal": { "provider": "anthropic", "model": "claude-opus-5-5", "effort": "high" },
+      "alternatives": [ { "provider": "openai", "model": "gpt-6-astra", "note": "second avis" }, { "provider": "anthropic", "model": "claude-fable-5-1", "note": "si la cause racine reste ambiguë" } ],
+      "why": "La doc Claude Code cite « outage debugging » pour fable et opus. Aucun benchmark d'incident ; le « SRE Bench » de Vals mesure la rétro-ingénierie de binaires, pas la gestion d'incident."
+    },
+    "recherche": {
+      "label": "Recherche", "confidence": "faible", "section": "§2.11", "undecided": true,
+      "principal": { "provider": "anthropic", "model": "claude-opus-5-5", "effort": "high", "note": "avec les outils web" },
+      "alternatives": [ { "provider": "anthropic", "model": "claude-fable-5-1", "note": "recherche longue, multi-heures" }, { "provider": "openai", "model": "gpt-6-astra", "note": "contre-lecture" } ],
+      "why": "Aucune mesure indépendante de recherche web. Anthropic conseille de partir d'Opus et de passer à Fable si les évaluations plafonnent."
+    },
+    "audit": {
+      "label": "Audit sécurité", "confidence": "moyenne", "section": "§2.12",
+      "principal": { "provider": "anthropic", "model": "claude-opus-5-5", "note": "plus une passe gpt-6-astra (rétro-ingénierie)" },
+      "alternatives": [ { "provider": "anthropic", "model": "claude-fable-5-1", "note": "génération de correctifs sûrs" }, { "provider": "openai", "model": "gpt-6-astra", "note": "passe de l'autre famille" } ],
+      "why": "Vals SRE Bench (rétro-ingénierie) : Astra 56,9 % contre Opus 33,6 % et Fable 22,9 %. Endor SecPass (code sûr) : Fable 5.1 en tête (37,4 %). Vals CyberBench est plat à 73-78 %."
+    },
+    "maintenance": {
+      "label": "Maintenance", "confidence": "moyenne", "section": "§2.8",
+      "principal": { "provider": "anthropic", "model": "claude-sonnet-5-5" },
+      "alternatives": [ { "provider": "openai", "model": "gpt-6.1-sol", "target": true, "today": { "provider": "openai", "model": "gpt-5.6-terra" } } ],
+      "why": "Sonnet 5.5 aujourd'hui ; GPT-6.1 Sol en cible pour le coût par tâche ($1,72 sur Terminal-Bench 4), dès qu'il sera dans codex."
+    },
+    "nouveau": {
+      "label": "Nouveau projet", "confidence": "moyenne à élevée", "section": "§1",
+      "principal": { "provider": "anthropic", "model": "claude-opus-5-5", "note": "cadrage et squelette" },
+      "alternatives": [ { "provider": "anthropic", "model": "claude-sonnet-5-5", "note": "itérations web" }, { "provider": "anthropic", "model": "claude-fable-5-1", "note": "option pour le cadrage" } ],
+      "why": "Accord des deux études : Opus au centre. Sonnet 5.5 mène Vibe Code Bench (applis web complètes, 92,4 %)."
+    },
+    "donnees": {
+      "label": "Données / scraping", "confidence": "élevée", "section": "§2.5",
+      "principal": { "provider": "anthropic", "model": "claude-haiku-5-5", "note": "après un parseur déterministe, avec validation par schéma" },
+      "alternatives": [ { "provider": "openai", "model": "gpt-6-luna", "target": true, "today": { "provider": "openai", "model": "gpt-5.6-luna" } }, { "provider": "anthropic", "model": "claude-sonnet-5-5", "note": "escalade sur échec" } ],
+      "why": "Méthode identique dans les deux études (parseur d'abord), modèle bon marché ; GPT-6 Luna absent de codex."
+    },
+    "redaction": {
+      "label": "Rédaction / traduction", "confidence": "faible", "section": "§2.13", "undecided": true,
+      "principal": { "provider": "anthropic", "model": "claude-opus-5-5" },
+      "alternatives": [ { "provider": "anthropic", "model": "claude-sonnet-5-5", "note": "en volume" }, { "external": "Mistral Large 4", "note": "souveraineté, à tester" } ],
+      "why": "arena.ai French : les premiers sont à égalité statistique ; aucune mesure ne couvre Sonnet 5.5."
+    },
+    "images": {
+      "label": "Images", "confidence": "élevée", "section": "§1",
+      "principal": { "provider": "anthropic", "model": "claude-opus-5-5", "note": "compréhension d'images" },
+      "alternatives": [ { "external": "gpt-image-2.5", "note": "génération" }, { "external": "Nano Banana 2.1", "note": "génération, alternative" }, { "external": "FLUX.1-schnell local" } ],
+      "why": "Accord des deux études : génération gpt-image-2.5 puis Nano Banana 2.1 ; compréhension par claude-opus-5-5."
+    },
+    "video": {
+      "label": "Vidéo", "confidence": "moyenne", "section": "§2.14",
+      "principal": { "provider": "local", "model": "ffmpeg", "note": "ffmpeg découpe, claude-opus-5-5 lit les images, whisper transcrit" },
+      "alternatives": [ { "provider": "anthropic", "model": "claude-opus-5-5", "note": "lecture des images extraites" }, { "external": "Wan 3.0 / Seedance 2.5", "note": "génération" }, { "external": "Gemini Omni Flash 1.1", "note": "génération, si seule l'API Google est câblée" } ],
+      "why": "Artificial Analysis text-to-video : Wan 3.0 n° 1 (1156), Seedance 2.5 n° 3, Gemini Omni Flash 1.1 n° 8."
+    },
+    "audio": {
+      "label": "Audio", "confidence": "élevée", "section": "§1",
+      "principal": { "provider": "local", "model": "faster-whisper", "note": "large-v3-turbo ; large-v3 si traduction (turbo n'est pas entraîné pour traduire)" },
+      "alternatives": [ { "external": "Parakeet TDT 0.6B v3" }, { "external": "ElevenLabs Scribe v2" }, { "external": "ElevenLabs v4", "note": "synthèse vocale" } ],
+      "why": "Accord des deux études. README Whisper : turbo ≈8× plus rapide, non entraîné pour la traduction."
+    }
+  },
+  "slots": {
+    "dev.comprendre": "comprendre",
+    "dev.comprendre.codebase": "comprendre",
+    "dev.comprendre.logs": "comprendre",
+    "dev.concevoir": "concevoir",
+    "dev.concevoir.architecture": "concevoir",
+    "dev.concevoir.plan": "concevoir",
+    "dev.spike": { "step": "concevoir", "extrapolated": "pas d'étape « spike » dans le rapport : repris de Concevoir (exploration jetable)" },
+    "dev.liste-tests": "liste-tests",
+    "dev.rouge": "rouge",
+    "dev.rouge.comportement": "rouge",
+    "dev.rouge.bugfix": "rouge",
+    "dev.vert": { "step": "vert-simple", "note": "valeur de l'étape (toutes variantes) : celle de Vert — simple ; chaque variante a sa propre suggestion" },
+    "dev.vert.simple": "vert-simple",
+    "dev.vert.complexe": "vert-complexe",
+    "dev.vert.mecanique": "vert-mecanique",
+    "dev.vert.refactoring": "vert-refactoring",
+    "dev.vert.migration": "vert-migration",
+    "dev.refactor": "refactor",
+    "dev.revue": "revue",
+    "dev.revue.code": "revue",
+    "dev.revue.securite": "audit",
+    "dev.revue.second-avis": "revue",
+    "dev.livrer": "livrer",
+    "dev.livrer.git": "livrer",
+    "dev.livrer.build": "livrer",
+    "dev.livrer.device": "livrer",
+    "dev.documenter": "documenter",
+    "dev.documenter.docs": "documenter",
+    "dev.documenter.changelog": "documenter",
+    "dev.documenter.rapport": "documenter",
+    "discussion.comprendre": "discussion",
+    "discussion.rechercher": "recherche",
+    "discussion.repondre": "discussion",
+    "routage.lire": "routage",
+    "routage.classifier": "routage",
+    "routage.decomposer": "routage",
+    "routage.affecter": "routage",
+    "routage.dispatcher": "routage",
+    "routage.superviser": "routage",
+    "routage.callback": "routage",
+    "routage.rapporter": "routage",
+    "incident.detecter": "incident",
+    "incident.evaluer": "incident",
+    "incident.contenir": "incident",
+    "incident.diagnostiquer": "incident",
+    "incident.diagnostiquer.simple": "incident",
+    "incident.diagnostiquer.difficile": "incident",
+    "incident.post-mortem": "incident",
+    "recherche.cadrer": "recherche",
+    "recherche.rechercher": "recherche",
+    "recherche.lire": "recherche",
+    "recherche.recouper": "recherche",
+    "recherche.synthetiser": "recherche",
+    "audit.cartographier": "audit",
+    "audit.scans": "audit",
+    "audit.revue-manuelle": "audit",
+    "audit.second-avis": { "step": "audit", "principal": { "provider": "openai", "model": "gpt-6-astra", "note": "la passe de l'autre famille (rétro-ingénierie)" }, "alternatives": [ { "provider": "anthropic", "model": "claude-opus-5-5", "note": "si la revue manuelle a été faite par GPT" } ] },
+    "audit.corriger": { "step": "audit", "principal": { "provider": "anthropic", "model": "claude-fable-5-1", "note": "génération de correctifs sûrs (Endor SecPass : 37,4 %, en tête)" }, "alternatives": [ { "provider": "anthropic", "model": "claude-opus-5-5" } ] },
+    "audit.reverifier": "audit",
+    "maintenance.dependances": "maintenance",
+    "maintenance.historique": "maintenance",
+    "maintenance.tests-instables": "maintenance",
+    "maintenance.dette": "maintenance",
+    "nouveau.cadrage": "nouveau",
+    "nouveau.squelette": "nouveau",
+    "nouveau.publication": { "step": "livrer", "extrapolated": "publication : reprise de l'étape Livrer du rapport" },
+    "donnees.collecter": "donnees",
+    "donnees.nettoyer": "donnees",
+    "donnees.stocker": "donnees",
+    "donnees.presenter": "donnees",
+    "redaction.rediger": "redaction",
+    "redaction.rediger.ecriture": "redaction",
+    "redaction.rediger.traduction": "redaction",
+    "redaction.relire": "redaction",
+    "redaction.mettre-en-forme": "redaction",
+    "images.cadrer": "images",
+    "images.produire": "images",
+    "images.produire.generation": { "step": "images", "principal": { "external": "gpt-image-2.5", "note": "génération (pas encore câblée dans l'orchestrateur)" }, "alternatives": [ { "external": "Nano Banana 2.1" }, { "external": "FLUX.1-schnell local" } ] },
+    "images.produire.retouche": { "step": "images", "principal": { "external": "gpt-image-2.5", "note": "retouche (pas encore câblée dans l'orchestrateur)" }, "alternatives": [ { "external": "Nano Banana 2.1" } ] },
+    "images.produire.ocr": "images",
+    "images.produire.legende": "images",
+    "images.produire.vignettes": { "step": "images", "extrapolated": "le rapport ne couvre pas les vignettes : ffmpeg, retenu pour la vidéo, sait aussi les faire", "principal": { "provider": "local", "model": "ffmpeg" }, "alternatives": [] },
+    "images.verifier": "images",
+    "images.livrer": "livrer",
+    "video.acquerir": { "step": "video", "extrapolated": "acquisition : ffmpeg (capture), retenu pour la vidéo", "principal": { "provider": "local", "model": "ffmpeg" }, "alternatives": [] },
+    "video.analyser": "video",
+    "video.analyser.transcription": { "step": "audio", "principal": { "provider": "local", "model": "faster-whisper", "note": "large-v3-turbo ; large-v3 si traduction" } },
+    "video.analyser.scenes": { "step": "video", "principal": { "provider": "local", "model": "ffmpeg", "note": "détection de scènes" }, "alternatives": [ { "provider": "anthropic", "model": "claude-opus-5-5", "note": "lecture des images extraites" } ] },
+    "video.analyser.resume": { "step": "video", "principal": { "provider": "anthropic", "model": "claude-opus-5-5", "note": "résumé à partir des images et de la transcription" }, "alternatives": [] },
+    "video.monter": { "step": "video", "principal": { "provider": "local", "model": "ffmpeg" }, "alternatives": [] },
+    "video.monter.decoupe": { "step": "video", "principal": { "provider": "local", "model": "ffmpeg" }, "alternatives": [] },
+    "video.monter.chapitres": { "step": "video", "principal": { "provider": "anthropic", "model": "claude-opus-5-5", "note": "chapitrage à partir de la transcription" }, "alternatives": [] },
+    "video.monter.sous-titres": { "step": "audio", "principal": { "provider": "local", "model": "faster-whisper" } },
+    "video.verifier": { "step": "video", "extrapolated": "vérification : ffprobe (même suite qu'ffmpeg)", "principal": { "provider": "local", "model": "ffprobe" }, "alternatives": [] },
+    "video.livrer": "livrer",
+    "audio.acquerir": { "step": "audio", "extrapolated": "acquisition : ffmpeg (capture)", "principal": { "provider": "local", "model": "ffmpeg" }, "alternatives": [] },
+    "audio.traiter": "audio",
+    "audio.traiter.stt": "audio",
+    "audio.traiter.tts": { "step": "audio", "principal": { "external": "ElevenLabs v4", "note": "synthèse vocale (pas encore câblée dans l'orchestrateur)" }, "alternatives": [] },
+    "audio.traiter.traitement": { "step": "audio", "extrapolated": "traitement du son : ffmpeg, retenu pour la vidéo", "principal": { "provider": "local", "model": "ffmpeg" }, "alternatives": [] },
+    "audio.verifier": { "step": "audio", "extrapolated": "vérification : taux d'erreur de mots (jiwer), le rapport ne la couvre pas", "principal": { "provider": "local", "model": "jiwer" }, "alternatives": [] },
+    "audio.livrer": "livrer"
+  }
+}

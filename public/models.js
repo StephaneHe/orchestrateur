@@ -57,6 +57,9 @@
     gapsError: null,
     gapNotice: null,           // message après Accepter / Rejeter
     highlight: null,           // case à mettre en évidence (lacune acceptée)
+    reco: null,                // /api/model-recommendations (0.46.0), null si absent
+    recoConfirm: null,         // { mode: one|empty, slot?, plan?, skipped?, busy?, error? }
+    recoNotice: null,
     gPending: 0,
   };
 
@@ -122,6 +125,9 @@
         st.catalog = catalog;
         st.routing = routing;
         st.error = null;
+        // Suggestions de l'étude comparative (0.46.0) : facultatives — un serveur
+        // plus ancien ne les a pas, la vue reste utilisable sans elles.
+        st.reco = await getJson("/api/model-recommendations").catch(() => null);
         st.optionsCache.clear();
         if (!pipeline()) st.pipeline = routing.pipelines[0].id;
       } catch (e) {
@@ -197,7 +203,14 @@
       else if (action && st.routing?.agentHarness?.[p] === false) { label = `${PLABEL[p]} — 🔧 outillage en construction : pas encore pour une étape d’action (${ok.length})`; disabled = true; }
       else if (p === "openrouter" && c.disabled) { label = `${PLABEL[p]} — clé non configurée (${ok.length})`; disabled = true; }
       html += `<optgroup label="${esc(label)}" data-provider="${p}"${disabled ? " disabled" : ""}>`;
-      for (const m of ok) html += `<option value="${esc(p + "|" + m.id)}"${m.hint ? ` title="${esc(m.hint)}"` : ""}>${esc(m.label || m.id)}</option>`;
+      for (const m of ok) {
+        // Étude comparative : « dominé » (atténué, raison et source au survol),
+        // « annoncé » (visible, non sélectionnable tant qu'il n'est pas dans la liste).
+        const title = m.dominated ? `Dominé par ${m.dominated.by} : ${m.dominated.reason} (source : ${m.dominated.source})`
+          : m.announced ? `${m.announced.note} (source : ${m.announced.source})` : (m.hint || "");
+        const label = (m.label || m.id) + (m.dominated ? " · dominé" : "");
+        html += `<option value="${esc(p + "|" + m.id)}"${title ? ` title="${esc(title)}"` : ""}${m.dominated ? ' class="is-dominated" data-dominated="1"' : ""}${m.unavailable ? ' disabled data-announced="1"' : ""}>${esc(label)}</option>`;
+      }
       html += "</optgroup>";
     }
     if (need.local && need.local.length) {
@@ -221,8 +234,19 @@
     const [p, ...rest] = value.split("|");
     const o = document.createElement("option");
     o.value = value;
-    o.textContent = `${PLABEL[p] || p} · ${rest.join("|")} (absent de la liste ou incompatible)`;
-    sel.insertBefore(o, sel.options[1] || null);
+    const gone = removedInfo(p, rest.join("|"));
+    o.textContent = gone
+      ? `⚠ obsolète : ${rest.join("|")} (retiré — ${gone.reason})`
+      : `${PLABEL[p] || p} · ${rest.join("|")} (absent de la liste ou incompatible)`;
+    if (gone) { o.dataset.obsolete = "1"; o.title = `Retiré : ${gone.reason} (source : ${gone.source}). Le choix est conservé tant que vous ne le changez pas.`; }
+    // Juste après l'option « hérité », hors des groupes (options[1] est dans un
+    // <optgroup> : insertBefore sur lui levait une exception).
+    sel.insertBefore(o, sel.firstElementChild ? sel.firstElementChild.nextSibling : null);
+  }
+
+  /** Model retiré des listes par l'étude comparative (null sinon). */
+  function removedInfo(provider, model) {
+    return (st.catalog?.removed || []).find(r => r.provider === provider && r.model === model) || null;
   }
 
   function fillSelect(sel) {
@@ -596,7 +620,138 @@
           <select class="mr-select2" id="mr-sel2-${esc(slotId)}" data-slot="${esc(slotId)}" data-role="second"${lazy}></select></div>
       </div>
       <p class="mr-dual-note" data-dual="${esc(slotId)}" hidden></p>
-      <div class="mr-status" data-status="${esc(slotId)}" aria-live="polite"></div>`;
+      <p class="mr-obsolete" data-obsolete-warn="${esc(slotId)}" hidden></p>
+      <div class="mr-status" data-status="${esc(slotId)}" aria-live="polite"></div>
+      <div class="mr-reco" data-reco="${esc(slotId)}"></div>`;
+  }
+
+  // ------------------------------------------------------------------------
+  // Suggestions de l'étude comparative (0.46.0) — affichées, jamais imposées.
+  // Toutes les valeurs viennent de data/model-recommendations.json (servi par
+  // /api/model-recommendations) : rien n'est codé ici.
+  // ------------------------------------------------------------------------
+  function refText(r) {
+    if (!r) return "";
+    if (r.external) return `${r.external}${r.note ? ` (${r.note})` : ""}`;
+    return `${r.model}${r.effort ? ` · effort ${r.effort}` : ""}${r.note ? ` (${r.note})` : ""}`;
+  }
+
+  function altHtml(a) {
+    if (a.external) return `<span class="mr-reco-ext" title="Hors des listes : pas encore câblé dans l’orchestrateur">${esc(refText(a))}</span>`;
+    if (a.target && !a.available) {
+      return `<span class="mr-reco-target" title="${esc(a.reason || "annoncé, pas encore disponible")}">${esc(a.model)} <i>(cible : pas encore dans codex)</i></span>`
+        + (a.today ? ` → aujourd’hui <b>${esc(refText(a.today))}</b>` : "");
+    }
+    return `<b>${esc(a.model)}</b>${a.target ? " <i>(cible, désormais disponible)</i>" : ""}${a.note ? ` (${esc(a.note)})` : ""}${a.available === false ? ' <span class="mr-warn">— indisponible ici</span>' : ""}`;
+  }
+
+  function recoHtml(slotId) {
+    const r = st.reco?.slots?.[slotId];
+    if (!r) return "";
+    const rep = st.reco.report || {};
+    const a = assigned(slotId);
+    const p = r.principal;
+    const followed = a && !p.external && a.provider === p.provider && a.model === p.model;
+    const stateTxt = !p.applicable ? `<span class="mr-reco-na">non applicable ici : ${esc(p.reason)}</span>`
+      : followed ? '<span class="mr-reco-ok">✓ suivie</span>'
+      : a ? '<span class="mr-reco-diff">votre choix est différent (conservé)</span>' : "";
+    const conf = esc(r.confidence || "");
+    const confirm = st.recoConfirm?.slot === slotId ? confirmHtml(st.recoConfirm) : "";
+    return `<div class="mr-reco-head"><span aria-hidden="true">💡</span> <b>Suggestion${r.inherited ? " (celle de l’étape)" : ""}</b>
+        <span class="mr-reco-conf" data-conf="${conf}" title="Niveau de confiance donné par le rapport">confiance ${conf}</span>
+        ${r.undecided ? '<span class="mr-reco-und" title="Le rapport dit que les preuves ne départagent pas : choix de cohérence et de coût, pas une victoire mesurée">non tranché</span>' : ""}
+        ${r.extrapolated ? `<span class="mr-reco-xtra" title="${esc(r.extrapolated)}">extrapolé</span>` : ""}</div>
+      <p class="mr-reco-main">Principal suggéré : <b>${esc(refText(p))}</b> ${stateTxt}</p>
+      ${r.alternatives?.length ? `<p class="mr-reco-alt">Alternative : ${r.alternatives.map(altHtml).join(" · ")}</p>` : ""}
+      <details class="mr-reco-why"><summary>Pourquoi ? (${esc(r.section || "")})</summary>
+        <p>${esc(r.why || "")}</p>
+        ${r.extrapolated ? `<p><i>${esc(r.extrapolated)}</i></p>` : ""}${r.note ? `<p><i>${esc(r.note)}</i></p>` : ""}
+        <p class="mr-reco-src">Source : rapport du ${esc(rep.date || "?")}, ${esc(r.section || "")} — ${esc(rep.file || "")}${rep.commit ? ` (commit ${esc(rep.commit)})` : ""}. ${esc(rep.author || "")}</p>
+      </details>
+      <button type="button" class="mr-reco-apply" data-reco-apply="${esc(slotId)}"${p.applicable && !followed ? "" : " disabled"}
+        title="${esc(p.applicable ? (followed ? "Déjà suivie" : "Affecter le principal suggéré à cette case (avec confirmation)") : p.reason)}">Appliquer la suggestion</button>
+      ${confirm}`;
+  }
+
+  function recoBoxHtml() {
+    const R = st.reco;
+    if (!R?.report) return "";
+    const rep = R.report, age = R.age || {};
+    const when = new Date(rep.date + "T00:00:00").toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
+    const aging = age.level === "stale"
+      ? `<p class="mr-reco-age" data-level="stale">⚠ Rapport de ${age.days} jours : dépassé — ${esc(rep.redoHint || "à refaire")}.</p>`
+      : age.level === "aging" ? `<p class="mr-reco-age" data-level="aging">⚠ Rapport de ${age.days} jours : il vieillit — ${esc(rep.redoHint || "à refaire d’ici 1-2 mois")}.</p>` : "";
+    const c = R.counts || {};
+    const confirm = st.recoConfirm?.mode === "empty" ? confirmHtml(st.recoConfirm) : "";
+    return `<section class="mr-reco-box" aria-label="Suggestions de l’étude comparative">
+      <p><span aria-hidden="true">💡</span> <b>Suggestions</b> de l’étude comparative du <b data-reco-date>${esc(when)}</b>
+        (${esc(rep.file || "")}${rep.commit ? `, commit ${esc(rep.commit)}` : ""}) :
+        <b data-reco-count>${c.withSuggestion || 0}</b> cases sur ${c.slots || 0} ont une suggestion, dont ${c.applicable || 0} applicables ici ;
+        ${c.undecided || 0} relèvent d’étapes que le rapport juge <span class="mr-reco-und">non tranchées</span>.
+        Rien n’est modifié sans votre clic.</p>
+      ${aging}
+      <button type="button" class="mr-reco-empty">Appliquer les suggestions aux étapes vides seulement</button>
+      ${confirm}
+    </section>`;
+  }
+
+  function confirmHtml(c) {
+    if (c.error) return `<div class="mr-reco-confirm" role="alert"><p class="mr-warn">✕ ${esc(c.error)}</p><button type="button" class="mr-reco-cancel">Fermer</button></div>`;
+    if (!c.plan) return '<div class="mr-reco-confirm"><p>Préparation…</p></div>';
+    const list = c.plan.map(p => `<li>${esc(slotLabel(p.slot))} : ${p.from ? `${esc(p.from)} → ` : ""}<b>${esc(p.provider)}:${esc(p.model)}</b></li>`).join("");
+    const why = {};
+    for (const s of c.skipped || []) why[s.reason] = (why[s.reason] || 0) + 1;
+    const skipped = Object.entries(why).map(([k, n]) => `${n} ${esc(k)}`).join(" · ");
+    const head = c.mode === "empty"
+      ? `${c.plan.length} case(s) vide(s) recevront la suggestion.${skipped ? ` Laissées telles quelles : ${skipped}.` : ""}`
+      : c.plan[0]?.from ? `Remplacer votre choix par la suggestion ?` : `Affecter la suggestion à cette case ?`;
+    return `<div class="mr-reco-confirm" role="group" aria-label="Confirmation">
+      <p>${head}</p>
+      ${c.plan.length ? `<details${c.mode === "one" ? " open" : ""}><summary>Détail (${c.plan.length})</summary><ul>${list}</ul></details>` : ""}
+      <button type="button" class="mr-reco-ok-btn"${c.plan.length && !c.busy ? "" : " disabled"}>Confirmer</button>
+      <button type="button" class="mr-reco-cancel">Annuler</button>
+      <span class="mr-reco-note">Chaque changement est inscrit dans l’historique (« suggestion du rapport »).</span>
+    </div>`;
+  }
+
+  async function recoPrepare(mode, slot) {
+    st.recoConfirm = { mode, slot: mode === "one" ? slot : null, plan: null };
+    patch();
+    try {
+      const r = await getJson("/api/model-routing/apply-suggestions", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode, slots: mode === "one" ? [slot] : [], dryRun: true }),
+      });
+      if (st.recoConfirm?.mode !== mode) return;
+      st.recoConfirm.plan = r.plan;
+      st.recoConfirm.skipped = r.skipped;
+    } catch (e) { if (st.recoConfirm) st.recoConfirm.error = e.message; }
+    patch();
+    root()?.querySelector(".mr-reco-confirm .mr-reco-ok-btn:not([disabled]), .mr-reco-confirm .mr-reco-cancel")?.focus();
+  }
+
+  async function recoConfirm() {
+    const c = st.recoConfirm;
+    if (!c?.plan) return;
+    c.busy = true;
+    patch();
+    try {
+      const r = await getJson("/api/model-routing/apply-suggestions", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode: c.mode, slots: c.mode === "one" ? [c.slot] : [] }),
+      });
+      st.routing = await getJson("/api/model-routing");
+      st.recoConfirm = null;
+      const msg = `✓ suggestion appliquée · ${fmtTime(new Date().toISOString())}`;
+      for (const a of r.applied) st.status[a.slot] = { kind: "saved", text: msg };
+      for (const f of r.failed) st.status[f.slot] = { kind: "error", text: `✕ non appliquée : ${f.error}` };
+      st.recoNotice = c.mode === "empty" ? `${r.applied.length} case(s) vide(s) remplie(s) avec la suggestion${r.failed.length ? `, ${r.failed.length} en échec` : ""}.` : null;
+      renderPanel();
+    } catch (e) {
+      c.busy = false;
+      c.error = e.message;
+      patch();
+    }
   }
 
   function stepCard(p, s, ctx) {
@@ -748,6 +903,7 @@
       <section class="mr-obs" ${st.showObs ? "" : "hidden"} aria-label="Classifications récentes des entrées">
         <h2 class="mr-h2">Classifications récentes</h2>${obsHtml()}
       </section>
+      <div class="mr-reco-wrap" data-reco-wrap></div>
       <div class="mr-tabs" role="tablist" aria-label="Pipelines">${tabsHtml()}</div>
       ${legendHtml()}
       <div class="mr-panel" id="mr-panel" role="tabpanel"></div>
@@ -844,6 +1000,29 @@
       const id = s.dataset.status;
       s.innerHTML = statusHtml(id);
       s.dataset.kind = st.status[id]?.kind || (assigned(id) ? "saved" : "");
+    }
+    // Choix existant sur un model retiré : conservé, signalé « obsolète ».
+    for (const o of el.querySelectorAll("[data-obsolete-warn]")) {
+      const a = assigned(o.dataset.obsoleteWarn), b = secondOf(o.dataset.obsoleteWarn);
+      const gone = [a, b].filter(Boolean).map(x => ({ x, r: removedInfo(x.provider, x.model) })).filter(g => g.r);
+      o.hidden = !gone.length;
+      o.textContent = gone.length ? gone.map(g => `⚠ ${g.x.model} est obsolète (${g.r.reason}). Votre choix est conservé : changez-le quand vous voulez.`).join(" ") : "";
+    }
+    // Suggestions : réécrites seulement si elles changent (focus et ouverture gardés).
+    const wrap = el.querySelector("[data-reco-wrap]");
+    if (wrap) {
+      const html = recoBoxHtml() + (st.recoNotice ? `<p class="mr-reco-notice" role="status">✓ ${esc(st.recoNotice)}</p>` : "");
+      if (wrap._html !== html) { wrap.innerHTML = html; wrap._html = html; }
+    }
+    for (const b of el.querySelectorAll("[data-reco]")) {
+      const html = recoHtml(b.dataset.reco);
+      if (b._html === html) continue;
+      const open = b.querySelector("details.mr-reco-why")?.open;
+      b.innerHTML = html;
+      b._html = html;
+      b.hidden = !html;
+      if (open) { const d = b.querySelector("details.mr-reco-why"); if (d) d.open = true; }
+      b.dataset.state = !html ? "" : st.reco.slots[b.dataset.reco].principal.applicable ? "ok" : "na";
     }
     const d = el.querySelector(`[data-distrib="${p.id}"]`);
     if (d) {
@@ -954,6 +1133,7 @@
     } else {
       // Retour sur la vue : relire les choix (un autre navigateur a pu changer).
       getJson("/api/model-routing").then(r => { st.routing = r; patch(); }).catch(() => {});
+      getJson("/api/model-recommendations").then(r => { st.reco = r; patch(); }).catch(() => {});
       loadGaps();
     }
     return true;
@@ -1007,6 +1187,11 @@
       if (e.target.closest(".mr-hist-btn")) { st.showHistory = !st.showHistory; patch(); return; }
       if (e.target.closest(".mr-obs-btn")) { st.showObs = !st.showObs; patch(); if (st.showObs) loadObs(); return; }
       if (e.target.closest(".mr-obs-reload")) { loadObs(); return; }
+      const ra = e.target.closest("[data-reco-apply]");
+      if (ra) { st.recoNotice = null; recoPrepare("one", ra.dataset.recoApply); return; }
+      if (e.target.closest(".mr-reco-empty")) { st.recoNotice = null; recoPrepare("empty"); return; }
+      if (e.target.closest(".mr-reco-ok-btn")) { recoConfirm(); return; }
+      if (e.target.closest(".mr-reco-cancel")) { st.recoConfirm = null; patch(); return; }
       if (e.target.closest(".mr-keys-btn")) { st.showKeys = !st.showKeys; renderKeys(); if (st.showKeys) loadKeys(); return; }
       const kt = e.target.closest(".mr-key-test");
       if (kt) { keyAction(kt.closest("form").dataset.key, "test"); return; }

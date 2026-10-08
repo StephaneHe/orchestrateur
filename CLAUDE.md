@@ -939,6 +939,55 @@ le meilleur des 2 ».
   - HTTP `model-routing` ;
   - navigateur `models-dual`.
 
+## Suggestions de models de l'étude comparative (0.46.0)
+
+Demande utilisateur (« Continue », à la proposition du chef) : afficher dans la
+page Models la recommandation consolidée de l'étude comparative, **en
+suggestions, sans toucher aux choix**.
+
+- **Source unique** : `data/model-recommendations.json` (versionné), produit à
+  partir du rapport `comparaison-models-2026-10.md` (commit a8c5cc2).
+  - `report` : date, commit, seuils d'âge (30 jours : « à refaire d'ici 1-2
+    mois », 60 jours : dépassé).
+  - `catalog` : `remove`, `dominated` et `announced`, chacun avec sa raison et
+    sa source.
+  - `steps` : les 25 étapes du rapport, avec principal, alternatives
+    (`target` + `today` pour un model annoncé, `external` hors listes),
+    confiance, section, justification et `undecided`.
+  - `slots` : chacune des 102 cases → une étape, éventuellement avec un
+    principal propre et une note `extrapolated`.
+- **Prochaine étude** : régénérer ce fichier, même schéma. Aucun model n'est
+  codé dans `models.js` ni `model-reco.mjs` (le test le vérifie). Le serveur
+  relit le fichier quand son mtime change ; un fichier invalide est refusé en
+  entier. Le fichier est public : aucun nom de projet privé (testé).
+- **Serveur** : `scripts/model-reco.mjs`.
+  - `decorateCatalog()` de `model-routing.mjs`, idempotent :
+    - un model retiré disparaît des menus ;
+    - un model dominé reçoit `dominated {by, reason, source}` ;
+    - un model annoncé est ajouté avec `unavailable` (PUT → 409) tant que la
+      vraie liste ne le contient pas.
+  - `GET /api/model-recommendations`.
+  - `POST /api/model-routing/apply-suggestions {mode: one|empty, slots,
+    dryRun}` (`sameOriginOnly`) :
+    - `empty` ne modifie jamais une case choisie ;
+    - une variante qui hériterait de la même suggestion reste vide ;
+    - historique `by` : « suggestion du rapport … ».
+- **Interface** (`models.js`) :
+  - bloc `.mr-reco` (`data-reco`) sous chaque paire de menus ;
+  - encadré `.mr-reco-box` avec « Appliquer les suggestions aux étapes vides
+    seulement » ;
+  - confirmation en ligne (plan venu du `dryRun`, Confirmer / Annuler) ;
+  - un choix sur un model retiré est affiché « ⚠ obsolète » (option et
+    `data-obsolete-warn`).
+- L'effort conseillé (low, medium, high…) est **affiché**, mais n'est pas
+  appliqué : aucune case ne porte encore d'effort.
+- `claude-haiku-5-5` est ajouté à `ANTHROPIC_VERIFIED`. La CLI 2.1.283 écrit
+  `unrecognized_model` sur stderr mais sert bien le model.
+- Recettes :
+  - `_test_model_reco.mjs` ;
+  - HTTP `model-reco` ;
+  - navigateur `models-reco` et `models-reco-mobile`.
+
 ## Demandes d'autorisation interactives (0.45.0)
 
 Demande utilisateur : « Je n'ai pas vu de moyen d'autoriser (1 fois, pour

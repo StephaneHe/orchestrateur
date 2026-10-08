@@ -74,7 +74,7 @@ export function extractCode(source, dst) {
     for (const f of ['server.js', 'package.json', 'downloads.json']) {
       if (fs.existsSync(path.join(base, f))) fs.copyFileSync(path.join(base, f), path.join(dst, f));
     }
-    for (const d of ['public', 'scripts', 'src', 'tests']) {
+    for (const d of ['public', 'scripts', 'src', 'tests', 'data']) {
       if (fs.existsSync(path.join(base, d))) copyDir(path.join(base, d), path.join(dst, d), (s) => /\.bak$/.test(s));
     }
   }

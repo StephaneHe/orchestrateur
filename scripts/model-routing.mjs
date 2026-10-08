@@ -39,11 +39,14 @@ export const PROVIDER_LABELS = { anthropic: 'Anthropic', openai: 'OpenAI', nvidi
 // Tous lisent les images ; aucun ne génère d'image ni ne traite l'audio.
 export const ANTHROPIC_VERIFIED = {
   checkedAt: '2026-10-08',
+  // claude-haiku-5-5 : `claude -p "ok" --model claude-haiku-5-5` → modelUsage
+  // claude-haiku-5-5, is_error false (revérifié le 2026-10-08 ; la CLI 2.1.283
+  // affiche encore « unrecognized_model » sur stderr, sans effet).
   models: [
     'claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8',
     'claude-sonnet-5-5', 'claude-sonnet-5',
     'claude-fable-5-1', 'claude-fable-5',
-    'claude-haiku-4-5-20251001',
+    'claude-haiku-5-5', 'claude-haiku-4-5-20251001',
   ],
 };
 
@@ -118,7 +121,37 @@ export function incompatibility(need, provider, entry, slot) {
  * @param {object} [o.env]      process.env par défaut
  * @param {Function} [o.which]  (bins, pyModules) → Promise<{bins:Set, py:Set}>, injectable
  */
-export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalThis.fetch, env = process.env, which } = {}) {
+/**
+ * Règles de l'étude comparative (data/model-recommendations.json, 0.46.0),
+ * appliquées au catalogue servi. Idempotent : le catalogue en cache peut être
+ * décoré plusieurs fois.
+ * - retirés : absents des menus (un choix existant reste affiché « obsolète ») ;
+ * - dominés : gardés, marqués avec la raison et la source ;
+ * - annoncés : visibles mais non sélectionnables tant qu'ils ne sont pas dans
+ *   la vraie liste (ex. models_cache.json de codex) — dès qu'ils y sont, c'est
+ *   l'entrée réelle qui est servie, sélectionnable.
+ */
+export function decorateCatalog(cat, rules) {
+  if (!cat?.providers || !rules) return cat;
+  const removed = new Set((rules.remove || []).map(x => `${x.provider}|${x.model}`));
+  for (const [p, src] of Object.entries(cat.providers)) {
+    if (!Array.isArray(src?.models)) continue;
+    src.models = src.models.filter(m => !removed.has(`${p}|${m.id}`) && !(m.announced && src.models.some(o => o !== m && o.id === m.id)));
+    for (const d of rules.dominated || []) {
+      if (d.provider !== p) continue;
+      const e = src.models.find(m => m.id === d.model);
+      if (e) e.dominated = { by: d.by, reason: d.reason, source: d.source };
+    }
+    for (const a of rules.announced || []) {
+      if (a.provider !== p || src.models.some(m => m.id === a.model)) continue;
+      src.models.push({ id: a.model, label: `${a.model} — annoncé, pas encore disponible dans codex`, caps: ['text'], announced: { note: a.note, source: a.source }, unavailable: true });
+    }
+  }
+  cat.removed = rules.remove || [];
+  return cat;
+}
+
+export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalThis.fetch, env = process.env, which, catalogRules = () => null } = {}) {
   const routingFile = path.join(root, 'model-routing.json');
   // Instance de non-régression : listes lues dans des fichiers, aucun réseau.
   const fixturesDir = env.MODEL_CATALOG_FIXTURES || null;
@@ -305,6 +338,7 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
       if (cat && cat.models.length && !entry) {
         return { ok: false, status: 400, error: `absent de la liste ${PROVIDER_LABELS[provider]} : ${model}` };
       }
+      if (entry?.unavailable) return { ok: false, status: 409, error: `${model} : annoncé, pas encore disponible dans codex` };
       const why = incompatibility(slot.need, provider, entry, slot);
       const pending = why === HARNESS_PENDING_MSG;
       if (why) return { ok: false, status: pending || (provider === 'local' && entry && !entry.installed) ? 409 : 400, error: `incompatible avec « ${slot.label} » : ${why}` };
@@ -556,9 +590,9 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
           local,
         },
       };
-      catalog = next;
       writeCache(next);
-      return next;
+      catalog = decorateCatalog(next, catalogRules());
+      return catalog;
     })();
     try { return await refreshing; } finally { refreshing = null; }
   }
@@ -576,7 +610,7 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
     catalog.providers.openrouter = { ...catalog.providers.openrouter, keyPresent: key.present, keyWhere: key.where, disabled: !key.present };
     catalog.providers.openai = await openaiSource().then(o => (o.models.length ? o : catalog.providers.openai));
     catalog.providers.anthropic = anthropicSource();
-    return catalog;
+    return decorateCatalog(catalog, catalogRules());
   }
 
   return { view, setAssignment, getCatalog, refresh, openrouterKey, routingFile, readRouting, effective, classifierExtras, decideGap, gapDecisions };
