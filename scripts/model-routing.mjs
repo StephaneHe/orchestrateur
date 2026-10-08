@@ -1,64 +1,42 @@
 // ============================================================================
-// scripts/model-routing.mjs — vue « Models par tâche » (0.39.0)
+// scripts/model-routing.mjs — vue « Models par tâche » (0.39.0 → 0.40.0)
 // ============================================================================
 //
-// Demande utilisateur : une interface où l'on voit l'enchaînement des types de
-// tâche et où l'on assigne à chacun un model (Anthropic, OpenAI, NVIDIA,
-// OpenRouter) dans un menu déroulant.
+// Demande utilisateur : voir l'enchaînement des tâches et assigner à chacune
+// un model (Anthropic, OpenAI, NVIDIA, OpenRouter) dans un menu déroulant.
+// 0.40.0 : 13 pipelines (scripts/model-pipelines.mjs) ; une « case » = une
+// étape ou une variante d'étape ; capacités par model (vision, génération
+// d'image, audio…) et outils locaux réellement installés.
 //
-// Ce module ne fait QUE le catalogue des models et l'enregistrement des choix.
-// Rien ici n'est lu par dispatch.mjs : le branchement viendra plus tard.
+// Ce module ne fait QUE le catalogue et l'enregistrement des choix. Rien ici
+// n'est lu par dispatch.mjs : le branchement viendra plus tard.
 //
 // - Les choix vivent dans `model-routing.json` (racine, non versionné), écrit
-//   seulement par le serveur, en temp + rename. PAS dans config.json, qui est
-//   partagé par plusieurs chefs.
+//   seulement par le serveur, en temp + rename. PAS dans config.json, partagé
+//   par plusieurs chefs. L'ancien format (20 types, version 1) est migré à la
+//   première lecture ; ce qui n'a pas pu l'être est consigné dans `migration`.
 // - Aucune clé n'est lue pour être affichée, journalisée ou copiée. Pour
-//   OpenRouter on ne rapporte que « présente (où) / absente ». La clé NVIDIA
-//   n'est jamais envoyée : la liste publique des models se lit sans clé.
+//   OpenRouter on ne rapporte que « présente (où) / absente ». Les listes
+//   NVIDIA et OpenRouter sont publiques : aucune clé n'est envoyée.
 // ============================================================================
 
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { PIPELINES, LEGACY_MAP, LOCAL_TOOLS, CAPS, slotsOf } from './model-pipelines.mjs';
 
-export const STAGES = [
-  { id: 'reflechir',  label: 'Réfléchir' },
-  { id: 'ecrire',     label: 'Écrire' },
-  { id: 'corriger',   label: 'Corriger' },
-  { id: 'verifier',   label: 'Vérifier' },
-  { id: 'livrer',     label: 'Livrer / opérer' },
-  { id: 'documenter', label: 'Écrire sur le code' },
-];
+export { PIPELINES, LEGACY_MAP, LOCAL_TOOLS, CAPS };
 
-export const TASK_TYPES = [
-  { n: 1,  id: 'architecture',     stage: 'reflechir',  label: 'Architecture / conception',  description: 'Choisir la structure, les modules, les compromis avant d’écrire.' },
-  { n: 2,  id: 'plan',             stage: 'reflechir',  label: 'Plan d’implémentation',       description: 'Découper le travail en étapes ordonnées et vérifiables.' },
-  { n: 3,  id: 'etude-codebase',   stage: 'reflechir',  label: 'Étude de codebase',           description: 'Lire et comprendre un projet existant, cartographier le code.' },
-  { n: 4,  id: 'feature-complexe', stage: 'ecrire',     label: 'Feature complexe',            description: 'Fonctionnalité qui touche plusieurs modules ou un algorithme délicat.' },
-  { n: 5,  id: 'feature-simple',   stage: 'ecrire',     label: 'Feature simple',              description: 'Ajout localisé, bien délimité, peu de risques.' },
-  { n: 6,  id: 'edits-mecaniques', stage: 'ecrire',     label: 'Edits mécaniques',            description: 'Renommages, remplacements en série, mises en forme.' },
-  { n: 7,  id: 'refactoring',      stage: 'ecrire',     label: 'Refactoring',                 description: 'Restructurer sans changer le comportement.' },
-  { n: 8,  id: 'migration',        stage: 'ecrire',     label: 'Migration',                   description: 'Changer de version, de bibliothèque ou de format de données.' },
-  { n: 9,  id: 'debug-simple',     stage: 'corriger',   label: 'Debug simple',                description: 'Bug reproductible, cause probable évidente.' },
-  { n: 10, id: 'debug-difficile',  stage: 'corriger',   label: 'Debug difficile',             description: 'Bug intermittent, concurrence, cause inconnue.' },
-  { n: 11, id: 'analyse-crash',    stage: 'corriger',   label: 'Analyse de crash / logs',     description: 'Lire des traces, des logs, un dump pour trouver la cause.' },
-  { n: 12, id: 'tests',            stage: 'verifier',   label: 'Écriture de tests',           description: 'Tests unitaires, d’intégration, de non-régression.' },
-  { n: 13, id: 'revue',            stage: 'verifier',   label: 'Revue de code',               description: 'Relire un changement : défauts, lisibilité, cohérence.' },
-  { n: 14, id: 'audit-securite',   stage: 'verifier',   label: 'Audit sécurité',              description: 'Chercher les failles : injection, secrets, droits, surface d’attaque.' },
-  { n: 15, id: 'second-avis',      stage: 'verifier',   label: 'Second avis / contradiction', description: 'Un autre model conteste une conclusion ou un plan.' },
-  { n: 16, id: 'build-deploiement',stage: 'livrer',     label: 'Build / déploiement',         description: 'Compiler, publier un APK, déployer un service.' },
-  { n: 17, id: 'git',              stage: 'livrer',     label: 'Opérations git',              description: 'Commits, branches, tags, résolution de conflits.' },
-  { n: 18, id: 'device-e2e',       stage: 'livrer',     label: 'Pilotage device / E2E',       description: 'Piloter un téléphone, un navigateur, des parcours de bout en bout.' },
-  { n: 19, id: 'documentation',    stage: 'documenter', label: 'Documentation technique',     description: 'README, guides, commentaires d’API.' },
-  { n: 20, id: 'synthese',         stage: 'documenter', label: 'Synthèse / rapport',          description: 'Résumer un travail, un état, des résultats pour décider.' },
-];
-
-export const PROVIDERS = ['anthropic', 'openai', 'nvidia', 'openrouter'];
-export const PROVIDER_LABELS = { anthropic: 'Anthropic', openai: 'OpenAI', nvidia: 'NVIDIA', openrouter: 'OpenRouter' };
+export const SLOTS = slotsOf();
+export const PROVIDERS = ['anthropic', 'openai', 'nvidia', 'openrouter', 'local'];
+export const LLM_PROVIDERS = ['anthropic', 'openai', 'nvidia', 'openrouter'];
+export const PROVIDER_LABELS = { anthropic: 'Anthropic', openai: 'OpenAI', nvidia: 'NVIDIA', openrouter: 'OpenRouter', local: 'Outil local / non-LLM' };
 
 // Aucune liste publique sans clé API côté Anthropic (et aucune clé payante ne
 // doit être ajoutée) : on garde les identifiants vérifiés avec la CLI claude.
+// Tous lisent les images ; aucun ne génère d'image ni ne traite l'audio.
 export const ANTHROPIC_VERIFIED = {
   checkedAt: '2026-10-08',
   models: [
@@ -71,11 +49,58 @@ export const ANTHROPIC_VERIFIED = {
 
 const NVIDIA_MODELS_URL     = 'https://integrate.api.nvidia.com/v1/models';
 const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models';
-// Models NVIDIA qui ne sont pas des models de dialogue (embeddings, filtres…).
-const NVIDIA_NON_CHAT = /embed|safety|guard|reward|rerank|retriev|parse|ocr|clip|pii|detector|vila|cosmos|fuyu|kosmos|deplot|paligemma|neva|grounding|riva|asr|tts|audio2|vista|streampetr|bevformer|sparsedrive/i;
+// Ni dialogue ni média utile ici : embeddings, filtres, scores, détecteurs.
+const NVIDIA_EXCLUDE = /embed|safety|guard|reward|rerank|retriev|nvclip|detector|topic-control/i;
+// Le catalogue NVIDIA ne donne que des identifiants : capacités déduites du nom.
+const NVIDIA_CAPS = [
+  ['vision',    /vision|vila|neva|kosmos|fuyu|deplot|omni|cosmos-reason|nemotron-parse|vlm|paligemma/i],
+  ['video-in',  /cosmos-reason|omni/i],
+  ['audio-in',  /omni|parakeet|canary|whisper|asr/i],
+  ['audio-out', /tts|fastpitch|magpie|radtts/i],
+  ['image-gen', /flux|stable-diffusion|sdxl|sana|edify|bria|consistory/i],
+];
+const NVIDIA_NOT_TEXT = /deplot|kosmos|fuyu|nemotron-parse|parakeet|canary|fastpitch|magpie|radtts|flux|stable-diffusion|sdxl/i;
 
-export const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:\/@+-]{0,159}$/;
+export const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:\/@+~-]{0,159}$/;
+export const SLOT_RE = /^[a-z0-9-]+(\.[a-z0-9-]+){1,2}$/;
 export const HISTORY_MAX = 500;
+
+/** Capacités d'un model OpenRouter, d'après ses modalités publiées. */
+function openrouterCaps(m) {
+  const a = m.architecture || {};
+  const inp = a.input_modalities || ['text'];
+  const out = a.output_modalities || ['text'];
+  const caps = [];
+  const tools = Array.isArray(m.supported_parameters) && m.supported_parameters.includes('tools');
+  if (out.includes('text') && tools) caps.push('text');
+  if (inp.includes('image')) caps.push('vision');
+  if (inp.includes('video')) caps.push('video-in');
+  if (inp.includes('audio')) caps.push('audio-in');
+  if (out.includes('image')) caps.push('image-gen');
+  if (out.includes('audio')) caps.push('audio-out');
+  return caps;
+}
+
+function nvidiaCaps(id) {
+  const caps = NVIDIA_NOT_TEXT.test(id) ? [] : ['text'];
+  for (const [cap, re] of NVIDIA_CAPS) if (re.test(id)) caps.push(cap);
+  return caps;
+}
+
+/** Une case accepte-t-elle ce model / cet outil ? Renvoie null si oui, sinon la raison. */
+export function incompatibility(need, provider, entry) {
+  if (provider === 'local') {
+    if (!need.local?.length) return 'aucun outil local ne convient à cette étape';
+    if (!entry) return null;
+    if (!entry.caps.some(c => need.local.includes(c))) return 'cet outil ne sait pas faire cette étape';
+    if (!entry.installed) return 'outil non installé sur cette machine';
+    return null;
+  }
+  if (!need.llm) return 'cette étape demande un outil local, pas un LLM';
+  if (!entry) return null;
+  if (!entry.caps?.includes(need.llm)) return `pas de capacité « ${CAPS[need.llm]} »`;
+  return null;
+}
 
 /**
  * @param {object} o
@@ -83,8 +108,9 @@ export const HISTORY_MAX = 500;
  * @param {string} o.cacheFile  cache du catalogue (logs/, non versionné)
  * @param {Function} [o.fetch]  injectable pour les tests
  * @param {object} [o.env]      process.env par défaut
+ * @param {Function} [o.which]  (bins, pyModules) → Promise<{bins:Set, py:Set}>, injectable
  */
-export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalThis.fetch, env = process.env } = {}) {
+export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalThis.fetch, env = process.env, which } = {}) {
   const routingFile = path.join(root, 'model-routing.json');
   // Instance de non-régression : listes lues dans des fichiers, aucun réseau.
   const fixturesDir = env.MODEL_CATALOG_FIXTURES || null;
@@ -92,19 +118,46 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
   let refreshing = null;       // promesse en cours (une seule à la fois)
 
   // ── Enregistrement ─────────────────────────────────────────────────────────
-  function emptyRouting() { return { version: 1, updatedAt: null, assignments: {}, history: [] }; }
+  function emptyRouting() { return { version: 2, updatedAt: null, assignments: {}, history: [] }; }
+
+  /** Ancien format (0.39.0, clés = 20 types) → cases des pipelines. */
+  function migrate(old) {
+    const at = new Date().toISOString();
+    const data = { version: 2, updatedAt: at, assignments: {}, history: Array.isArray(old.history) ? old.history : [] };
+    const mapped = [], lost = [];
+    for (const [key, a] of Object.entries(old.assignments || {})) {
+      const targets = LEGACY_MAP[key];
+      if (!targets || !a?.provider || !a?.model) { lost.push({ from: key, model: a ? `${a.provider}:${a.model}` : null, reason: targets ? 'affectation illisible' : 'type de tâche sans équivalent' }); continue; }
+      for (const slot of targets) {
+        data.assignments[slot] = { provider: a.provider, model: a.model, at };
+        data.history.push({ at, task: slot, from: null, to: `${a.provider}:${a.model}`, by: `migration 0.40.0 (${key})` });
+      }
+      mapped.push({ from: key, to: targets, model: `${a.provider}:${a.model}` });
+    }
+    if (data.history.length > HISTORY_MAX) data.history = data.history.slice(-HISTORY_MAX);
+    data.migration = { at, fromVersion: 1, mapped, lost };
+    return data;
+  }
 
   function readRouting() {
-    try {
-      const j = JSON.parse(fs.readFileSync(routingFile, 'utf8'));
-      if (!j || typeof j !== 'object') return emptyRouting();
-      return {
-        version: 1,
-        updatedAt: j.updatedAt || null,
-        assignments: j.assignments && typeof j.assignments === 'object' ? j.assignments : {},
-        history: Array.isArray(j.history) ? j.history : [],
-      };
-    } catch { return emptyRouting(); }
+    let j;
+    try { j = JSON.parse(fs.readFileSync(routingFile, 'utf8')); } catch { return emptyRouting(); }
+    if (!j || typeof j !== 'object') return emptyRouting();
+    if (j.version !== 2) {
+      const m = migrate(j);
+      try {
+        fs.copyFileSync(routingFile, `${routingFile}.v1-bak`);
+        writeRouting(m);
+      } catch { /* lecture seule : on sert quand même la version migrée */ }
+      return m;
+    }
+    return {
+      version: 2,
+      updatedAt: j.updatedAt || null,
+      assignments: j.assignments && typeof j.assignments === 'object' ? j.assignments : {},
+      history: Array.isArray(j.history) ? j.history : [],
+      ...(j.migration ? { migration: j.migration } : {}),
+    };
   }
 
   function writeRouting(data) {
@@ -116,50 +169,55 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
   function fmt(a) { return a ? `${a.provider}:${a.model}` : null; }
 
   /**
-   * `choice` = null → « (défaut du projet) ». Sinon `{provider, model}`.
-   * Renvoie `{ok, status, error?, assignment?, changed?}`.
+   * `choice` = null → valeur héritée (étape, puis défaut du projet). Sinon
+   * `{provider, model}`. Renvoie `{ok, status, error?, assignment?, changed?}`.
    */
-  function setAssignment(taskId, choice, by) {
-    const task = TASK_TYPES.find(t => t.id === taskId);
-    if (!task) return { ok: false, status: 404, error: `type de tâche inconnu : ${taskId}` };
+  function setAssignment(slotId, choice, by) {
+    const slot = SLOTS.find(s => s.id === slotId);
+    if (!slot) return { ok: false, status: 404, error: `case inconnue : ${slotId}` };
     let next = null;
     if (choice) {
       const { provider, model } = choice;
       if (!PROVIDERS.includes(provider)) return { ok: false, status: 400, error: `fournisseur inconnu : ${provider}` };
       if (typeof model !== 'string' || !MODEL_ID_RE.test(model)) return { ok: false, status: 400, error: 'identifiant de model invalide' };
-      const cat = catalog?.providers?.[provider];
       if (provider === 'openrouter' && !openrouterKey().present) {
         return { ok: false, status: 409, error: 'clé OpenRouter non configurée' };
       }
+      const cat = catalog?.providers?.[provider];
+      const entry = cat?.models?.find(m => m.id === model);
       // Liste connue et non vide : le model doit y figurer. Liste vide (source
       // injoignable) : on accepte un identifiant bien formé plutôt que bloquer.
-      if (cat && cat.models.length && !cat.models.some(m => m.id === model)) {
-        return { ok: false, status: 400, error: `model absent de la liste ${PROVIDER_LABELS[provider]} : ${model}` };
+      if (cat && cat.models.length && !entry) {
+        return { ok: false, status: 400, error: `absent de la liste ${PROVIDER_LABELS[provider]} : ${model}` };
       }
+      const why = incompatibility(slot.need, provider, entry);
+      if (why) return { ok: false, status: provider === 'local' && entry && !entry.installed ? 409 : 400, error: `incompatible avec « ${slot.label} » : ${why}` };
       next = { provider, model };
     }
     const data = readRouting();
-    const prev = data.assignments[taskId] || null;
+    const prev = data.assignments[slotId] || null;
     if (fmt(prev) === fmt(next)) return { ok: true, status: 200, assignment: next, changed: false, updatedAt: data.updatedAt };
     const at = new Date().toISOString();
-    if (next) data.assignments[taskId] = { ...next, at };
-    else delete data.assignments[taskId];
-    data.history.push({ at, task: taskId, from: fmt(prev), to: fmt(next), by: typeof by === 'string' ? by.slice(0, 40) : 'dashboard' });
+    if (next) data.assignments[slotId] = { ...next, at };
+    else delete data.assignments[slotId];
+    data.history.push({ at, task: slotId, from: fmt(prev), to: fmt(next), by: typeof by === 'string' ? by.slice(0, 40) : 'dashboard' });
     if (data.history.length > HISTORY_MAX) data.history = data.history.slice(-HISTORY_MAX);
     data.updatedAt = at;
     writeRouting(data);
-    return { ok: true, status: 200, assignment: data.assignments[taskId] || null, changed: true, updatedAt: at };
+    return { ok: true, status: 200, assignment: data.assignments[slotId] || null, changed: true, updatedAt: at };
   }
 
   function view(historyN = 50) {
     const data = readRouting();
     return {
-      stages: STAGES,
-      tasks: TASK_TYPES,
+      pipelines: PIPELINES,
+      slots: SLOTS,
+      caps: CAPS,
       assignments: data.assignments,
       updatedAt: data.updatedAt,
       history: data.history.slice(-historyN).reverse(),
       historyTotal: data.history.length,
+      migration: data.migration || null,
     };
   }
 
@@ -184,7 +242,7 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
   // ── Sources des listes ─────────────────────────────────────────────────────
   function anthropicSource() {
     return {
-      models: ANTHROPIC_VERIFIED.models.map(id => ({ id, label: id })),
+      models: ANTHROPIC_VERIFIED.models.map(id => ({ id, label: id, caps: ['text', 'vision'] })),
       source: `liste vérifiée avec la CLI claude (${ANTHROPIC_VERIFIED.checkedAt}) — pas de liste publique sans clé API`,
       fetchedAt: ANTHROPIC_VERIFIED.checkedAt,
     };
@@ -203,8 +261,13 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
           id: m.slug,
           label: m.slug + (m.visibility === 'hide' ? ' (masqué dans codex)' : ''),
           hint: typeof m.description === 'string' ? m.description.slice(0, 120) : undefined,
+          caps: ['text', ...((m.input_modalities || []).includes('image') ? ['vision'] : [])],
         }));
-      return { models: list, source: 'models_cache.json de codex', fetchedAt: j.fetched_at || null };
+      return {
+        models: list,
+        source: 'models_cache.json de codex (génération d’image, STT et TTS d’OpenAI : seulement via OpenRouter, sans clé OpenAI payante)',
+        fetchedAt: j.fetched_at || null,
+      };
     } catch (e) {
       return { models: [], source: 'models_cache.json de codex', fetchedAt: null, error: `lecture impossible (${e.code || e.message})` };
     }
@@ -239,7 +302,7 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
     let live = [], error;
     try {
       const j = await getJson(NVIDIA_MODELS_URL);
-      live = (Array.isArray(j.data) ? j.data : []).map(m => m?.id).filter(id => typeof id === 'string' && MODEL_ID_RE.test(id) && !NVIDIA_NON_CHAT.test(id));
+      live = (Array.isArray(j.data) ? j.data : []).map(m => m?.id).filter(id => typeof id === 'string' && MODEL_ID_RE.test(id) && !NVIDIA_EXCLUDE.test(id));
     } catch (e) { error = `liste NVIDIA injoignable (${e.message})`; }
     const liveSet = new Set(live);
     const models = cascade.map((id, i) => ({
@@ -247,11 +310,16 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
       label: `${id} — failover n° ${i + 1}` + (live.length && !liveSet.has(id) ? ' (absent du catalogue NVIDIA)' : ''),
       cascade: i + 1,
       missing: live.length > 0 && !liveSet.has(id),
+      caps: nvidiaCaps(id),
     }));
-    for (const id of live.sort()) if (!cascade.includes(id)) models.push({ id, label: id });
+    for (const id of live.sort()) {
+      if (cascade.includes(id)) continue;
+      const caps = nvidiaCaps(id);
+      if (caps.length) models.push({ id, label: id, caps });
+    }
     return {
       models,
-      source: 'cascade du failover (dispatch.mjs) + liste publique integrate.api.nvidia.com',
+      source: 'cascade du failover (dispatch.mjs) + liste publique integrate.api.nvidia.com (capacités déduites du nom)',
       fetchedAt: new Date().toISOString(),
       ...(error ? { error } : {}),
     };
@@ -264,23 +332,58 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
       const j = await getJson(OPENROUTER_MODELS_URL);
       const all = Array.isArray(j.data) ? j.data : [];
       total = all.length;
-      // Pour du code, un model doit savoir appeler des outils.
+      // Texte : seulement les models qui savent appeler des outils (agents).
+      // Média : tout model qui a la capacité, outils ou pas.
       models = all
         .filter(m => typeof m?.id === 'string' && MODEL_ID_RE.test(m.id))
-        .filter(m => Array.isArray(m.supported_parameters) && m.supported_parameters.includes('tools'))
-        .map(m => ({ id: m.id, label: m.id }))
+        .map(m => ({ id: m.id, label: m.id, caps: openrouterCaps(m) }))
+        .filter(m => m.caps.length)
         .sort((a, b) => a.id.localeCompare(b.id));
     } catch (e) { error = `liste OpenRouter injoignable (${e.message})`; }
     return {
       models,
       total,
-      filter: 'models capables d’appeler des outils',
+      filter: 'models à outils, ou dotés d’une capacité média',
       source: 'liste publique openrouter.ai (sans clé)',
       fetchedAt: new Date().toISOString(),
       keyPresent: key.present,
       keyWhere: key.where,
       disabled: !key.present,
       ...(error ? { error } : {}),
+    };
+  }
+
+  /** Cherche les exécutables et modules Python des outils locaux. */
+  function defaultWhich(bins, pyMods) {
+    const run = (cmd, args) => new Promise(resolve => {
+      execFile(cmd, args, { windowsHide: true, timeout: 8000 }, (err, stdout) => resolve(err ? null : String(stdout)));
+    });
+    const finder = process.platform === 'win32' ? 'where' : 'which';
+    return Promise.all([
+      Promise.all(bins.map(b => run(finder, [b]).then(out => (out && out.trim() ? b : null)))),
+      run('python', ['-c', `import importlib.util as u;print(','.join(m for m in ${JSON.stringify(pyMods)} if u.find_spec(m)))`]),
+    ]).then(([found, py]) => ({ bins: new Set(found.filter(Boolean)), py: new Set((py || '').trim().split(',').filter(Boolean)) }));
+  }
+
+  async function localSource() {
+    let found;
+    try {
+      if (fixturesDir) {
+        const j = JSON.parse(await fsp.readFile(path.join(fixturesDir, 'local-tools.json'), 'utf8'));
+        found = { bins: new Set(j.bins || []), py: new Set(j.py || []) };
+      } else {
+        found = await (which || defaultWhich)(LOCAL_TOOLS.filter(t => t.bin).map(t => t.bin), LOCAL_TOOLS.filter(t => t.py).map(t => t.py));
+      }
+    } catch { found = { bins: new Set(), py: new Set() }; }
+    const models = LOCAL_TOOLS.map(t => {
+      const installed = t.always === true || (t.always === 'win32' && process.platform === 'win32')
+        || (t.bin && found.bins.has(t.bin)) || (t.py && found.py.has(t.py)) || false;
+      return { id: t.id, label: t.label + (installed ? '' : ' (non installé)'), caps: t.caps, installed };
+    });
+    return {
+      models,
+      source: 'outils détectés sur cette machine (PATH, modules Python), plus la synthèse vocale intégrée',
+      fetchedAt: new Date().toISOString(),
     };
   }
 
@@ -301,17 +404,19 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
     if (refreshing) return refreshing;
     refreshing = (async () => {
       const prev = catalog || readCache();
-      const [openai, nvidia, openrouter] = await Promise.all([openaiSource(), nvidiaSource(), openrouterSource()]);
+      const [openai, nvidia, openrouter, local] = await Promise.all([openaiSource(), nvidiaSource(), openrouterSource(), localSource()]);
       const keep = (name, fresh) => (!fresh.error || !prev?.providers?.[name]?.models?.length)
         ? fresh
         : { ...prev.providers[name], error: fresh.error, stale: true };
       const next = {
+        schema: 2,
         builtAt: new Date().toISOString(),
         providers: {
           anthropic: anthropicSource(),
           openai: keep('openai', openai),
           nvidia: keep('nvidia', nvidia),
           openrouter: { ...keep('openrouter', openrouter), keyPresent: openrouter.keyPresent, keyWhere: openrouter.keyWhere, disabled: openrouter.disabled },
+          local,
         },
       };
       catalog = next;
@@ -325,7 +430,8 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
     if (force) return refresh();
     if (!catalog) {
       const c = readCache();
-      if (c?.providers) catalog = c;
+      // Cache d'avant 0.40.0 : pas de capacités ni d'outils locaux → on refait.
+      if (c?.providers && c.schema === 2) catalog = c;
       else return refresh();
     }
     // La présence de la clé et la liste codex sont relues à chaque fois : peu coûteux.

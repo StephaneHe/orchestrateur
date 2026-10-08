@@ -236,12 +236,18 @@ function modelCatalogFixtures(root) {
   fs.writeFileSync(path.join(dir, 'nvidia.json'), JSON.stringify({ data: [
     { id: 'moonshotai/kimi-k3' }, { id: 'nvidia/nemotron-3-ultra-550b-a55b' },
     { id: 'z-ai/glm-5.3' }, { id: 'nvidia/nemotron-3-embed-1b' },
+    { id: 'meta/llama-3.2-90b-vision-instruct' },
   ] }));
+  const mod = (inp, out) => ({ input_modalities: inp, output_modalities: out });
   fs.writeFileSync(path.join(dir, 'openrouter.json'), JSON.stringify({ data: [
-    { id: 'anthropic/claude-haiku-5.5', supported_parameters: ['tools'] },
-    { id: 'qwen/qwen3-coder', supported_parameters: ['tools', 'temperature'] },
-    { id: 'some/no-tools-model', supported_parameters: ['temperature'] },
+    { id: 'anthropic/claude-haiku-5.5', supported_parameters: ['tools'], architecture: mod(['text', 'image'], ['text']) },
+    { id: 'qwen/qwen3-coder', supported_parameters: ['tools', 'temperature'], architecture: mod(['text'], ['text']) },
+    { id: 'some/no-tools-model', supported_parameters: ['temperature'], architecture: mod(['text'], ['text']) },
+    { id: 'google/gemini-3-pro-image', supported_parameters: [], architecture: mod(['text', 'image'], ['text', 'image']) },
+    { id: 'openai/gpt-audio', supported_parameters: [], architecture: mod(['text', 'audio'], ['text', 'audio']) },
   ] }));
+  // Outils locaux « installés » de l'instance (aucune recherche dans le PATH).
+  fs.writeFileSync(path.join(dir, 'local-tools.json'), JSON.stringify({ bins: ['ffmpeg', 'ffprobe', 'whisper', 'tesseract'], py: ['PIL'] }));
 }
 
 export function serverEnv(root, port) {

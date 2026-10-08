@@ -382,49 +382,92 @@ async function apiChecks(sb) {
     const r = await post('/api/project/omega/park', { parked: true });
     assert(r.status === 404, `route /park encore servie (HTTP ${r.status})`);
   });
-  await check(S, 'model-routing', 'Models par tâche : 20 types en 6 étapes, catalogue à 4 fournisseurs, choix validé, enregistré hors config.json, relu, historisé', async () => {
+  await check(S, 'model-routing', 'Models par tâche : 13 pipelines (boucles, retours, renvois), une case par étape et variante, migration de l\'ancien format, capacités média, outils locaux, choix validé, enregistré hors config.json, relu, historisé', async () => {
+    const routingPath = path.join(sb.root, 'model-routing.json');
+    // Ancien format (0.39.0) posé avant la première lecture : il doit être migré.
+    fs.writeFileSync(routingPath, JSON.stringify({ version: 1, assignments: {
+      'refactoring': { provider: 'anthropic', model: 'claude-sonnet-5-5' },
+      'second-avis': { provider: 'openai', model: 'gpt-6-astra' },
+      'type-disparu': { provider: 'anthropic', model: 'claude-opus-5-5' },
+    }, history: [] }));
     const first = await get('/api/model-routing');
     if (first.status === 404) NA('route absente de cet état du code');
     const v = await first.json();
-    assert(v.tasks.length === 20 && v.stages.length === 6, `${v.tasks.length} types, ${v.stages.length} étapes`);
-    assert(v.tasks.every(t => v.stages.some(s => s.id === t.stage)), 'type de tâche hors étape');
-    assert(v.tasks.map(t => t.n).join(',') === Array.from({ length: 20 }, (_, i) => i + 1).join(','), 'numérotation 1→20');
+    if (!Array.isArray(v.pipelines)) NA('structure en pipelines absente de cet état du code');
+    const ids = v.pipelines.map(p => p.id).join(',');
+    assert(ids === 'dev,discussion,routage,incident,recherche,audit,maintenance,nouveau,donnees,redaction,images,video,audio', `pipelines : ${ids}`);
+    const steps = (p) => p.flow.flatMap(n => (n.kind === 'loop' ? n.steps : [n]));
+    for (const p of v.pipelines) {
+      assert(p.purpose && p.when, `${p.id} : bandeau incomplet`);
+      for (const s of steps(p)) {
+        assert(s.title && s.what && s.example, `${p.id}.${s.id} : titre, quand/quoi ou exemple manquant`);
+        if (!s.ref) assert(v.slots.some(x => x.id === `${p.id}.${s.id}`), `${p.id}.${s.id} : pas de case`);
+        for (const vr of s.variants || []) assert(v.slots.some(x => x.id === `${p.id}.${s.id}.${vr.id}`), `${p.id}.${s.id}.${vr.id} : pas de case`);
+      }
+    }
+    const dev = v.pipelines[0];
+    const loop = dev.flow.find(n => n.kind === 'loop');
+    assert(loop && loop.steps.map(s => s.n).join(',') === '4a,4b,4c' && loop.back.from === 'refactor' && loop.back.to === 'rouge', 'boucle TDD 4a→4b→4c→4a absente');
+    assert(steps(dev).find(s => s.id === 'revue').returns.some(r => r.to === 'tdd'), 'retour Revue → 4 absent');
+    assert(steps(dev).find(s => s.id === 'vert').variants.length === 5, 'variantes de 4b');
+    assert(steps(v.pipelines.find(p => p.id === 'incident')).find(s => s.id === 'corriger').ref.pipeline === 'dev', 'renvoi Incident → Développement absent');
+    assert(steps(v.pipelines.find(p => p.id === 'images')).find(s => s.id === 'verifier').returns.some(r => r.to === 'produire'), 'boucle Images vérifier → générer absente');
+    // Migration : reprise sur les nouvelles cases, perte signalée.
+    assert(v.migration && v.migration.mapped.length === 2 && v.migration.lost.length === 1 && v.migration.lost[0].from === 'type-disparu', `migration : ${JSON.stringify(v.migration)}`);
+    assert(v.assignments['dev.vert.refactoring']?.model === 'claude-sonnet-5-5' && v.assignments['dev.refactor']?.model === 'claude-sonnet-5-5', 'refactoring non repris');
+    assert(v.assignments['audit.second-avis']?.model === 'gpt-6-astra' && v.assignments['dev.revue.second-avis'], 'second avis non repris');
+    assert(fs.existsSync(routingPath + '.v1-bak'), 'pas de sauvegarde de l\'ancien fichier');
+    assert(JSON.parse(fs.readFileSync(routingPath, 'utf8')).version === 2, 'fichier non réécrit au nouveau format');
+    // Catalogue : capacités et outils locaux.
     const c = await json('/api/model-catalog');
-    assert(['anthropic', 'openai', 'nvidia', 'openrouter'].every(p => Array.isArray(c.providers[p]?.models)), 'fournisseur manquant');
-    assert(c.providers.anthropic.models.some(m => m.id === 'claude-opus-5-5'), 'Anthropic : claude-opus-5-5 absent');
-    assert(c.providers.openai.models.map(m => m.id).join(',') === 'gpt-6-astra,gpt-reserve,gpt-5.6-sol', `OpenAI (models_cache, par priorité) : ${c.providers.openai.models.map(m => m.id)}`);
-    const nv = c.providers.nvidia.models.map(m => m.id);
-    assert(nv[0] === 'moonshotai/kimi-k3' && nv.includes('z-ai/glm-5.3') && !nv.includes('nvidia/nemotron-3-embed-1b'), `NVIDIA : ${nv}`);
-    assert(c.providers.nvidia.models.some(m => m.missing), 'model du failover absent du catalogue non signalé');
+    assert(['anthropic', 'openai', 'nvidia', 'openrouter', 'local'].every(p => Array.isArray(c.providers[p]?.models)), 'fournisseur manquant');
+    assert(c.providers.anthropic.models.every(m => m.caps.includes('vision') && !m.caps.includes('image-gen')), 'capacités Anthropic');
+    assert(c.providers.openai.models.map(m => m.id).join(',') === 'gpt-6-astra,gpt-reserve,gpt-5.6-sol', `OpenAI : ${c.providers.openai.models.map(m => m.id)}`);
+    const nv = c.providers.nvidia.models;
+    assert(nv[0].id === 'moonshotai/kimi-k3' && nv.some(m => m.missing) && !nv.some(m => /embed/.test(m.id)), 'NVIDIA : cascade, signalement, filtre');
+    assert(nv.find(m => m.id === 'meta/llama-3.2-90b-vision-instruct')?.caps.includes('vision'), 'NVIDIA : vision non détectée');
     const or = c.providers.openrouter;
-    assert(or.keyPresent === false && or.disabled === true && or.models.length === 2, `OpenRouter : clé=${or.keyPresent} ${or.models.length} models`);
+    assert(or.keyPresent === false && or.disabled === true, 'OpenRouter : clé');
+    assert(or.models.find(m => m.id === 'google/gemini-3-pro-image')?.caps.includes('image-gen'), 'OpenRouter : génération d\'image non détectée');
+    assert(or.models.find(m => m.id === 'openai/gpt-audio')?.caps.includes('audio-out'), 'OpenRouter : TTS non détecté');
+    assert(!or.models.some(m => m.id === 'some/no-tools-model'), 'OpenRouter : model sans outils ni média gardé');
+    const loc = c.providers.local.models;
+    assert(loc.find(t => t.id === 'ffmpeg')?.installed && !loc.find(t => t.id === 'piper')?.installed && loc.find(t => t.id === 'web-speech')?.installed, 'outils locaux : détection');
     assert(!JSON.stringify(c).match(/sk-or-|nvapi-/), 'une valeur de clé apparaît dans le catalogue');
+    // Enregistrement et validation.
     const cfgPath = path.join(sb.root, 'config.json');
     const cfgBefore = fs.readFileSync(cfgPath, 'utf8');
-    const put = (task, body) => fetch(`${sb.url}/api/model-routing/${task}`, { method: 'PUT', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    let r = await put('revue', { provider: 'anthropic', model: 'claude-opus-5-5' });
+    const put = (slot, body) => fetch(`${sb.url}/api/model-routing/${slot}`, { method: 'PUT', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    let r = await put('dev.revue.code', { provider: 'anthropic', model: 'claude-opus-5-5' });
     assert(r.status === 200 && (await r.json()).changed === true, `PUT ${r.status}`);
-    r = await put('revue', { provider: 'anthropic', model: 'claude-opus-5-5' });
+    r = await put('dev.revue.code', { provider: 'anthropic', model: 'claude-opus-5-5' });
     assert((await r.json()).changed === false, 'même choix compté comme un changement');
-    assert((await put('revue', { provider: 'openrouter', model: 'qwen/qwen3-coder' })).status === 409, 'OpenRouter accepté sans clé');
-    assert((await put('inconnue', { provider: 'anthropic', model: 'claude-opus-5-5' })).status === 404, 'type inconnu accepté');
-    assert((await put('revue', { provider: 'anthropic', model: 'claude-inexistant-9' })).status === 400, 'model hors liste accepté');
-    assert((await put('revue', { provider: 'anthropic', model: '../x y' })).status === 400, 'identifiant invalide accepté');
-    assert((await put('revue', { provider: 'mistral', model: 'x' })).status === 400, 'fournisseur inconnu accepté');
-    r = await put('tests', { provider: 'nvidia', model: 'z-ai/glm-5.3' });
-    assert(r.status === 200, `NVIDIA ${r.status}`);
+    assert((await put('dev.revue.code', { provider: 'openrouter', model: 'qwen/qwen3-coder' })).status === 409, 'OpenRouter accepté sans clé');
+    assert((await put('dev.inconnue', { provider: 'anthropic', model: 'claude-opus-5-5' })).status === 404, 'case inconnue acceptée');
+    assert((await put('incident.corriger', { provider: 'anthropic', model: 'claude-opus-5-5' })).status === 404, 'un renvoi a reçu un model');
+    assert((await put('dev.revue.code', { provider: 'anthropic', model: 'claude-inexistant-9' })).status === 400, 'model hors liste accepté');
+    assert((await put('dev.revue.code', { provider: 'anthropic', model: '../x y' })).status === 400, 'identifiant invalide accepté');
+    assert((await put('dev.revue.code', { provider: 'mistral', model: 'x' })).status === 400, 'fournisseur inconnu accepté');
+    assert((await put('images.produire.generation', { provider: 'anthropic', model: 'claude-opus-5-5' })).status === 400, 'model texte accepté pour la génération d\'image');
+    assert((await put('audio.traiter.tts', { provider: 'local', model: 'piper' })).status === 409, 'outil non installé accepté');
+    assert((await put('dev.vert', { provider: 'local', model: 'ffmpeg' })).status === 400, 'outil local accepté pour du code');
+    assert((await put('video.monter.decoupe', { provider: 'local', model: 'ffmpeg' })).status === 200, 'ffmpeg refusé pour la découpe');
+    assert((await put('audio.traiter.stt', { provider: 'local', model: 'whisper' })).status === 200, 'whisper local refusé pour la transcription');
+    assert((await put('images.verifier', { provider: 'nvidia', model: 'meta/llama-3.2-90b-vision-instruct' })).status === 200, 'model vision refusé pour la vérification visuelle');
     const after = await json('/api/model-routing');
-    assert(after.assignments.revue?.model === 'claude-opus-5-5' && after.assignments.tests?.provider === 'nvidia', 'choix non relus');
-    const file = JSON.parse(fs.readFileSync(path.join(sb.root, 'model-routing.json'), 'utf8'));
-    assert(file.assignments.revue?.model === 'claude-opus-5-5', 'model-routing.json sans le choix');
+    assert(after.assignments['dev.revue.code']?.model === 'claude-opus-5-5' && after.assignments['video.monter.decoupe']?.provider === 'local', 'choix non relus');
+    const file = JSON.parse(fs.readFileSync(routingPath, 'utf8'));
+    assert(file.assignments['dev.revue.code']?.model === 'claude-opus-5-5', 'model-routing.json sans le choix');
     assert(fs.readFileSync(cfgPath, 'utf8') === cfgBefore, 'config.json modifié');
-    r = await put('revue', { default: true });
-    assert(r.status === 200 && !(await json('/api/model-routing')).assignments.revue, '« (défaut du projet) » non appliqué');
+    r = await put('dev.revue.code', { default: true });
+    assert(r.status === 200 && !(await json('/api/model-routing')).assignments['dev.revue.code'], 'valeur héritée non appliquée');
     const h = (await json('/api/model-routing')).history;
-    assert(h[0].task === 'revue' && h[0].from === 'anthropic:claude-opus-5-5' && h[0].to === null, `historique : ${JSON.stringify(h[0])}`);
-    assert(h.filter(e => e.task === 'revue').length === 2, 'historique : nombre de changements de « revue »');
-    await put('tests', { default: true });
-    return `${c.providers.anthropic.models.length}/${c.providers.openai.models.length}/${nv.length}/${or.models.length} models`;
+    assert(h[0].task === 'dev.revue.code' && h[0].from === 'anthropic:claude-opus-5-5' && h[0].to === null, `historique : ${JSON.stringify(h[0])}`);
+    assert(h.some(e => /migration/.test(e.by || '')), 'historique : migration non tracée');
+    for (const s of ['video.monter.decoupe', 'audio.traiter.stt', 'images.verifier']) await put(s, { default: true });
+    // L'instance repart propre pour les parcours navigateur.
+    fs.rmSync(routingPath, { force: true });
+    return `${v.pipelines.length} pipelines, ${v.slots.length} cases, ${loc.filter(t => t.installed).length} outils locaux`;
   });
   await check(S, 'sse', 'Flux temps réel /api/sse/fleet : une ligne de log arrive au client', async () => {
     const ac = new AbortController();

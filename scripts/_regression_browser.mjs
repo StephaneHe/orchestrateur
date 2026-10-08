@@ -623,52 +623,129 @@ export async function browserChecks(sb, t) {
       fs.writeFileSync(fc, JSON.stringify(cfg, null, 2) + '\n');
       assert(await until(async () => (await page.locator('.rail-card').count()) > 0, 15_000), 'cadres non rétablis');
     });
-    // ---------------- Models par tâche (0.39.0) ----------------
-    // Exigence utilisateur : flux visuel des étapes, un menu de model par tâche
-    // groupé Anthropic / OpenAI / NVIDIA / OpenRouter, choix enregistré et relu.
+    // ---------------- Models par tâche (0.39.0 → 0.40.0 : 13 pipelines) ----------------
+    // Exigences utilisateur : une vue claire de l'enchaînement des tâches, un
+    // model par tâche (menu groupé Anthropic / OpenAI / NVIDIA / OpenRouter) ;
+    // puis « tous les pipelines », lisibles, boucles comprises, et le travail
+    // images / vidéo / audio avec les models spécialisés et les outils locaux.
     const hasModels = async (pg) => (await pg.locator('#btn-models').count()) > 0;
-    await check(B, 'models-view', 'Models par tâche : 6 étapes dans l\'ordre, 20 cartes, menu à 4 groupes (OpenRouter grisé sans clé), choix enregistré puis relu après rechargement, historique', async () => {
+    const TABS = 'Développement,Discussion,Routage (chef),Incident,Recherche,Audit sécurité,Maintenance,Nouveau projet,Données,Rédaction,Images,Vidéo,Audio';
+    await check(B, 'models-view', 'Models par tâche : 13 onglets de pipeline, bandeau, légende, chaque étape a titre + quand/quoi + exemple + menu (variantes repliables), boucles et retours dessinés, étape optionnelle distincte, renvois, menus par capacité (outils locaux), conseils, choix enregistré puis relu après rechargement, historique', async () => {
       if (!(await hasModels(page))) NA('vue absente de cet état du code');
       await setHash(page, '#/');
       await page.click('#btn-models');
       assert(await until(async () => (await hash(page)) === '#/models' && await visible(page, '#models'), 5000), 'la pill n\'ouvre pas la vue');
-      assert(await until(async () => (await page.locator('#models .mr-card').count()) === 20, 10_000), `cartes : ${await page.locator('#models .mr-card').count()}`);
+      assert(await until(async () => (await page.locator('#models .mr-tab').count()) > 0, 10_000), 'onglets absents');
+      if (!(await page.locator('#models .mr-tab').count())) NA('structure en pipelines absente de cet état du code');
       assert(!(await visible(page, '#rail')) && !(await visible(page, '#conductor-view')), 'le fil ou le rail reste affiché');
-      const stages = await page.$$eval('#models .mr-stage .mr-stage-name', els => els.map(e => e.textContent.trim()));
-      assert(stages.join(' > ') === 'Réfléchir > Écrire > Corriger > Vérifier > Livrer / opérer > Écrire sur le code', `étapes : ${stages.join(' > ')}`);
-      const perStage = await page.$$eval('#models .mr-stage', els => els.map(e => e.querySelectorAll('.mr-card').length));
-      assert(perStage.join(',') === '3,5,3,4,3,2', `cartes par étape : ${perStage}`);
-      // Desktop large : les 6 étapes sur une seule ligne, de gauche à droite.
-      const tops = await page.$$eval('#models .mr-stage', els => els.map(e => Math.round(e.getBoundingClientRect().top)));
-      const lefts = await page.$$eval('#models .mr-stage', els => els.map(e => Math.round(e.getBoundingClientRect().left)));
-      assert(new Set(tops).size === 1 && lefts.every((x, i) => i === 0 || x > lefts[i - 1]), `flux non horizontal : top=${tops} left=${lefts}`);
-      const groups = await page.$$eval('#models .mr-select', sels => sels.map(s => [...s.querySelectorAll('optgroup')].map(g => `${g.dataset.provider}:${g.disabled ? 'off' : 'on'}:${g.children.length}`)));
-      assert(groups.length === 20, `${groups.length} menus`);
-      for (const g of groups) {
-        assert(g.map(x => x.split(':')[0]).join(',') === 'anthropic,openai,nvidia,openrouter', `groupes : ${g}`);
-        assert(g[3].startsWith('openrouter:off'), `OpenRouter devrait être grisé sans clé : ${g[3]}`);
-        assert(g.slice(0, 3).every(x => x.split(':')[1] === 'on' && Number(x.split(':')[2]) > 0), `groupe vide ou grisé : ${g}`);
+      const tabs = await page.$$eval('#models .mr-tab', els => els.map(e => e.textContent.replace(/\d+\/\d+/, '').replace(/^\W+/u, '').trim()));
+      assert(tabs.length === 13, `${tabs.length} onglets : ${tabs.join(', ')}`);
+      assert(tabs.join(',') === TABS, `onglets : ${tabs.join(',')}`);
+      assert(await page.locator('#models .mr-legend li').count() >= 7, 'légende incomplète');
+      for (const sym of ['→', '↻', '↩', '⤳', '◇']) assert((await page.textContent('#models .mr-legend')).includes(sym), `légende sans ${sym}`);
+      // Chaque onglet : bandeau, et chaque étape complète.
+      const pipelineIds = await page.$$eval('#models .mr-tab', els => els.map(e => e.dataset.pipeline));
+      let nSelects = 0;
+      for (const id of pipelineIds) {
+        await page.click(`#models .mr-tab[data-pipeline="${id}"]`);
+        assert(await until(async () => (await page.getAttribute('#models .mr-panel', 'data-pipeline')) === id, 3000), `onglet ${id} non affiché`);
+        assert(await page.getAttribute(`#models .mr-tab[data-pipeline="${id}"]`, 'aria-selected') === 'true', `${id} : aria-selected`);
+        const banner = await page.textContent('#models .mr-banner');
+        assert(/À quoi il sert/.test(banner) && /Quand il s’applique/.test(banner), `${id} : bandeau incomplet`);
+        const bad = await page.$$eval('#models .mr-panel .mr-card', cards => cards.map(c => {
+          const t = c.querySelector('.mr-card-title')?.textContent.trim(), what = c.querySelector('.mr-what')?.textContent.trim(), ex = c.querySelector('.mr-ex')?.textContent.trim();
+          const ref = c.classList.contains('mr-ref');
+          const menu = ref ? !!c.querySelector('.mr-goto') : !!c.querySelector(':scope > .mr-select');
+          const vars = c.querySelectorAll('.mr-var').length, varSel = c.querySelectorAll('.mr-var .mr-select').length;
+          return (!t || !what || !ex || !menu || vars !== varSel) ? `${c.dataset.step}` : null;
+        }).filter(Boolean));
+        assert(!bad.length, `${id} : étape(s) incomplète(s) ${bad.join(', ')}`);
+        nSelects += await page.locator('#models .mr-panel .mr-select').count();
+        // Menus des étapes texte : les 4 fournisseurs, OpenRouter grisé sans clé.
+        const groups = await page.$$eval('#models .mr-panel .mr-card > .mr-select[data-filled]', sels => sels.map(s => [...s.querySelectorAll('optgroup')].map(g => `${g.dataset.provider}:${g.disabled ? 'off' : 'on'}`).join(',')));
+        for (const g of groups) assert(g.startsWith('anthropic:') && g.includes('openai:') && g.includes('nvidia:') && g.includes('openrouter:off'), `${id} : groupes ${g}`);
       }
-      const orLabel = await page.$eval('#models .mr-select optgroup[data-provider="openrouter"]', g => g.label);
-      assert(/clé non configurée/.test(orLabel), `libellé OpenRouter : ${orLabel}`);
-      assert(/clé non configurée/.test(await page.textContent('#models .mr-sources')), 'état de la clé absent des sources');
-      const defOpt = await page.$eval('#models .mr-select[data-task="plan"] option', o => ({ v: o.value, t: o.textContent }));
+      assert(nSelects >= 90, `${nSelects} menus au total`);
+      // Développement : boucle TDD, retour Revue → 4, 4c optionnel, 4b à 5 variantes.
+      await page.click('#models .mr-tab[data-pipeline="dev"]');
+      const loopTxt = await page.textContent('#models .mr-loop');
+      assert((await page.locator('#models .mr-loop .mr-card').count()) === 3 && /4c Refactor → 4a Rouge/.test(loopTxt), 'boucle TDD 4a→4b→4c→4a non dessinée');
+      assert(await page.locator('#models .mr-loop .mr-loop-line').count() === 1, 'flèche de retour de la boucle absente');
+      assert(/5 Revue → 4 Boucle TDD/.test(await page.textContent('#models .mr-loops')), 'retour Revue → 4 absent');
+      assert(/retour vers 4 Boucle TDD/.test(await page.textContent('#models .mr-card[data-step="revue"]')), 'retour Revue non signalé sur l\'étape');
+      assert(await page.$eval('#models .mr-card[data-step="refactor"]', c => c.classList.contains('is-optional') && getComputedStyle(c).borderTopStyle === 'dashed'), '4c optionnel sans style distinct');
+      assert(await page.locator('#models .mr-card[data-step="vert"] .mr-var').count() === 5, 'variantes de 4b');
+      assert(/Bugfix/.test(await page.textContent('#models .mr-banner')) && /Spike/.test(await page.textContent('#models .mr-banner')), 'variantes Bugfix / Spike non affichées');
+      // Flux horizontal sur PC : les premières étapes sur une ligne, de gauche à droite.
+      const pos = await page.$$eval('#models .mr-flow > .mr-node', ns => ns.slice(0, 3).map(n => { const r = n.getBoundingClientRect(); return [Math.round(r.top), Math.round(r.left)]; }));
+      assert(pos[0][0] === pos[1][0] && pos[1][1] > pos[0][1], `flux non horizontal : ${JSON.stringify(pos)}`);
+      // Renvoi Incident → Développement.
+      await page.click('#models .mr-tab[data-pipeline="incident"]');
+      assert(/Incident|Développement/.test(await page.textContent('#models .mr-loops')), 'renvoi Incident non listé');
+      await page.click('#models .mr-card[data-step="corriger"] .mr-goto');
+      assert(await until(async () => (await page.getAttribute('#models .mr-panel', 'data-pipeline')) === 'dev', 3000), 'le renvoi n\'ouvre pas Développement');
+      // Média : menus par capacité, outils locaux réellement installés.
+      await page.click('#models .mr-tab[data-pipeline="images"]');
+      assert(/2 Générer \/ éditer \/ analyser|3 Vérifier visuellement → 2/.test(await page.textContent('#models .mr-loops')), 'boucle Images absente');
+      await page.click('#models .mr-card[data-step="produire"] .mr-vars > summary');
+      assert(await until(async () => (await page.locator('#models .mr-select[data-slot="images.produire.vignettes"] optgroup').count()) > 0, 3000), 'variantes Images non remplies à l\'ouverture');
+      const gen = await page.$eval('#models .mr-select[data-slot="images.produire.generation"]', s => [...s.querySelectorAll('optgroup')].map(g => ({ p: g.dataset.provider, off: g.disabled, n: g.children.length, l: g.label })));
+      assert(gen.find(g => g.p === 'anthropic').off && /aucun model/.test(gen.find(g => g.p === 'anthropic').l), 'génération d\'image : Anthropic proposé');
+      assert(gen.find(g => g.p === 'openrouter').n >= 1, 'génération d\'image : models OpenRouter absents');
+      const thumbs = await page.$eval('#models .mr-select[data-slot="images.produire.vignettes"]', s => [...s.querySelectorAll('optgroup')].map(g => ({ p: g.dataset.provider, off: g.disabled, opts: [...g.querySelectorAll('option')].map(o => o.value + (o.disabled ? ':off' : '')) })));
+      assert(thumbs.filter(g => g.p !== 'local').every(g => g.off), 'vignettes : un LLM proposé');
+      assert(thumbs.find(g => g.p === 'local').opts.includes('local|ffmpeg'), 'vignettes : ffmpeg absent');
+      await page.click('#models .mr-tab[data-pipeline="audio"]');
+      await page.click('#models .mr-card[data-step="traiter"] .mr-vars > summary');
+      assert(await until(async () => (await page.locator('#models .mr-select[data-slot="audio.traiter.tts"] optgroup').count()) > 0, 3000), 'variantes Audio non remplies à l\'ouverture');
+      const tts = await page.$eval('#models .mr-select[data-slot="audio.traiter.tts"]', s => [...s.querySelectorAll('optgroup[data-provider="local"] option')].map(o => o.value + (o.disabled ? ':off' : '')));
+      assert(tts.includes('local|web-speech') && tts.includes('local|piper:off'), `TTS local : ${tts}`);
+      await page.selectOption('#models .mr-select[data-slot="audio.traiter.stt"]', 'local|whisper');
+      assert(await until(async () => /enregistré/.test(await page.textContent('#models [data-status="audio.traiter.stt"]')), 5000), 'whisper local non enregistré');
+      // Choix, conseil d'indépendance, persistance (onglet, variante dépliée, valeurs).
+      await page.click('#models .mr-tab[data-pipeline="dev"]');
+      const defOpt = await page.$eval('#models .mr-select[data-slot="dev.rouge"] option', o => ({ v: o.value, t: o.textContent }));
       assert(defOpt.v === '' && /défaut du projet/.test(defOpt.t), 'option « (défaut du projet) » absente');
-      await page.selectOption('#models .mr-select[data-task="plan"]', 'openai|gpt-6-astra');
-      assert(await until(async () => /enregistré/.test(await page.textContent('#models .mr-card[data-task="plan"] .mr-status')), 5000), 'indicateur « enregistré » absent');
-      assert(await page.getAttribute('#models .mr-card[data-task="plan"]', 'data-provider') === 'openai', 'carte pas marquée OpenAI');
+      await page.selectOption('#models .mr-select[data-slot="dev.rouge"]', 'openai|gpt-6-astra');
+      assert(await until(async () => /enregistré/.test(await page.textContent('#models [data-status="dev.rouge"]')), 5000), 'indicateur « enregistré » absent');
+      await page.selectOption('#models .mr-select[data-slot="dev.vert"]', 'openai|gpt-6-astra');
+      assert(await until(async () => visible(page, '#models [data-warn="dev.vert"]'), 5000), 'conseil 4a / 4b non affiché');
+      assert(await page.getAttribute('#models .mr-card[data-step="rouge"]', 'data-provider') === 'openai', 'couleur du fournisseur absente');
+      await page.click('#models .mr-card[data-step="vert"] .mr-vars > summary');
+      assert(await until(async () => (await page.locator('#models .mr-select[data-slot="dev.vert.complexe"] optgroup').count()) > 0, 3000), 'variantes de 4b non remplies à l\'ouverture');
+      const vDef = await page.$eval('#models .mr-select[data-slot="dev.vert.complexe"] option', o => o.textContent);
+      assert(/model de l’étape/.test(vDef), 'variante : option « model de l’étape » absente');
+      await page.selectOption('#models .mr-select[data-slot="dev.vert.complexe"]', 'anthropic|claude-opus-5-5');
+      assert(await until(async () => /enregistré/.test(await page.textContent('#models [data-status="dev.vert.complexe"]')), 5000), 'variante non enregistrée');
       const srv = await api('/api/model-routing');
-      assert(srv.assignments.plan?.provider === 'openai' && srv.assignments.plan?.model === 'gpt-6-astra', 'serveur : choix non enregistré');
+      assert(srv.assignments['dev.rouge']?.model === 'gpt-6-astra' && srv.assignments['dev.vert.complexe']?.model === 'claude-opus-5-5', 'serveur : choix non enregistrés');
       await page.reload();
-      assert(await until(async () => (await page.locator('#models .mr-card').count()) === 20, 10_000), 'vue non rouverte au rechargement');
-      assert(await until(async () => (await page.inputValue('#models .mr-select[data-task="plan"]')) === 'openai|gpt-6-astra', 5000), 'choix non relu après rechargement');
-      await page.selectOption('#models .mr-select[data-task="plan"]', '');
-      assert(await until(async () => !(await api('/api/model-routing')).assignments.plan, 5000), '« (défaut du projet) » non enregistré');
+      assert(await until(async () => (await page.getAttribute('#models .mr-panel', 'data-pipeline')) === 'dev', 10_000), 'onglet non mémorisé');
+      assert(await until(async () => (await page.inputValue('#models .mr-select[data-slot="dev.rouge"]')) === 'openai|gpt-6-astra', 5000), 'choix non relu après rechargement');
+      assert(await page.$eval('#models .mr-card[data-step="vert"] details.mr-vars', d => d.open), 'variantes dépliées non mémorisées');
+      assert((await page.inputValue('#models .mr-select[data-slot="dev.vert.complexe"]')) === 'anthropic|claude-opus-5-5', 'variante non relue');
+      assert((await page.locator('#models [data-dots="dev.vert"] .mr-dot[data-provider="anthropic"]').count()) === 1, 'pastille de variante absente');
       await page.click('#models .mr-hist-btn');
       assert(await until(async () => /gpt-6-astra/.test(await page.textContent('#models .mr-history')), 3000), 'historique sans le changement');
       await shot(page, 'models-desktop', { fullPage: true });
+      if (shotsDir) {
+        // La vue défile dans son propre conteneur : une fenêtre haute montre tout le schéma.
+        await page.setViewportSize({ width: 1600, height: 3400 });
+        for (const id of ['dev', 'images', 'audio', 'routage']) {
+          await page.click(`#models .mr-tab[data-pipeline="${id}"]`);
+          await sleep(300);
+          await shot(page, `models-${id}`);
+        }
+        await page.click('#models .mr-tab[data-pipeline="dev"]');
+        await page.setViewportSize({ width: 1600, height: 1000 });
+      }
+      for (const [slot, v] of [['dev.rouge', ''], ['dev.vert', ''], ['dev.vert.complexe', '']]) await page.selectOption(`#models .mr-select[data-slot="${slot}"]`, v);
+      await until(async () => !Object.keys((await api('/api/model-routing')).assignments).some(k => k.startsWith('dev.')), 5000);
+      await page.click('#models .mr-card[data-step="vert"] .mr-vars > summary');
+      await page.click('#models .mr-hist-btn');
       await page.keyboard.press('Escape');
       assert(await until(async () => (await hash(page)) === '#/' && !(await visible(page, '#models')), 3000), 'Échap ne revient pas au fil');
+      return `13 onglets, ${nSelects} menus`;
     });
 
     await ctx.close();
@@ -896,19 +973,24 @@ export async function browserChecks(sb, t) {
       await sleep(300);
       return `${g.n} tuiles`;
     });
-    await check(B, 'models-mobile', 'Models par tâche · mobile : étapes empilées, aucun défilement horizontal, menus ≥ 44 px, lisible à 150 %', async () => {
+    await check(B, 'models-mobile', 'Models par tâche · mobile : onglets défilants, étapes et boucle empilées, aucun débordement, menus et onglets ≥ 44 px, lisible à 150 %', async () => {
       if (!(await hasModels(m))) NA('vue absente de cet état du code');
       await m.setViewportSize({ width: 390, height: 844 });
       await setHash(m, '#/models');
-      assert(await until(async () => (await m.locator('#models .mr-card').count()) === 20, 10_000), 'cartes');
+      assert(await until(async () => (await m.locator('#models .mr-tab').count()) === 13 && (await m.locator('#models .mr-panel .mr-card').count()) > 0, 10_000), 'onglets ou cartes');
+      await m.click('#models .mr-tab[data-pipeline="dev"]');
+      await sleep(300);
       const g = await m.evaluate(() => ({
-        lefts: [...new Set([...document.querySelectorAll('#models .mr-stage')].map(s => Math.round(s.getBoundingClientRect().left)))],
-        minSel: Math.min(...[...document.querySelectorAll('#models .mr-select')].map(s => s.getBoundingClientRect().height)),
+        lefts: [...new Set([...document.querySelectorAll('#models .mr-flow > .mr-node > .mr-card, #models .mr-loop-flow .mr-card')].map(s => Math.round(s.getBoundingClientRect().left)))],
+        minSel: Math.min(...[...document.querySelectorAll('#models .mr-card > .mr-select')].map(s => s.getBoundingClientRect().height)),
+        minTab: Math.min(...[...document.querySelectorAll('#models .mr-tab')].map(s => s.getBoundingClientRect().height)),
         overflow: document.documentElement.scrollWidth - window.innerWidth,
+        tabsScroll: (() => { const t = document.querySelector('#models .mr-tabs'); return t.scrollWidth > t.clientWidth && getComputedStyle(t).overflowX === 'auto'; })(),
       }));
-      assert(g.lefts.length === 1, `étapes non empilées : ${g.lefts}`);
+      assert(g.lefts.length <= 2, `étapes non empilées : ${g.lefts}`);
       assert(g.overflow <= 0, `débordement horizontal ${g.overflow}px`);
-      assert(g.minSel >= 44, `menu de ${g.minSel}px`);
+      assert(g.minSel >= 44 && g.minTab >= 44, `cibles : menu ${g.minSel}px, onglet ${g.minTab}px`);
+      assert(g.tabsScroll, 'onglets non défilants');
       await shot(m, 'models-mobile');
       for (let i = 0; i < 6; i++) { const b = m.locator('#text-size [data-ts="1"]'); if (await b.isEnabled()) await b.click(); }
       await sleep(300);

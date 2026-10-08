@@ -11,6 +11,81 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.40.0] - 2026-10-08
+
+Demandes utilisateur : « Oui, tous les pipeline. Fais en sorte que l'interface
+soit claire, et que l'on puisse bien comprendre les differents cas, et
+assigner clairement un model a chacune des taches. », puis « On peut aussi
+rajouter du travail sur images ? Videos ? Sons ? »
+
+### Changed
+- (server) **Models par tâche** : les 20 types répartis en 6 étapes sont
+  remplacés par **13 pipelines en onglets** :
+  - Développement (TDD canonique de Kent Beck) ;
+  - Discussion, Routage (chef), Incident, Recherche, Audit sécurité ;
+  - Maintenance, Nouveau projet, Données, Rédaction ;
+  - Images, Vidéo, Audio.
+
+  Chaque pipeline est un schéma de ses étapes dans l'ordre :
+  - flèches entre les étapes ;
+  - boucle TDD 4a → 4b → 4c → 4a encadrée, avec sa flèche de retour ;
+  - retours possibles (↩, par exemple Revue → 4 ou Vérifier → Générer) et
+    renvois vers un autre pipeline (⤳, par exemple Incident → Développement,
+    variante Bugfix) ;
+  - étapes optionnelles ou conditionnelles en pointillés ;
+  - un récapitulatif « Boucles, retours et renvois ».
+- Chaque étape porte un titre, une ligne « quand / quoi », un exemple tiré du
+  fleet (sans nom de projet privé, le dépôt est public) et son menu de model.
+- Les étapes à variantes ont un menu par variante, dans un volet repliable dont
+  l'état est mémorisé. Une variante vide hérite du model de l'étape. Exemples :
+  4b Vert (simple, complexe, mécanique, refactoring, migration), Diagnostiquer
+  (simple, difficile), Générer / éditer / analyser (génération, retouche, OCR,
+  légende, vignettes).
+- Repères visuels :
+  - un bandeau par onglet (à quoi il sert, quand il s'applique), avec la
+    répartition des models par fournisseur ;
+  - une légende des symboles ;
+  - la couleur du fournisseur sur chaque étape, et des pastilles par variante.
+- Conseils affichés, jamais imposés : « 3 / 4a et 4b par des models
+  différents », « second avis sécurité par une autre famille ». Un ⚠ apparaît
+  quand le conseil n'est pas suivi.
+- Migration automatique de `model-routing.json` (ancien format) à la première
+  lecture :
+  - chaque ancien type est recopié sur ses nouvelles cases (par exemple
+    refactoring → 4b Refactoring et 4c Refactor) ;
+  - l'ancien fichier est sauvegardé en `model-routing.json.v1-bak` ;
+  - les affectations perdues sont listées avec leur raison, dans un bandeau
+    « Migration ». Les 14 affectations existantes de l'utilisateur ont toutes
+    un équivalent.
+
+### Added
+- (server) **Capacités par model** dans `/api/model-catalog` : texte (agent avec
+  outils), vision, génération d'image, audio en entrée, audio en sortie, vidéo.
+  - OpenRouter : lues dans les modalités publiées.
+  - codex : lues dans `input_modalities`.
+  - NVIDIA : déduites du nom.
+  - Anthropic : texte et vision.
+
+  Une étape média ne propose que les models qui ont la capacité requise. Les
+  autres groupes sont grisés avec leur raison (« aucun model génération
+  d'images », « un LLM ne convient pas ici »). Le serveur refuse un model
+  incompatible (400).
+- (server) Groupe **« Outil local / non-LLM »** pour les étapes média : ffmpeg,
+  ffprobe, yt-dlp, Whisper local, faster-whisper, whisper.cpp, Tesseract,
+  Pillow, OpenCV, ImageMagick, Piper, eSpeak NG, synthèse vocale du navigateur,
+  Windows SAPI, SoX, Demucs, jiwer.
+  - Leur présence est détectée sur la machine (PATH, modules Python).
+  - Un outil non installé est affiché mais n'est pas sélectionnable (409 côté
+    serveur).
+- Tests : suite `_test_model_routing.mjs` réécrite (71 contrôles), parcours HTTP
+  `model-routing`, parcours navigateur `models-view` et `models-mobile`. Ils
+  vérifient :
+  - les 13 onglets, les étapes complètes et un menu par étape et par variante ;
+  - les boucles et les renvois ;
+  - les capacités et les outils locaux ;
+  - la migration ;
+  - la persistance après rechargement (onglet, volet de variantes, valeurs).
+
 ## [0.39.0] - 2026-10-08
 
 Demande utilisateur : une interface, accessible depuis l'orchestrateur, qui

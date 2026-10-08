@@ -1,15 +1,18 @@
 // ============================================================================
-// public/models.js — v0.39.0 « MODELS PAR TÂCHE »
+// public/models.js — « MODELS PAR TÂCHE » (0.39.0 → 0.40.0 : pipelines)
 // ============================================================================
 //
-// Niveau routé `#/models` de la salle. Les 20 types de tâche, en 6 étapes
-// successives (Réfléchir → Écrire → Corriger → Vérifier → Livrer → Écrire sur
-// le code) ; sur chacun, un menu déroulant de model groupé par fournisseur.
+// Niveau routé `#/models` de la salle. 13 pipelines en onglets ; chacun est un
+// schéma de ses étapes dans l'ordre, avec ses boucles et ses retours dessinés.
+// Sur chaque étape : quand / quoi, un exemple, et le menu de model (groupé par
+// fournisseur, plus « Outil local » pour le travail média). Les étapes à
+// variantes ont un menu par variante, repliable ; une variante vide hérite du
+// model de l'étape.
 //
-// Données : `/api/model-catalog` (listes, rafraîchissables) et
-// `/api/model-routing` (choix + historique). Un choix est enregistré dès qu'il
-// change (PUT), avec un indicateur par carte. Rien ici ne lance de tour : le
-// branchement sur dispatch.mjs viendra plus tard.
+// Données : `/api/model-catalog` (listes + capacités) et `/api/model-routing`
+// (pipelines, choix, historique, migration). Un choix est enregistré dès qu'il
+// change (PUT). Rien ici ne lance de tour : le branchement sur dispatch.mjs
+// viendra plus tard.
 //
 // Désactivable sans redéploiement : `config.json` → `"ui": {"modelRouting":
 // false}` (à chaud) ou `?models=0` (ce navigateur).
@@ -21,11 +24,11 @@
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-  const PROVIDERS = ["anthropic", "openai", "nvidia", "openrouter"];
-  const PLABEL = { anthropic: "Anthropic", openai: "OpenAI", nvidia: "NVIDIA", openrouter: "OpenRouter" };
-  const PSHORT = { anthropic: "ANT", openai: "OAI", nvidia: "NV", openrouter: "OR" };
+  const LLM = ["anthropic", "openai", "nvidia", "openrouter"];
+  const PLABEL = { anthropic: "Anthropic", openai: "OpenAI", nvidia: "NVIDIA", openrouter: "OpenRouter", local: "Outil local / non-LLM" };
+  const PSHORT = { anthropic: "ANT", openai: "OAI", nvidia: "NV", openrouter: "OR", local: "LOCAL" };
 
-  const LS = { disabled: "mr.disabled" };
+  const LS = { disabled: "mr.disabled", pipeline: "mr.pipeline", open: "mr.openVariants", migration: "mr.migrationSeen" };
   const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
   const lsSet = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { /* privé */ } };
 
@@ -35,9 +38,11 @@
     loading: null,
     catalog: null,
     routing: null,
-    optionsHtml: "",
-    status: {},          // task → { kind: "saving"|"saved"|"error", text }
-    error: null,         // erreur de chargement globale
+    pipeline: lsGet(LS.pipeline) || "dev",
+    openVariants: new Set((lsGet(LS.open) || "").split(",").filter(Boolean)),
+    optionsCache: new Map(),   // clé de besoin → HTML des options
+    status: {},                // case → { kind: "saving"|"saved"|"error", text }
+    error: null,
     refreshing: false,
     showHistory: false,
     gPending: 0,
@@ -99,13 +104,17 @@
           getJson("/api/model-catalog" + (refresh ? "?refresh=1" : "")),
           getJson("/api/model-routing"),
         ]);
+        if (!Array.isArray(routing.pipelines)) {
+          throw Object.assign(new Error("ancien serveur"), { status: 426 });
+        }
         st.catalog = catalog;
         st.routing = routing;
         st.error = null;
-        st.optionsHtml = buildOptions(catalog);
+        st.optionsCache.clear();
+        if (!pipeline()) st.pipeline = routing.pipelines[0].id;
       } catch (e) {
-        st.error = e.status === 404
-          ? "Le serveur ne connaît pas encore cette vue : il doit être redémarré (version ≥ 0.39.0)."
+        st.error = e.status === 404 || e.status === 426
+          ? "Le serveur ne connaît pas encore cette version de la vue : il doit être redémarré (version ≥ 0.40.0)."
           : `Chargement impossible : ${e.message}`;
       } finally {
         st.loading = null;
@@ -114,42 +123,98 @@
     return st.loading;
   }
 
-  function providerOf(task) {
-    const a = st.routing?.assignments?.[task];
-    return a ? a.provider : "";
+  const pipeline = () => st.routing?.pipelines?.find(p => p.id === st.pipeline) || null;
+  const slotById = (id) => st.routing?.slots?.find(s => s.id === id) || null;
+  const assigned = (slot) => st.routing?.assignments?.[slot] || null;
+  const valueOf = (slot) => { const a = assigned(slot); return a ? `${a.provider}|${a.model}` : ""; };
+
+  function stepsOf(p) {
+    const out = [];
+    for (const n of p.flow) {
+      if (n.kind === "loop") for (const s of n.steps) out.push(s);
+      else out.push(n);
+    }
+    return out;
   }
 
-  function valueOf(task) {
-    const a = st.routing?.assignments?.[task];
-    return a ? `${a.provider}|${a.model}` : "";
+  /** Model effectif d'une case : la sienne, sinon celle de son étape. */
+  function effective(slotId) {
+    const a = assigned(slotId);
+    if (a) return a;
+    const parts = slotId.split(".");
+    return parts.length === 3 ? assigned(parts.slice(0, 2).join(".")) : null;
   }
 
-  function buildOptions(catalog) {
-    let html = '<option value="">(défaut du projet)</option>';
-    for (const p of PROVIDERS) {
-      const c = catalog?.providers?.[p];
-      const models = c?.models || [];
-      let label = `${PLABEL[p]} (${models.length})`;
-      if (p === "openrouter" && c?.disabled) label = `${PLABEL[p]} — clé non configurée (${models.length})`;
-      if (!models.length) label = `${PLABEL[p]} — liste indisponible`;
-      html += `<optgroup label="${esc(label)}" data-provider="${p}"${c?.disabled ? " disabled" : ""}>`;
-      for (const m of models) {
-        html += `<option value="${esc(p + "|" + m.id)}"${m.hint ? ` title="${esc(m.hint)}"` : ""}>${esc(m.label || m.id)}</option>`;
-      }
+  /** Famille d'un model (pour le conseil « autre famille »). */
+  function family(a) {
+    if (!a || a.provider === "local") return null;
+    if (a.provider === "anthropic") return "Claude";
+    if (a.provider === "openai") return "GPT";
+    const v = String(a.model).replace(/^~/, "").split("/")[0].toLowerCase();
+    const map = { anthropic: "Claude", openai: "GPT", google: "Gemini", meta: "Llama", "meta-llama": "Llama",
+      "deepseek-ai": "DeepSeek", deepseek: "DeepSeek", moonshotai: "Kimi", qwen: "Qwen", "z-ai": "GLM",
+      mistralai: "Mistral", "nv-mistralai": "Mistral", nvidia: "Nemotron", "x-ai": "Grok" };
+    return map[v] || v;
+  }
+
+  // ------------------------------------------------------------------------
+  // Menus déroulants
+  // ------------------------------------------------------------------------
+  function capLabel(c) { return st.routing?.caps?.[c] || c; }
+
+  function optionsFor(slot) {
+    const need = slot.need || { llm: "text", local: [] };
+    const isVariant = !!slot.variant;
+    const key = `${need.llm}|${(need.local || []).join(",")}|${isVariant}`;
+    if (st.optionsCache.has(key)) return st.optionsCache.get(key);
+    let html = `<option value="">${isVariant ? "(model de l’étape)" : "(défaut du projet)"}</option>`;
+    for (const p of LLM) {
+      const c = st.catalog?.providers?.[p] || {};
+      const all = c.models || [];
+      const ok = need.llm ? all.filter(m => (m.caps || []).includes(need.llm)) : [];
+      let label = `${PLABEL[p]} (${ok.length})`;
+      let disabled = false;
+      if (!need.llm) { label = `${PLABEL[p]} — un LLM ne convient pas ici`; disabled = true; }
+      else if (!all.length) { label = `${PLABEL[p]} — liste indisponible`; disabled = true; }
+      else if (!ok.length) { label = `${PLABEL[p]} — aucun model « ${capLabel(need.llm)} »`; disabled = true; }
+      else if (p === "openrouter" && c.disabled) { label = `${PLABEL[p]} — clé non configurée (${ok.length})`; disabled = true; }
+      html += `<optgroup label="${esc(label)}" data-provider="${p}"${disabled ? " disabled" : ""}>`;
+      for (const m of ok) html += `<option value="${esc(p + "|" + m.id)}"${m.hint ? ` title="${esc(m.hint)}"` : ""}>${esc(m.label || m.id)}</option>`;
       html += "</optgroup>";
     }
+    if (need.local && need.local.length) {
+      const tools = (st.catalog?.providers?.local?.models || []).filter(t => t.caps.some(x => need.local.includes(x)));
+      const n = tools.filter(t => t.installed).length;
+      html += `<optgroup label="${esc(`${PLABEL.local} (${n} installé${n > 1 ? "s" : ""})`)}" data-provider="local">`;
+      for (const t of tools) html += `<option value="${esc("local|" + t.id)}"${t.installed ? "" : " disabled"}>${esc(t.label)}</option>`;
+      html += "</optgroup>";
+    }
+    st.optionsCache.set(key, html);
     return html;
   }
 
-  /** Un choix enregistré qui n'est plus dans la liste reste visible et sélectionné. */
+  /** Un choix enregistré absent de la liste (ou incompatible) reste visible et sélectionné. */
   function ensureOption(sel, value) {
-    if (!value || [...sel.options].some(o => o.value === value)) return;
+    if (!value) return;
+    const existing = [...sel.options].find(o => o.value === value);
+    if (existing && !existing.disabled && !existing.parentElement?.disabled) return;
+    // Hors de tout groupe désactivé, juste sous l'option « hérité ».
+    existing?.remove();
     const [p, ...rest] = value.split("|");
-    const og = sel.querySelector(`optgroup[data-provider="${p}"]`);
     const o = document.createElement("option");
     o.value = value;
-    o.textContent = `${rest.join("|")} (absent de la liste actuelle)`;
-    (og || sel).appendChild(o);
+    o.textContent = `${PLABEL[p] || p} · ${rest.join("|")} (absent de la liste ou incompatible)`;
+    sel.insertBefore(o, sel.options[1] || null);
+  }
+
+  function fillSelect(sel) {
+    const slot = slotById(sel.dataset.slot);
+    if (!slot) return;
+    sel.innerHTML = optionsFor(slot);
+    const v = valueOf(slot.id);
+    ensureOption(sel, v);
+    sel.value = v;
+    sel.dataset.filled = "1";
   }
 
   // ------------------------------------------------------------------------
@@ -165,14 +230,17 @@
       : d.toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
   }
 
-  function taskLabel(id) {
-    const t = st.routing?.tasks?.find(x => x.id === id);
-    return t ? `${t.n}. ${t.label}` : id;
+  function slotLabel(id) { return slotById(id)?.label || id; }
+
+  function shortModel(a) {
+    if (!a) return "";
+    const m = String(a.model);
+    return m.length > 26 ? m.slice(0, 25) + "…" : m;
   }
 
   function sourcesHtml() {
     const c = st.catalog?.providers || {};
-    return PROVIDERS.map(p => {
+    const items = LLM.map(p => {
       const s = c[p] || {};
       const n = (s.models || []).length;
       let extra = "";
@@ -180,20 +248,50 @@
         extra = s.keyPresent
           ? ` · clé présente (${esc((s.keyWhere || []).join(", "))})`
           : ' · <b class="mr-warn">clé non configurée</b>';
-        if (s.total) extra += ` · ${n}/${s.total} ${esc(s.filter || "")}`;
       }
       if (p === "nvidia") {
         const miss = (s.models || []).filter(m => m.missing).length;
         if (miss) extra += ` · <b class="mr-warn">${miss} model(s) du failover absent(s) du catalogue</b>`;
       }
       const err = s.error ? ` · <b class="mr-warn">${esc(s.error)}${s.stale ? " — dernière liste connue" : ""}</b>` : "";
-      // Anthropic : une date de vérification (pas d'heure), pas une lecture.
       const when = !s.fetchedAt ? ""
         : p === "anthropic" ? ` · vérifiée le ${esc(new Date(s.fetchedAt).toLocaleDateString("fr-FR"))}`
         : ` · ${esc(fmtTime(s.fetchedAt) || s.fetchedAt)}`;
       return `<li class="mr-src" data-provider="${p}" title="${esc(s.source || "")}">
-        <span class="mr-ptag" data-provider="${p}">${PSHORT[p]}</span>
-        <b>${PLABEL[p]}</b> ${n} models${when}${extra}${err}</li>`;
+        <span class="mr-ptag" data-provider="${p}">${PSHORT[p]}</span> <b>${PLABEL[p]}</b> ${n} models${when}${extra}${err}</li>`;
+    });
+    const loc = c.local?.models || [];
+    const inst = loc.filter(t => t.installed);
+    items.push(`<li class="mr-src" data-provider="local" title="${esc(c.local?.source || "")}">
+      <span class="mr-ptag" data-provider="local">LOCAL</span> <b>Outils locaux</b> ${inst.length}/${loc.length} installés :
+      ${esc(inst.map(t => t.id).join(", ") || "aucun")}</li>`);
+    return items.join("");
+  }
+
+  function legendHtml() {
+    const open = !(global.matchMedia && global.matchMedia("(max-width: 767.98px)").matches);
+    return `<details class="mr-legend"${open ? " open" : ""}><summary>Légende des symboles</summary>
+      <ul>
+        <li><span class="mr-sym">→</span> étape suivante, dans l’ordre</li>
+        <li><span class="mr-sym mr-sym-loop">↻</span> boucle : on recommence ces étapes</li>
+        <li><span class="mr-sym mr-sym-ret">↩</span> retour possible vers une étape antérieure</li>
+        <li><span class="mr-sym mr-sym-ref">⤳</span> renvoi vers un autre pipeline (ses models s’appliquent)</li>
+        <li><span class="mr-sym mr-sym-opt">┄</span> cadre en pointillés : étape optionnelle ou conditionnelle</li>
+        <li><span class="mr-sym">◇</span> variantes : un menu par cas ; vide = model de l’étape</li>
+        <li><span class="mr-ptag" data-provider="anthropic">ANT</span><span class="mr-ptag" data-provider="openai">OAI</span><span class="mr-ptag" data-provider="nvidia">NV</span><span class="mr-ptag" data-provider="openrouter">OR</span><span class="mr-ptag" data-provider="local">LOCAL</span> couleur = fournisseur choisi (bordure de l’étape)</li>
+        <li><span class="mr-sym">💡</span> conseil (non imposé) · <span class="mr-sym">⚠</span> conseil non suivi</li>
+      </ul></details>`;
+  }
+
+  function tabsHtml() {
+    return st.routing.pipelines.map(p => {
+      const slots = st.routing.slots.filter(s => s.pipeline === p.id);
+      const n = slots.filter(s => assigned(s.id)).length;
+      const sel = p.id === st.pipeline;
+      return `<button class="mr-tab" role="tab" type="button" id="mr-tab-${esc(p.id)}" data-pipeline="${esc(p.id)}"
+        aria-selected="${sel}" aria-controls="mr-panel" tabindex="${sel ? 0 : -1}">
+        <span class="mr-tab-ic" aria-hidden="true">${esc(p.icon || "")}</span>${esc(p.label)}
+        <span class="mr-tab-count" data-tab-count="${esc(p.id)}">${n}/${slots.length}</span></button>`;
     }).join("");
   }
 
@@ -202,28 +300,161 @@
     if (!h.length) return '<p class="mr-empty">Aucun changement enregistré.</p>';
     return `<ol class="mr-hist-list">${h.map(e => `
       <li><time datetime="${esc(e.at)}">${esc(fmtTime(e.at))}</time>
-        <span class="mr-hist-task">${esc(taskLabel(e.task))}</span>
-        <span class="mr-hist-from">${esc(e.from || "(défaut du projet)")}</span>
+        <span class="mr-hist-task">${esc(slotLabel(e.task))}</span>
+        <span class="mr-hist-from">${esc(e.from || "(hérité)")}</span>
         <span aria-hidden="true">→</span><span class="sr-only">devient</span>
-        <span class="mr-hist-to">${esc(e.to || "(défaut du projet)")}</span></li>`).join("")}</ol>
+        <span class="mr-hist-to">${esc(e.to || "(hérité)")}</span>
+        ${e.by && e.by !== "dashboard" ? `<span class="mr-hist-by">${esc(e.by)}</span>` : ""}</li>`).join("")}</ol>
       ${st.routing.historyTotal > h.length ? `<p class="mr-empty">${h.length} derniers sur ${st.routing.historyTotal}.</p>` : ""}`;
   }
 
-  function summaryText() {
-    const tasks = st.routing?.tasks || [];
-    const n = tasks.filter(t => st.routing.assignments[t.id]).length;
-    const saving = Object.values(st.status).some(s => s.kind === "saving");
-    const last = st.routing?.updatedAt ? ` · dernier enregistrement ${fmtTime(st.routing.updatedAt)}` : "";
-    return `${n}/${tasks.length} affectées${saving ? " · enregistrement…" : " · tout est enregistré"}${last}`;
+  function migrationHtml() {
+    const m = st.routing?.migration;
+    if (!m || lsGet(LS.migration) === m.at) return "";
+    const lost = m.lost || [];
+    return `<div class="mr-migration" role="status">
+      <b>Migration depuis l’ancienne structure (20 types en 6 étapes)</b> :
+      ${m.mapped.length} affectation(s) reprise(s)${lost.length ? `, <b class="mr-warn">${lost.length} perdue(s)</b>` : ", aucune perdue"}.
+      <details><summary>Détail</summary><ul>
+        ${m.mapped.map(x => `<li>${esc(x.from)} (${esc(x.model)}) → ${x.to.map(t => esc(slotLabel(t))).join(" ; ")}</li>`).join("")}
+        ${lost.map(x => `<li class="mr-warn">${esc(x.from)} (${esc(x.model || "?")}) : perdue — ${esc(x.reason)}</li>`).join("")}
+      </ul></details>
+      <button type="button" class="mr-mig-ok">Compris</button></div>`;
   }
 
-  function statusHtml(task) {
-    const s = st.status[task];
-    if (!s) {
-      const a = st.routing?.assignments?.[task];
-      return a?.at ? `✓ enregistré · ${esc(fmtTime(a.at))}` : "";
+  function needHtml(need) {
+    if (!need || (need.llm === "text" && !(need.local || []).length)) return "";
+    const parts = [];
+    if (need.llm) parts.push(`un model capable de <b>${esc(capLabel(need.llm))}</b>`);
+    if ((need.local || []).length) parts.push("un outil local");
+    return `<p class="mr-need">Exige : ${parts.join(" ou ")}.</p>`;
+  }
+
+  function selectHtml(slotId, label, isVariant) {
+    const lazy = isVariant ? ' data-lazy="1"' : "";
+    return `<label class="mr-sel-label" for="mr-sel-${esc(slotId)}">${esc(label)}</label>
+      <select class="mr-select" id="mr-sel-${esc(slotId)}" data-slot="${esc(slotId)}"${lazy}></select>
+      <div class="mr-status" data-status="${esc(slotId)}" aria-live="polite"></div>`;
+  }
+
+  function stepCard(p, s, ctx) {
+    const slotId = `${p.id}.${s.id}`;
+    const opt = s.optional ? `<span class="mr-opt">${esc(s.optional)}</span>` : "";
+    const incoming = ctx.incoming[s.id] || [];
+    const ret = (s.returns || []).map(r => {
+      const target = ctx.byId[r.to];
+      return `<p class="mr-ret"><span class="mr-sym mr-sym-ret" aria-hidden="true">↩</span>
+        <b>retour vers ${esc(target ? `${target.n} ${target.title}` : r.to)}</b> — ${esc(r.label)}</p>`;
+    }).join("");
+    const inc = incoming.map(f => `<p class="mr-inc">⟲ point de retour depuis ${esc(f.n)} ${esc(f.title)}</p>`).join("");
+    const advice = s.advice ? `<p class="mr-advice">💡 ${esc(s.advice)}</p>` : "";
+    if (s.ref) {
+      const target = st.routing.pipelines.find(x => x.id === s.ref.pipeline);
+      return `<article class="mr-card mr-ref" data-step="${esc(s.id)}" data-ref="${esc(s.ref.pipeline)}">
+        <header class="mr-card-head"><span class="mr-num">${esc(s.n)}</span><h3 class="mr-card-title">${esc(s.title)}</h3>${opt}</header>
+        <p class="mr-what">${esc(s.what)}</p>
+        <p class="mr-ex"><b>Ex.</b> ${esc(s.example)}</p>
+        ${ret}${inc}
+        <button type="button" class="mr-goto" data-goto="${esc(s.ref.pipeline)}">
+          <span class="mr-sym mr-sym-ref" aria-hidden="true">⤳</span> ${esc(s.ref.label)} — ouvrir « ${esc(target?.label || s.ref.pipeline)} »</button>
+      </article>`;
     }
-    return esc(s.text);
+    const variants = s.variants || [];
+    const openKey = slotId;
+    const vars = variants.length ? `
+      <details class="mr-vars" data-vars="${esc(openKey)}"${st.openVariants.has(openKey) ? " open" : ""}>
+        <summary><span class="mr-sym" aria-hidden="true">◇</span> Variantes (${variants.length})
+          <span class="mr-dots" data-dots="${esc(slotId)}"></span></summary>
+        ${variants.map(v => `<div class="mr-var" data-variant="${esc(v.id)}">
+          <div class="mr-var-head"><b>${esc(v.label)}</b> <span class="mr-var-what">${esc(v.what || "")}</span></div>
+          ${needHtml(v.need && v.need !== s.need ? v.need : null)}
+          ${selectHtml(`${slotId}.${v.id}`, `Model — ${v.label}`, true)}
+        </div>`).join("")}
+      </details>` : "";
+    return `<article class="mr-card${s.optional ? " is-optional" : ""}" data-step="${esc(s.id)}" data-slot-card="${esc(slotId)}">
+      <header class="mr-card-head"><span class="mr-num">${esc(s.n)}</span><h3 class="mr-card-title">${esc(s.title)}</h3>${opt}
+        <span class="mr-ptag" data-ptag="${esc(slotId)}"></span></header>
+      <p class="mr-what">${esc(s.what)}</p>
+      <p class="mr-ex"><b>Ex.</b> ${esc(s.example)}</p>
+      ${needHtml(s.need)}
+      ${advice}<p class="mr-warn-live" data-warn="${esc(slotId)}" hidden></p>
+      ${ret}${inc}
+      ${selectHtml(slotId, variants.length ? "Model de l’étape (toutes variantes)" : "Model de l’étape", false)}
+      ${vars}
+    </article>`;
+  }
+
+  function flowHtml(p) {
+    const byId = {};
+    const incoming = {};
+    for (const n of p.flow) {
+      byId[n.id] = n;
+      if (n.kind === "loop") for (const s of n.steps) byId[s.id] = s;
+    }
+    for (const s of stepsOf(p)) for (const r of s.returns || []) (incoming[r.to] = incoming[r.to] || []).push(s);
+    const ctx = { byId, incoming };
+    const items = [];
+    p.flow.forEach((n, i) => {
+      if (i) items.push('<li class="mr-arrow" aria-hidden="true"><span>→</span></li>');
+      if (n.kind === "loop") {
+        const from = byId[n.back.from], to = byId[n.back.to];
+        const inc = (incoming[n.id] || []).map(f => `<p class="mr-inc">⟲ point de retour depuis ${esc(f.n)} ${esc(f.title)}</p>`).join("");
+        items.push(`<li class="mr-node mr-loop" data-loop="${esc(n.id)}">
+          <div class="mr-loop-head"><span class="mr-sym mr-sym-loop" aria-hidden="true">↻</span>
+            <span class="mr-num">${esc(n.n)}</span> <b>${esc(n.title)}</b></div>
+          <p class="mr-loop-what">${esc(n.what)}</p>${inc}
+          <ol class="mr-loop-flow">
+            ${n.steps.map((s, j) => `${j ? '<li class="mr-arrow" aria-hidden="true"><span>→</span></li>' : ""}<li class="mr-node">${stepCard(p, s, ctx)}</li>`).join("")}
+          </ol>
+          <div class="mr-loop-back" data-loop-back="${esc(n.id)}">
+            <span class="mr-loop-line" aria-hidden="true"></span>
+            <span class="mr-loop-label"><span class="mr-sym mr-sym-loop" aria-hidden="true">↺</span>
+              ${esc(from.n)} ${esc(from.title)} → ${esc(to.n)} ${esc(to.title)} : ${esc(n.back.label)}</span>
+          </div>
+        </li>`);
+      } else {
+        items.push(`<li class="mr-node">${stepCard(p, n, ctx)}</li>`);
+      }
+    });
+    return `<ol class="mr-flow" aria-label="Étapes du pipeline ${esc(p.label)}, dans l’ordre">${items.join("")}</ol>`;
+  }
+
+  /** Toutes les boucles et tous les retours du pipeline, en clair. */
+  function loopsHtml(p) {
+    const rows = [];
+    const byId = {};
+    for (const n of p.flow) { byId[n.id] = n; if (n.kind === "loop") for (const s of n.steps) byId[s.id] = s; }
+    for (const n of p.flow) {
+      if (n.kind === "loop") {
+        rows.push(`<li data-kind="loop"><span class="mr-sym mr-sym-loop">↻</span> <b>${esc(byId[n.back.from].n)} ${esc(byId[n.back.from].title)} → ${esc(byId[n.back.to].n)} ${esc(byId[n.back.to].title)}</b> — ${esc(n.back.label)}</li>`);
+      }
+    }
+    for (const s of stepsOf(p)) for (const r of s.returns || []) {
+      const t = byId[r.to];
+      rows.push(`<li data-kind="return"><span class="mr-sym mr-sym-ret">↩</span> <b>${esc(s.n)} ${esc(s.title)} → ${esc(t ? `${t.n} ${t.title}` : r.to)}</b> — ${esc(r.label)}</li>`);
+    }
+    for (const s of stepsOf(p)) if (s.ref) {
+      const t = st.routing.pipelines.find(x => x.id === s.ref.pipeline);
+      rows.push(`<li data-kind="ref"><span class="mr-sym mr-sym-ref">⤳</span> <b>${esc(s.n)} ${esc(s.title)} → pipeline ${esc(t?.label || s.ref.pipeline)}</b> — ${esc(s.ref.label)}</li>`);
+    }
+    if (!rows.length) return "";
+    return `<section class="mr-loops" aria-label="Boucles et retours"><h3 class="mr-h3">Boucles, retours et renvois</h3><ul>${rows.join("")}</ul></section>`;
+  }
+
+  function panelHtml(p) {
+    const vinfo = (p.variantsInfo || []).map(v => `<li><b>${esc(v.label)}</b> : ${esc(v.text)}</li>`).join("");
+    const advice = (p.advice || []).map(a => `<p class="mr-advice">💡 ${esc(a)}</p>`).join("");
+    return `<section class="mr-banner" aria-label="À quoi sert ce pipeline">
+        <h2 class="mr-banner-title"><span aria-hidden="true">${esc(p.icon || "")}</span> ${esc(p.label)}</h2>
+        <p><b>À quoi il sert :</b> ${esc(p.purpose)}</p>
+        <p><b>Quand il s’applique :</b> ${esc(p.when)}</p>
+        ${vinfo ? `<ul class="mr-vinfo">${vinfo}</ul>` : ""}
+        ${advice}
+        ${p.source ? `<p class="mr-srcref">Référence : <a href="${esc(p.source.url)}" target="_blank" rel="noopener noreferrer">${esc(p.source.label)}</a></p>` : ""}
+        <p class="mr-distrib" data-distrib="${esc(p.id)}"></p>
+      </section>
+      ${flowHtml(p)}
+      ${loopsHtml(p)}`;
   }
 
   function renderShell() {
@@ -233,100 +464,148 @@
       body.innerHTML = `<p class="mr-error" role="alert">${esc(st.error)}</p>`;
       return;
     }
-    if (!st.routing) { body.innerHTML = '<p class="mr-empty">Chargement des listes de models…</p>'; return; }
-
-    const stages = st.routing.stages;
+    if (!st.routing) { body.innerHTML = '<p class="mr-empty">Chargement des pipelines et des listes de models…</p>'; return; }
+    // Les onglets d'abord : c'est la navigation. Les sources, techniques, en bas.
     body.innerHTML = `${st.error ? `<p class="mr-error" role="alert">${esc(st.error)}</p>` : ""}
-      <ul class="mr-sources" aria-label="Sources des listes">${sourcesHtml()}</ul>
+      ${migrationHtml()}
       <section class="mr-history" ${st.showHistory ? "" : "hidden"} aria-label="Historique des changements">
         <h2 class="mr-h2">Historique</h2>${historyHtml()}
       </section>
-      <ol class="mr-flow" aria-label="Étapes successives">
-        ${stages.map((s, i) => {
-          const tasks = st.routing.tasks.filter(t => t.stage === s.id);
-          return `<li class="mr-stage" data-stage="${esc(s.id)}">
-            <h2 class="mr-stage-head"><span class="mr-step" aria-hidden="true">${i + 1}</span>
-              <span class="mr-stage-name">${esc(s.label)}</span>
-              <span class="mr-stage-count" data-stage-count="${esc(s.id)}"></span></h2>
-            <div class="mr-cards">
-              ${tasks.map(t => `
-                <article class="mr-card" data-task="${esc(t.id)}" data-provider="${esc(providerOf(t.id))}">
-                  <header class="mr-card-head"><span class="mr-num">${t.n}</span>
-                    <h3 class="mr-card-title" id="mr-t-${esc(t.id)}">${esc(t.label)}</h3>
-                    <span class="mr-ptag" data-provider="${esc(providerOf(t.id))}"></span></header>
-                  <p class="mr-desc">${esc(t.description)}</p>
-                  <select class="mr-select" data-task="${esc(t.id)}" aria-labelledby="mr-t-${esc(t.id)}"
-                          aria-describedby="mr-s-${esc(t.id)}"></select>
-                  <div class="mr-status" id="mr-s-${esc(t.id)}" aria-live="polite"></div>
-                </article>`).join("")}
-            </div>
-          </li>`;
-        }).join("")}
-      </ol>`;
-    for (const sel of body.querySelectorAll(".mr-select")) {
-      sel.innerHTML = st.optionsHtml;
-      const v = valueOf(sel.dataset.task);
-      ensureOption(sel, v);
-      sel.value = v;
+      <div class="mr-tabs" role="tablist" aria-label="Pipelines">${tabsHtml()}</div>
+      ${legendHtml()}
+      <div class="mr-panel" id="mr-panel" role="tabpanel"></div>
+      <section class="mr-sources-box" aria-label="Sources des listes">
+        <h3 class="mr-h3">D’où viennent les listes</h3>
+        <ul class="mr-sources">${sourcesHtml()}</ul>
+      </section>`;
+    renderPanel();
+  }
+
+  function renderPanel() {
+    const el = root();
+    const panel = $(".mr-panel", el);
+    const p = pipeline();
+    if (!panel || !p) return;
+    panel.setAttribute("aria-labelledby", `mr-tab-${p.id}`);
+    panel.dataset.pipeline = p.id;
+    panel.innerHTML = panelHtml(p);
+    for (const sel of panel.querySelectorAll(".mr-select")) {
+      const det = sel.closest("details.mr-vars");
+      if (!sel.dataset.lazy || !det || det.open) fillSelect(sel);
     }
     patch();
+  }
+
+  function statusHtml(slotId) {
+    const s = st.status[slotId];
+    if (s) return esc(s.text);
+    const a = assigned(slotId);
+    return a?.at ? `✓ enregistré · ${esc(fmtTime(a.at))}` : "";
   }
 
   /** Mise à jour sans recréer les menus (le focus et l'ouverture restent). */
   function patch() {
     const el = root();
     if (!el || !st.routing) return;
-    $(".mr-summary", el).textContent = summaryText();
+    const all = st.routing.slots;
+    const n = all.filter(s => assigned(s.id)).length;
+    const saving = Object.values(st.status).some(s => s.kind === "saving");
+    const last = st.routing.updatedAt ? ` · dernier enregistrement ${fmtTime(st.routing.updatedAt)}` : "";
+    $(".mr-summary", el).textContent = `${n}/${all.length} cases affectées${saving ? " · enregistrement…" : " · tout est enregistré"}${last}`;
     const hb = $(".mr-hist-btn", el);
     hb.textContent = `Historique (${st.routing.historyTotal || 0})`;
     hb.setAttribute("aria-expanded", st.showHistory ? "true" : "false");
     const rb = $(".mr-refresh", el);
     rb.disabled = st.refreshing;
     rb.textContent = st.refreshing ? "↻ Rafraîchissement…" : "↻ Rafraîchir les listes";
-    for (const card of el.querySelectorAll(".mr-card")) {
-      const t = card.dataset.task;
-      const p = providerOf(t);
-      card.dataset.provider = p;
-      const tag = $(".mr-ptag", card);
-      tag.dataset.provider = p;
-      tag.textContent = p ? PLABEL[p] : "défaut";
-      const s = $(".mr-status", card);
-      s.innerHTML = statusHtml(t);
-      s.dataset.kind = st.status[t]?.kind || (st.routing.assignments[t] ? "saved" : "");
+
+    for (const p of st.routing.pipelines) {
+      const c = el.querySelector(`[data-tab-count="${p.id}"]`);
+      if (!c) continue;
+      const slots = all.filter(s => s.pipeline === p.id);
+      c.textContent = `${slots.filter(s => assigned(s.id)).length}/${slots.length}`;
     }
-    for (const c of el.querySelectorAll("[data-stage-count]")) {
-      const tasks = st.routing.tasks.filter(t => t.stage === c.dataset.stageCount);
-      c.textContent = `${tasks.filter(t => st.routing.assignments[t.id]).length}/${tasks.length}`;
+    const p = pipeline();
+    if (!p) return;
+    for (const card of el.querySelectorAll("[data-slot-card]")) {
+      const id = card.dataset.slotCard;
+      const a = assigned(id);
+      card.dataset.provider = a ? a.provider : "";
+      const tag = card.querySelector(`[data-ptag="${id}"]`);
+      if (tag) { tag.dataset.provider = a ? a.provider : ""; tag.textContent = a ? `${PSHORT[a.provider]} · ${shortModel(a)}` : "défaut"; tag.title = a ? `${PLABEL[a.provider]} : ${a.model}` : "défaut du projet"; }
+      const dots = card.querySelector(`[data-dots="${id}"]`);
+      if (dots) {
+        const vs = all.filter(s => s.pipeline === p.id && s.step === id.split(".")[1] && s.variant);
+        dots.innerHTML = vs.map(v => { const e = effective(v.id); return `<span class="mr-dot" data-provider="${e ? e.provider : ""}" title="${esc((slotById(v.id)?.label || v.id) + " : " + (e ? `${PLABEL[e.provider]} ${e.model}` : "défaut du projet"))}"></span>`; }).join("");
+      }
     }
+    for (const s of el.querySelectorAll("[data-status]")) {
+      const id = s.dataset.status;
+      s.innerHTML = statusHtml(id);
+      s.dataset.kind = st.status[id]?.kind || (assigned(id) ? "saved" : "");
+    }
+    const d = el.querySelector(`[data-distrib="${p.id}"]`);
+    if (d) {
+      const slots = all.filter(s => s.pipeline === p.id);
+      const counts = {};
+      for (const s of slots) { const a = assigned(s.id); const k = a ? a.provider : "inherit"; counts[k] = (counts[k] || 0) + 1; }
+      d.innerHTML = `<b>Répartition :</b> ` + [...LLM, "local"].filter(k => counts[k]).map(k =>
+        `<span class="mr-ptag" data-provider="${k}">${PSHORT[k]}</span> ${counts[k]}`).join(" · ")
+        + `${counts.inherit ? `${Object.keys(counts).length > 1 ? " · " : ""}<span class="mr-ptag">hérité</span> ${counts.inherit}` : ""}`;
+    }
+    adviceChecks(p);
     const hist = $(".mr-history", el);
     if (hist) { hist.hidden = !st.showHistory; if (st.showHistory) hist.innerHTML = '<h2 class="mr-h2">Historique</h2>' + historyHtml(); }
+  }
+
+  /** Conseils non imposés : on signale, on ne bloque rien. */
+  function adviceChecks(p) {
+    const el = root();
+    const warn = (slot, text) => {
+      const w = el.querySelector(`[data-warn="${slot}"]`);
+      if (!w) return;
+      w.hidden = !text;
+      w.textContent = text ? `⚠ ${text}` : "";
+    };
+    const same = (x, y) => x && y && x.provider === y.provider && x.model === y.model;
+    if (p.id === "dev") {
+      const vert = assigned("dev.vert");
+      const rouge = assigned("dev.rouge"), liste = assigned("dev.liste-tests");
+      const clash = [same(rouge, vert) && "4a", same(liste, vert) && "3"].filter(Boolean);
+      warn("dev.vert", clash.length ? `même model que ${clash.join(" et ")} : la preuve n’est plus indépendante (conseil : un model différent).` : "");
+      warn("dev.rouge", same(rouge, vert) ? "même model que 4b (conseil : un model différent)." : "");
+      warn("dev.liste-tests", same(liste, vert) ? "même model que 4b (conseil : un model différent)." : "");
+    }
+    if (p.id === "audit") {
+      const f1 = family(assigned("audit.revue-manuelle")), f2 = family(assigned("audit.second-avis"));
+      warn("audit.second-avis", f1 && f2 && f1 === f2 ? `même famille (${f1}) que la revue manuelle (conseil : une autre famille).` : "");
+    }
   }
 
   // ------------------------------------------------------------------------
   // Enregistrement
   // ------------------------------------------------------------------------
   async function save(sel) {
-    const task = sel.dataset.task;
-    const before = valueOf(task);
+    const slot = sel.dataset.slot;
+    const before = valueOf(slot);
     const v = sel.value;
     if (v === before) return;
     const [provider, ...rest] = v.split("|");
     const body = v ? { provider, model: rest.join("|") } : { default: true };
-    st.status[task] = { kind: "saving", text: "enregistrement…" };
+    st.status[slot] = { kind: "saving", text: "enregistrement…" };
     patch();
     try {
-      const r = await getJson(`/api/model-routing/${encodeURIComponent(task)}`, {
+      const r = await getJson(`/api/model-routing/${encodeURIComponent(slot)}`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
-      const routing = await getJson("/api/model-routing");
-      st.routing = routing;
-      st.status[task] = { kind: "saved", text: `✓ enregistré · ${fmtTime(r.updatedAt || new Date().toISOString())}` };
+      st.routing = await getJson("/api/model-routing");
+      st.status[slot] = { kind: "saved", text: `✓ enregistré · ${fmtTime(r.updatedAt || new Date().toISOString())}` };
     } catch (e) {
       ensureOption(sel, before);
       sel.value = before;
-      st.status[task] = { kind: "error", text: `✕ non enregistré : ${e.message}` };
+      st.status[slot] = { kind: "error", text: `✕ non enregistré : ${e.message}` };
     }
     patch();
   }
@@ -337,6 +616,20 @@
     await load(true);
     st.refreshing = false;
     renderShell();
+  }
+
+  function selectPipeline(id, focus) {
+    if (!st.routing?.pipelines?.some(p => p.id === id)) return;
+    st.pipeline = id;
+    lsSet(LS.pipeline, id);
+    for (const t of root().querySelectorAll(".mr-tab")) {
+      const on = t.dataset.pipeline === id;
+      t.setAttribute("aria-selected", on ? "true" : "false");
+      t.tabIndex = on ? 0 : -1;
+      if (on && focus) t.focus();
+      if (on) t.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    }
+    renderPanel();
   }
 
   // ------------------------------------------------------------------------
@@ -387,10 +680,37 @@
       const sel = e.target.closest(".mr-select");
       if (sel) save(sel);
     });
+    el.addEventListener("toggle", (e) => {
+      const det = e.target.closest?.("details.mr-vars");
+      if (!det) return;
+      const k = det.dataset.vars;
+      if (det.open) { st.openVariants.add(k); for (const s of det.querySelectorAll(".mr-select:not([data-filled])")) fillSelect(s); }
+      else st.openVariants.delete(k);
+      lsSet(LS.open, [...st.openVariants].join(",") || null);
+    }, true);
     el.addEventListener("click", (e) => {
       if (e.target.closest(".mr-back")) { back(); return; }
       if (e.target.closest(".mr-refresh")) { refreshLists(); return; }
-      if (e.target.closest(".mr-hist-btn")) { st.showHistory = !st.showHistory; patch(); }
+      if (e.target.closest(".mr-hist-btn")) { st.showHistory = !st.showHistory; patch(); return; }
+      const tab = e.target.closest(".mr-tab");
+      if (tab) { selectPipeline(tab.dataset.pipeline); return; }
+      const go = e.target.closest(".mr-goto");
+      if (go) { selectPipeline(go.dataset.goto, true); $(".mr-panel", el)?.scrollIntoView?.({ block: "start" }); return; }
+      if (e.target.closest(".mr-mig-ok")) {
+        lsSet(LS.migration, st.routing?.migration?.at || null);
+        e.target.closest(".mr-migration")?.remove();
+      }
+    });
+    // Onglets au clavier : flèches, Début, Fin.
+    el.addEventListener("keydown", (e) => {
+      const tab = e.target.closest?.(".mr-tab");
+      if (!tab) return;
+      const ids = st.routing.pipelines.map(p => p.id);
+      const i = ids.indexOf(tab.dataset.pipeline);
+      const j = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: ids.length - 1 }[e.key];
+      if (j == null) return;
+      e.preventDefault();
+      selectPipeline(ids[(j + ids.length) % ids.length], true);
     });
     document.getElementById("btn-models")?.addEventListener("click", () => (st.open ? back() : open()));
     document.addEventListener("keydown", (e) => {
@@ -411,7 +731,7 @@
   }
 
   global.Models = {
-    init, applyUi, show, hide, open, enabled, isRoute,
+    init, applyUi, show, hide, open, enabled, isRoute, selectPipeline,
     get isOpen() { return st.open; },
   };
 })(window);

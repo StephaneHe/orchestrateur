@@ -743,11 +743,30 @@ OpenRouter.
   - la pill « ⇄ Models » ;
   - le menu ⋮ ;
   - `g` puis `m`.
-
-  Elle présente 20 types de tâche, répartis en 6 étapes successives
-  (`TASK_TYPES` et `STAGES` de `scripts/model-routing.mjs`, découpage proposé
-  par le chef). Le flux est horizontal sur PC (3 étapes par ligne sous
-  1400 px) et empilé sur mobile.
+- **Structure depuis la 0.40.0** : 13 pipelines en onglets, définis dans
+  **`scripts/model-pipelines.mjs`** (données pures).
+  - Un pipeline a des étapes (`flow`), des boucles (`kind: 'loop'` avec
+    `back`), des retours (`returns`) et des renvois (`ref`, sans menu).
+  - Les étapes peuvent avoir des variantes et un besoin
+    (`need: {llm, local}`).
+  - Une **case** = `pipeline.étape` ou `pipeline.étape.variante`. Une
+    variante vide hérite de l'étape, puis du défaut du projet.
+  - Les exemples ne nomment **aucun projet privé**, car le dépôt est public :
+    le test le vérifie contre le config.json local.
+  - Ajouter un pipeline ou une étape : éditer ce fichier, et `LEGACY_MAP` si
+    une case disparaît. Les tests HTTP et navigateur suivent la structure.
+- Migration : un `model-routing.json` sans `version: 2` est migré à la
+  première lecture.
+  - La correspondance est dans `LEGACY_MAP`.
+  - L'ancien fichier est gardé en `model-routing.json.v1-bak`.
+  - Le résultat va dans `migration.{mapped,lost}`, et l'interface l'affiche
+    dans un bandeau.
+- Capacités : chaque model du catalogue porte `caps` (`text`, `vision`,
+  `image-gen`, `audio-in`, `audio-out`, `video-in`).
+  - Une étape ne propose que les models compatibles.
+  - Les outils locaux (`LOCAL_TOOLS`) sont détectés dans le PATH et les
+    modules Python. Un outil non installé est visible mais non sélectionnable.
+  - Le serveur refuse un model incompatible (400) et un outil absent (409).
 - **Phase 1 = interface et enregistrement seulement.** `dispatch.mjs` ne lit
   pas encore `model-routing.json`. Ne pas brancher sans demande.
 - Listes de models (`GET /api/model-catalog[?refresh=1]`, cache dans
@@ -781,8 +800,8 @@ OpenRouter.
   - HTTP `model-routing` ;
   - navigateur `models-view` et `models-mobile`.
 
-  L'instance de test lit des listes de fixtures (`MODEL_CATALOG_FIXTURES`),
-  sans réseau, et sans clé OpenRouter.
+  L'instance de test lit des listes de fixtures (`MODEL_CATALOG_FIXTURES`,
+  dont `local-tools.json`), sans réseau, et sans clé OpenRouter.
 
 ## Attachments
 
