@@ -232,6 +232,57 @@ r = await go(['continuer'], { ORCH_PIPE_REVIEW_ROUNDS: '1' });
 ok(r.code === 0 && r.run === run10b && r.evs.some(e => e.subtype === 'pipeline_limit_extended' && e.limit === 'review'), `reprise : un tour de revue de plus, puis livraison (${seq(r.done)})`, r.out.slice(-400));
 reset();
 
+// ---------------------------------------------------------------------------
+section('11. Retour utilisateur : un constat de revue NON testable (doc, registre, CHANGELOG, version) va à Livrer, pas dans la boucle de tests');
+ok(E.isDeliveryFix('docs/USER_REQUIREMENTS.md : la demande est absente du registre') && E.isDeliveryFix('CHANGELOG : décrire la fonction') && E.isDeliveryFix('version non incrémentée') && !E.isDeliveryFix('nommer le paramètre de double') && !E.isDeliveryFix('charCount(null) doit renvoyer 0'), 'tri : doc / registre / CHANGELOG / version d’un côté, comportements de l’autre');
+// Le cas exact signalé : liste pleine (2/2), puis un constat de registre en revue.
+r = await go(['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '2', ORCH_PIPE_ITEMS: '2', FAKE_PIPE_REVIEW: 'doc:1' });
+ok(r.code === 0 && !r.evs.some(e => e.subtype === 'pipeline_limit') && !r.evs.some(e => e.subtype === 'pipeline_loop'), `liste pleine + constat de registre : AUCUNE pause, aucun tour de boucle (code ${r.code})`, r.out.slice(-400));
+ok(seq(r.done).endsWith('rouge,vert,refactor:skipped,revue,livrer') && runState(r.run).itemsDone === 2, `la limite de tests n’est pas consommée (${seq(r.done)})`);
+const dfx = r.evs.find(e => e.subtype === 'pipeline_delivery_fixes');
+const livLog = fs.readFileSync(path.join(T, 'logs', 'runs', r.run, r.done.find(d => d.pipeline.step === 'livrer').pipeline.key + '.jsonl'), 'utf8');
+ok(dfx && /USER_REQUIREMENTS/.test(livLog) && /D'OFFICE la ligne de la demande/.test(livLog), 'le constat est transmis à Livrer, qui ajoute d’office la ligne d’exigence');
+reset();
+r = await go(['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '1', FAKE_PIPE_REVIEW: 'hors:1' });
+ok(r.code === 0 && !r.evs.some(e => e.subtype === 'pipeline_loop') && r.evs.some(e => e.subtype === 'pipeline_delivery_fixes'), 'revue au nouveau format (hors_tdd) : même traitement');
+reset();
+r = await go(['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '1', FAKE_PIPE_REVIEW: 'mixte:1' });
+const tm = E.parseItems(fs.readFileSync(path.join(P, '.orchestrateur', 'runs', r.run, 'tests.md'), 'utf8'));
+ok(r.code === 0 && tm.filter(i => /^\(revue\)/.test(i.text)).length === 1 && !tm.some(i => /CHANGELOG/.test(i.text)) && runState(r.run).deliveryFixes?.some(f => /CHANGELOG/.test(f)), 'revue mixte : le défaut de comportement devient un test, le constat CHANGELOG va à Livrer');
+reset();
+r = await go(['Ajoute une fonction double', '--mode', 'leger'], { FAKE_PIPE_REVIEW: 'doc:1' });
+ok(r.code === 0 && seq(r.done) === 'rouge,vert,revue,livrer', `léger : pas de retour à « écrire le code » pour un constat de doc (${seq(r.done)})`);
+reset();
+
+// ---------------------------------------------------------------------------
+section('12. Retour utilisateur : message de pause compréhensible, et chaque choix fait vraiment quelque chose');
+r = await go(['Ajoute beaucoup de choses', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '4', ORCH_PIPE_ITEMS: '3' });
+const res12 = r.evs.find(e => e.type === 'result')?.result || '';
+const needs = (/^NEEDS_USER_INPUT:\s*(.*)$/m.exec(res12) || [])[1] || '';
+ok(r.code === 2 && ["Ce qui s'est passé", 'Où en est le travail', '« **continuer** »', '« **simplifier** »', '« **changer le model** »', '« **abandonner** »', 'Je recommande'].every(s => res12.includes(s)), 'le message dit : ce qui s’est passé, où en est le travail, chaque choix et sa conséquence, une recommandation');
+ok(/0 test\(s\) faits sur 4 prévus, 4 restant\(s\)/.test(res12), `avancement chiffré : « ${(/Où en est le travail\*\* : (.*)/.exec(res12) || [])[1]} »`);
+ok(/continuer.*simplifier.*changer le model.*abandonner.*je recommande « (continuer|simplifier|changer le model|abandonner) »/.test(needs), `la question elle-même liste les réponses et la recommandation : « ${needs.slice(0, 160)} »`);
+ok(!/\b4[abc]\b|@loop|--pipeline-resume|critère de sortie|\bitem/i.test(res12), 'aucun vocabulaire interne (4a/4b/4c, boucle, commande, critère, item)');
+ok(/abandonner/.test(needs.slice(0, 160)) && /je recommande « [^»]+ »/.test(needs.slice(0, 160)), 'l’aperçu du dashboard (160 caractères) garde les réponses et la recommandation');
+ok(r.notes.some(n => n.project === 'chef' && /Ce qui s'est passé/.test(n.text) && /Je recommande/.test(n.text)), 'le chef reçoit toute l’explication, pas seulement la question');
+const run12 = r.run;
+r = await go(['changer le model']);
+ok(r.code === 2 && runState(run12).status === 'paused' && /page Models/.test(r.evs.find(e => e.type === 'result')?.result || '') && deriveState(logOf().map(e => JSON.stringify(e))).state === 'input', '« changer le model » : dit quelle case changer, et reste en attente de « continuer »');
+r = await go(['abandonner']);
+const res12b = r.evs.find(e => e.type === 'result')?.result || '';
+ok(r.code === 0 && runState(run12).status === 'abandoned' && /Rien n’est livré/.test(res12b) && deriveState(logOf().map(e => JSON.stringify(e))).state !== 'input', '« abandonner » : exécution close, rien de livré, plus de question en attente', `code ${r.code} statut ${runState(run12).status} état ${deriveState(logOf().map(e => JSON.stringify(e))).state} — ${res12b.slice(0, 200)} ${r.out.slice(-300)}`);
+reset();
+r = await go(['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '1', FAKE_PIPE_BAD: 'vert' });
+r = await go(['simplifier']);
+const res12c = r.evs.find(e => e.type === 'result')?.result || '';
+ok(r.code === 0 && /demande plus petite/.test(res12c) && /src\/pipe-1\.mjs|test\/pipe-1\.test\.mjs/.test(res12c), '« simplifier » : clos, et liste les modifications restées dans le projet');
+reset();
+r = await go(['Ajoute beaucoup de choses', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '4', ORCH_PIPE_ITEMS: '3' });
+ok(r.code === 2 && /la liste prévoit 4 tests, plus que le maximum de 3/.test(r.evs.find(e => e.type === 'result')?.result || ''), 'liste trop longue d’emblée : le message le dit tel quel (pas « 0 faits »)');
+r = await go(['continuer'], { FAKE_PIPE_ITEMS: '4', ORCH_PIPE_ITEMS: '3' });
+ok(r.code === 0 && r.done.filter(d => d.pipeline.step === 'rouge').length === 4, `« continuer » accepte toute la liste : 4 tests faits, puis livraison (code ${r.code})`, r.out.slice(-300));
+reset();
+
 srv.close();
 fs.rmSync(T, { recursive: true, force: true });
 console.log(`\n${pass} ok, ${fail} KO`);

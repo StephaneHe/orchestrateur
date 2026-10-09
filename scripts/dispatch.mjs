@@ -1041,6 +1041,14 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
     const paused = latestPausedRun(projectName);
     const reply = prompt.replace(/^\s*\[CHEF_ANSWER\]\s*/i, '').trim();
     if (paused && /^(continue|continuer|reprends|reprendre|on continue|oui|go|vas-y)\b/i.test(reply)) resumeRun = paused;
+    // Les autres choix proposés par la pause font vraiment quelque chose.
+    const answer = !paused ? null
+      : /^(abandonner|abandonne|abandon|annuler|annule|arr[eê]te)\b/i.test(reply) ? 'abandonner'
+      : /^simplifi/i.test(reply) ? 'simplifier'
+      : /^changer?\s+(de\s+|le\s+)?mod[eè]le?/i.test(reply) ? 'changer le model' : null;
+    if (answer) {
+      process.exit(await pipeEngine.answerPausedRun({ logsDir: LOGS, project, projectName, run: paused, answer, promptForLog: prompt, sourceProject, callbackProject, testLabel }));
+    }
   }
   if (!pipe && !resumeRun) {
     const obs = await import('./pipeline-observe.mjs');

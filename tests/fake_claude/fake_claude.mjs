@@ -245,6 +245,7 @@ async function run() {
 //   FAKE_PIPE_REFACTOR=1        4c modifie vraiment le code (sinon RIEN_A_REFACTORER)
 //   FAKE_PIPE_COVERED=<k>[,…]   l'item k est déjà couvert : test qui passe + DEJA_COUVERT
 //   FAKE_PIPE_NOCLAIM=1         … mais sans écrire DEJA_COUVERT
+//   FAKE_PIPE_REVIEW=doc|hors|mixte[:n]  revue : constat de doc (items / hors_tdd / les deux sortes)
 /** Numéro de l'item de la liste de tests (« ITEM=<n>: … »), ou 0 en léger. */
 function item(text) { return Number((/^ITEM=(\d+):/m.exec(text) || [])[1] || 0); }
 
@@ -323,7 +324,13 @@ function pipelineStep(text) {
       break;
     }
     case 'revue': {
-      const prob = once(process.env.FAKE_PIPE_REVIEW, 'problemes');
+      const spec = process.env.FAKE_PIPE_REVIEW;
+      // « doc » : constat non testable, à l'ancienne (dans items) ; « hors » :
+      // le même, rangé par la revue dans hors_tdd ; « mixte » : un de chaque.
+      if (once(spec, 'doc')) { w(artefact, JSON.stringify({ verdict: 'problèmes', items: ['docs/USER_REQUIREMENTS.md : la demande est absente du registre'] })); break; }
+      if (once(spec, 'hors')) { w(artefact, JSON.stringify({ verdict: 'problèmes', items: [], hors_tdd: ['README : documenter la nouvelle fonction'] })); break; }
+      if (once(spec, 'mixte')) { w(artefact, JSON.stringify({ verdict: 'problèmes', items: ['nommer le paramètre de double', 'CHANGELOG : décrire la fonction'] })); break; }
+      const prob = once(spec, 'problemes');
       w(artefact, JSON.stringify(prob ? { verdict: 'problèmes', items: ['nommer le paramètre de double'] } : { verdict: 'ok', items: [] }));
       break;
     }

@@ -11,6 +11,46 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.50.1] - 2026-10-09
+
+Retour utilisateur sur une pause incomprise (« la liste n'est pas vide après
+15 items (suivant : « (revue) docs/USER_REQUIREMENTS.md … ») »).
+
+### Fixed
+- (server) Un constat de la Revue qui n'est **pas un comportement testable**
+  (documentation, README, registre des exigences, CHANGELOG, version,
+  commentaires) ne devient plus un test de la boucle.
+  - Il est mis de côté (`system/pipeline_delivery_fixes`) et transmis à
+    l'étape Livrer, qui le traite.
+  - Il ne consomme ni la limite de 15 tests ni un tour de revue.
+  - La Revue range désormais ses constats en `items` (comportements) et
+    `hors_tdd`. Pour l'ancien format, un tri déterministe s'applique
+    (`isDeliveryFix`).
+- (server) Livrer ajoute **d'office** la ligne de la demande au registre des
+  exigences, en le disant explicitement à l'étape ; l'orchestrateur le
+  vérifie.
+- (server) **Messages de pause en langage clair** :
+  - ce qui s'est passé ;
+  - où en est le travail (« N tests faits sur M prévus, R restants, dont K
+    déjà assurés par le code existant ») ;
+  - ce que fait concrètement chaque réponse (« continuer », « simplifier »,
+    « changer le model », « abandonner ») ;
+  - la réponse recommandée, et pourquoi.
+
+  Plus de vocabulaire interne (4a/4b/4c, critère, boucle, commande). La
+  question du dashboard liste les quatre réponses et la recommandation. Le
+  chef reçoit l'explication complète.
+- (server) Une liste de tests trop longue **d'emblée** est annoncée telle
+  quelle (« la liste prévoit N tests, plus que le maximum de M »), et
+  « continuer » accepte alors toute la liste.
+- (server) Chaque réponse proposée fait vraiment quelque chose :
+  - « abandonner » et « simplifier » closent l'exécution sans rien livrer, en
+    listant les modifications restées dans le projet ;
+  - « changer le model » indique la case à changer dans la page Models, puis
+    attend « continuer ».
+- (server) Les tests du projet déjà rouges au départ : message clair, et
+  « continuer » les relance avant de commencer.
+
 ## [0.50.0] - 2026-10-09
 
 Décision utilisateur Q10 (« A ») et fin de la phase 4.

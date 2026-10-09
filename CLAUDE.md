@@ -1084,6 +1084,32 @@ Suite de la demande du 2026-10-09. Plan : `docs/PLAN-pipeline-enforcement.md`.
   Les valeurs de `LIMITS` restent celles décidées par l'utilisateur (n° 5).
 - **Revue** : elle ne relève jamais l'absence de version, de CHANGELOG ou de
   ligne d'exigence. C'est l'étape Livrer qui les ajoute et les fait vérifier.
+- **Constats non testables** (retour utilisateur, 0.50.1). La Revue rend
+  `items` (comportements) et `hors_tdd`. Pour l'ancien format, le tri se fait
+  par `isDeliveryFix` (doc, README, registre, CHANGELOG, version,
+  commentaires).
+  - Les constats hors TDD vont dans `state.deliveryFixes`, sont transmis au
+    prompt de Livrer, et un événement `pipeline_delivery_fixes` est écrit.
+  - Ils ne deviennent jamais un test et ne consomment ni la limite de tests
+    ni un tour de revue.
+  - Livrer ajoute **d'office** la ligne du registre des exigences.
+- **Messages de pause** (0.50.1) : `pauseForLimit` et `pauseForModel`
+  construisent un texte clair (`pauseText`, `progressText`, `plainStep`) :
+  - ce qui s'est passé ;
+  - l'avancement chiffré ;
+  - les quatre réponses et leur effet concret ;
+  - la recommandation.
+
+  La ligne `NEEDS_USER_INPUT` liste les réponses et la recommandation, sans
+  aucun jargon (4a/4b, critère, commande). Le chef reçoit le texte complet.
+- **Réponses à une pause** (`answerPausedRun`, détectées par `dispatch.mjs`) :
+  - « continuer » reprend ;
+  - « abandonner » et « simplifier » closent l'exécution (`abandoned`) et
+    listent les modifications restées ;
+  - « changer le model » dit la case à changer et reste en pause.
+
+  Chaque tour de réponse écrit un message assistant : l'état du musicien se
+  lit sur le dernier texte du tour.
 - **Revue en complet** : chaque problème devient un item `(revue) …`, puis
   retour à `@loop`, au plus 2 tours. En léger : retour à 4b, comme en 0.48.0.
 - **Montée léger → complet** : après 4b en léger, `lightScope` mesure le

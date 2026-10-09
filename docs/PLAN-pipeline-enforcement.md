@@ -484,6 +484,7 @@ Chaque phase suit le protocole 0.29.0 : tag `pre-pipeline-enforce-pN-v<X.Y.Z>`, 
   - La Revue (gpt-6-astra) relève un faux problème : la ligne d'exigence manquante, que Livrer ajoute ensuite. Ce 16ᵉ item déclenche la limite « items ». Le contrat de la Revue est corrigé.
   - « continuer » relance l'exécution : une allocation de plus est accordée. L'item 16 passe par 4a et 4b, puis Revue ✓ et Livrer ✓.
   - Résultat : un seul commit `9e023cf` (pipelineLab v1.1.0), 24 tests sur 24, et la CLI `compte` répond.
+- **Retour utilisateur (0.50.1)** sur la pause « liste pas vide après 15 items » : un constat de revue non testable (doc, registre, CHANGELOG, version) va désormais à Livrer, sans devenir un test ni consommer la limite. Les pauses s'expliquent en clair : ce qui s'est passé, l'avancement, l'effet de chaque réponse et la recommandation. « abandonner », « simplifier » et « changer le model » sont de vraies réponses.
 - **Questions de la phase 4** — Q10 **tranchée le 2026-10-09 : « A »**, livrée en 0.50.0 (avec la durée active : une pause ne compte plus dans les 90 min) :
   - Q10 — un item de la liste **déjà couvert** par le code existant (le nouveau test passe d'emblée) :
     - (A, recommandé) accepter, si le model l'écrit explicitement (`DEJA_COUVERT` dans `rouge.md`) et que le moteur vérifie que seuls des tests ont changé et que la suite passe : le test reste comme documentation, l'item est coché sans 4b/4c, et c'est tracé dans la frise ; la Revue juge ensuite si le test est vide de sens ;

@@ -618,6 +618,33 @@ async function apiChecks(sb) {
     fs.rmSync(routingFile, { force: true });
     return 'déclaré → accepté sans 4b/4c ; non déclaré → refusé';
   });
+  // Retour utilisateur (2026-10-09) sur la pause « liste pas vide après 15 items » :
+  // un constat de revue non testable va à Livrer ; la pause s'explique en clair.
+  await check(S, 'pipeline-pause-clear', 'Pipelines : constat de revue non testable (registre, doc) → Livrer, sans pause ni test de plus ; pause expliquée en clair (ce qui s’est passé, avancement, choix, recommandation) ; « abandonner » clôt l’exécution', async () => {
+    if ((await get('/api/pipeline-enforcement')).status === 404) NA('moteur absent de cet état du code');
+    const js = await (await fetch(`${sb.url}/activite.js`, { headers: H })).text();
+    if (!/jt-covered/.test(js)) NA('cet état du code ne trie pas les constats de revue');
+    omegaFresh(); enforceOmega();
+    let n0 = readLog('omega').length;
+    let r = await pipeDispatch(['omega', 'Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '2', ORCH_PIPE_ITEMS: '2', FAKE_PIPE_REVIEW: 'doc:1' });
+    let evs = readLog('omega').slice(n0);
+    if (!evs.some(e => e.subtype === 'pipeline_delivery_fixes')) NA('cet état du code ne trie pas les constats de revue');
+    assert(r.code === 0 && !evs.some(e => e.subtype === 'pipeline_limit'), `constat de registre : pause inattendue (code ${r.code})`);
+    omegaFresh();
+    n0 = readLog('omega').length;
+    r = await pipeDispatch(['omega', 'Ajoute beaucoup de choses', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '4', ORCH_PIPE_ITEMS: '3' });
+    evs = readLog('omega').slice(n0);
+    const res = evs.find(e => e.type === 'result')?.result || '';
+    assert(r.code === 2 && ["Ce qui s'est passé", 'Où en est le travail', 'Je recommande', '« **abandonner** »'].every(s => res.includes(s)) && !/--pipeline-resume|\b4[abc]\b/.test(res), `pause peu claire : ${res.slice(0, 300)}`);
+    const row = await until(async () => (await json('/api/pupitre')).fleet.find(x => x.name === 'omega' && x.state === 'input') || null, 8000);
+    assert(row && /continuer.*abandonner/.test(row.needsInput || ''), `question du dashboard : ${row?.needsInput}`);
+    r = await pipeDispatch(['omega', 'abandonner']);
+    const st = await until(async () => (await json('/api/pupitre')).fleet.find(x => x.name === 'omega' && x.state !== 'input') || null, 8000);
+    assert(r.code === 0 && st, '« abandonner » : la question devrait disparaître');
+    omegaFresh();
+    fs.rmSync(routingFile, { force: true });
+    return 'constat de doc → Livrer ; pause claire ; abandon effectif';
+  });
   await check(S, 'mark-read', 'Marquer lu (/api/mark-read) persiste le marqueur', async () => {
     const r = await post('/api/mark-read', { project: 'lambda' });
     assert(r.ok, `HTTP ${r.status}`);

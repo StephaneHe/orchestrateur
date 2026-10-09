@@ -52,6 +52,14 @@ export const LIMITS = {
 };
 // Garde-fou du léger (plan §4) : au-delà, l'exécution monte en complet.
 export const LIGHT_SCOPE = { files: 3, lines: 150 };
+const PLAIN_STEP = {
+  comprendre: 'comprendre la demande', concevoir: 'concevoir la solution', 'liste-tests': 'établir la liste des tests',
+  rouge: 'écrire un test, qui doit d’abord échouer', vert: 'écrire le code qui fait passer le test', refactor: 'nettoyer le code',
+  revue: 'relecture', livrer: 'livraison (version, journal des changements, commit)',
+  rechercher: 'rechercher', repondre: 'rédiger la réponse', '@loop': 'boucle des tests',
+};
+/** Nom d'étape compréhensible par l'utilisateur, sans vocabulaire interne. */
+export function plainStep(id) { return PLAIN_STEP[id] || id || 'exécution'; }
 export function pipelineLabel(pipeline, mode) {
   return pipeline === 'dev' ? (mode === 'complet' ? 'Développement complet' : 'Développement léger') : 'Discussion';
 }
@@ -195,6 +203,17 @@ export function devCatalog({ mode = 'leger', kind = 'simple' } = {}) {
     revue: { id: 'revue', title: '5 Revue', chain: ['dev.revue.code', 'dev.revue'], group: 'revue', artefact: 'revue.json', judge: true },
     livrer: { id: 'livrer', title: '6 Livrer (+ 7 Documenter)', chain: ['dev.livrer.git', 'dev.livrer'], group: 'code', artefact: 'livraison.md', final: true },
   };
+}
+
+/**
+ * Constat de revue qui n'est PAS un comportement testable : documentation,
+ * registre des exigences, CHANGELOG, version, commentaires (retour utilisateur
+ * du 2026-10-09). Il part à l'étape Livrer, jamais dans la boucle TDD, et ne
+ * consomme pas la limite de tests.
+ */
+export function isDeliveryFix(text) {
+  const t = STRIP(text);
+  return /(user_requirements|registre des exigences|registre d.exigence|changelog|readme|claude\.md|documentation|\bdocs?\b|docs\/|\.md\b|numero de version|version (non |pas )?(incrementee|bumpee|a jour)|\bbump|versionname|versioncode|commentaire|tracabilite|faute d.orthographe dans la doc)/.test(t);
 }
 
 /** Items de tests.md : « - [ ] texte » / « - [x] texte », dans l'ordre. */
@@ -407,16 +426,18 @@ function stepPrompt(ctx, step, extra) {
       L.push(`  ${art('diff.patch')}`);
       if (ctx.coveredItems?.length) L.push(`Items acceptés comme DÉJÀ COUVERTS (leur test passait d'emblée, sans nouveau code) : ${ctx.coveredItems.map(i => `n° ${i.n} « ${i.text} »`).join(' ; ')}. Vérifie que chacun de ces tests est FIDÈLE à son item et qu'il échouerait si le comportement disparaissait ; un test vide de sens est un « problème ».`);
       L.push('Ne relève PAS l’absence de numéro de version incrémenté, d’entrée CHANGELOG ni de ligne dans le registre des exigences : l’étape Livrer, qui suit, les ajoute, et l’orchestrateur les vérifie.');
-      L.push(`Écris ${art('revue.json')}, et UNIQUEMENT ce JSON : {"verdict": "ok" | "problèmes", "items": ["problème 1", …]}. « problèmes » seulement pour un défaut réel, à corriger maintenant.`);
+      L.push(`Écris ${art('revue.json')}, et UNIQUEMENT ce JSON : {"verdict": "ok" | "problèmes", "items": ["défaut de comportement 1", …], "hors_tdd": ["correction de doc ou de commentaire 1", …]}.`);
+      L.push('« items » : uniquement des défauts de COMPORTEMENT, qu’un test peut prouver (ils repartent dans la boucle de tests). « hors_tdd » : ce qui ne se teste pas (documentation, README, commentaires…) — ce sera fait à la livraison. « problèmes » seulement pour un défaut réel, à corriger maintenant.');
       L.push('Ne modifie AUCUN fichier du projet.');
       break;
     case 'livrer': {
       L.push('Ton rôle : LIVRER et DOCUMENTER (règles de la flotte), dans cet ordre :');
+      if (ctx.deliveryFixes?.length) L.push(`0. d'abord, les corrections relevées par la relecture qui ne relèvent pas des tests (documentation, commentaires…) :\n${ctx.deliveryFixes.map(f => `   - ${f}`).join('\n')}`);
       L.push(`1. incrémente la version (patch pour une correction, minor pour une fonctionnalité) dans : ${(cfg.versionFiles || []).join(', ') || '(fichier de version du projet)'} ;`);
       L.push(`2. ajoute l'entrée « ## [X.Y.Z] - AAAA-MM-JJ » correspondante dans ${cfg.changelog || 'CHANGELOG.md'} ;`);
-      if (cfg.requirements) L.push(`3. ajoute la ligne de la demande dans ${cfg.requirements} (date, demande verbatim, test associé, version) ;`);
+      if (cfg.requirements) L.push(`3. ajoute D'OFFICE la ligne de la demande dans ${cfg.requirements} (date, demande verbatim, tests associés, version) — c'est obligatoire à chaque livraison, personne d'autre ne le fera ;`);
       L.push(`${cfg.requirements ? 4 : 3}. un SEUL commit avec tout le changement (git add -A puis git commit) — l'arbre doit être propre ensuite ;`);
-      L.push('Pas de git push (il reste soumis à autorisation). Pas de nouvelle modification de code ni de test.');
+      L.push('Pas de git push (il reste soumis à autorisation). Hormis les corrections de documentation ci-dessus, aucune nouvelle modification de code ni de test.');
       L.push(`Écris ${art('livraison.md')} : version, commit, ce qui a été livré.`);
       L.push(`L'orchestrateur vérifie ensuite : commit créé, arbre propre, version incrémentée, entrée CHANGELOG${cfg.requirements ? ', ligne d’exigence' : ''}, ${T} vert${cfg.buildCommand ? `, build (« ${cfg.buildCommand} »)` : ''}.`);
       break;
@@ -460,7 +481,13 @@ function checkCriteria(ctx, step, before, after) {
       try { j = JSON.parse(art.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')); } catch { return { ok: false, why: 'revue.json n’est pas un JSON valide', changed }; }
       const verdict = STRIP(j?.verdict || '');
       if (!['ok', 'problemes'].includes(verdict) || !Array.isArray(j.items)) return { ok: false, why: 'revue.json : il faut {"verdict": "ok"|"problèmes", "items": [...]}', changed };
-      return { ok: true, changed, review: { verdict, items: j.items.map(x => String(typeof x === 'string' ? x : x?.text || JSON.stringify(x)).slice(0, 400)).slice(0, 15) } };
+      const txt = (x) => String(typeof x === 'string' ? x : x?.text || JSON.stringify(x)).replace(/\s+/g, ' ').trim().slice(0, 400);
+      const all = j.items.map(txt).filter(Boolean);
+      // Comportements à corriger (boucle TDD) d'un côté ; corrections de
+      // livraison (doc, registre, CHANGELOG, version) de l'autre, pour Livrer.
+      const delivery = [...(Array.isArray(j.hors_tdd) ? j.hors_tdd.map(txt).filter(Boolean) : []), ...all.filter(isDeliveryFix)];
+      const items = all.filter(i => !isDeliveryFix(i)).slice(0, 15);
+      return { ok: true, changed, review: { verdict: items.length ? verdict : 'ok', items, delivery: [...new Set(delivery)].slice(0, 15) } };
     }
     return { ok: true, changed };
   }
@@ -659,7 +686,9 @@ export async function runPipeline(o) {
   if (resumed && ['items', 'duration', 'review'].includes(state.pausedLimit)) {
     state.budgets = state.budgets || {};
     const L = state.pausedLimit;
-    if (L === 'items') state.budgets.items = (state.itemsDone || 0) + limits.items;
+    // Une liste trop longue d'emblée : l'allocation couvre au moins toute la liste.
+    let open = 0; try { open = parseItems(fs.readFileSync(path.join(artDir, 'tests.md'), 'utf8')).filter(i => !i.done).length; } catch {}
+    if (L === 'items') state.budgets.items = (state.itemsDone || 0) + Math.max(limits.items, open);
     if (L === 'duration') state.budgets.duration = (Number(state.activeMs) || 0) + limits.runMs;
     if (L === 'review') state.budgets.review = (state.reviewRounds || 0) + limits.reviewRounds;
     extended = { limit: L, to: state.budgets[L] };
@@ -710,14 +739,14 @@ export async function runPipeline(o) {
   const testEnv = { ...childEnv };
   delete testEnv.ORCH_OBS_ID;
   const ctx = { run, pipeline, kind, mode: state.mode, cwd, cfg, artDir, base, testEnv, reviewItems: null, testPrint: null, limits,
-    item: state.item || null, escalated: !!state.escalated, coveredItems: state.coveredItems || [] };
+    item: state.item || null, escalated: !!state.escalated, coveredItems: state.coveredItems || [], deliveryFixes: state.deliveryFixes || [] };
   // Durée ACTIVE : le temps passé en pause à attendre l'utilisateur ne compte
   // pas dans la limite de 90 min (une reprise repart du temps déjà consommé).
   const sessionStart = Date.now();
   const elapsed = () => (Number(state.activeMs) || 0) + (Date.now() - sessionStart);
   const totals = { costUsd: 0, apiMs: 0, turns: 0 };
 
-  const finish = async ({ code, result, isError = false, paused = false, question = null, limit = null }) => {
+  const finish = async ({ code, result, isError = false, paused = false, question = null, limit = null, notice = null }) => {
     clearInterval(progress);
     state.status = paused ? 'paused' : isError ? 'failed' : 'done';
     state.endedAt = new Date().toISOString();
@@ -741,30 +770,112 @@ export async function runPipeline(o) {
       stop_reason: 'end_turn', pipeline: { run, pipeline, status: state.status, ...(limit ? { limit } : {}) },
       ...(paused ? { pipeline_paused: true } : {}), result: text });
     try { fs.unlinkSync(pidPath); } catch {}
+    // Une pause part au chef avec TOUTE l'explication (ce qui s'est passé, où en
+    // est le travail, les choix et la recommandation), pas seulement la question.
+    const pausedText = paused ? [notice, result, question].filter(Boolean).join('\n\n') : null;
     if (callbackProject) {
-      await postNotify(root, callbackProject, `[PIPELINE — ${projectName} — ${run}] ${paused ? `⏸ pause : ${question}` : isError ? `✕ ${result.slice(0, 1500)}` : result.slice(0, 8000)}`, paused && limit ? 'pipeline-limit' : 'pipeline');
+      await postNotify(root, callbackProject, `[PIPELINE — ${projectName} — ${run}] ${paused ? pausedText : isError ? `✕ ${result.slice(0, 1500)}` : result.slice(0, 8000)}`, paused && limit ? 'pipeline-limit' : 'pipeline');
     } else if (paused && limit) {
-      await postNotify(root, 'chef', `[PIPELINE — ${projectName} — ${run}] ⏸ ${question}`, 'pipeline-limit');
+      await postNotify(root, 'chef', `[PIPELINE — ${projectName} — ${run}] ${pausedText}`, 'pipeline-limit');
     }
     say(`${summary.text}`);
     return code;
   };
 
+  // ── Messages de pause lisibles (retour utilisateur du 2026-10-09) : ce qui
+  //    s'est passé, où en est le travail, ce que fait chaque réponse, et une
+  //    recommandation — sans vocabulaire interne (4a, critère, boucle…).
+  const progressText = () => {
+    const its = parseItems(readArtefact(ctx, 'tests.md') || '');
+    const okSteps = state.steps.filter(s => s.status === 'ok');
+    if (pipeline === 'dev' && state.mode === 'complet' && its.length) {
+      const done = its.filter(i => i.done).length, left = its.length - done;
+      const cov = (state.coveredItems || []).length;
+      return `${done} test(s) faits sur ${its.length} prévus, ${left} restant(s)${cov ? ` (dont ${cov} déjà assurés par le code existant, sans nouveau code)` : ''}.`;
+    }
+    return okSteps.length ? `étapes terminées : ${[...new Set(okSteps.map(s => plainStep(s.id)))].join(', ')}.` : 'aucune étape terminée pour l’instant.';
+  };
+  const pauseText = ({ what, options, recommend }) => [
+    `⏸ **${projectName} — travail en pause, votre décision est attendue.**`, '',
+    `**Ce qui s'est passé** : ${what}`, '',
+    `**Où en est le travail** : ${progressText()}`, '',
+    '**Vos choix** (répondez simplement par le mot entre guillemets) :',
+    ...options.map(([k, t]) => `- « **${k}** » : ${t}`), '',
+    `**Je recommande « ${recommend[0]} »** : ${recommend[1]}`,
+  ].join('\n');
+  const commonChoices = (step) => {
+    const slot = step && stepDefs[step.id]?.chain?.length ? resolveCase(readAssignments(root), stepDefs[step.id].chain).slot : null;
+    return {
+      simplifier: ['simplifier', 'j’arrête cette exécution sans rien livrer. Le travail déjà fait reste dans le projet (non enregistré dans git) ; vous m’envoyez ensuite une demande plus petite pour la suite.'],
+      model: ['changer le model', `choisissez un autre model pour l’étape « ${plainStep(step?.id)} » dans la page Models${slot ? ` (case « ${slot} »)` : ''}, puis répondez « continuer » : je reprends là où je me suis arrêté, avec ce model.`],
+      abandonner: ['abandonner', 'j’arrête et je ne livre rien. Les modifications déjà faites restent dans le projet, non enregistrées dans git, pour que vous les regardiez ou les annuliez.'],
+    };
+  };
+  const plainWhy = (why) => String(why || '').split('\n')[0].replace(/\s+/g, ' ').trim().slice(0, 300);
+
   const pauseForLimit = async ({ limit, value, step, why, lastOutput }) => {
-    const label = { criteria: `${value} essais refusés par le critère de sortie`, green: `${value} essais de 4b sans passer`, review: `${value} tours de revue`, duration: `durée maximale (${fmtDur(value)})` }[limit] || limit;
-    const notice = `⏸ Limite atteinte — ${projectName} · ${pipelineLabel(pipeline, state.mode)} · ${step ? step.title : 'exécution'} : ${label}`;
+    const C = commonChoices(step);
+    const its = parseItems(readArtefact(ctx, 'tests.md') || '');
+    const left = its.filter(i => !i.done);
+    const itemTxt = ctx.item ? ` pour le test « ${ctx.item.text} »` : '';
+    const M = {
+      items: (state.itemsDone || 0) === 0 ? {
+        short: `la liste prévoit ${left.length} tests, plus que le maximum de ${state.budgets?.items || limits.items} par exécution`,
+        what: `la liste des tests établie pour cette demande en compte ${left.length}, alors que la règle en autorise au plus ${state.budgets?.items || limits.items} par exécution, pour garder des travaux de taille raisonnable. Aucun test n’a encore été écrit.`,
+        cont: `j’accepte la liste telle quelle et je fais les ${left.length} tests, puis la relecture et la livraison.`,
+        rec: left.length <= (state.budgets?.items || limits.items) + 3 ? ['continuer', 'la liste ne dépasse que de peu.'] : ['simplifier', 'la demande est trop grosse pour une seule exécution : mieux vaut la découper.'],
+      } : {
+        short: `nombre maximum de tests atteint (${its.length - left.length} faits, ${left.length} restant(s))`,
+        what: `la règle fixe au plus ${state.budgets?.items || limits.items} tests par exécution, pour garder des travaux de taille raisonnable. Ce nombre est atteint, mais il reste ${left.length} point(s) à traiter${left[0] ? ` — le prochain : « ${left[0].text} »` : ''}.`,
+        cont: `je traite le(s) ${left.length} point(s) restant(s) (avec une marge de ${limits.items} tests de plus au maximum), puis la relecture et la livraison.`,
+        rec: left.length <= 5 ? ['continuer', 'il ne reste presque plus rien à faire.'] : ['simplifier', 'il reste beaucoup à faire : mieux vaut découper la demande.'],
+      },
+      green: {
+        short: `le code ne fait pas passer le test après ${value} essais`,
+        what: `l’étape « ${plainStep('vert')} » a échoué ${value} fois de suite${itemTxt}. Dernière raison : ${plainWhy(why)}.`,
+        cont: `je refais ${limits.greenAttempts} essais pour ce même test, avec le même model.`,
+        rec: ['changer le model', 'le même model a échoué plusieurs fois sur le même point : un autre a plus de chances d’y arriver.'],
+      },
+      criteria: {
+        short: `l’étape « ${plainStep(step?.id)} » a été refusée ${value} fois`,
+        what: `l’étape « ${plainStep(step?.id)} »${itemTxt} a été refusée ${value} fois par les vérifications automatiques de l’orchestrateur. Dernière raison : ${plainWhy(why)}.`,
+        cont: `je refais ${limits.criteriaAttempts} essais de cette étape.`,
+        rec: ['continuer', 'un nouvel essai règle souvent ce genre de refus ; si cela se reproduit, simplifiez la demande.'],
+      },
+      review: {
+        short: `la relecture trouve encore des défauts après ${value} tour(s) de corrections`,
+        what: `la relecture trouve encore des défauts après ${value} tour(s) de corrections : ${plainWhy(why).replace(/^la revue relève encore : /, '')}.`,
+        cont: `encore ${limits.reviewRounds} tour(s) de corrections et de relecture.`,
+        rec: ['continuer', 'les défauts restants sont précis : un tour de plus suffit en général.'],
+      },
+      duration: {
+        short: 'durée maximale de travail atteinte',
+        what: `le travail a dépassé ${fmtDur(value)} de travail effectif (le temps passé à attendre votre réponse ne compte pas).`,
+        cont: `${fmtDur(limits.runMs)} de travail de plus, à partir de là où je me suis arrêté.`,
+        rec: left.length > 5 ? ['simplifier', 'il reste beaucoup à faire : mieux vaut découper la demande.'] : ['continuer', 'la fin est proche.'],
+      },
+    }[limit] || { short: limit, what: plainWhy(why) || limit, cont: 'je reprends là où je me suis arrêté.', rec: ['continuer', 'c’est le plus simple.'] };
+    const notice = `⏸ Limite atteinte — ${projectName} : ${M.short}`;
     writeEvent({ type: 'notification', subtype: 'pipeline_limit', pipeline: { run, step: step?.id || null }, limit, value, why: why ? String(why).slice(0, 2000) : null,
       lastOutput: lastOutput ? String(lastOutput).slice(-2000) : null, text: notice });
-    const question = `${notice}. ${why ? `Dernier refus : ${String(why).split('\n')[0].slice(0, 300)}. ` : ''}` +
-      `Que faire : continuer (node scripts/dispatch.mjs ${projectName} --pipeline-resume ${run}), simplifier la demande, changer le model de l'étape dans la page Models, ou abandonner ?`;
-    return finish({ code: 2, paused: true, limit, question, result: notice });
+    const body = pauseText({ what: M.what, options: [['continuer', M.cont], C.simplifier, C.model, C.abandonner], recommend: M.rec });
+    // Réponses et recommandation EN TÊTE : le dashboard coupe la question à 160 caractères.
+    const question = `${projectName} en pause — répondez « continuer », « simplifier », « changer le model » ou « abandonner » (je recommande « ${M.rec[0]} ») : ${M.short}.`;
+    return finish({ code: 2, paused: true, limit, question, result: body, notice });
   };
 
   const pauseForModel = async (step, info, why) => {
-    const notice = `⏸ Model indisponible — ${projectName} · ${step.title} : ${info.model} (${info.provider}) — aucun repli (règle utilisateur)`;
+    const C = commonChoices(step);
+    const notice = `⏸ Model indisponible — ${projectName} : ${info.model} ne répond pas (étape « ${plainStep(step.id)} »)`;
     writeEvent({ type: 'notification', subtype: 'pipeline_limit', pipeline: { run, step: step.id }, limit: 'model_unavailable', value: info.model, why: String(why).slice(0, 2000), text: notice });
-    const question = `${notice}. Cause : ${String(why).split('\n')[0].slice(0, 300)}. Que faire : attendre puis continuer (node scripts/dispatch.mjs ${projectName} --pipeline-resume ${run}), choisir un autre model pour la case ${info.slot} dans la page Models puis continuer, ou abandonner ?`;
-    return finish({ code: 2, paused: true, limit: 'model_unavailable', question, result: notice });
+    const limitLike = /limit|quota|rate|session/i.test(String(why));
+    const body = pauseText({
+      what: `le model ${info.model}, choisi pour l’étape « ${plainStep(step.id)} », est indisponible : ${plainWhy(why)}. Je ne bascule jamais en silence sur un autre model (votre règle).`,
+      options: [['continuer', 'je réessaie avec le même model — utile s’il était seulement momentanément indisponible.'], C.simplifier, C.model, C.abandonner],
+      recommend: limitLike ? ['changer le model', 'ce model a atteint une limite d’utilisation : il ne reviendra pas tout de suite.'] : ['continuer', 'une indisponibilité passagère est le cas le plus fréquent.'],
+    });
+    const question = `${projectName} en pause — répondez « continuer », « simplifier », « changer le model » ou « abandonner » (je recommande « ${limitLike ? 'changer le model' : 'continuer'} ») : le model ${info.model} est indisponible.`;
+    return finish({ code: 2, paused: true, limit: 'model_unavailable', question, result: body, notice });
   };
 
   // ── Une étape : un tour, sur le model de sa case, jeton signé ────────────
@@ -835,13 +946,18 @@ export async function runPipeline(o) {
   };
 
   // ── Préconditions de Développement : la suite doit être verte au départ ──
-  if (pipeline === 'dev' && state.index === 0 && !resumed) {
+  if (pipeline === 'dev' && state.index === 0 && (!resumed || state.pausedLimit === 'precondition')) {
     const t = runCommand(cwd, cfg.testCommand, testEnv);
     if (!t.ok) {
       writeEvent({ type: 'system', subtype: 'pipeline_precondition', pipeline: { run }, text: `la suite (${cfg.testCommand}) est déjà rouge avant l'étape 4a`, output: t.out.slice(-2000) });
-      return finish({ code: 2, paused: true, limit: 'precondition',
-        question: `La suite de tests de ${projectName} (${cfg.testCommand}) échoue AVANT toute modification : le TDD ne peut pas démarrer (4a doit partir d'une suite verte). Que faire : réparer d'abord la suite (nouvelle demande), ou abandonner ?`,
-        result: `⏸ Précondition non remplie — ${projectName} : suite déjà rouge` });
+      return finish({ code: 2, paused: true, limit: 'precondition', notice: `⏸ ${projectName} : les tests du projet échouent déjà avant toute modification`,
+        question: `${projectName} en pause — répondez « continuer » (tests réparés) ou « abandonner » (je recommande « abandonner ») : ses tests échouent déjà avant toute modification.`,
+        result: pauseText({
+          what: `avant de commencer, j’ai lancé les tests du projet (« ${cfg.testCommand} ») : ils échouent déjà. Or chaque nouveau test doit d’abord échouer à cause de lui seul ; sur une base déjà cassée, ce contrôle n’a plus de sens.`,
+          options: [['continuer', 'je relance les tests et, s’ils passent (vous les avez réparés entre-temps), je commence le travail.'],
+            ['abandonner', 'j’arrête sans rien modifier ; vous m’envoyez d’abord une demande pour réparer les tests.']],
+          recommend: ['abandonner', 'il faut d’abord une base de tests qui passe.'],
+        }) });
     }
   }
   // Empreinte des tests protégés : à la reprise, celle de l'état actuel.
@@ -955,6 +1071,12 @@ export async function runPipeline(o) {
         }
       }
     }
+    if (step.id === 'revue' && last.crit?.review?.delivery?.length) {
+      // Constats hors TDD : faits à la livraison, sans test ni tour de boucle.
+      state.deliveryFixes = ctx.deliveryFixes = [...new Set([...(state.deliveryFixes || []), ...last.crit.review.delivery])].slice(0, 20);
+      writeEvent({ type: 'system', subtype: 'pipeline_delivery_fixes', pipeline: { run }, fixes: last.crit.review.delivery,
+        text: `revue : ${last.crit.review.delivery.length} correction(s) de documentation ou de livraison, mise(s) de côté pour l'étape Livrer (hors boucle de tests)` });
+    }
     if (step.id === 'revue' && last.crit?.review?.verdict === 'problemes' && last.crit.review.items.length) {
       if (state.reviewRounds >= (state.budgets?.review || limits.reviewRounds)) {
         return pauseForLimit({ limit: 'review', value: state.reviewRounds, step, why: `la revue relève encore : ${last.crit.review.items.slice(0, 5).join(' ; ')}` });
@@ -993,6 +1115,49 @@ export async function runPipeline(o) {
       `- Pas de push (soumis à autorisation).\n\n${(readArtefact(ctx, 'livraison.md') || '').trim().slice(0, 4000)}`;
   }
   return finish({ code: 0, result });
+}
+
+/**
+ * Réponse de l'utilisateur à une exécution EN PAUSE, autre que « continuer »
+ * (retour du 2026-10-09 : chaque choix proposé doit vraiment faire quelque chose) :
+ *   abandonner / simplifier → l'exécution est close (rien n'est livré), les
+ *     modifications restent dans le projet et sont listées ;
+ *   changer le model → reste en pause, dit quelle case changer, attend « continuer ».
+ * Un tour côté musicien : user_prompt + result. Renvoie le code de sortie.
+ */
+export async function answerPausedRun({ logsDir, project, projectName, run, answer, promptForLog, sourceProject, callbackProject, testLabel }) {
+  const f = path.join(logsDir, 'runs', run, 'run.json');
+  const state = readJson(f);
+  if (!state || state.status !== 'paused' || state.project !== projectName) { console.error(`[pipeline] aucune exécution en pause ${run} pour ${projectName}`); return 65; }
+  const projectLog = path.join(logsDir, `${projectName}.jsonl`);
+  const writeEvent = (ev) => { try { fs.appendFileSync(projectLog, JSON.stringify({ ...ev, timestamp: new Date().toISOString() }) + '\n'); } catch {} };
+  writeEvent({ type: 'user_prompt', text: promptForLog, pipeline: { run, pipeline: state.pipeline, mode: state.mode, answer },
+    ...(sourceProject ? { source: sourceProject } : {}), ...(callbackProject ? { callback: callbackProject } : {}), ...(testLabel ? { test: { label: testLabel } } : {}) });
+  const save = () => { state.updatedAt = new Date().toISOString(); fs.writeFileSync(`${f}.tmp`, JSON.stringify(state, null, 2)); fs.renameSync(`${f}.tmp`, f); };
+  let text, paused = false;
+  if (answer === 'changer le model') {
+    const last = [...(state.steps || [])].reverse().find(s => s.slot) || {};
+    text = `D’accord. Ouvrez la page Models et choisissez un autre model pour l’étape « ${plainStep(last.id)} »${last.slot ? ` (case « ${last.slot} »${last.model ? `, actuellement ${last.model}` : ''})` : ''}. Le changement est pris en compte tout de suite, sans redémarrage.\n\nNEEDS_USER_INPUT: ${projectName} attend toujours : une fois le model changé dans la page Models, répondez « continuer » pour reprendre là où je me suis arrêté.`;
+    paused = true;
+  } else {
+    const changed = git(project.path, ['status', '--porcelain']).out.split('\n').filter(l => l && !l.slice(3).startsWith(RUNS_PREFIX)).map(l => l.slice(3));
+    state.status = 'abandoned'; state.abandonedBy = answer; state.endedAt = new Date().toISOString();
+    save();
+    writeEvent({ type: 'system', subtype: 'pipeline_summary', pipeline: { run, pipeline: state.pipeline, mode: state.mode, status: 'abandoned' },
+      text: `exécution ${run} arrêtée à la demande de l’utilisateur (« ${answer} ») — rien n’est livré` });
+    text = `■ Exécution arrêtée à votre demande (« ${answer} »). Rien n’est livré, aucun commit n’a été fait.\n\n` +
+      (changed.length
+        ? `Les modifications déjà faites restent dans le projet, non enregistrées dans git (vous pouvez les examiner, les garder ou les annuler) :\n${changed.slice(0, 30).map(c => `- ${c}`).join('\n')}${changed.length > 30 ? `\n- … et ${changed.length - 30} autre(s)` : ''}`
+        : 'Aucune modification n’est restée dans le projet.') +
+      (answer === 'simplifier' ? '\n\nEnvoyez-moi maintenant une demande plus petite pour la suite : elle partira dans une nouvelle exécution.' : '');
+  }
+  // Toujours un message : l'état du musicien se lit sur le dernier texte du tour
+  // (sans lui, l'ancienne question restait affichée après « abandonner »).
+  writeEvent({ type: 'assistant', message: { model: '<synthetic>', content: [{ type: 'text', text }] } });
+  writeEvent({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, duration_ms: 1, duration_api_ms: 1, stop_reason: 'end_turn',
+    pipeline: { run, pipeline: state.pipeline, status: state.status, answer }, ...(paused ? { pipeline_paused: true } : {}), result: text });
+  console.log(`[pipeline] exécution ${run} : réponse « ${answer} » — ${state.status}`);
+  return paused ? 2 : 0;
 }
 
 const CODE_RE = /\.(m?js|cjs|ts|tsx|jsx|kt|kts|java|py|go|rs|cs|swift|c|cc|cpp|h)$/i;

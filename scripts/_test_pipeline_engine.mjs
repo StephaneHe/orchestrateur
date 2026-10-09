@@ -167,7 +167,9 @@ const lim = evs.find(e => e.type === 'notification' && e.subtype === 'pipeline_l
 ok(lim?.limit === 'green' && /Limite atteinte/.test(lim.text), `signal 1 : notification/pipeline_limit (« ${lim?.text} »)`);
 const st = deriveState(logOf('P').map(e => JSON.stringify(e)));
 ok(st.state === 'input', 'signal 2 : question dans le dashboard (état input)');
-ok(/NEEDS_USER_INPUT: .*--pipeline-resume/.test(evs.find(e => e.type === 'result')?.result || ''), 'la question propose de continuer, changer de model ou abandonner');
+// 0.50.1 : la question est en langage clair (plus de commande) — elle liste les
+// quatre réponses possibles et la recommandation.
+ok(/NEEDS_USER_INPUT: .*« continuer ».*« simplifier ».*« changer le model ».*« abandonner ».*je recommande/.test(evs.find(e => e.type === 'result')?.result || ''), 'la question propose de continuer, changer de model ou abandonner');
 ok(runState(run).status === 'paused', 'run.json : paused');
 ok(!fs.existsSync(path.join(P, 'src', 'pipe.mjs')) || g(P, 'diff', '--quiet', '--', 'test').status === 0, 'essais refusés annulés (tests intacts)');
 // Reprise : « continuer » relance l'exécution en pause, à son étape.
