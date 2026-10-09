@@ -456,6 +456,8 @@ async function apiChecks(sb) {
     fs.writeFileSync(path.join(omegaDir, 'package.json'), JSON.stringify({ name: 'omega', version: '1.0.0', type: 'module', scripts: { test: 'node --test' } }, null, 2) + '\n');
     fs.mkdirSync(path.join(omegaDir, 'test'), { recursive: true });
     fs.writeFileSync(path.join(omegaDir, 'test', 'base.test.mjs'), "import { test } from 'node:test';\ntest('base', () => {});\n");
+    fs.mkdirSync(path.join(omegaDir, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(omegaDir, 'src', 'pipe.mjs'), 'export const id = (x) => x;\n');
     fs.writeFileSync(path.join(omegaDir, 'CHANGELOG.md'), '# Changelog\n\n## [1.0.0] - 2026-10-01\n- début\n');
     fs.mkdirSync(path.join(omegaDir, '.orchestrateur'), { recursive: true });
     fs.writeFileSync(path.join(omegaDir, '.orchestrateur', 'pipeline.json'), JSON.stringify({ testCommand: 'node --test', testGlobs: ['test/**'], versionFiles: ['package.json'], changelog: 'CHANGELOG.md', requirements: 'docs/USER_REQUIREMENTS.md' }));
@@ -478,7 +480,7 @@ async function apiChecks(sb) {
     assert(r.status === 202, `dispatch : ${r.status}`);
     let run = await until(async () => (await runsOf()).find(x => x.pipeline === 'discussion' && x.status !== 'running') || null, 90_000);
     assert(run?.status === 'done' && run.steps.filter(s => s.status === 'ok').length === 3, `Discussion : ${JSON.stringify(run && { s: run.status, st: run.steps.map(x => `${x.id}:${x.status}:${x.why || ''}`) })}`);
-    r = await pipeDispatch(['omega', 'Ajoute une fonction double qui multiplie par deux']);
+    r = await pipeDispatch(['omega', 'Ajoute une fonction double qui multiplie par deux', '--mode', 'leger']);
     run = (await runsOf()).find(x => x.pipeline === 'dev');
     assert(r.code === 0 && run?.status === 'done' && run.steps.map(s => s.id).join() === 'rouge,vert,revue,livrer', `Développement léger : ${r.code} ${JSON.stringify(run?.steps?.map(x => `${x.id}:${x.status}`))} ${r.out.slice(-300)}`);
     assert(g('rev-list', '--count', `${h0}..HEAD`).stdout.trim() === '1', 'un seul commit attendu');
@@ -529,7 +531,7 @@ async function apiChecks(sb) {
     // Repartir du commit initial : le parcours pipeline-run a déjà livré double().
     g('reset', '-q', '--hard', g('rev-list', '--max-parents=0', 'HEAD').stdout.trim());
     const nNotices = notices.length;
-    const r = await pipeDispatch(['omega', 'Ajoute une fonction triple'], { FAKE_PIPE_BAD: 'vert' });
+    const r = await pipeDispatch(['omega', 'Ajoute une fonction triple', '--mode', 'leger'], { FAKE_PIPE_BAD: 'vert' });
     const lim = readLog('omega').filter(e => e.subtype === 'pipeline_limit').pop();
     assert(r.code === 2 && lim?.limit === 'green' && /Limite atteinte/.test(lim.text), `signal du log : ${r.code} ${JSON.stringify(lim)}`);
     const row = await until(async () => (await json('/api/pupitre')).fleet.find(x => x.name === 'omega' && x.state === 'input') || null, 8000);
@@ -540,8 +542,58 @@ async function apiChecks(sb) {
     spawnSync('git', ['checkout', '-q', '--', '.'], { cwd: omegaDir });
     spawnSync('git', ['clean', '-qfd', '-e', '.orchestrateur'], { cwd: omegaDir });
     fs.rmSync(routingFile, { force: true });
-    noticeSrv.close();
     return 'les 3 signaux partent : log, dashboard, chef';
+  });
+  // 0.49.0 — phase 4 : Développement COMPLET, TDD canonique un test à la fois.
+  const omegaFresh = () => { const g = omegaRepo(); g('reset', '-q', '--hard', g('rev-list', '--max-parents=0', 'HEAD').stdout.trim()); g('clean', '-qfd', '-e', '.orchestrateur'); return g; };
+  await check(S, 'pipeline-tdd', 'Pipelines, phase 4 : Développement complet — Comprendre, Concevoir, Liste de tests, puis UN test à la fois (4a échoue réellement, 4b la rend verte, 4c sautée si inutile), items cochés par le moteur, un commit ; montée léger → complet annoncée ; frise du journal', async () => {
+    if ((await get('/api/pipeline-enforcement')).status === 404) NA('moteur absent de cet état du code');
+    const js = await (await fetch(`${sb.url}/activite.js`, { headers: H })).text();
+    if (!/jt-escalate/.test(js)) NA('Développement complet absent de cet état du code');
+    const g = omegaFresh(); enforceOmega();
+    const h0 = g('rev-parse', 'HEAD').stdout.trim();
+    const n0 = readLog('omega').length;
+    let r = await pipeDispatch(['omega', 'Ajoute les multiplications par deux et par trois', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '2' });
+    let evs = readLog('omega').slice(n0);
+    const seq = evs.filter(e => e.subtype === 'pipeline_step_done').map(e => `${e.pipeline.step}${e.status === 'ok' ? '' : ':' + e.status}`).join(',');
+    assert(r.code === 0 && seq === 'comprendre,concevoir,liste-tests,rouge,vert,refactor:skipped,rouge,vert,refactor:skipped,revue,livrer', `enchaînement : ${seq} (code ${r.code}) ${r.out.slice(-300)}`);
+    const rouges = evs.filter(e => e.subtype === 'pipeline_step_done' && e.pipeline.step === 'rouge');
+    assert(rouges.every(e => e.test?.ok === false && e.pipeline.item), '4a doit échouer réellement, item par item');
+    assert(evs.filter(e => e.subtype === 'pipeline_item_done').length === 2, 'items non cochés un par un');
+    assert(g('rev-list', '--count', `${h0}..HEAD`).stdout.trim() === '1', 'un seul commit attendu');
+    const t0 = (await json('/api/project/omega/journal?n=3')).turns[0];
+    assert(t0?.pipeline?.mode === 'complet' && t0.pipeline.items === 2 && t0.pipeline.steps.some(s => s.status === 'skipped' && s.item), `journal : ${JSON.stringify(t0?.pipeline && { m: t0.pipeline.mode, i: t0.pipeline.items })}`);
+    omegaFresh();
+    const n1 = readLog('omega').length;
+    r = await pipeDispatch(['omega', 'Ajoute une fonction double', '--mode', 'leger'], { FAKE_PIPE_BIG: '1', FAKE_PIPE_ITEMS: '1' });
+    evs = readLog('omega').slice(n1);
+    assert(r.code === 0 && evs.some(e => e.subtype === 'pipeline_escalate'), `montée en complet absente (code ${r.code})`);
+    const t1 = (await json('/api/project/omega/journal?n=3')).turns[0];
+    assert(t1?.pipeline?.escalated && t1.pipeline.mode === 'complet', 'journal : montée en complet non visible');
+    omegaFresh();
+    return `complet : ${seq.split(',').length} étapes, 2 items ; montée léger → complet annoncée`;
+  });
+  await check(S, 'pipeline-limits', 'Pipelines, phase 4 : chaque limite (items, durée) met en pause ET prévient — log (pipeline_limit), dashboard (input), chef (notify pipeline-limit)', async () => {
+    if ((await get('/api/pipeline-enforcement')).status === 404) NA('moteur absent de cet état du code');
+    const js = await (await fetch(`${sb.url}/activite.js`, { headers: H })).text();
+    if (!/jt-escalate/.test(js)) NA('Développement complet absent de cet état du code');
+    const got = [];
+    for (const [limit, env] of [['items', { FAKE_PIPE_ITEMS: '4', ORCH_PIPE_ITEMS: '3' }], ['duration', { FAKE_PIPE_ITEMS: '1', ORCH_PIPE_RUN_MS: '1' }]]) {
+      omegaFresh(); enforceOmega();
+      const k0 = notices.length;
+      const r = await pipeDispatch(['omega', 'Ajoute des opérations', '--mode', 'complet'], env);
+      const lim = readLog('omega').filter(e => e.subtype === 'pipeline_limit').pop();
+      assert(r.code === 2 && lim?.limit === limit, `${limit} : code ${r.code}, signal ${JSON.stringify(lim?.limit)}`);
+      const row = await until(async () => (await json('/api/pupitre')).fleet.find(x => x.name === 'omega' && x.state === 'input') || null, 8000);
+      assert(row, `${limit} : question absente du dashboard`);
+      const chef = notices.slice(k0).find(n => n.project === 'chef' && n.source === 'pipeline-limit' && /Limite atteinte/.test(n.text));
+      assert(chef, `${limit} : chef non prévenu`);
+      await post('/api/question/omega/resolve', { note: 'recette' });
+      got.push(limit);
+    }
+    omegaFresh();
+    fs.rmSync(routingFile, { force: true });
+    return `limites ${got.join(', ')} : les 3 signaux partent`;
   });
   await check(S, 'mark-read', 'Marquer lu (/api/mark-read) persiste le marqueur', async () => {
     const r = await post('/api/mark-read', { project: 'lambda' });

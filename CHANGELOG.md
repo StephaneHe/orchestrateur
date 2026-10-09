@@ -11,6 +11,39 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.49.0] - 2026-10-09
+
+Pipelines obligatoires, phase 4 : le Développement complet (TDD canonique,
+un test à la fois).
+
+### Added
+- (server) Développement **complet** en service :
+  - Comprendre → Concevoir (`plan.md` : « ## Approche », « ## Étapes ») →
+    Liste de tests (`tests.md`, cases « - [ ] », au plus 15) ;
+  - puis, pour CHAQUE item, dans l'ordre : 4a Rouge (un test, la suite doit
+    échouer à cause de lui) → 4b Vert (tests intouchables, suite verte) → 4c
+    Refactor (tests intouchables, suite verte ; sautée, en le disant, si 4b a
+    changé moins de 10 lignes ou si le model répond `RIEN_A_REFACTORER`) ;
+  - le moteur coche l'item et passe au suivant, jusqu'à ce que la liste soit
+    vide ;
+  - puis Revue (chaque problème devient un item « (revue) … » → retour à la
+    boucle, au plus 2 tours) et Livrer.
+- (server) Montée **léger → complet** (garde-fou du plan §4) : au-delà de
+  3 fichiers, de 150 lignes ou d'un nouveau fichier de code, l'exécution passe
+  en complet à l'étape 3, et le dit (`system/pipeline_escalate`, résultat).
+- (server) Limite « items » (liste de plus de 15 cases, ou liste encore non
+  vide après 15 items) ; avec 4b (3 essais), critères (2), revue (2) et durée
+  (90 min), **chaque limite** met en pause et prévient : `pipeline_limit` dans
+  le log, question dans le dashboard, notification au chef.
+- (server) `dispatch.mjs --mode leger|complet` ; sans lui, la classification
+  décide (nouvelle fonctionnalité → complet ; hésitation → léger, décision Q9 ;
+  préfixes `/léger`, `/complet`). La file d'attente garde le mode.
+- (server) Journal : la frise montre l'item traité par chaque 4a/4b/4c,
+  « ↷ sautée », le nombre d'items cochés et la montée en complet.
+
+### Removed
+- (server) La note « mode complet pas encore en service : exécuté en léger ».
+
 ## [0.48.0] - 2026-10-09
 
 Pipelines obligatoires, phase 3 : le moteur. Demande utilisateur : « il faut

@@ -710,7 +710,9 @@ div.jt-did { padding-left: 0; }
 .jt-pipeline .jt-step { margin: 2px 0; }
 .jt-pipeline .jt-step[data-step-status="refused"], .jt-pipeline .jt-step[data-step-status="failed"] { color: var(--fg-1); }
 .jt-pipeline .jt-step[data-step-status="refused"] > b, .jt-pipeline .jt-step[data-step-status="failed"] > b { text-decoration: line-through; text-decoration-color: var(--fg-3); }
-.jt-pipeline .jt-step.is-todo { color: var(--fg-3); }
+.jt-pipeline .jt-step.is-todo, .jt-pipeline .jt-step[data-step-status="skipped"] { color: var(--fg-3); }
+.jt-pipeline .jt-item { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--fg-2); border: 1px solid var(--line, var(--fg-3)); padding: 0 4px; }
+.jt-pipeline .jt-escalate { color: var(--st-live); font-weight: 600; }
 .jt-pipeline .jt-why { font-family: var(--font-mono); font-size: 0.6875rem; }
 .jt-pipeline .jt-warn { color: var(--st-input); font-weight: 600; }
 .jt-pipeline .jt-dim { color: var(--fg-2); }

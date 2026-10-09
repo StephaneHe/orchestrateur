@@ -206,10 +206,16 @@
         const q = ev.pipeline || {};
         if (ev.subtype === "pipeline_step_start") {
           p.steps.push({ key: q.key, id: q.step, slot: q.slot, attempt: q.attempt || 1, model: ev.model || null, provider: ev.provider || null,
-            second: ev.second || null, source: ev.modelSource || null, status: "running", why: null, durationMs: null, served: null });
+            second: ev.second || null, source: ev.modelSource || null, status: "running", why: null, durationMs: null, served: null,
+            item: q.item || null, itemText: q.itemText || null });
+        } else if (ev.subtype === "pipeline_escalate") {
+          // 0.49.0 : le léger a dépassé son périmètre, l'exécution passe en complet.
+          p.mode = "complet"; p.escalated = ev.text || "monté en complet";
+        } else if (ev.subtype === "pipeline_item_done") {
+          p.items = (p.items || 0) + 1;
         } else if (ev.subtype === "pipeline_step_done") {
           let s = p.steps.find(x => x.key === q.key);
-          if (!s) { s = { key: q.key, id: q.step, slot: q.slot, attempt: q.attempt || 1 }; p.steps.push(s); }
+          if (!s) { s = { key: q.key, id: q.step, slot: q.slot, attempt: q.attempt || 1, item: q.item || null }; p.steps.push(s); }
           Object.assign(s, { status: ev.status, why: ev.why || null, durationMs: ev.durationMs ?? null, served: ev.served || null,
             model: ev.model || s.model || null, source: ev.modelSource || s.source || null, costUsd: ev.costUsd ?? null, test: ev.test || null });
         } else if (ev.subtype === "pipeline_warning") {

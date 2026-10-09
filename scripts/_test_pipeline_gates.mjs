@@ -1,0 +1,184 @@
+#!/usr/bin/env node
+// ============================================================================
+// scripts/_test_pipeline_gates.mjs — Développement COMPLET, phase 4 (0.49.0)
+// ============================================================================
+//
+// Demande utilisateur (2026-10-09) : « il faut faire en sorte que ces pipelines
+// soient obligatoirement utilisés » — phase 4 : la boucle TDD canonique, UN
+// test à la fois (Comprendre → Concevoir → Liste de tests → 4a → 4b → 4c par
+// item → Revue → Livrer), critères vérifiés par le code, revue → nouveaux items,
+// montée léger → complet, et CHAQUE limite prévient l'utilisateur (log,
+// dashboard, chef).
+//
+// VRAI dispatch.mjs, VRAI moteur, doublure de claude (FAKE_CLAUDE_PIPELINE),
+// racine jetable ; les notifications vont à un écouteur local (jamais 7777).
+// ============================================================================
+
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import http from 'node:http';
+import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import * as E from './pipeline-engine.mjs';
+import { deriveState } from './fleet-status-core.mjs';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const FAKE = path.join(ROOT, 'tests', 'fake_claude', 'fake_claude.mjs');
+let pass = 0, fail = 0;
+const ok = (c, l, d) => { c ? pass++ : fail++; console.log(`  ${c ? '✓' : '✗'} ${l}${!c && d ? `\n      ${String(d).slice(0, 700)}` : ''}`); };
+const section = (n) => console.log(`\n── ${n}`);
+
+// ---------------------------------------------------------------------------
+section('1. Briques : liste de tests, cases, plan complet, périmètre du léger');
+const md = '# Liste\n\n- [ ] a vide renvoie 0\n- [x] déjà fait\n* [ ] b deux mots\ntexte libre\n';
+const it = E.parseItems(md);
+ok(it.length === 3 && it[0].text === 'a vide renvoie 0' && it[1].done && it[2].n === 3, 'parseItems : cases cochées ou non, dans l’ordre');
+ok(E.parseItems(E.checkItem(md, 3)).every(i => i.n !== 3 || i.done) && E.parseItems(E.checkItem(md, 3))[0].done === false, 'checkItem coche l’item n et lui seul');
+const plan = E.planSteps('dev', { mode: 'complet' }).map(s => s.id);
+ok(plan.join() === 'comprendre,concevoir,liste-tests,@loop,revue,livrer', `plan complet : ${plan.join(' → ')}`);
+const cat = E.devCatalog({ mode: 'complet' });
+ok(cat.vert.chain[0] === 'dev.vert.complexe' && cat.refactor.chain[0] === 'dev.refactor' && cat['liste-tests'].judge && cat.concevoir.chain[0] === 'dev.concevoir.plan', 'cases : 4b complexe, 4c, liste de tests (jugement), concevoir/plan');
+
+// ---------------------------------------------------------------------------
+// Racine jetable + écouteur des notifications (chef)
+// ---------------------------------------------------------------------------
+const notices = [];
+const srv = http.createServer((req, res) => { let b = ''; req.on('data', c => { b += c; }); req.on('end', () => { try { notices.push({ path: req.url, ...JSON.parse(b) }); } catch {} res.end('{}'); }); });
+await new Promise(r => srv.listen(0, '127.0.0.1', r));
+const T = fs.mkdtempSync(path.join(os.tmpdir(), 'orch-gates-'));
+const P = path.join(T, 'proj');
+for (const d of [path.join(T, 'logs'), P, path.join(T, 'chef')]) fs.mkdirSync(d, { recursive: true });
+fs.writeFileSync(path.join(T, 'config.json'), JSON.stringify({
+  conductor: 'chef', defaults: { model: 'claude-haiku-5-5', allowedTools: 'Read,Edit,Write,Bash', provider: 'claude' },
+  projects: [{ name: 'chef', path: path.join(T, 'chef') }, { name: 'P', path: P }],
+}));
+fs.writeFileSync(path.join(T, 'model-routing.json'), JSON.stringify({
+  version: 2, assignments: {
+    'dev.comprendre': { provider: 'anthropic', model: 'claude-opus-5-5' },
+    'dev.concevoir': { provider: 'anthropic', model: 'claude-opus-5-5' },
+    'dev.liste-tests': { provider: 'anthropic', model: 'claude-opus-5-5' },
+    'dev.rouge': { provider: 'anthropic', model: 'claude-opus-5-5' },
+    'dev.vert': { provider: 'anthropic', model: 'claude-sonnet-5-5' },
+    'dev.refactor': { provider: 'anthropic', model: 'claude-sonnet-5-5' },
+    'dev.revue': { provider: 'anthropic', model: 'claude-fable-5-1' },
+    'dev.livrer': { provider: 'anthropic', model: 'claude-sonnet-5-5' },
+  }, history: [], enforcement: { projects: ['P'], pipelines: ['discussion', 'dev'] },
+}));
+const g = (...a) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@localhost', ...a], { cwd: P, encoding: 'utf8' });
+fs.writeFileSync(path.join(P, 'package.json'), JSON.stringify({ name: 'p', version: '1.0.0', type: 'module', scripts: { test: 'node --test' } }, null, 2) + '\n');
+fs.mkdirSync(path.join(P, 'test')); fs.mkdirSync(path.join(P, 'src')); fs.mkdirSync(path.join(P, 'docs')); fs.mkdirSync(path.join(P, '.orchestrateur'));
+fs.writeFileSync(path.join(P, 'test', 'base.test.mjs'), "import { test } from 'node:test';\ntest('base', () => {});\n");
+fs.writeFileSync(path.join(P, 'src', 'pipe.mjs'), 'export const id = (x) => x;\n');
+fs.writeFileSync(path.join(P, 'CHANGELOG.md'), '# Changelog\n\n## [1.0.0] - 2026-10-01\n- début\n');
+fs.writeFileSync(path.join(P, 'docs', 'USER_REQUIREMENTS.md'), '| date | demande | test | version |\n|---|---|---|---|\n');
+fs.writeFileSync(path.join(P, '.orchestrateur', 'pipeline.json'), JSON.stringify({ testCommand: 'node --test', testGlobs: ['test/**'], versionFiles: ['package.json'], changelog: 'CHANGELOG.md', requirements: 'docs/USER_REQUIREMENTS.md' }));
+g('init', '-q'); g('add', '-A'); g('commit', '-q', '-m', 'init');
+const H0 = g('rev-parse', 'HEAD').stdout.trim();
+const reset = () => { g('reset', '-q', '--hard', H0); g('clean', '-qfd', '-e', '.orchestrateur'); };
+
+const baseEnv = { ...process.env, DISPATCH_ROOT_FOR_TESTS: T, CLAUDE_BIN: FAKE, FAKE_CLAUDE_PIPELINE: '1', FAKE_CLAUDE_ECHO_MODEL: '1',
+  FAKE_CLAUDE_LATENCY_MS: '5', FAKE_CLAUDE_TOOL_USES: '0', ORCH_PERM_DISABLE: '1', ORCH_PORT: String(srv.address().port), ORCH_PIPE_PROGRESS_MS: '200' };
+for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'ORCH_TURN_PROJECT', 'ORCH_TURN_STEP', 'ORCH_STEP_TOKEN', 'ORCH_OBS_ID', 'DISPATCH_SLOT', 'ORCH_TEST_LABEL', 'FAKE_PIPE_BAD', 'FAKE_PIPE_REVIEW', 'FAKE_PIPE_ITEMS', 'FAKE_PIPE_BIG', 'FAKE_PIPE_REFACTOR']) delete baseEnv[k];
+// Asynchrone : l'écouteur des notifications tourne dans CE processus.
+const dispatch = (args, env = {}) => new Promise((resolve) => {
+  const c = spawn(process.execPath, [path.join(ROOT, 'scripts', 'dispatch.mjs'), 'P', ...args], { env: { ...baseEnv, ...env }, windowsHide: true });
+  let out = ''; c.stdout.on('data', d => { out += d; }); c.stderr.on('data', d => { out += d; });
+  const t = setTimeout(() => c.kill(), 240_000);
+  c.on('exit', code => { clearTimeout(t); resolve({ code, out }); });
+});
+const logOf = () => { try { return fs.readFileSync(path.join(T, 'logs', 'P.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean); } catch { return []; } };
+const runState = (run) => JSON.parse(fs.readFileSync(path.join(T, 'logs', 'runs', run, 'run.json'), 'utf8'));
+const go = async (args, env) => { const n0 = logOf().length, k0 = notices.length; const r = await dispatch(args, env); const evs = logOf().slice(n0); return { ...r, evs, run: evs.find(e => e.type === 'user_prompt' && e.pipeline)?.pipeline.run, done: evs.filter(e => e.subtype === 'pipeline_step_done'), notes: notices.slice(k0) }; };
+const seq = (done) => done.map(d => `${d.pipeline.step}${d.status === 'ok' ? '' : `:${d.status}`}`).join(',');
+
+// ---------------------------------------------------------------------------
+section('2. Complet : Comprendre → Concevoir → Liste → (4a → 4b → 4c) par item → Revue → Livrer');
+let r = await go(['Ajoute les fonctions de multiplication par deux et par trois', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '2' });
+ok(r.code === 0, `exécution terminée (code ${r.code})`, r.out.slice(-1200));
+ok(seq(r.done) === 'comprendre,concevoir,liste-tests,rouge,vert,refactor:skipped,rouge,vert,refactor:skipped,revue,livrer', `enchaînement : ${seq(r.done)}`);
+const up = r.evs.find(e => e.type === 'user_prompt');
+ok(up?.pipeline?.mode === 'complet' && up.pipeline.steps.some(s => s.loop && s.id === 'refactor'), 'user_prompt : mode complet, frise annoncée avec la boucle 4a/4b/4c');
+const rouges = r.done.filter(d => d.pipeline.step === 'rouge'), verts = r.done.filter(d => d.pipeline.step === 'vert');
+ok(rouges.length === 2 && rouges.every(d => d.test?.ok === false) && verts.every(d => d.test?.ok === true), '4a ÉCHOUE réellement (suite lancée par l’orchestrateur), 4b la rend verte — à chaque item');
+ok(r.evs.filter(e => e.subtype === 'pipeline_item_start').length === 2 && r.evs.filter(e => e.subtype === 'pipeline_item_done').length === 2, 'un item à la fois : 2 démarrés, 2 cochés');
+const tmd = fs.readFileSync(path.join(P, '.orchestrateur', 'runs', r.run, 'tests.md'), 'utf8');
+ok(E.parseItems(tmd).every(i => i.done), 'la boucle s’arrête quand la liste est vide (tout est coché, par le moteur)');
+ok(r.done.filter(d => d.pipeline.step === 'refactor').every(d => /seuil/.test(d.why || '')), '4c sautée quand 4b a très peu changé — et c’est dit');
+ok(['comprendre', 'concevoir', 'liste-tests'].every(id => r.done.find(d => d.pipeline.step === id)?.served === 'claude-opus-5-5') && verts.every(d => d.served === 'claude-sonnet-5-5'), 'chaque étape sur le model de SA case');
+ok(g('rev-list', '--count', `${H0}..HEAD`).stdout.trim() === '1' && fs.existsSync(path.join(P, 'test', 'pipe-1.test.mjs')) && fs.existsSync(path.join(P, 'test', 'pipe-2.test.mjs')), 'un seul commit, un test par item');
+ok(/Développement complet terminé/.test(r.evs.find(e => e.type === 'result')?.result || '') && /2 item\(s\)/.test(r.evs.find(e => e.type === 'result').result), 'résultat : « Développement complet », 2 items');
+reset();
+
+// ---------------------------------------------------------------------------
+section('3. Gardiens : 4b qui touche le test refusé ; 4c qui change le code, ou les tests');
+r = await go(['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '1', FAKE_PIPE_BAD: 'vert:1' });
+const v3 = r.done.filter(d => d.pipeline.step === 'vert');
+ok(r.code === 0 && v3[0]?.status === 'refused' && /fichiers de test modifiés/.test(v3[0].why) && v3[1]?.status === 'ok', `4b qui modifie le test de 4a : refusé puis repris (${seq(r.done)})`);
+reset();
+r = await go(['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '1', FAKE_PIPE_REFACTOR: '1', ORCH_PIPE_REFACTOR_MIN: '0' });
+const rf = r.done.find(d => d.pipeline.step === 'refactor');
+ok(r.code === 0 && rf?.status === 'ok' && rf.test?.ok === true && /valeur/.test(fs.readFileSync(path.join(P, 'src', 'pipe-1.mjs'), 'utf8')), '4c exécutée : code nettoyé, suite verte vérifiée');
+reset();
+r = await go(['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '1', FAKE_PIPE_BAD: 'refactor', ORCH_PIPE_REFACTOR_MIN: '0' });
+const rfs = r.done.filter(d => d.pipeline.step === 'refactor');
+ok(r.code === 2 && rfs.length === 2 && rfs.every(d => d.status === 'refused' && /test modifiés/.test(d.why)), `4c qui retouche les tests : refusée (2 essais) puis pause (code ${r.code})`);
+reset();
+r = await go(['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '1', FAKE_PIPE_BAD: 'concevoir:1' });
+const cv = r.done.filter(d => d.pipeline.step === 'concevoir');
+ok(r.code === 0 && cv[0]?.status === 'refused' && /Approche/.test(cv[0].why) && cv[1]?.status === 'ok', 'Concevoir sans les sections attendues : refusé puis repris');
+reset();
+
+// ---------------------------------------------------------------------------
+section('4. Revue → chaque problème devient un item → retour à la boucle');
+r = await go(['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '1', FAKE_PIPE_REVIEW: 'problemes:1' });
+const loop = r.evs.find(e => e.subtype === 'pipeline_loop');
+ok(r.code === 0 && loop?.pipeline?.to === 'tdd', `revue → retour à la boucle TDD (${loop?.text})`);
+ok(seq(r.done).endsWith('revue,rouge,vert,refactor:skipped,revue,livrer'), `l’item de revue a son propre 4a/4b : ${seq(r.done)}`);
+ok(E.parseItems(fs.readFileSync(path.join(P, '.orchestrateur', 'runs', r.run, 'tests.md'), 'utf8')).some(i => /^\(revue\)/.test(i.text) && i.done), 'tests.md : l’item « (revue) … » ajouté puis coché');
+reset();
+
+// ---------------------------------------------------------------------------
+section('5. Montée léger → complet (garde-fou du plan §4), annoncée');
+r = await go(['Ajoute une fonction double', '--mode', 'leger'], { FAKE_PIPE_BIG: '1', FAKE_PIPE_ITEMS: '1' });
+const esc = r.evs.find(e => e.subtype === 'pipeline_escalate');
+ok(r.code === 0 && esc && /nouveau\(x\) fichier\(s\) de code|fichiers/.test(esc.text), `périmètre dépassé → montée en complet : « ${esc?.text?.slice(0, 110)} »`);
+ok(seq(r.done) === 'rouge,vert,liste-tests,rouge,vert,refactor:skipped,revue,livrer', `puis liste de tests et un test à la fois : ${seq(r.done)}`);
+const res5 = r.evs.find(e => e.type === 'result')?.result || '';
+ok(/Monté de léger en complet/.test(res5) && runState(r.run).mode === 'complet' && runState(r.run).escalated, 'dit dans le résultat ; run.json : mode complet, escalated');
+reset();
+r = await go(['Ajoute une fonction double', '--mode', 'leger']);
+ok(r.code === 0 && !r.evs.some(e => e.subtype === 'pipeline_escalate') && seq(r.done) === 'rouge,vert,revue,livrer', 'changement localisé (fichier existant, 2 lignes) : reste léger');
+reset();
+
+// ---------------------------------------------------------------------------
+section('6. Chaque limite prévient l’utilisateur : log, dashboard (input), chef');
+const limitCase = async (label, args, env, want) => {
+  const x = await go(args, env);
+  const lim = x.evs.find(e => e.type === 'notification' && e.subtype === 'pipeline_limit');
+  const input = deriveState(logOf().map(e => JSON.stringify(e))).state === 'input';
+  const chef = x.notes.find(n => n.path === '/api/notify' && n.project === 'chef' && n.source === 'pipeline-limit' && /Limite atteinte/.test(n.text));
+  ok(x.code === 2 && lim?.limit === want && input && chef, `${label} → pause « ${want} » : log ${!!lim}, dashboard ${input}, chef ${!!chef}`, x.out.slice(-500));
+  reset();
+};
+await limitCase('liste de tests trop longue (4 > 3)', ['Ajoute beaucoup de choses', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '4', ORCH_PIPE_ITEMS: '3' }, 'items');
+await limitCase('4b : 3 essais sans passer', ['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '1', FAKE_PIPE_BAD: 'vert' }, 'green');
+await limitCase('critère de 4a refusé 2 fois', ['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '1', FAKE_PIPE_BAD: 'rouge' }, 'criteria');
+await limitCase('tours de revue épuisés', ['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '1', FAKE_PIPE_REVIEW: 'problemes', ORCH_PIPE_REVIEW_ROUNDS: '1' }, 'review');
+await limitCase('durée maximale', ['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '1', ORCH_PIPE_RUN_MS: '1' }, 'duration');
+
+// ---------------------------------------------------------------------------
+section('7. Classification : nouvelle fonctionnalité → complet ; /léger → léger');
+r = await go(['Ajoute une fonction de multiplication'], { FAKE_PIPE_ITEMS: '1' });
+ok(r.code === 0 && r.evs.find(e => e.type === 'user_prompt')?.pipeline?.mode === 'complet', `sans --mode : ${r.evs.find(e => e.type === 'user_prompt')?.pipeline?.mode}`);
+reset();
+r = await go(['/léger ajoute une fonction double']);
+ok(r.code === 0 && r.evs.find(e => e.type === 'user_prompt')?.pipeline?.mode === 'leger', '« /léger » force le mode léger');
+reset();
+r = await go(['x', '--mode', 'moyen']);
+ok(r.code === 64, '--mode inconnu refusé (64)');
+
+srv.close();
+fs.rmSync(T, { recursive: true, force: true });
+console.log(`\n${pass} ok, ${fail} KO`);
+process.exit(fail ? 1 : 0);

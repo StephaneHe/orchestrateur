@@ -1033,16 +1033,27 @@ export async function browserChecks(sb, t) {
     wire(tp);
     const spoken = () => tp.evaluate(() => window.__tts.spoken);
     await check(B, 'tts', 'Lecture audio : 🔊 sur les bulles du chef, texte nettoyé et découpé, voix FR, pause / reprise / arrêt, Ctrl+Alt+L', async () => {
+      // Bulle de référence remise en fin de fil : le fil ne montre que les 60
+      // derniers messages, et les notices du serveur au chef (lacunes, réveils,
+      // autorisations) en ajoutent au fil de la recette — la fixture d'origine
+      // pouvait sortir de la fenêtre selon la durée du parcours.
+      appendLog('chef', [
+        { type: 'user_prompt', text: 'Fais le point sur la flotte (recette lecture audio)' },
+        { type: 'system', subtype: 'init', model: 'claude-opus-5-5' },
+        { type: 'assistant', message: { content: [{ type: 'text', text: 'Bonjour — la flotte est calme, rien à signaler.' }] } },
+        { type: 'result', subtype: 'success', is_error: false, num_turns: 1, duration_ms: 2000, duration_api_ms: 1500, result: 'Bonjour — la flotte est calme, rien à signaler.' },
+      ]);
       await tp.goto(`${sb.url}/?token=${sb.token}`);
       await tp.locator('.brand').waitFor();
       if (!(await tp.evaluate(() => !!window.Tts))) NA('lecture audio absente de cet état du code');
-      assert(await until(async () => (await tp.locator('#cv-scroll .cv-tts-btn').count()) > 0, 10_000), 'aucun bouton « écouter » sur les bulles du chef');
-      const btn = tp.locator('#cv-scroll .cv-tts-btn').first();
+      const refBubble = tp.locator('#cv-scroll .cv-bubble.is-conductor', { hasText: 'la flotte est calme' }).last();
+      assert(await until(async () => (await refBubble.locator('.cv-tts-btn').count()) > 0, 10_000), 'aucun bouton « écouter » sur les bulles du chef');
+      const btn = refBubble.locator('.cv-tts-btn');
       assert(/Écouter/.test(await btn.getAttribute('aria-label')), 'aria-label');
-      // On fait défiler le FIL jusqu'à la première bulle, comme un utilisateur :
+      // On fait défiler le FIL jusqu'à la bulle, comme un utilisateur :
       // laissé à Playwright, le défilement automatique décale aussi les
       // conteneurs parents (overflow: hidden) et fausse les captures.
-      await tp.evaluate(() => { document.getElementById('cv-scroll').scrollTop = 0; });
+      await refBubble.evaluate((el) => { const s = document.getElementById('cv-scroll'); s.scrollTop = Math.max(0, el.offsetTop - 20); });
       await sleep(200);
       await btn.click();
       assert(await until(async () => (await spoken()).length > 0, 3000), 'rien envoyé au moteur');
@@ -1497,6 +1508,39 @@ export async function browserChecks(sb, t) {
         await shot(rp, 'pipeline-frise');
       } finally { await rctx.close(); }
       return 'frise rendue : 3 étapes, refus motivé, défaut du projet, limite';
+    });
+
+    // 0.49.0 — phase 4 : la frise du Développement complet (items, 4c sautée, montée).
+    await check(B, 'run-tdd-timeline', 'Pipeline complet : frise avec l’item traité par chaque 4a/4b/4c, « ↷ sautée », items cochés, montée léger → complet annoncée', async () => {
+      const js = await (await fetch(`${sb.url}/activite.js`, { headers: H })).text();
+      if (!/jt-escalate/.test(js)) NA('Développement complet absent de cet état du code');
+      const run = 'p-20261009T130000-c0ffee';
+      const st = (k, id, item, extra = {}) => ({ type: 'system', subtype: 'pipeline_step_done', pipeline: { run, step: id, key: k, item }, model: 'claude-sonnet-5-5', served: 'claude-sonnet-5-5', modelSource: 'pipeline', status: 'ok', durationMs: 20_000, ...extra });
+      appendLog('zeta', [
+        { type: 'user_prompt', text: 'Ajoute une fonction double', pipeline: { run, pipeline: 'dev', mode: 'leger', kind: 'simple', steps: [{ id: 'rouge', title: '4a Rouge' }, { id: 'vert', title: '4b Vert' }, { id: 'refactor', title: '4c Refactor', loop: true }, { id: 'revue', title: '5 Revue' }] } },
+        st('01-rouge', 'rouge', undefined), st('02-vert', 'vert', undefined),
+        { type: 'system', subtype: 'pipeline_escalate', pipeline: { run, from: 'leger', to: 'complet' }, text: '⇧ périmètre dépassé (5 fichiers) : l’exécution monte en Développement complet' },
+        st('03-liste-tests', 'liste-tests', undefined),
+        st('04-rouge', 'rouge', 2), st('05-vert', 'vert', 2),
+        { ...st('06-refactor', 'refactor', 2), status: 'skipped', why: '4b n’a changé que 1 ligne(s) (seuil 10)' },
+        { type: 'system', subtype: 'pipeline_item_done', pipeline: { run, item: 2 }, text: '✓ item 2 coché' },
+        { type: 'system', subtype: 'pipeline_summary', pipeline: { run, status: 'done' }, totalMs: 200_000 },
+        { type: 'result', subtype: 'success', is_error: false, num_turns: 6, duration_ms: 200_000, duration_api_ms: 150_000, result: '✓ zeta — pipeline Développement complet terminé.' },
+      ]);
+      const rctx = await browser.newContext({ viewport: { width: 1600, height: 1000 }, locale: 'fr-FR' });
+      const rp = await rctx.newPage();
+      wire(rp);
+      try {
+        await rp.goto(`${sb.url}/?token=${sb.token}#/m/zeta`);
+        await rp.locator('.brand').waitFor();
+        const sel = `#dive .jt-pipeline[data-run="${run}"]`;
+        assert(await until(async () => (await rp.locator(sel).count()) ? true : null, 10_000), 'frise absente');
+        const txt = await rp.textContent(sel);
+        for (const want of ['Développement complet', 'monte en Développement complet', 'item 2', '↷ sautée', '1 item(s) cochés']) assert(txt.includes(want), `frise sans « ${want} » : ${txt.slice(0, 400)}`);
+        assert(await rp.locator(`${sel} .jt-step[data-step-status="skipped"]`).count() === 1, '4c sautée non marquée');
+        await shot(rp, 'pipeline-frise-complet');
+      } finally { await rctx.close(); }
+      return 'frise complète : items, 4c sautée, montée annoncée';
     });
 
     await check(B, 'js-errors', 'Aucune erreur JavaScript non interceptée pendant les parcours', async () => {

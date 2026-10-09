@@ -1047,6 +1047,54 @@ Suite de la demande du 2026-10-09. Plan : `docs/PLAN-pipeline-enforcement.md`.
   le nettoyage de l'env du serveur. Le moteur et la porte (`dispatch.mjs`)
   sont actifs tout de suite.
 
+## Pipelines obligatoires — phase 4 : Développement complet (0.49.0)
+
+- **Plan complet** (`devCatalog`, `planSteps`) : Comprendre → Concevoir →
+  Liste de tests → `@loop` → Revue → Livrer.
+  - `@loop` lit `tests.md` (`parseItems`) et insère `rouge, vert, refactor,
+    @check` pour le premier item non coché. `@check` coche cet item
+    (`checkItem`) : c'est le moteur qui coche, jamais le model.
+  - La boucle se termine quand la liste est vide.
+  - L'item voyage dans le prompt (`ITEM=<n>: …`) et dans les événements
+    (`pipeline.item`).
+- **Critères** :
+  - `plan.md` : au moins deux sections `##` ;
+  - `tests.md` : au moins une case `- [ ]`, et au plus `LIMITS.items` (15) ;
+  - 4c : tests inchangés et suite verte. Avec `RIEN_A_REFACTORER`, aucune
+    modification n'est permise. 4c est sautée (`skipped`, motif écrit) si 4b
+    a changé moins de `refactorMinLines` (10) lignes (`lineDelta`).
+- **Revue en complet** : chaque problème devient un item `(revue) …`, puis
+  retour à `@loop`, au plus 2 tours. En léger : retour à 4b, comme en 0.48.0.
+- **Montée léger → complet** : après 4b en léger, `lightScope` mesure le
+  changement (plus de 3 fichiers, plus de 150 lignes, ou un nouveau fichier de
+  code, hors tests). Au-delà :
+  - `state.mode = complet`, `escalated` ;
+  - insertion de `liste-tests, @loop` ;
+  - événement `system/pipeline_escalate` ;
+  - mention dans le résultat.
+- **Mode** : `--mode leger|complet`, sinon la classification
+  (`pipeline-observe.classify`) : nouvelle fonctionnalité → complet,
+  hésitation → léger (Q9), préfixes `/léger` et `/complet`. Le champ
+  `pipelineMode` voyage dans la file.
+- **Limites** : `items`, `green`, `criteria`, `review` et `duration`. Chacune
+  produit `notification/pipeline_limit`, l'état `input` (question) et
+  `/api/notify` au chef (`pipeline-limit`). Réglage en test :
+  `ORCH_PIPE_ITEMS`, `ORCH_PIPE_REFACTOR_MIN`.
+- **Fake claude** :
+  - `FAKE_PIPE_ITEMS=<n>` ;
+  - `ITEM=k` → `test/pipe-k`, `src/pipe-k` ;
+  - `FAKE_PIPE_BIG=1` (montée) ;
+  - `FAKE_PIPE_REFACTOR=1`.
+
+  Le 4b léger complète un fichier **existant** : les fixtures ont
+  `src/pipe.mjs`.
+- Recettes :
+  - `_test_pipeline_gates.mjs` (33 contrôles) ;
+  - HTTP `pipeline-tdd` et `pipeline-limits` ;
+  - navigateur `run-tdd-timeline`.
+
+  Les recettes de la phase 3 forcent `--mode leger`.
+
 ## Rouge = vrai incident ; arrêts, essais et attentes neutres (0.47.2)
 
 Remarque utilisateur : « Si il n'y a pas eu de probleme, ca n'aurait pas du

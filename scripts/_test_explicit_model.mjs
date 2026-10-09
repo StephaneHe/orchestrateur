@@ -195,7 +195,7 @@ scenario('file et API : le model demandé n’est jamais réécrit');
   ok(/model:\s+typeof req\.body\?\.model\s+=== 'string' \? req\.body\.model/.test(SRV), 'l’entrée de file garde le model du --model d’origine');
   // 0.41.0 : l'identifiant d'observation voyage aussi (obsId) ; le model, inchangé.
   // 0.44.0 : les models du mode double voyagent aussi ; le model, inchangé.
-  ok(/\{ callback, source, model, provider, slot, ticket, newSession,( obsId,)?( secondModel, secondProvider, dualMode,)?( pipeline, pipelineResume, horsPipeline,)? noQueueIfBusy: true \}/.test(SRV), 'le drain le repasse tel quel (spawnDirectDispatch → --model)');
+  ok(/\{ callback, source, model, provider, slot, ticket, newSession,( obsId,)?( secondModel, secondProvider, dualMode,)?( pipeline, pipelineResume, horsPipeline,( pipelineMode,)?)? noQueueIfBusy: true \}/.test(SRV), 'le drain le repasse tel quel (spawnDirectDispatch → --model)');
   ok(/opts\.model === 'string' && opts\.model\) args\.push\('--model', opts\.model\)/.test(SRV), 'spawnDirectDispatch le transmet en --model ⇒ explicite côté dispatch.mjs');
   ok(/!ev\.synthetic && !ev\.model_unavailable &&/.test(SRV), 'pas de drain immédiat derrière un ✕ « model indisponible »');
   ok(/\[fallback-refusé\]/.test(SRV) && /debugLog\(msg\)/.test(SRV), 'le serveur trace [fallback-refusé] dans server-debug.log');

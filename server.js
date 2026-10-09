@@ -383,7 +383,7 @@ function queueEntryView(e, i) {
     callback: e.callback || null, source: e.source || null,
     attachments: (e.attachmentPaths?.length || 0) + (e.videoPaths?.length || 0),
     newSession: !!e.newSession,
-    pipeline: e.pipeline || null, pipelineResume: e.pipelineResume || null, horsPipeline: e.horsPipeline || null,
+    pipeline: e.pipeline || null, pipelineResume: e.pipelineResume || null, horsPipeline: e.horsPipeline || null, pipelineMode: e.pipelineMode || null,
   };
 }
 
@@ -806,6 +806,7 @@ function spawnDirectDispatch(name, prompt, attachmentPaths = [], videoPaths = []
   }
   // Pipelines (0.48.0) : la demande garde son pipeline jusqu'au lancement.
   if (opts.pipeline === 'discussion' || opts.pipeline === 'dev') args.push('--pipeline', opts.pipeline);
+  if (opts.pipelineMode === 'leger' || opts.pipelineMode === 'complet') args.push('--mode', opts.pipelineMode);
   if (typeof opts.pipelineResume === 'string' && /^p-\d{8}T\d{6}-[a-z0-9]{4,8}$/.test(opts.pipelineResume)) args.push('--pipeline-resume', opts.pipelineResume);
   if (typeof opts.horsPipeline === 'string' && opts.horsPipeline.trim()) args.push('--hors-pipeline', opts.horsPipeline.replace(/\s+/g, ' ').trim().slice(0, 300));
 
@@ -890,7 +891,7 @@ function drainAttempt(name, reason) {
     return;
   }
   drainPending.delete(name);
-  const { id, prompt, attachmentPaths, videoPaths, callback, source, model, provider, slot, ticket, newSession, obsId, secondModel, secondProvider, dualMode, pipeline, pipelineResume, horsPipeline } = q.shift();
+  const { id, prompt, attachmentPaths, videoPaths, callback, source, model, provider, slot, ticket, newSession, obsId, secondModel, secondProvider, dualMode, pipeline, pipelineResume, horsPipeline, pipelineMode } = q.shift();
   if (q.length === 0) dispatchQueue.delete(name);
   persistQueue(name);
   drainLaunchedAt.set(name, Date.now());
@@ -899,7 +900,7 @@ function drainAttempt(name, reason) {
     ` attente-pid=${Date.now() - since}ms`;
   console.log(msg); debugLog(msg);
   spawnDirectDispatch(name, prompt, attachmentPaths, videoPaths,
-    { callback, source, model, provider, slot, ticket, newSession, obsId, secondModel, secondProvider, dualMode, pipeline, pipelineResume, horsPipeline, noQueueIfBusy: true });
+    { callback, source, model, provider, slot, ticket, newSession, obsId, secondModel, secondProvider, dualMode, pipeline, pipelineResume, horsPipeline, pipelineMode, noQueueIfBusy: true });
 }
 
 const DRAIN_WAIT_STEP_MS = 1000;
@@ -4907,6 +4908,7 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
       pipeline:       ['discussion', 'dev'].includes(req.body?.pipeline) ? req.body.pipeline : undefined,
       pipelineResume: typeof req.body?.pipelineResume === 'string' ? req.body.pipelineResume : undefined,
       horsPipeline:   typeof req.body?.horsPipeline === 'string' ? req.body.horsPipeline : undefined,
+      pipelineMode:   ['leger', 'complet'].includes(req.body?.pipelineMode) ? req.body.pipelineMode : undefined,
     };
     if (busy) {
       const len = queuePush(name, entry);

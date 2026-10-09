@@ -47,7 +47,14 @@ export const LIMITS = {
   greenAttempts: 3,        // essais de 4b pour un même test
   reviewRounds: 2,         // tours de revue → correction
   runMs: 90 * 60_000,      // durée totale d'une exécution
+  items: 15,               // items de la liste de tests (au-delà : découper)
+  refactorMinLines: 10,    // 4c sautée si 4b a changé moins de lignes
 };
+// Garde-fou du léger (plan §4) : au-delà, l'exécution monte en complet.
+export const LIGHT_SCOPE = { files: 3, lines: 150 };
+export function pipelineLabel(pipeline, mode) {
+  return pipeline === 'dev' ? (mode === 'complet' ? 'Développement complet' : 'Développement léger') : 'Discussion';
+}
 const PROGRESS_MS = Number(process.env.ORCH_PIPE_PROGRESS_MS) > 0 ? Number(process.env.ORCH_PIPE_PROGRESS_MS) : 30_000;
 const TEST_TIMEOUT_MS = 10 * 60_000;
 
@@ -163,18 +170,62 @@ export function planSteps(pipeline, { mode = 'leger', kind = 'simple' } = {}) {
     ];
   }
   if (pipeline === 'dev') {
-    const steps = [];
-    if (kind !== 'mecanique') {
-      const v = kind === 'bugfix' ? 'bugfix' : 'comportement';
-      steps.push({ id: 'rouge', title: `4a Rouge${kind === 'bugfix' ? ' (reproduire le bug)' : ''}`, chain: [`dev.rouge.${v}`, 'dev.rouge'], group: 'tests', artefact: 'rouge.md' });
-    }
-    const vv = kind === 'mecanique' ? 'mecanique' : 'simple';
-    steps.push({ id: 'vert', title: '4b Vert', chain: [`dev.vert.${vv}`, 'dev.vert'], group: 'code', artefact: 'vert.md' });
-    steps.push({ id: 'revue', title: '5 Revue', chain: ['dev.revue.code', 'dev.revue'], group: 'revue', artefact: 'revue.json', judge: true });
-    steps.push({ id: 'livrer', title: '6 Livrer (+ 7 Documenter)', chain: ['dev.livrer.git', 'dev.livrer'], group: 'code', artefact: 'livraison.md', final: true });
-    return steps;
+    const D = devCatalog({ mode, kind });
+    // Complet (0.49.0) : le TDD canonique — liste de tests, puis UN test à la
+    // fois (4a → 4b → 4c) tant que la liste n'est pas vide (« @loop »).
+    if (mode === 'complet') return ['comprendre', 'concevoir', 'liste-tests', '@loop', 'revue', 'livrer'].map(id => D[id]);
+    return [...(kind !== 'mecanique' ? [D.rouge] : []), D.vert, D.revue, D.livrer];
   }
   throw new Error(`pipeline « ${pipeline} » pas encore en service`);
+}
+
+/** Toutes les étapes possibles du Développement (léger, complet, montée en complet). */
+export function devCatalog({ mode = 'leger', kind = 'simple' } = {}) {
+  const v = kind === 'bugfix' ? 'bugfix' : 'comportement';
+  const vv = kind === 'mecanique' ? 'mecanique' : mode === 'complet' ? 'complexe' : 'simple';
+  return {
+    comprendre: { id: 'comprendre', title: '1 Comprendre', chain: ['dev.comprendre.codebase', 'dev.comprendre'], group: 'analyse', artefact: 'comprehension.md', judge: true },
+    concevoir: { id: 'concevoir', title: '2 Concevoir', chain: ['dev.concevoir.plan', 'dev.concevoir'], group: 'analyse', artefact: 'plan.md', judge: true },
+    'liste-tests': { id: 'liste-tests', title: '3 Liste de tests', chain: ['dev.liste-tests'], group: 'tests', artefact: 'tests.md', judge: true },
+    '@loop': { id: '@loop', title: '4 Boucle TDD (un test à la fois)', chain: ['dev.rouge'], marker: true },
+    '@check': { id: '@check', title: 'item coché', chain: [], marker: true },
+    rouge: { id: 'rouge', title: `4a Rouge${kind === 'bugfix' ? ' (reproduire le bug)' : ''}`, chain: [`dev.rouge.${v}`, 'dev.rouge'], group: 'tests', artefact: 'rouge.md' },
+    vert: { id: 'vert', title: '4b Vert', chain: [`dev.vert.${vv}`, 'dev.vert'], group: 'code', artefact: 'vert.md' },
+    refactor: { id: 'refactor', title: '4c Refactor', chain: ['dev.refactor'], group: 'code', artefact: 'refactor.md', optional: true },
+    revue: { id: 'revue', title: '5 Revue', chain: ['dev.revue.code', 'dev.revue'], group: 'revue', artefact: 'revue.json', judge: true },
+    livrer: { id: 'livrer', title: '6 Livrer (+ 7 Documenter)', chain: ['dev.livrer.git', 'dev.livrer'], group: 'code', artefact: 'livraison.md', final: true },
+  };
+}
+
+/** Items de tests.md : « - [ ] texte » / « - [x] texte », dans l'ordre. */
+export function parseItems(md) {
+  const out = [];
+  for (const line of String(md || '').split(/\r?\n/)) {
+    const m = /^\s*[-*]\s+\[( |x|X)\]\s+(.+?)\s*$/.exec(line);
+    if (m) out.push({ n: out.length + 1, done: m[1] !== ' ', text: m[2] });
+  }
+  return out;
+}
+/** Coche l'item n (1-based) dans le texte de tests.md. */
+export function checkItem(md, n) {
+  let i = 0;
+  return String(md).split(/(\r?\n)/).map(part => {
+    const m = /^(\s*[-*]\s+\[)( |x|X)(\]\s+.+)$/.exec(part);
+    if (!m) return part;
+    i++;
+    return i === n ? `${m[1]}x${m[3]}` : part;
+  }).join('');
+}
+/** Lignes changées entre deux instantanés (fichiers hors tests) : une mesure grossière mais stable. */
+export function lineDelta(cwd, before, after, files) {
+  let n = 0;
+  const read = (h) => { if (!h) return []; const r = spawnSync('git', ['-C', cwd, 'cat-file', 'blob', h], { encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024 }); return r.status === 0 ? r.stdout.split('\n') : []; };
+  for (const f of files) {
+    const a = read(before.get(f)), b = read(after.get(f));
+    const sa = new Set(a), sb = new Set(b);
+    n += b.filter(l => !sa.has(l)).length + a.filter(l => !sb.has(l)).length;
+  }
+  return n;
 }
 
 // ---------------------------------------------------------------------------
@@ -286,17 +337,20 @@ function stepPrompt(ctx, step, extra) {
   const { run, pipeline, artDir, cfg } = ctx;
   const art = (f) => path.join(artDir, f).replace(/\\/g, '/');
   const L = [];
-  L.push(`[PIPELINE ${pipeline === 'dev' ? 'Développement léger' : 'Discussion'} — exécution ${run} — étape ${step.title}]`);
+  L.push(`[PIPELINE ${pipelineLabel(pipeline, ctx.mode)} — exécution ${run} — étape ${step.title}]`);
   L.push(`PIPELINE_STEP=${step.id}`);
   L.push(`ARTEFACT=${art(step.artefact)}`);
   L.push(`DOSSIER_ARTEFACTS=${artDir.replace(/\\/g, '/')}`);
+  if (ctx.item && ['rouge', 'vert', 'refactor'].includes(step.id)) L.push(`ITEM=${ctx.item.n}: ${ctx.item.text}`);
   L.push('');
   L.push(`Demande d'origine : ${art('demande.md')} (lis-la d'abord). Les artefacts des étapes précédentes sont dans le même dossier : lis ceux qui existent.`);
   L.push('');
   const T = cfg.testCommand ? `« ${cfg.testCommand} »` : 'la suite de tests du projet';
   switch (step.id) {
     case 'comprendre':
-      L.push('Ton rôle : COMPRENDRE la question. Reformule ce qui est réellement demandé, les interprétations possibles, et repère les fichiers utiles du projet.');
+      L.push(pipeline === 'dev'
+        ? 'Ton rôle : étape 1 COMPRENDRE. Lis le code existant (et les logs utiles) avant toute modification : modules concernés, conventions, points d’entrée, tests existants.'
+        : 'Ton rôle : COMPRENDRE la question. Reformule ce qui est réellement demandé, les interprétations possibles, et repère les fichiers utiles du projet.');
       L.push(`Écris ${art('comprehension.md')}. Cite les fichiers du projet entre accents graves (\`chemin/relatif\`) : chaque chemin cité doit exister.`);
       L.push('Ne modifie AUCUN fichier du projet (lecture seule).');
       break;
@@ -310,8 +364,25 @@ function stepPrompt(ctx, step, extra) {
       L.push(`Écris la réponse complète, en Markdown, dans ${art('reponse.md')} : c'est elle que l'utilisateur lira.`);
       L.push('Ne modifie AUCUN fichier du projet. Si une modification est souhaitable, propose-la : elle deviendra une tâche si l’utilisateur la confirme.');
       break;
+    case 'concevoir':
+      L.push('Ton rôle : étape 2 CONCEVOIR. À partir de comprehension.md : la structure retenue, les compromis, et le découpage en étapes vérifiables. Aucune ligne de code.');
+      L.push(`Écris ${art('plan.md')}, avec au moins les sections « ## Approche » et « ## Étapes ».`);
+      L.push('Ne modifie AUCUN fichier du projet.');
+      break;
+    case 'liste-tests':
+      L.push('Ton rôle : étape 3 LISTE DE TESTS (TDD canonique, Kent Beck). Liste les COMPORTEMENTS attendus, un par ligne, avec leurs critères d’acceptation — sans aucune décision d’implémentation.');
+      L.push(`Écris ${art('tests.md')} : une case à cocher par comportement, au format exact « - [ ] <comportement observable> ». Au plus ${ctx.limits?.items || LIMITS.items} cases (au-delà : la demande doit être découpée).`);
+      if (ctx.escalated) L.push('La demande a dépassé le périmètre du mode léger : un premier test existe déjà (voir rouge.md) et passe. Mets-le en tête, déjà coché « - [x] », puis les comportements RESTANTS à couvrir.');
+      L.push('Ne modifie AUCUN fichier du projet. L’orchestrateur traitera ensuite les cases UNE PAR UNE (4a → 4b → 4c).');
+      break;
+    case 'refactor':
+      L.push(`Ton rôle : étape 4c REFACTOR, pour l'item « ${ctx.item?.text || ''} » : nettoie le code maintenant que les tests le protègent, SANS changer le comportement (noms, duplication, lisibilité).`);
+      L.push('Interdit : modifier les tests. La suite doit rester verte.');
+      L.push(`Écris ${art('refactor.md')} : ce que tu as nettoyé. S'il n'y a rien d'utile à faire, écris exactement « RIEN_A_REFACTORER » dans ce fichier et ne modifie rien.`);
+      break;
     case 'rouge':
-      L.push(`Ton rôle : étape 4a ROUGE du TDD. Écris UN test qui décrit le comportement attendu${ctx.kind === 'bugfix' ? ' — ici : un test qui REPRODUIT le bug signalé' : ''}, et rien d'autre.`);
+      if (ctx.item) L.push(`Item de la liste de tests à traiter MAINTENANT, et lui seul (tests.md) : « ${ctx.item.text} ».`);
+      L.push(`Ton rôle : étape 4a ROUGE du TDD. Écris UN test qui décrit le comportement attendu${ctx.kind === 'bugfix' && !ctx.item ? ' — ici : un test qui REPRODUIT le bug signalé' : ''}, et rien d'autre.`);
       L.push(`Tu ne modifies QUE des fichiers de test (motifs : ${(cfg.testGlobs || []).join(', ')}). Aucun code de production.`);
       L.push(`Après ton tour, l'orchestrateur lance ${T} : elle doit ÉCHOUER, à cause de ton test.`);
       L.push(`Écris ${art('rouge.md')} : le nom du test, le fichier, et pourquoi il échoue aujourd'hui.`);
@@ -323,6 +394,7 @@ function stepPrompt(ctx, step, extra) {
       } else if (ctx.kind === 'mecanique') {
         L.push('Ton rôle : étape 4b — faire la modification MÉCANIQUE demandée (renommage, remplacement…), sans changer le comportement. Ne modifie aucun test existant.');
       } else {
+        if (ctx.item) L.push(`Item en cours : « ${ctx.item.text} ». Ne traite pas les items suivants : ils auront leur propre test.`);
         L.push('Ton rôle : étape 4b VERT du TDD. Écris le code MINIMAL qui fait passer le test écrit à l’étape 4a (voir rouge.md) ET tous les autres.');
         L.push('Interdit : modifier les fichiers de test (l’orchestrateur compare leur empreinte : toute modification est refusée).');
       }
@@ -371,6 +443,15 @@ function checkCriteria(ctx, step, before, after) {
       const missing = missingCitedPaths(art, cwd);
       if (missing.length) return { ok: false, why: `chemins cités inexistants : ${missing.slice(0, 6).join(', ')}`, changed };
     }
+    if (step.id === 'concevoir' && (art.match(/^##\s+\S/gm) || []).length < 2) {
+      return { ok: false, why: 'plan.md : il faut au moins les sections « ## Approche » et « ## Étapes »', changed };
+    }
+    if (step.id === 'liste-tests') {
+      const items = parseItems(art);
+      const open = items.filter(i => !i.done);
+      if (!items.length || (!open.length && !ctx.escalated)) return { ok: false, why: 'tests.md : aucune case « - [ ] <comportement> »', changed };
+      return { ok: true, changed, items };
+    }
     if (step.id === 'revue') {
       let j;
       try { j = JSON.parse(art.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')); } catch { return { ok: false, why: 'revue.json n’est pas un JSON valide', changed }; }
@@ -403,6 +484,18 @@ function checkCriteria(ctx, step, before, after) {
     if (touched.length) return { ok: false, why: `fichiers de test modifiés (interdit à cette étape) : ${touched.slice(0, 8).join(', ')}`, changed };
     const t = runCommand(cwd, cfg.testCommand, ctx.testEnv);
     if (!t.ok) return { ok: false, why: `la suite échoue encore (${cfg.testCommand}, code ${t.code}) :\n${t.out.slice(-1500)}`, changed, test: t };
+    return { ok: true, changed, test: t };
+  }
+  if (step.id === 'refactor') {
+    const nothing = /RIEN_A_REFACTORER/.test(art || '');
+    if (!art) return { ok: false, why: 'artefact refactor.md absent', changed };
+    if (nothing && changed.length) return { ok: false, why: `« RIEN_A_REFACTORER » annoncé, mais des fichiers ont changé : ${changed.slice(0, 8).join(', ')}`, changed };
+    const tests = ctx.testPrint;
+    const touched = [...tests.keys()].filter(f => after.get(f) !== tests.get(f));
+    if (touched.length) return { ok: false, why: `fichiers de test modifiés (interdit au refactor) : ${touched.slice(0, 8).join(', ')}`, changed };
+    if (nothing) return { ok: true, changed, nothing: true };
+    const t = runCommand(cwd, cfg.testCommand, ctx.testEnv);
+    if (!t.ok) return { ok: false, why: `le refactor casse la suite (${cfg.testCommand}) :\n${t.out.slice(-1500)}`, changed, test: t };
     return { ok: true, changed, test: t };
   }
   if (step.id === 'livrer') {
@@ -459,6 +552,8 @@ export async function runPipeline(o) {
     greenAttempts: Number(process.env.ORCH_PIPE_GREEN_ATTEMPTS) || LIMITS.greenAttempts,
     reviewRounds: Number.isFinite(Number(process.env.ORCH_PIPE_REVIEW_ROUNDS)) && process.env.ORCH_PIPE_REVIEW_ROUNDS !== undefined ? Number(process.env.ORCH_PIPE_REVIEW_ROUNDS) : LIMITS.reviewRounds,
     runMs: Number(process.env.ORCH_PIPE_RUN_MS) || LIMITS.runMs,
+    items: Number(process.env.ORCH_PIPE_ITEMS) || LIMITS.items,
+    refactorMinLines: Number.isFinite(Number(process.env.ORCH_PIPE_REFACTOR_MIN)) && process.env.ORCH_PIPE_REFACTOR_MIN !== undefined ? Number(process.env.ORCH_PIPE_REFACTOR_MIN) : LIMITS.refactorMinLines,
   };
 
   // ── Reprise d'une exécution en pause, ou exécution neuve ─────────────────
@@ -515,7 +610,7 @@ export async function runPipeline(o) {
   const artDir = path.join(cwd, '.orchestrateur', 'runs', run);
   fs.mkdirSync(runDir, { recursive: true });
   fs.mkdirSync(artDir, { recursive: true });
-  const mode = state?.mode || 'leger';
+  const mode = state?.mode || (pipeline === 'dev' && o.mode === 'complet' ? 'complet' : 'leger');
   const kind = state?.kind || (pipeline === 'dev' ? devKind(prompt) : null);
   const assignments = readAssignments(root);
   if (!state) {
@@ -541,17 +636,19 @@ export async function runPipeline(o) {
 
   // Le musicien est occupé pendant toute l'exécution : le parent tient le .pid.
   try { fs.writeFileSync(pidPath, String(process.pid)); } catch {}
-  const stepDefs = Object.fromEntries(planSteps(pipeline, { mode, kind }).map(s => [s.id, s]));
-  const planned = state.plan.map(id => ({ id, title: stepDefs[id].title, slot: resolveCase(assignments, stepDefs[id].chain) }));
+  let stepDefs = pipeline === 'dev' ? devCatalog({ mode: state.mode, kind }) : Object.fromEntries(planSteps(pipeline, { mode, kind }).map(s => [s.id, s]));
+  // Frise annoncée : la boucle TDD se lit 4a → 4b → 4c, répétée par item.
+  const planned = state.plan.flatMap(id => (id === '@loop' ? ['rouge', 'vert', 'refactor'].map(x => ({ id: x, loop: true })) : id === '@check' ? [] : [{ id }]))
+    .map(p => ({ ...p, title: stepDefs[p.id].title, slot: resolveCase(assignments, stepDefs[p.id].chain) }));
   writeEvent({
     type: 'user_prompt', text: o.promptForLog ?? prompt,
-    pipeline: { run, pipeline, mode, kind, resumed: resumed || undefined, steps: planned.map(p => ({ id: p.id, title: p.title, slot: p.slot.slot, model: p.slot.model, provider: p.slot.provider, second: p.slot.second, source: p.slot.source })) },
+    pipeline: { run, pipeline, mode: state.mode, kind, resumed: resumed || undefined, steps: planned.map(p => ({ id: p.id, title: p.title, loop: p.loop || undefined, slot: p.slot.slot, model: p.slot.model, provider: p.slot.provider, second: p.slot.second, source: p.slot.source })) },
     ...(sourceProject ? { source: sourceProject } : {}),
     ...(callbackProject ? { callback: callbackProject } : {}),
     ...(o.testLabel ? { test: { label: o.testLabel } } : {}),
   });
-  writeEvent({ type: 'system', subtype: 'pipeline_start', pipeline: { run, pipeline, mode, kind, base },
-    text: `${resumed ? 'reprise de l’exécution' : 'exécution'} ${run} : pipeline ${pipeline === 'dev' ? 'Développement léger' : 'Discussion'} — ${planned.map(p => p.title).join(' → ')}`,
+  writeEvent({ type: 'system', subtype: 'pipeline_start', pipeline: { run, pipeline, mode: state.mode, kind, base },
+    text: `${resumed ? 'reprise de l’exécution' : 'exécution'} ${run} : pipeline ${pipelineLabel(pipeline, state.mode)} — ${state.plan.filter(id => id !== '@check').map(id => stepDefs[id].title).join(' → ')}`,
     ...(o.modeNote ? { note: o.modeNote } : {}) });
   for (const p of planned) {
     if (p.slot.source === 'project-default') {
@@ -573,7 +670,8 @@ export async function runPipeline(o) {
   if (obsId) childEnv.ORCH_OBS_ID = obsId;
   const testEnv = { ...childEnv };
   delete testEnv.ORCH_OBS_ID;
-  const ctx = { run, pipeline, kind, cwd, cfg, artDir, base, testEnv, reviewItems: null, testPrint: null };
+  const ctx = { run, pipeline, kind, mode: state.mode, cwd, cfg, artDir, base, testEnv, reviewItems: null, testPrint: null, limits,
+    item: state.item || null, escalated: !!state.escalated };
   const started = Date.parse(state.createdAt) || Date.now();
   const totals = { costUsd: 0, apiMs: 0, turns: 0 };
 
@@ -584,7 +682,7 @@ export async function runPipeline(o) {
     if (question) state.question = question;
     saveState();
     const summary = {
-      type: 'system', subtype: 'pipeline_summary', pipeline: { run, pipeline, mode, kind, status: state.status },
+      type: 'system', subtype: 'pipeline_summary', pipeline: { run, pipeline, mode: state.mode, kind, status: state.status, escalated: state.escalated || undefined, items: state.itemsDone || undefined },
       steps: state.steps.map(s => ({ id: s.id, key: s.key, title: s.title, slot: s.slot, model: s.model, served: s.served, source: s.source, status: s.status, why: s.why, durationMs: s.durationMs, costUsd: s.costUsd, attempt: s.attempt })),
       totalMs: Date.now() - started, costUsd: totals.costUsd || null,
       text: `exécution ${run} : ${state.status === 'done' ? 'terminée' : state.status === 'paused' ? 'en pause' : 'échec'} — ${state.steps.filter(s => s.status === 'ok').length} étape(s) validée(s)`,
@@ -610,7 +708,7 @@ export async function runPipeline(o) {
 
   const pauseForLimit = async ({ limit, value, step, why, lastOutput }) => {
     const label = { criteria: `${value} essais refusés par le critère de sortie`, green: `${value} essais de 4b sans passer`, review: `${value} tours de revue`, duration: `durée maximale (${fmtDur(value)})` }[limit] || limit;
-    const notice = `⏸ Limite atteinte — ${projectName} · ${pipeline === 'dev' ? 'Développement léger' : 'Discussion'} · ${step ? step.title : 'exécution'} : ${label}`;
+    const notice = `⏸ Limite atteinte — ${projectName} · ${pipelineLabel(pipeline, state.mode)} · ${step ? step.title : 'exécution'} : ${label}`;
     writeEvent({ type: 'notification', subtype: 'pipeline_limit', pipeline: { run, step: step?.id || null }, limit, value, why: why ? String(why).slice(0, 2000) : null,
       lastOutput: lastOutput ? String(lastOutput).slice(-2000) : null, text: notice });
     const question = `${notice}. ${why ? `Dernier refus : ${String(why).split('\n')[0].slice(0, 300)}. ` : ''}` +
@@ -638,7 +736,7 @@ export async function runPipeline(o) {
     const text = stepPrompt(ctx, step, extra);
     const before = snapshot(cwd);
     current = { id: step.id, title: step.title, model: info.model, t0: Date.now() };
-    writeEvent({ type: 'system', subtype: 'pipeline_step_start', pipeline: { run, step: step.id, key, slot: info.slot, attempt },
+    writeEvent({ type: 'system', subtype: 'pipeline_step_start', pipeline: { run, step: step.id, key, slot: info.slot, attempt, ...(ctx.item ? { item: ctx.item.n, itemText: ctx.item.text } : {}) },
       model: info.model, provider: info.provider, second: info.second, modelSource: info.source,
       text: `étape ${step.title} — ${info.model ? `${info.provider}/${info.model}${info.second ? ` + second ${info.second.model}` : ''}` : 'défaut du projet ⚠'}${attempt > 1 ? ` — essai ${attempt}` : ''}` });
     // Mode double dans une étape d'action : les deux branches partent du dernier
@@ -658,7 +756,7 @@ export async function runPipeline(o) {
     });
     const log = readBranchLog(path.join(runDir, `${key}.jsonl`));
     const after = snapshot(cwd);
-    const rec = { id: step.id, key, title: step.title, slot: info.slot, model: info.model, provider: info.provider, second: info.second, source: info.source,
+    const rec = { id: step.id, key, title: step.title, ...(ctx.item ? { item: ctx.item.n } : {}), slot: info.slot, model: info.model, provider: info.provider, second: info.second, source: info.source,
       served: log.served, attempt, durationMs: Date.now() - t0, costUsd: Number.isFinite(log.result?.total_cost_usd) ? log.result.total_cost_usd : null, exit: code };
     totals.turns += 1;
     totals.apiMs += Number(log.result?.duration_api_ms) || Number(log.result?.duration_ms) || 0;
@@ -685,7 +783,7 @@ export async function runPipeline(o) {
     state.steps.push(r.rec);
     saveState();
     const s = r.rec;
-    writeEvent({ type: 'system', subtype: 'pipeline_step_done', pipeline: { run, step: s.id, key: s.key, slot: s.slot, attempt: s.attempt },
+    writeEvent({ type: 'system', subtype: 'pipeline_step_done', pipeline: { run, step: s.id, key: s.key, slot: s.slot, attempt: s.attempt, ...(s.item ? { item: s.item } : {}) },
       model: s.model, served: s.served, provider: s.provider, modelSource: s.source, status: s.status, why: s.why ? String(s.why).slice(0, 2000) : undefined,
       durationMs: s.durationMs, costUsd: s.costUsd, changed: s.changed, test: s.test, log: `logs/runs/${run}/${s.key}.jsonl`,
       text: `étape ${s.title} : ${s.status === 'ok' ? '✓ critère vérifié' : s.status === 'refused' ? `✕ refusée — ${String(s.why).split('\n')[0].slice(0, 200)}` : s.status === 'model_unavailable' ? '⏸ model indisponible' : `✕ échec — ${String(s.why).split('\n')[0].slice(0, 200)}`}` });
@@ -707,9 +805,44 @@ export async function runPipeline(o) {
   if (state.reviewItems) ctx.reviewItems = state.reviewItems;
 
   // ── Boucle des étapes ─────────────────────────────────────────────────────
+  const readItems = () => parseItems(readArtefact(ctx, 'tests.md') || '');
   while (state.index < state.plan.length) {
-    if (Date.now() - started > limits.runMs) return pauseForLimit({ limit: 'duration', value: limits.runMs, step: stepDefs[state.plan[state.index]] });
-    const step = stepDefs[state.plan[state.index]];
+    const id = state.plan[state.index];
+    if (Date.now() - started > limits.runMs) return pauseForLimit({ limit: 'duration', value: limits.runMs, step: stepDefs[id] });
+    // ── Boucle TDD (0.49.0) : UN item de tests.md à la fois, 4a → 4b → 4c,
+    //    tant que la liste n'est pas vide. Le moteur coche l'item, pas le model.
+    if (id === '@loop') {
+      const next = readItems().find(i => !i.done);
+      if (!next) { state.plan.splice(state.index, 1); state.item = ctx.item = null; saveState(); continue; }
+      if ((state.itemsDone || 0) >= limits.items) {
+        return pauseForLimit({ limit: 'items', value: limits.items, step: stepDefs['@loop'], why: `la liste n'est pas vide après ${limits.items} items (suivant : « ${next.text} ») — découper la demande` });
+      }
+      state.item = ctx.item = next;
+      state.plan.splice(state.index, 0, 'rouge', 'vert', 'refactor', '@check');
+      writeEvent({ type: 'system', subtype: 'pipeline_item_start', pipeline: { run, item: next.n }, text: `item ${next.n} : ${next.text}` });
+      saveState();
+      continue;
+    }
+    if (id === '@check') {
+      fs.writeFileSync(path.join(artDir, 'tests.md'), checkItem(readArtefact(ctx, 'tests.md') || '', state.item.n));
+      state.itemsDone = (state.itemsDone || 0) + 1;
+      writeEvent({ type: 'system', subtype: 'pipeline_item_done', pipeline: { run, item: state.item.n }, text: `✓ item ${state.item.n} coché : ${state.item.text}` });
+      state.plan.splice(state.index, 1);
+      state.item = ctx.item = null;
+      saveState();
+      continue;
+    }
+    const step = stepDefs[id];
+    // 4c sautée quand 4b a très peu changé (plan §2.3) : dit, jamais en silence.
+    if (id === 'refactor' && (state.lastGreenLines ?? 0) < limits.refactorMinLines) {
+      const why = `4b n'a changé que ${state.lastGreenLines ?? 0} ligne(s) (seuil ${limits.refactorMinLines})`;
+      const key = `${String(state.steps.length + 1).padStart(2, '0')}-refactor`;
+      state.steps.push({ id, key, title: step.title, ...(ctx.item ? { item: ctx.item.n } : {}), status: 'skipped', why, attempt: 1, durationMs: 0 });
+      writeEvent({ type: 'system', subtype: 'pipeline_step_done', pipeline: { run, step: id, key, attempt: 1, ...(ctx.item ? { item: ctx.item.n } : {}) }, status: 'skipped', why, durationMs: 0, text: `étape ${step.title} : sautée — ${why}` });
+      state.index++;
+      saveState();
+      continue;
+    }
     // Un seul commit à la livraison : points d'étape du mode double, commits de
     // sa relecture… tout ce qui a été commité depuis le départ est replié.
     if (step.id === 'livrer' && git(cwd, ['rev-parse', 'HEAD']).out !== base) {
@@ -742,17 +875,46 @@ export async function runPipeline(o) {
       }
     }
     if (step.id === 'rouge') ctx.testPrint = testsNow();
-    if (step.id === 'vert' && ctx.reviewItems) { ctx.reviewItems = null; state.reviewItems = null; }
+    if (step.id === 'liste-tests' && (last.crit?.items || []).filter(i => !i.done).length > limits.items) {
+      return pauseForLimit({ limit: 'items', value: limits.items, step, why: `${last.crit.items.filter(i => !i.done).length} items listés (maximum ${limits.items}) — découper la demande en plusieurs exécutions` });
+    }
+    if (step.id === 'vert') {
+      const codeFiles = (last.rec.changed || []).filter(f => !isTestFile(f, cfg.testGlobs));
+      state.lastGreenLines = lineDelta(cwd, last.before, last.after, codeFiles);
+      const afterReview = !!ctx.reviewItems;
+      if (ctx.reviewItems) { ctx.reviewItems = null; state.reviewItems = null; }
+      // Garde-fou du léger (plan §4) : au-delà du périmètre, montée en complet
+      // à l'étape 3 — annoncée, jamais en silence.
+      if (state.mode === 'leger' && !afterReview && !state.escalated) {
+        const scope = lightScope(cwd, base, cfg);
+        if (scope.over) {
+          state.mode = ctx.mode = 'complet';
+          state.escalated = ctx.escalated = true;
+          stepDefs = devCatalog({ mode: 'complet', kind });
+          state.plan.splice(state.index + 1, 0, 'liste-tests', '@loop');
+          writeEvent({ type: 'system', subtype: 'pipeline_escalate', pipeline: { run, from: 'leger', to: 'complet' }, scope,
+            text: `⇧ périmètre dépassé (${scope.why}) : l'exécution monte en Développement complet — liste de tests, puis un test à la fois` });
+        }
+      }
+    }
     if (step.id === 'revue' && last.crit?.review?.verdict === 'problemes' && last.crit.review.items.length) {
       if (state.reviewRounds >= limits.reviewRounds) {
         return pauseForLimit({ limit: 'review', value: state.reviewRounds, step, why: `la revue relève encore : ${last.crit.review.items.slice(0, 5).join(' ; ')}` });
       }
       state.reviewRounds++;
-      ctx.reviewItems = state.reviewItems = last.crit.review.items;
-      ctx.testPrint = testsNow();   // tests existants protégés ; en ajouter reste permis
-      state.plan.splice(state.index + 1, 0, 'vert', 'revue');
-      writeEvent({ type: 'system', subtype: 'pipeline_loop', pipeline: { run, from: 'revue', to: 'vert', round: state.reviewRounds },
-        text: `revue : ${last.crit.review.items.length} problème(s) → retour à 4b (tour de revue ${state.reviewRounds}/${limits.reviewRounds})` });
+      if (state.mode === 'complet') {
+        // Complet : chaque problème devient un item de la liste, puis retour à 4.
+        const md = (readArtefact(ctx, 'tests.md') || '').replace(/\s*$/, '\n');
+        fs.writeFileSync(path.join(artDir, 'tests.md'), md + last.crit.review.items.map(i => `- [ ] (revue) ${String(i).replace(/\s+/g, ' ').slice(0, 300)}`).join('\n') + '\n');
+        state.plan.splice(state.index + 1, 0, '@loop', 'revue');
+      } else {
+        ctx.reviewItems = state.reviewItems = last.crit.review.items;
+        ctx.testPrint = testsNow();   // tests existants protégés ; en ajouter reste permis
+        state.plan.splice(state.index + 1, 0, 'vert', 'revue');
+      }
+      const to = state.mode === 'complet' ? '4 (nouveaux items)' : '4b';
+      writeEvent({ type: 'system', subtype: 'pipeline_loop', pipeline: { run, from: 'revue', to: state.mode === 'complet' ? 'tdd' : 'vert', round: state.reviewRounds },
+        text: `revue : ${last.crit.review.items.length} problème(s) → retour à ${to} (tour de revue ${state.reviewRounds}/${limits.reviewRounds})` });
     }
     state.index++;
     saveState();
@@ -764,13 +926,36 @@ export async function runPipeline(o) {
     result = (readArtefact(ctx, 'reponse.md') || '').trim() || '(réponse vide)';
   } else {
     const head = git(cwd, ['log', '-1', '--format=%h %s']).out;
-    result = `✓ ${projectName} — pipeline Développement léger terminé (${run}).\n\n` +
+    result = `✓ ${projectName} — pipeline ${pipelineLabel(pipeline, state.mode)} terminé (${run}).\n\n` +
       `- Commit : ${head}\n` +
       `- Étapes : ${state.steps.filter(s => s.status === 'ok').map(s => `${s.title.split(' ')[0]} ${s.model || 'défaut'}`).join(' → ')}\n` +
+      (state.mode === 'complet' ? `- TDD : ${state.itemsDone || 0} item(s) de la liste de tests, un à la fois (4a → 4b → 4c)\n` : '') +
+      (state.escalated ? '- ⇧ Monté de léger en complet : la demande dépassait le périmètre du mode léger\n' : '') +
       `- Critères vérifiés par l'orchestrateur : test rouge puis vert, tests inchangés en 4b, revue, version, CHANGELOG${cfg.requirements ? ', exigence' : ''}, suite verte\n` +
       `- Pas de push (soumis à autorisation).\n\n${(readArtefact(ctx, 'livraison.md') || '').trim().slice(0, 4000)}`;
   }
   return finish({ code: 0, result });
+}
+
+const CODE_RE = /\.(m?js|cjs|ts|tsx|jsx|kt|kts|java|py|go|rs|cs|swift|c|cc|cpp|h)$/i;
+/** Périmètre d'un changement léger, hors tests et artefacts (plan §4 : plus de
+ *  3 fichiers, plus de 150 lignes ou un NOUVEAU fichier de code ⇒ complet). */
+export function lightScope(cwd, base, cfg) {
+  const isRun = (f) => f.startsWith(RUNS_PREFIX) || f.startsWith('.orchestrateur/');
+  let files = 0, lines = 0, newCode = 0;
+  for (const l of git(cwd, ['diff', '--numstat', base]).out.split('\n').filter(Boolean)) {
+    const [a, b, f] = l.split('\t');
+    if (!f || isRun(f) || isTestFile(f, cfg.testGlobs)) continue;
+    files++; lines += (Number(a) || 0) + (Number(b) || 0);
+  }
+  for (const f of git(cwd, ['ls-files', '-o', '--exclude-standard']).out.split('\n').filter(Boolean)) {
+    if (isRun(f) || isTestFile(f, cfg.testGlobs)) continue;
+    files++;
+    try { lines += fs.readFileSync(path.join(cwd, f), 'utf8').split('\n').length; } catch {}
+    if (CODE_RE.test(f)) newCode++;
+  }
+  const why = [files > LIGHT_SCOPE.files && `${files} fichiers`, lines > LIGHT_SCOPE.lines && `${lines} lignes`, newCode && `${newCode} nouveau(x) fichier(s) de code`].filter(Boolean).join(', ');
+  return { files, lines, newCode, over: !!why, why };
 }
 
 /** Annule les modifications d'un essai refusé (fichiers seulement, jamais les artefacts). */

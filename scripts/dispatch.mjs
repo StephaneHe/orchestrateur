@@ -239,6 +239,9 @@ const pipelineResumeArg = takeFlagValue('--pipeline-resume');
 const pipelineStepArg   = takeFlagValue('--pipeline-step');
 const pipelineSession   = takeFlagValue('--pipeline-session');
 const horsPipelineArg   = takeFlagValue('--hors-pipeline');
+// --mode leger|complet (0.49.0) : force le mode du Développement ; sinon la classification.
+const pipelineModeArg   = takeFlagValue('--mode');
+if (pipelineModeArg && !['leger', 'complet'].includes(pipelineModeArg)) die(`--mode leger|complet (reçu « ${pipelineModeArg} »)`);
 const STEP_TOKEN = process.env.ORCH_STEP_TOKEN || null;
 const TURN_OF    = process.env.ORCH_TURN_PROJECT || null;   // ce dispatch est lancé DEPUIS un tour de ce projet
 const TURN_STEP  = process.env.ORCH_TURN_STEP || null;      // … qui est une étape de pipeline
@@ -963,6 +966,7 @@ function postQueueIfBusy() {
     if (pipelineArg)       payload.pipeline        = pipelineArg;
     if (pipelineResumeArg) payload.pipelineResume  = pipelineResumeArg;
     if (horsPipelineArg != null) payload.horsPipeline = horsPipelineArg;
+    if (pipelineModeArg)   payload.pipelineMode    = pipelineModeArg;
     const body = Buffer.from(JSON.stringify(payload));
     const req = http.request({
       hostname: '127.0.0.1', port: 7777, path: '/api/dispatch', method: 'POST',
@@ -1031,7 +1035,7 @@ if (horsPipelineArg != null && !PIPE_STEP) {
   pipelineBypass = { reason: String(horsPipelineArg).replace(/\s+/g, ' ').trim().slice(0, 300), by: 'hors-pipeline', enforced: ENFORCED };
 }
 if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResumeArg || AUTO_PIPELINE)) {
-  let pipe = pipelineArg, resumeRun = pipelineResumeArg, classification = null, modeNote = null;
+  let pipe = pipelineArg, resumeRun = pipelineResumeArg, classification = null, mode = pipelineModeArg;
   if (!pipe && !resumeRun) {
     // Réponse « continuer » à une exécution en pause : on la reprend.
     const paused = latestPausedRun(projectName);
@@ -1044,18 +1048,20 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
     classification = { pipeline: c.pipeline, mode: c.mode, confidence: c.confidence, classifier: obs.CLASSIFIER, unclassifiable: !!c.unclassifiable };
     if (ENFORCEMENT.pipelines.includes(c.pipeline)) {
       pipe = c.pipeline;
-      if (c.pipeline === 'dev' && c.mode === 'complet') modeNote = 'mode complet pas encore en service (phase 4) : exécuté en Développement léger';
+      if (!mode) mode = c.mode;
     } else {
       pipelineBypass = { reason: `pipeline « ${c.pipeline} » pas encore en service (phase 3 : ${ENFORCEMENT.pipelines.join(', ')})`, by: 'hors-perimetre', classification, enforced: true };
     }
   }
+  // --pipeline dev sans --mode : la classification choisit (Q9 : hésitation → léger).
+  if (pipe === 'dev' && !mode) mode = (await import('./pipeline-observe.mjs')).classify({ text: `/dev ${prompt}` }).mode;
   if (pipe || resumeRun) {
     const code = await pipeEngine.runPipeline({
       root: ROOT, logsDir: LOGS, project, projectName,
       prompt: imagePaths.length || videoPaths.length
         ? `${prompt}\n\nPièces jointes (à lire avec l'outil Read) :\n${[...imagePaths, ...videoPaths].map(p => `- ${p}`).join('\n')}`
         : prompt,
-      promptForLog: prompt, pipeline: pipe, resumeRun, classification, modeNote,
+      promptForLog: prompt, pipeline: pipe, resumeRun, classification, mode,
       callbackProject, sourceProject, obsId, testLabel,
       dispatchScript: fileURLToPath(import.meta.url),
     });

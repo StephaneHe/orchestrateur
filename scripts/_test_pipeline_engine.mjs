@@ -81,6 +81,8 @@ function initRepo(dir) {
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'p', version: '1.0.0', type: 'module', scripts: { test: 'node --test' } }, null, 2) + '\n');
   fs.mkdirSync(path.join(dir, 'test'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'test', 'base.test.mjs'), "import { test } from 'node:test';\ntest('base', () => {});\n");
+  fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'src', 'pipe.mjs'), 'export const id = (x) => x;\n');
   fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), '# Changelog\n\n## [1.0.0] - 2026-10-01\n- début\n');
   fs.mkdirSync(path.join(dir, 'docs'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'docs', 'USER_REQUIREMENTS.md'), '| date | demande | test | version |\n|---|---|---|---|\n');
@@ -133,7 +135,7 @@ section('3. Développement léger : 4a rouge → 4b vert → revue → livrer, u
 routing({ 'dev.livrer': undefined });   // case vide : défaut du projet + avertissement
 n0 = logOf('P').length;
 const h0 = head(P);
-r = dispatch(['P', 'Ajoute une fonction double qui multiplie par deux']);
+r = dispatch(['P', 'Ajoute une fonction double qui multiplie par deux', '--mode', 'leger']);
 evs = since('P', n0); run = runOf(evs);
 ok(r.code === 0, `exécution terminée (code ${r.code})`, r.out.slice(-1200));
 const d2 = evs.filter(e => e.subtype === 'pipeline_step_done');
@@ -150,14 +152,14 @@ routing();
 section('4. Critères refusés : essai rejeté puis repris ; limite → pause annoncée');
 g(P, 'reset', '-q', '--hard', h0);
 n0 = logOf('P').length;
-r = dispatch(['P', 'Ajoute une fonction double'], { FAKE_PIPE_BAD: 'rouge:1' });
+r = dispatch(['P', 'Ajoute une fonction double', '--mode', 'leger'], { FAKE_PIPE_BAD: 'rouge:1' });
 evs = since('P', n0);
 const rouge = evs.filter(e => e.subtype === 'pipeline_step_done' && e.pipeline.step === 'rouge');
 ok(r.code === 0 && rouge.length === 2 && rouge[0].status === 'refused' && /hors tests.*src\/pipe\.mjs/.test(rouge[0].why) && rouge[1].status === 'ok',
   `4a qui touche le code : refusé (« ${rouge[0]?.why?.slice(0, 80)} »), puis repris`, r.out.slice(-600));
 g(P, 'reset', '-q', '--hard', h0);
 n0 = logOf('P').length;
-r = dispatch(['P', 'Ajoute une fonction double'], { FAKE_PIPE_BAD: 'vert' });
+r = dispatch(['P', 'Ajoute une fonction double', '--mode', 'leger'], { FAKE_PIPE_BAD: 'vert' });
 evs = since('P', n0); run = runOf(evs);
 const vert = evs.filter(e => e.subtype === 'pipeline_step_done' && e.pipeline.step === 'vert');
 ok(r.code === 2 && vert.length === 3 && vert.every(v => v.status === 'refused' && /fichiers de test modifiés/.test(v.why)), `4b qui affaiblit le test : 3 essais refusés (code ${r.code})`);
@@ -179,13 +181,13 @@ ok(evs.filter(e => e.subtype === 'pipeline_step_done').map(e => e.pipeline.step)
 section('5. Revue → correction → revue (boucle bornée)');
 g(P, 'reset', '-q', '--hard', h0);
 n0 = logOf('P').length;
-r = dispatch(['P', 'Ajoute une fonction double'], { FAKE_PIPE_REVIEW: 'problemes:1' });
+r = dispatch(['P', 'Ajoute une fonction double', '--mode', 'leger'], { FAKE_PIPE_REVIEW: 'problemes:1' });
 evs = since('P', n0);
 ok(r.code === 0 && evs.some(e => e.subtype === 'pipeline_loop'), 'problème relevé → retour à 4b (pipeline_loop)', `code ${r.code} — ${evs.filter(e => e.subtype === 'pipeline_step_done').map(e => `${e.pipeline.step}:${e.status}:${e.why || ''}`).join(' | ')}\n${r.out.slice(-600)}`);
 ok(evs.filter(e => e.subtype === 'pipeline_step_done').map(e => e.pipeline.step).join() === 'rouge,vert,revue,vert,revue,livrer', 'enchaînement rouge, vert, revue, vert, revue, livrer');
 g(P, 'reset', '-q', '--hard', h0);
 n0 = logOf('P').length;
-r = dispatch(['P', 'Ajoute une fonction double'], { FAKE_PIPE_REVIEW: 'problemes', ORCH_PIPE_REVIEW_ROUNDS: '1' });
+r = dispatch(['P', 'Ajoute une fonction double', '--mode', 'leger'], { FAKE_PIPE_REVIEW: 'problemes', ORCH_PIPE_REVIEW_ROUNDS: '1' });
 evs = since('P', n0);
 ok(r.code === 2 && evs.find(e => e.subtype === 'pipeline_limit')?.limit === 'review', 'tours de revue épuisés → pause + signal « review »');
 g(P, 'reset', '-q', '--hard', h0);

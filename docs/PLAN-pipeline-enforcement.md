@@ -19,7 +19,7 @@
 > soient obligatoirement utlises. » Les phases 2 à 7 sont lancées dans l'ordre.
 > **Phase 2 (outillage NVIDIA / OpenRouter) livrée en 0.47.0** (§2.7, « État
 > livré »). **Phase 3 (moteur) livrée en 0.48.0** (§5, « État livré de la phase 3 »).
-> Prochaine : phase 4 (Développement complet, boucle TDD pilotée).
+> **Phase 4 (Développement complet) livrée en 0.49.0** (§5, « État livré de la phase 4 »). Prochaine : phase 5 (toutes les entrées branchées).
 
 ---
 
@@ -424,7 +424,7 @@ Chaque phase suit le protocole 0.29.0 : tag `pre-pipeline-enforce-pN-v<X.Y.Z>`, 
 | **P1 — Observation** ✅ (0.41.0 + 0.42.0, livrée) | Chaque entrée E1 à E14 est classée (pipeline + mode) par un **classifieur à règles** (`scripts/pipeline-observe.mjs`, gratuit et instantané) et journalisée dans `logs/pipeline-observe.ndjson`, terminal interactif compris (ligne par ligne). Inclassable = Discussion. **Aucun changement de comportement.** Panneau « Observation » dans la page Models. Étapes action / jugement, et NVIDIA / OpenRouter marqués « outillage en construction » (refus 409 sur une étape d'action). Projet pilote `pipelineLab`. **0.42.0** : lacunes proposées (§1.4) et décision Q9 (hésitation → léger) | Chaque entrée observée une seule fois (l'identifiant suit l'entrée jusqu'au tour) ; le texte des tours est inchangé | `_test_pipeline_observe.mjs` (classification sur les vraies demandes du fleet, terminal, câblage de chaque entrée, vrai `dispatch.mjs`), HTTP `pipeline-observe`, navigateur `observe-view` et `models-harness` | fait | Opus |
 | **P2 — Outillage NVIDIA / OpenRouter** ✅ (livrée en 0.47.0, voir §2.7 « État livré ») | §2.7 : codex + OpenRouter (Responses), passerelle Responses → chat intégrée au serveur pour NVIDIA, outil `web_fetch` de la passerelle, correspondance des `allowed-tools` avec le bac à sable codex, `system/init` complet, vérification du model servi, aucun repli. `AGENT_HARNESS` passe à `true` fournisseur par fournisseur | Sur `pipelineLab`, un tour NVIDIA (kimi-k3) et un tour OpenRouter (avec la clé) **lisent un fichier, le modifient et lancent `npm test`**, avec un journal JSONL identique à un tour codex. Un model indisponible donne `fallback_refused`, pas de repli | `_test_responses_shim.mjs` (traduction SSE, appels d'outils en flux, erreurs), HTTP `harness-nvidia` (faux NVIDIA local), contrôle réel sur `pipelineLab` | 3 à 4 j | Opus |
 | **P3 — Moteur + Discussion + Dev léger, sur `pipelineLab`** ✅ (livrée en 0.48.0) | Moteur d'exécution (`logs/runs/`), jeton d'étape, porte unique `startStep`, frise dans le journal, pause et escalade, **signaux de limite** (§2.5), avertissement « défaut du projet ». Classification par le model de `routage.classifier`, comparée au journal de la phase 1. Pipelines **Discussion** et **Développement léger** en service sur `pipelineLab` seulement | Sur le pilote, chaque tour porte `run/step/modelSource`, avec le bon model servi. Un `dispatch.mjs` lancé par un musicien est refusé. Un model indisponible met l'exécution en pause | HTTP `pipeline-run`, `pipeline-bypass`, `pipeline-unavailable`, `pipeline-limit-notice`. Navigateur `run-timeline` | 3 à 4 j | Opus |
-| **P4 — Développement complet** (0.45.0) | Boucle TDD pilotée (4a → 4b → 4c, un test à la fois), critères vérifiés (§2.4), revue → 4, limites et signaux, montée léger → complet. Toujours sur `pipelineLab` | Sur `pipelineLab` : 4a échoue réellement, 4b qui modifie le test est refusé, la suite passe à la sortie, la boucle s'arrête quand la liste est vide, chaque limite prévient l'utilisateur | `_test_pipeline_gates.mjs`, HTTP `pipeline-tdd`, `pipeline-limits` | 3 j | Opus (critères), Sonnet (intégration) |
+| **P4 — Développement complet** ✅ (livrée en 0.49.0) | Boucle TDD pilotée (4a → 4b → 4c, un test à la fois), critères vérifiés (§2.4), revue → 4, limites et signaux, montée léger → complet. Toujours sur `pipelineLab` | Sur `pipelineLab` : 4a échoue réellement, 4b qui modifie le test est refusé, la suite passe à la sortie, la boucle s'arrête quand la liste est vide, chaque limite prévient l'utilisateur | `_test_pipeline_gates.mjs`, HTTP `pipeline-tdd`, `pipeline-limits` | 3 j | Opus (critères), Sonnet (intégration) |
 | **P5 — Toutes les entrées branchées** (0.46.0, Android 0.9.0) | Sélecteur de pipeline dans le composer et l'app, préfixes, `@musicien`, `sessions/new`, file, pool, réveil, relais. **Terminal interactif routé** (décision n° 1) : sa session devient une Discussion en lecture seule, et une ligne classée comme action est confirmée puis lancée en exécution du bon pipeline. Refus sans pipeline (sauf `--hors-pipeline` tracé). Contrat du chef mis à jour (dispatch vers le musicien Chef) | **Test de la demande utilisateur** : pour chaque entrée E1 à E14 de l'instance de test, le tour lancé appartient à une exécution et tourne sur le model de sa case. Aucune entrée ne lance de tour hors pipeline | HTTP `pipeline-all-entries`, navigateur `composer-pipeline` et `terminal-routing`, Android `assembleDebug` et un test de ViewModel | 3 j | Sonnet |
 | **P6 — Autres pipelines** (0.47.x) | Incident, Recherche, Audit, Rédaction, Maintenance, Nouveau projet, Données, Routage complet, puis **média** (outils locaux exécutés par le moteur, models spécialisés) | Chaque pipeline a ses critères et un parcours de test | Une recette par pipeline | 3 à 5 j | Sonnet (Opus pour l'audit) |
 | **P7 — Généralisation** (0.48.0) | Tous les projets en service, mode observation retiré, rapport de coûts réels par pipeline | Une semaine d'usage sans contournement, et des coûts conformes aux estimations à ± 50 % | Non-régression complète | 1 j | Sonnet |
@@ -459,6 +459,33 @@ Chaque phase suit le protocole 0.29.0 : tag `pre-pipeline-enforce-pN-v<X.Y.Z>`, 
 - **Retour arrière** :
   - `node scripts/pipeline-enforce.mjs off --all`, sans redéploiement ;
   - ou le tag `pre-pipeline-enforce-p3-v0.47.2`.
+
+### État livré de la phase 4 (0.49.0, 2026-10-09)
+
+- **Livré** :
+  - Développement complet : Comprendre → Concevoir → Liste de tests → boucle `@loop` (4a → 4b → 4c, UN item à la fois, coché par le moteur) → Revue → Livrer ;
+  - critères du §2.4 pour Concevoir, Liste de tests et Refactor ;
+  - revue → nouveaux items (complet) ;
+  - montée léger → complet (§4), annoncée ;
+  - limite `items` en plus des autres ; chaque limite donne ses trois signaux (log, dashboard, chef) — la notification de bureau est celle du dashboard pour l'état `input` ;
+  - `--mode leger|complet` ;
+  - frise du journal (items, 4c sautée, montée).
+- **Écarts assumés** :
+  1. Pas d'étape **Spike** automatique : rien dans la demande ne permet au moteur de décider qu'il faut explorer. Elle viendra avec une variante explicite (`/spike`) ou une proposition de l'étape Concevoir.
+  2. Pas de **commande de test rapide** distincte (`fastTestCommand`) : la commande complète est rejouée à chaque critère. C'est assez rapide sur `pipelineLab` (< 1 s) ; à brancher pour les gros projets.
+  3. L'option « lot » (plusieurs items par tour, Q4) n'existe pas : un test à la fois, comme décidé.
+- **Essai réel sur `pipelineLab`** (`p-20261009T014516-e88f28`, demande « charCount + commande `compte` », `--mode complet`) :
+  - Comprendre (opus-5-5, 48 s) → Concevoir (gpt-6-astra, 141 s) → Liste de tests (opus-5-5 : **15 items**, très fins) ;
+  - item 1 : 4a ✓ (opus-5-5), 4b ✓ (sonnet-5-5), 4c sautée (3 lignes) ;
+  - **item 2 : 4a refusée deux fois** (« la suite passe encore »), puis pause avec ses trois signaux. Le code de l'item 1 couvrait déjà l'item 2 : tout test fidèle passe d'emblée. Le model l'a constaté lui-même (`rouge.md`) et a refusé de fausser le test ;
+  - **Question ouverte posée à l'utilisateur** : comment traiter un item déjà couvert. Voir « Questions de la phase 4 ».
+- **Questions de la phase 4** (en attente de l'utilisateur) :
+  - Q10 — un item de la liste **déjà couvert** par le code existant (le nouveau test passe d'emblée) :
+    - (A, recommandé) accepter, si le model l'écrit explicitement (`DEJA_COUVERT` dans `rouge.md`) et que le moteur vérifie que seuls des tests ont changé et que la suite passe : le test reste comme documentation, l'item est coché sans 4b/4c, et c'est tracé dans la frise ; la Revue juge ensuite si le test est vide de sens ;
+    - (B) garder la règle stricte : pause et question à chaque fois, comme aujourd'hui.
+- **Retour arrière** :
+  - `node scripts/pipeline-enforce.mjs off --all` ;
+  - ou le tag `pre-pipeline-enforce-p4-v0.48.0`.
 
 **Retour arrière** : à chaque phase, le tag, plus le drapeau `enforcement` vidé. Sans redéploiement, le comportement redevient celui d'avant (un tour, un model).
 

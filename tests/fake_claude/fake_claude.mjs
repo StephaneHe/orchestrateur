@@ -240,6 +240,12 @@ async function run() {
 //                               Comprendre cite un chemin inexistant, Rechercher
 //                               modifie le projet, Livrer ne commite pas
 //   FAKE_PIPE_REVIEW=problemes[:n]  la revue relève un problème (n fois)
+//   FAKE_PIPE_ITEMS=<n>         Liste de tests : n items (défaut 2) ; « ITEM=k » → test/pipe-k, src/pipe-k
+//   FAKE_PIPE_BIG=1             4b léger crée 4 fichiers de code (montée en complet)
+//   FAKE_PIPE_REFACTOR=1        4c modifie vraiment le code (sinon RIEN_A_REFACTORER)
+/** Numéro de l'item de la liste de tests (« ITEM=<n>: … »), ou 0 en léger. */
+function item(text) { return Number((/^ITEM=(\d+):/m.exec(text) || [])[1] || 0); }
+
 function pipelineStep(text) {
   const step = (/^PIPELINE_STEP=(\S+)/m.exec(text) || [])[1];
   const artefact = (/^ARTEFACT=(.+)$/m.exec(text) || [])[1]?.trim();
@@ -260,17 +266,53 @@ function pipelineStep(text) {
     case 'comprendre': w(artefact, `# Compréhension\n\nLa question porte sur le projet. Fichiers utiles : \`package.json\`${bad ? ', `inexistant/fichier.js`' : ''}.\n`); break;
     case 'rechercher': w(artefact, '# Recherche\n\n- package.json : script de test « node --test ».\n'); if (bad) w('pollution.txt', 'modifié par la recherche\n'); break;
     case 'repondre': w(artefact, '# Réponse\n\nRéponse simulée : le projet se teste avec `npm test`. Recommandation : rien à changer.\n'); break;
-    case 'rouge':
-      w('test/pipe.test.mjs', "import { test } from 'node:test';\nimport assert from 'node:assert';\ntest('pipe double', async () => {\n  const m = await import('../src/pipe.mjs');\n  assert.equal(m.double(2), 4);\n});\n");
-      if (bad) w('src/pipe.mjs', 'export const double = (x) => x * 2;\n');
-      w(artefact, '# Rouge\n\nTest « pipe double » dans test/pipe.test.mjs : échoue, src/pipe.mjs n’existe pas.\n');
+    case 'concevoir':
+      w(artefact, bad ? 'Un plan sans sections.\n' : '# Plan\n\n## Approche\nUn module par comportement.\n\n## Étapes\n1. un test par item\n');
       break;
-    case 'vert':
-      // Correction demandée par la revue : renommer le paramètre.
-      w('src/pipe.mjs', /CORRIGER les problèmes/.test(text) ? 'export const double = (valeur) => valeur * 2;\n' : 'export const double = (x) => x * 2;\n');
+    case 'liste-tests': {
+      const n = Number(process.env.FAKE_PIPE_ITEMS || 2);
+      const head = /dépassé le périmètre/.test(text) ? '- [x] double(x) = 2x (déjà couvert par le premier test)\n' : '';
+      w(artefact, `# Liste de tests\n\n${head}${Array.from({ length: n }, (_, i) => `- [ ] multiplier par ${i + 2}`).join('\n')}\n`);
+      break;
+    }
+    case 'rouge': {
+      const k = item(text);
+      if (k) {
+        w(`test/pipe-${k}.test.mjs`, `import { test } from 'node:test';\nimport assert from 'node:assert';\ntest('pipe item ${k}', async () => {\n  const m = await import('../src/pipe-${k}.mjs');\n  assert.equal(m.f(2), ${2 * k});\n});\n`);
+        if (bad) w(`src/pipe-${k}.mjs`, `export const f = (x) => x * ${k};\n`);
+        w(artefact, `# Rouge\n\nTest « pipe item ${k} » : échoue, src/pipe-${k}.mjs n’existe pas.\n`);
+        break;
+      }
+      w('test/pipe.test.mjs', "import { test } from 'node:test';\nimport assert from 'node:assert';\ntest('pipe double', async () => {\n  const m = await import('../src/pipe.mjs');\n  assert.equal(m.double(2), 4);\n});\n");
+      if (bad) w('src/pipe.mjs', 'export const id = (x) => x;\nexport const double = (x) => x * 2;\n');
+      w(artefact, '# Rouge\n\nTest « pipe double » dans test/pipe.test.mjs : échoue, double() n’existe pas encore.\n');
+      break;
+    }
+    case 'vert': {
+      const k = item(text);
+      if (k) {
+        w(`src/pipe-${k}.mjs`, `export const f = (x) => x * ${k};\n`);
+        if (bad) fs.appendFileSync(path.join(cwd, `test/pipe-${k}.test.mjs`), '// affaibli\n');
+        w(artefact, `# Vert\n\nsrc/pipe-${k}.mjs : f(x) = ${k}x.\n`);
+        break;
+      }
+      // Fichier EXISTANT complété (le léger ne crée pas de fichier de code) ;
+      // correction demandée par la revue : renommer le paramètre.
+      w('src/pipe.mjs', 'export const id = (x) => x;\n' + (/CORRIGER les problèmes/.test(text) ? 'export const double = (valeur) => valeur * 2;\n' : 'export const double = (x) => x * 2;\n'));
+      if (process.env.FAKE_PIPE_BIG === '1') for (let i = 1; i <= 4; i++) w(`src/extra-${i}.mjs`, `export const e${i} = ${i};\n`);
       if (bad) fs.appendFileSync(path.join(cwd, 'test/pipe.test.mjs'), '// affaibli\n');
       w(artefact, '# Vert\n\nsrc/pipe.mjs : double(x) = 2x.\n');
       break;
+    }
+    case 'refactor': {
+      const k = item(text);
+      if (bad) { fs.appendFileSync(path.join(cwd, `test/pipe-${k}.test.mjs`), '// retouché\n'); w(artefact, '# Refactor\n\ntests retouchés\n'); break; }
+      if (process.env.FAKE_PIPE_REFACTOR === '1') {
+        w(`src/pipe-${k}.mjs`, `/** Multiplie par ${k}. */\nexport const f = (valeur) => valeur * ${k};\n`);
+        w(artefact, '# Refactor\n\nparamètre renommé, commentaire.\n');
+      } else w(artefact, 'RIEN_A_REFACTORER\n');
+      break;
+    }
     case 'revue': {
       const prob = once(process.env.FAKE_PIPE_REVIEW, 'problemes');
       w(artefact, JSON.stringify(prob ? { verdict: 'problèmes', items: ['nommer le paramètre de double'] } : { verdict: 'ok', items: [] }));
