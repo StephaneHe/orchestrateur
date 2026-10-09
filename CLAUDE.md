@@ -1160,6 +1160,32 @@ Suite de la demande du 2026-10-09. Plan : `docs/PLAN-pipeline-enforcement.md`.
 - Fake claude : `FAKE_PIPE_JSON='{"<étape>":{…}}'` et `ATTENDU_ENUM`.
 - Recettes : `_test_pipeline_routage.mjs`, HTTP `pipeline-routage`.
 
+## Pipelines obligatoires — phase 6, lot C : Images, Vidéo, Audio (0.55.0)
+
+- Définitions : `scripts/pipeline-catalog-media.mjs` (`MEDIA_PIPELINES`),
+  fusionnées dans le catalogue.
+- Contrôles : `scripts/media-check.mjs` (`checkMediaFiles`, `listedFiles`,
+  `imageSize`, `findFfprobe`, `wordErrorRate`).
+  - `ORCH_FFPROBE=<chemin>|none` force la découverte de ffprobe (les tests
+    mettent `none`).
+- **Critère `media: {kind, min, optionalWith}`** : les fichiers de la section
+  « ## Fichiers » de l'artefact sont vérifiés. Ils peuvent se trouver dans le
+  projet ou dans le dossier d'exécution. Une étape média réussie n'exige donc
+  pas de modifier le projet.
+  - `mediaByVariant` change le type attendu.
+  - `wer: true` mesure la transcription contre `reference.txt` ou
+    `cfg.werReference` (maximum `cfg.werMax`, 0,35 par défaut).
+- **Variantes** (`variants: {nom: regex}` sur la demande sans accents, la
+  première qui correspond) : la case `pipeline.étape.variante` passe en tête
+  de `chain`.
+- **Outil local** : `localToolFor(assignments, chain)` repère une case
+  `provider: 'local'`. L'étape reçoit `OUTIL_LOCAL=`.
+- La vérification reçoit `ctx.lastMedia`. Les fichiers produits sont listés
+  dans le résultat final (`state.media`).
+- Fake claude : `MEDIA=` produit un vrai petit fichier (PNG, WAV, texte,
+  en-tête MP4) ; `FAKE_PIPE_TRANSCRIPT`.
+- Recettes : `_test_pipeline_media.mjs`, HTTP `pipeline-media`.
+
 ## Langue de discussion (0.51.0)
 
 Demande utilisateur : « La langue de la discussion doit pouvoir etre fixee et

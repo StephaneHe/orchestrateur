@@ -20,7 +20,8 @@
 > **Phase 2 (outillage NVIDIA / OpenRouter) livrée en 0.47.0** (§2.7, « État
 > livré »). **Phase 3 (moteur) livrée en 0.48.0** (§5, « État livré de la phase 3 »).
 > **Phase 4 (Développement complet) livrée en 0.49.0** (§5, « État livré de la phase 4 »).
-> **Phase 5 (toutes les entrées branchées) livrée en 0.52.0** (§5, « État livré de la phase 5 »). Prochaine : phase 6 (autres pipelines).
+> **Phase 5 (toutes les entrées branchées) livrée en 0.52.0** (§5, « État livré de la phase 5 »).
+> **Phase 6 (autres pipelines) livrée en trois lots : 0.53.0, 0.54.0, 0.55.0** (§5). Prochaine : phase 7 (tous les projets en service), soumise à la validation de l’utilisateur.
 
 ---
 
@@ -583,6 +584,27 @@ Chaque phase suit le protocole 0.29.0 : tag `pre-pipeline-enforce-pN-v<X.Y.Z>`, 
      imposé : la mise en service de tous les projets reste la phase 7.
 - **Retour arrière** : `node scripts/pipeline-enforce.mjs off --chef`, ou le
   tag `pre-pipeline-enforce-p6b-v0.53.0`.
+
+### État livré de la phase 6, lot C (0.55.0, 2026-10-09) — phase 6 terminée
+
+- **Livré** : Images, Vidéo et Audio. Chaque fichier produit est ouvert et
+  vérifié par le code (`scripts/media-check.mjs`) :
+  - signature ;
+  - dimensions d'une image ;
+  - décodage, durée et pistes par ffprobe quand il est installé ;
+  - taux d'erreur d'une transcription quand une référence existe.
+
+  Les variantes d'étape sont choisies d'après la demande. Une case affectée à
+  un outil local est annoncée à l'étape.
+- **Écart assumé** : un outil local n'est pas lancé par le moteur lui-même. Le
+  model de l'étape l'utilise, et le code juge le fichier produit. La
+  commande exacte dépend trop de la demande (options de ffmpeg, langue de
+  whisper) pour être codée sans perte.
+- **Phase 6 terminée** (lots A, B, C). Prochaine : la phase 7, mise en service
+  de tous les projets, soumise à la validation de l'utilisateur.
+- **Retour arrière** : `node scripts/pipeline-enforce.mjs pipelines
+  discussion,dev,…` (sans images, video, audio), ou le tag
+  `pre-pipeline-enforce-p6c-v0.54.0`.
 
 **Retour arrière** : à chaque phase, le tag, plus le drapeau `enforcement` vidé. Sans redéploiement, le comportement redevient celui d'avant (un tour, un model).
 

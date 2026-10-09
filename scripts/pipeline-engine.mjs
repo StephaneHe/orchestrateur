@@ -39,6 +39,7 @@ import { readBranchLog } from './dual-run.mjs';
 import { languageFor, languageGate, localize, workingLanguage } from './language.mjs';
 import { CATALOG_PIPELINES, catalogOf, catalogSteps } from './pipeline-catalog.mjs';
 import { PIPELINES } from './model-pipelines.mjs';
+import { checkMediaFiles, listedFiles, wordErrorRate } from './media-check.mjs';
 
 export const RUN_RE = /^p-\d{8}T\d{6}-[a-z0-9]{4,8}$/;
 export const STEP_KEY_RE = /^\d{2}-[a-z0-9-]{1,40}$/;
@@ -162,6 +163,16 @@ export function resolveCase(assignments, chain) {
     return { slot, model: a.model, provider: PROVIDER_OF[a.provider], second, source: 'pipeline' };
   }
   return { slot: chain[0], model: null, provider: null, second: null, source: 'project-default' };
+}
+
+/** Outil local affecté à une case de la chaîne (ffmpeg, whisper…), ou null. */
+export function localToolFor(assignments, chain) {
+  for (const slot of chain || []) {
+    const a = assignments?.[slot];
+    if (a?.provider === 'local' && a.model) return String(a.model).slice(0, 60);
+    if (a?.model && PROVIDER_OF[a.provider]) return null;   // un model passe avant
+  }
+  return null;
 }
 
 function readAssignments(root) {
@@ -514,6 +525,10 @@ function catalogStepPrompt(L, ctx, step, art, T) {
   if (step.jsonExample) machine.push(`JSON_EXEMPLE=${step.jsonExample}`);
   if (c.nothing) machine.push(`MARQUEUR_RIEN=${c.nothing}`);
   if (c.requireFiles?.length) machine.push(`FICHIERS_REQUIS=${c.requireFiles.join(', ')}`);
+  const mediaKind = c.media ? (step.mediaKind || c.media.kind) : null;
+  if (mediaKind) machine.push(`MEDIA=${mediaKind}`);
+  if (c.media?.optionalWith) machine.push(`MARQUEUR_SANS_MEDIA=${c.media.optionalWith}`);
+  if (ctx.localTool) machine.push(`OUTIL_LOCAL=${ctx.localTool}`);
   L.push(...machine);
   L.push('');
   if (step.kind === 'judge') {
@@ -534,6 +549,15 @@ function catalogStepPrompt(L, ctx, step, art, T) {
   if (c.minSources) L.push(`Au moins ${c.minSources} source(s) distincte(s), chacune avec son URL (https://…).`);
   if (c.citedPaths) L.push('Cite les fichiers du projet entre accents graves (`chemin/relatif`) : chaque chemin cité doit exister.');
   if (step.jsonExample) L.push(`Format exact : ${step.jsonExample}`);
+  if (mediaKind) {
+    const word = { image: 'image(s)', video: 'vidéo(s)', audio: 'fichier(s) audio', text: 'fichier(s) texte' }[mediaKind];
+    L.push(`Liste CHAQUE ${word} produit(s) dans une section « ## Fichiers » de l'artefact, un chemin entre accents graves par ligne (relatif au projet, ou absolu dans le dossier d'artefacts). L'orchestrateur ouvre chaque fichier et vérifie son type${mediaKind === 'image' ? ' et ses dimensions' : mediaKind === 'text' ? '' : ' (et, si ffprobe est installé, la durée et les pistes)'} : un fichier annoncé mais absent ou invalide fait refuser l'étape.`);
+    if (c.media?.optionalWith) L.push(`Si la demande ne réclame aucun fichier à cette étape, écris « ${c.media.optionalWith} » dans l'artefact.`);
+  }
+  if (ctx.localTool) L.push(`Outil local affecté à cette étape dans la page Models : « ${ctx.localTool} » (installé). Utilise-le pour le traitement.`);
+  if (ctx.lastMedia?.length && step.kind === 'judge' && catalogOf(ctx.pipeline)?.media) {
+    L.push(`Fichiers produits à vérifier${step.vision ? ' (ouvre chaque image avec l’outil Read : tu les vois)' : ''} :\n${ctx.lastMedia.map(f => `- ${f}`).join('\n')}`);
+  }
   if (step.id === 'rapporter' && /^\s*\[NEEDS_CHEF_INPUT_FROM:/.test(ctx.request || '')) {
     L.push('Cette demande est la QUESTION D’UN MUSICIEN (relais automatique) : le rapport doit commencer par « [ANSWER] » suivi de ta décision, ou par « NEEDS_USER_INPUT: » si la décision revient à l’utilisateur — l’orchestrateur relaie selon ce préfixe.');
   }
@@ -650,6 +674,7 @@ const CODE_STEPS = {
 
 /** Critères génériques d'une étape du catalogue. */
 function checkCatalogCriteria(ctx, step, before, after) {
+  ctx.lastCheck = null;
   const { cwd } = ctx;
   const c = step.checks || {};
   const changed = changedFiles(before, after);
@@ -669,9 +694,31 @@ function checkCatalogCriteria(ctx, step, before, after) {
     if (changed.length) return fail(`étape en lecture seule, mais des fichiers du projet ont changé : ${changed.slice(0, 8).join(', ')}`);
     if (c.headUnchanged && git(cwd, ['rev-parse', 'HEAD']).out !== ctx.headAtStep) return fail('l’historique git a été modifié : interdit à cette étape (rapport seulement)');
   } else {
+    // Médias (0.55.0) : chaque fichier annoncé est ouvert et vérifié par le code.
+    let media = null, waived = false, wer = null;
+    if (c.media) {
+      const kind = step.mediaKind || c.media.kind;
+      waived = !!(c.media.optionalWith && new RegExp(`\\b${c.media.optionalWith}\\b`).test(art));
+      if (!waived) {
+        const m = checkMediaFiles(listedFiles(art), { kind, min: c.media.min || 1, roots: [cwd, ctx.artDir] });
+        if (!m.ok) return fail(m.why);
+        media = m.files;
+        // Transcription : taux d'erreur mesuré si une référence a été fournie.
+        // Référence : reference.txt du dossier d'exécution, sinon `werReference` du pipeline.json du projet.
+        const ref = [path.join(ctx.artDir, 'reference.txt'), ctx.cfg.werReference ? path.join(cwd, String(ctx.cfg.werReference)) : null].find(f => f && fs.existsSync(f)) || '';
+        if (c.wer && kind === 'text' && ref) {
+          const hypFile = media[0].path;
+          const hyp = fs.readFileSync(path.isAbsolute(hypFile) ? hypFile : path.join(cwd, hypFile), 'utf8');
+          wer = wordErrorRate(fs.readFileSync(ref, 'utf8'), hyp);
+          const max = Number(ctx.cfg.werMax) || 0.35;
+          if (wer > max) return fail(`transcription trop éloignée de la référence : taux d'erreur ${(wer * 100).toFixed(1)} % (maximum ${(max * 100).toFixed(0)} %)`);
+        }
+      }
+      ctx.lastCheck = { media, waived, wer };
+    }
     const nothing = c.nothing && new RegExp(`\\b${c.nothing}\\b`).test(art);
     if (nothing && changed.length && !c.onlyGlobs) return fail(`« ${c.nothing} » annoncé, mais des fichiers ont changé : ${changed.slice(0, 8).join(', ')}`);
-    if (!changed.length && !nothing) return fail(c.nothing ? `aucune modification — s'il n'y a rien à faire, écris « ${c.nothing} » dans l'artefact` : 'aucune modification');
+    if (!changed.length && !nothing && !media && !waived) return fail(c.nothing ? `aucune modification — s'il n'y a rien à faire, écris « ${c.nothing} » dans l'artefact` : 'aucune modification');
     if (c.onlyGlobs) {
       const bad = changed.filter(f => !isTestFile(f, c.onlyGlobs));
       if (bad.length) return fail(`seuls des documents peuvent changer à cette étape ; modifiés : ${bad.slice(0, 8).join(', ')}`);
@@ -720,7 +767,7 @@ function checkCatalogCriteria(ctx, step, before, after) {
       if (why) return fail(`${step.artefact} : ${why}`);
     }
   }
-  return { ok: true, changed, json };
+  return { ok: true, changed, json, ...(c.media ? { media: ctx.lastCheck?.media || null, wer: ctx.lastCheck?.wer ?? null } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -992,6 +1039,14 @@ export async function runPipeline(o) {
   try { fs.writeFileSync(pidPath, String(process.pid)); } catch {}
   let stepDefs = pipeline === 'dev' ? devCatalog({ mode: state.mode, kind }) : Object.fromEntries(planSteps(pipeline, { mode, kind }).map(s => [s.id, s]));
   const catalog = catalogOf(pipeline);
+  // Variante d'étape (média, 0.55.0) : choisie d'après la demande ; sa case passe
+  // en tête de la chaîne, et le type de fichier attendu peut en dépendre.
+  if (catalog) for (const [sid, s] of Object.entries(stepDefs)) {
+    if (!s.variants) continue;
+    const t = STRIP(state.request || prompt);
+    const v = Object.entries(s.variants).find(([, re]) => re.test(t))?.[0];
+    if (v) stepDefs[sid] = { ...s, variant: v, chain: [`${pipeline}.${s.id}.${v}`, ...s.chain], mediaKind: s.mediaByVariant?.[v] || s.checks?.media?.kind };
+  }
   // Frise annoncée : la boucle TDD se lit 4a → 4b → 4c, répétée par item.
   const planned = state.plan.flatMap(id => (id === '@loop' ? ['rouge', 'vert', 'refactor'].map(x => ({ id: x, loop: true })) : id === '@check' ? [] : [{ id }]))
     .map(p => ({ ...p, title: stepDefs[p.id].title, slot: stepDefs[p.id].kind === 'code' ? { slot: stepDefs[p.id].chain[0], model: null, provider: null, second: null, source: 'code' } : resolveCase(assignments, stepDefs[p.id].chain) }));
@@ -1033,7 +1088,7 @@ export async function runPipeline(o) {
   const testEnv = { ...childEnv };
   delete testEnv.ORCH_OBS_ID;
   const ctx = { root, request: state.request || prompt, run, pipeline, kind, mode: state.mode, cwd, cfg, artDir, base, testEnv, reviewItems: null, testPrint: null, limits,
-    item: state.item || null, escalated: !!state.escalated, coveredItems: state.coveredItems || [], deliveryFixes: state.deliveryFixes || [], suiteRedAtStart: !!state.suiteRedAtStart };
+    item: state.item || null, escalated: !!state.escalated, coveredItems: state.coveredItems || [], deliveryFixes: state.deliveryFixes || [], suiteRedAtStart: !!state.suiteRedAtStart, lastMedia: state.lastMedia || null };
   // Durée ACTIVE : le temps passé en pause à attendre l'utilisateur ne compte
   // pas dans la limite de 90 min (une reprise repart du temps déjà consommé).
   const sessionStart = Date.now();
@@ -1204,6 +1259,7 @@ export async function runPipeline(o) {
     const args = [projectName, '--prompt-stdin', '--pipeline-step', `${run}:${key}`, '--pipeline-session', sessionGroup, '--no-queue-if-busy'];
     if (info.model) args.push('--model', info.model, '--provider', info.provider);
     if (info.model && info.second) args.push('--second-model', info.second.model, '--second-provider', info.second.provider, '--dual-mode', step.judge ? 'judge' : 'action');
+    ctx.localTool = localToolFor(readAssignments(root), step.chain);
     const text = stepPrompt(ctx, step, extra);
     const before = snapshot(cwd);
     current = { id: step.id, title: step.title, model: info.model, t0: Date.now() };
@@ -1418,6 +1474,7 @@ export async function runPipeline(o) {
     }
     if (step.id === 'rouge' || step.crit === 'rouge') ctx.testPrint = testsNow();
     if (step.crit === 'vert') ctx.suiteRedAtStart = state.suiteRedAtStart = false;
+    if (last.crit?.media?.length) { ctx.lastMedia = state.lastMedia = last.crit.media.map(f => f.path); state.media = [...new Set([...(state.media || []), ...ctx.lastMedia])]; }
     // Boucle déclarée (audit : re-vérifier → corriger tant qu'il reste des failles),
     // bornée par le budget des tours de revue — comme la revue du Développement.
     if (step.loop && Array.isArray(last.crit?.json?.[step.loop.field]) && last.crit.json[step.loop.field].length) {
@@ -1508,8 +1565,11 @@ export async function runPipeline(o) {
         const fmt = (x) => (typeof x === 'string' ? x : `${x.severity ? `[${x.severity}] ` : ''}${x.file ? `${x.file} : ` : ''}${x.issue || JSON.stringify(x)}`);
         body = `**Failles restantes** : ${j.remaining.length ? `\n${j.remaining.map(x => `- ${fmt(x)}`).join('\n')}` : 'aucune (gravité haute ou moyenne).'}` +
           (Array.isArray(j.verified) && j.verified.length ? `\n\n**Corrigées et vérifiées** :\n${j.verified.map(x => `- ${fmt(x)}`).join('\n')}` : '');
+      } else if (j && typeof j.verdict === 'string') {
+        body = `**Vérification** : ${j.verdict === 'ok' ? '✓ conforme' : 'défauts relevés'}${Array.isArray(j.items) && j.items.length ? `\n${j.items.map(x => `- ${typeof x === 'string' ? x : JSON.stringify(x)}`).join('\n')}` : ''}`;
       } else body = raw;
     }
+    if (catalog.media && state.media?.length) body = `**Fichiers produits (vérifiés par l'orchestrateur)** :\n${state.media.map(f => `- \`${f}\``).join('\n')}\n\n${body}`;
     // Recherche : lecture seule, la synthèse EST la réponse.
     if (pipeline === 'recherche') return body || '(synthèse vide)';
     // Routage : le rapport EST la réponse du chef ; une demande ambiguë finit

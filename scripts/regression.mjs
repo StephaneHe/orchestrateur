@@ -686,14 +686,36 @@ async function apiChecks(sb) {
       const chat = await json('/api/conductor-chat');
       const last = chat.filter(m => m.role === 'conductor').pop();
       assert(last && /Rapport simulé/.test(last.text), `réponse du chef absente du fil : ${JSON.stringify(last)}`);
-      const pool = (await json('/api/pupitre')).pool;
-      assert(!pool.queue.length && pool.slots.every(s => !s.ticket), `ticket du pool non clos : ${JSON.stringify(pool)}`);
+      // Le serveur clôt le ticket en lisant le result dans le log (observateur
+      // de fichiers) : un court délai après la fin de l'exécution est normal.
+      const closed = await until(async () => { const p = (await json('/api/pupitre')).pool; return !p.queue.length && p.slots.every(s => !s.ticket) ? p : null; }, 20_000, 500);
+      assert(closed, `ticket du pool non clos : ${JSON.stringify((await json('/api/pupitre')).pool)}`);
       return `message → pool → Routage ${run.run} (${ids}) → réponse dans le fil, ticket clos`;
     } finally {
       fs.rmSync(routingFile, { force: true });
       // Le chef ne doit jamais rester en question pour les parcours suivants.
       try { await post('/api/question/chef/resolve', { note: 'recette Routage' }); } catch { /* rien à acquitter */ }
     }
+  });
+  // 0.55.0 — phase 6, lot C : Images / Vidéo / Audio (fichiers produits vérifiés par le code).
+  await check(S, 'pipeline-media', 'Pipelines, phase 6 (lot C) : une demande classée « images » part en exécution Images par l’API — fichier produit réellement ouvert et vérifié (signature, dimensions), vérification visuelle, livraison ; frise au journal', async () => {
+    if (!fs.existsSync(path.join(sb.root, 'scripts', 'media-check.mjs'))) NA('pipelines média absents de cet état du code');
+    const { ENGINE_PIPELINES } = await import(pathToFileURL(path.join(sb.root, 'scripts', 'pipeline-engine.mjs')).href);
+    const g = omegaRepo();
+    g('reset', '-q', '--hard', g('rev-list', '--max-parents=0', 'HEAD').stdout.trim()); g('clean', '-qfd', '-e', '.orchestrateur');
+    fs.writeFileSync(routingFile, JSON.stringify({ version: 2, assignments: {}, history: [], enforcement: { projects: ['omega'], pipelines: ENGINE_PIPELINES } }));
+    try {
+      const before = new Set((await runsOf()).map(x => x.run));
+      const r = await post('/api/dispatch', { project: 'omega', prompt: 'génère une image : dessine une icône pour le projet' });
+      assert(r.status === 202, `dispatch : ${r.status}`);
+      const run = await waitNewRun(before, 150_000);
+      assert(run?.pipeline === 'images' && run.status === 'done' && run.steps.map(s => `${s.id}:${s.status}`).join() === 'cadrer:ok,produire:ok,verifier:ok,livrer:ok', `Images : ${JSON.stringify(run && { p: run.pipeline, s: run.status, st: run.steps.map(x => `${x.id}:${x.status}:${x.why || ''}`) })}`);
+      const png = path.join(omegaDir, 'media', 'produire.png');
+      assert(fs.existsSync(png) && fs.readFileSync(png).readUInt32BE(0) === 0x89504e47, 'fichier image absent ou invalide');
+      const turns = (await json('/api/project/omega/journal?n=2')).turns || [];
+      assert(turns[0]?.pipeline?.pipeline === 'images', `journal : ${turns[0]?.pipeline?.pipeline}`);
+      return `Images 4/4 (classée automatiquement), ${path.relative(omegaDir, png)} vérifié, livré (commit ${g('log', '-1', '--format=%h').stdout.trim()})`;
+    } finally { fs.rmSync(routingFile, { force: true }); }
   });
   // 0.49.0 — phase 4 : Développement COMPLET, TDD canonique un test à la fois.
   const omegaFresh = () => { const g = omegaRepo(); g('reset', '-q', '--hard', g('rev-list', '--max-parents=0', 'HEAD').stdout.trim()); g('clean', '-qfd', '-e', '.orchestrateur'); return g; };

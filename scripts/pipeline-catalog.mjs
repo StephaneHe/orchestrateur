@@ -31,6 +31,8 @@
 //   their output to the model (it never trusts a reported scan).
 // ============================================================================
 
+import { MEDIA_PIPELINES } from './pipeline-catalog-media.mjs';
+
 const DOC_GLOBS = ['**/*.md', 'docs/**', '**/*.txt', '**/*.rst', '**/*.adoc'];
 
 const S = {
@@ -224,6 +226,9 @@ S.routage = {
       checks: {} },
   ],
 };
+
+// ── Images, Vidéo, Audio (lot C, 0.55.0) ────────────────────────────────────
+Object.assign(S, MEDIA_PIPELINES);
 
 export const CATALOG_PIPELINES = Object.keys(S);
 export function catalogOf(pipeline) { return S[pipeline] || null; }

@@ -430,6 +430,23 @@ function catalogStep(text, step, artefact, bad, w, once) {
     return;
   }
   const body = [`# ${step}`, '', ...sections.flatMap(s => [`## ${s}`, `Contenu simulé pour « ${s} » (voir \`package.json\`).`, '']), urls, ''].join('\n') || `# ${step}\n\nContenu simulé, assez long pour le critère.\n`;
+  // Media steps (0.55.0): really write a small valid file of the expected kind
+  // and list it under « ## Fichiers ». FAKE_PIPE_BAD lists a missing file.
+  const media = line('MEDIA');
+  if (media) {
+    const noMedia = line('MARQUEUR_SANS_MEDIA');
+    if (noMedia && wantNothing) { w(artefact, `${noMedia}\n\n${body}`); return; }
+    const ext = { image: 'png', audio: 'wav', video: 'mp4', text: 'txt' }[media];
+    const rel = `media/${step}.${ext}`;
+    const PNG_1x1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const wav = () => { const n = 800, b = Buffer.alloc(44 + n * 2); b.write('RIFF', 0); b.writeUInt32LE(36 + n * 2, 4); b.write('WAVE', 8); b.write('fmt ', 12); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22); b.writeUInt32LE(8000, 24); b.writeUInt32LE(16000, 28); b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34); b.write('data', 36); b.writeUInt32LE(n * 2, 40); for (let i = 0; i < n; i++) b.writeInt16LE(Math.round(8000 * Math.sin(i / 4)), 44 + i * 2); return b; };
+    const data = media === 'image' ? Buffer.from(PNG_1x1, 'base64') : media === 'audio' ? wav()
+      : media === 'video' ? Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypisom'), Buffer.alloc(12)])
+      : Buffer.from(process.env.FAKE_PIPE_TRANSCRIPT || `Transcription simulée de l'étape ${step}.\n`);
+    if (!bad) { fs.mkdirSync(path.join(process.cwd(), 'media'), { recursive: true }); fs.writeFileSync(path.join(process.cwd(), rel), data); }
+    w(artefact, `${body}\n## Fichiers\n- \`${rel}\`\n`);
+    return;
+  }
   if (modify === 'non') {
     w(artefact, `${body}\nRapport simulé (lecture seule, \`package.json\`).\n`);
     if (bad) w('pollution.txt', `modifié par l'étape ${step}\n`);

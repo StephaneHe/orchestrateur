@@ -11,6 +11,54 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.55.0] - 2026-10-09
+
+Pipelines obligatoires, phase 6, lot C : Images, Vidéo, Audio. Fin de la
+phase 6. Demande utilisateur : « … puis Images/Vidéo/Audio. Chacun a ses
+critères de sortie vérifiés par le code et ses tests. »
+
+### Added
+- (server) **Images** : Cadrer → Produire → Vérifier visuellement → Livrer.
+  - Variantes : génération, retouche, OCR, légende, vignettes. L'OCR et la
+    légende produisent du texte.
+  - Défaut visuel ⇒ retour à Produire, borné, puis pause expliquée.
+- (server) **Vidéo** : Acquérir → Transcrire / analyser (texte) → Monter
+  (vidéo) → Vérifier → Livrer.
+  - Variantes : transcription, scènes, résumé ; découpe, chapitres,
+    sous-titres.
+  - `AUCUN_MONTAGE` pour une analyse seule.
+- (server) **Audio** : Acquérir → Transcrire / synthétiser / traiter →
+  Vérifier → Livrer.
+  - Variantes : transcription, synthèse vocale, nettoyage.
+  - Une transcription est mesurée par son **taux d'erreur de mots** contre une
+    référence (`reference.txt` de l'exécution, ou `werReference` du
+    `pipeline.json` du projet ; maximum `werMax`, 35 % par défaut).
+- (server) `scripts/media-check.mjs`. Chaque fichier listé dans la section
+  « ## Fichiers » de l'artefact est ouvert par le code :
+  - il doit exister, dans le projet ou dans le dossier d'exécution, et ne pas
+    être vide ;
+  - sa signature doit correspondre au type attendu (PNG, JPEG, GIF, WebP, SVG ;
+    WAV, MP3, OGG, FLAC, M4A ; MP4, MKV, AVI) ;
+  - les dimensions d'une image doivent être lisibles ;
+  - quand **ffprobe** est installé, la vidéo ou l'audio doit se décoder, avec
+    une durée non nulle et une piste du bon type.
+
+  Un fichier annoncé mais absent ou invalide fait refuser l'étape.
+- (server) La **variante** d'une étape est choisie d'après la demande : sa
+  case passe en tête de la chaîne.
+- (server) Une case affectée à un **outil local** (ffmpeg, whisper,
+  tesseract, imagemagick…) est annoncée à l'étape (`OUTIL_LOCAL=`) comme
+  l'outil à utiliser.
+- (server) La vérification reçoit la liste des fichiers produits. Pour une
+  image, elle les ouvre avec Read (vision).
+
+### Tests
+- `scripts/_test_pipeline_media.mjs` (24 contrôles). Le faux claude écrit de
+  vrais petits fichiers (PNG, WAV, texte, en-tête MP4). Une section utilise le
+  vrai ffprobe s'il est installé : un WAV réel est décodé, un faux MP4 est
+  refusé.
+- Parcours HTTP `pipeline-media` ; le parcours `pipeline-routage` attend la clôture du ticket du pool (lecture asynchrone du log) au lieu de la supposer immédiate.
+
 ## [0.54.0] - 2026-10-09
 
 Pipelines obligatoires, phase 6, lot B : le tour du chef devient lui-même un
