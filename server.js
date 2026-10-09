@@ -2404,9 +2404,12 @@ function scanProjectState(name) {
     // A SOURCED user_prompt (musician callback, @shortcut, /api/notify) is not a
     // turn start — only a source-less prompt or a system/init is. A real dispatch
     // launched with --source still emits system/init, so it's covered.
-    if ((t === 'user_prompt' && !ev.source) || (t === 'system' && ev.subtype === 'init')) {
+    // A pipeline / dual run dispatched by the chef opens with pipeline_start /
+    // dual_start instead (TurnCore.isTurnStart, 0.57.1).
+    if (globalThis.TurnCore.isTurnStart(ev)) {
       stopped = null;
-      if (state === 'idle' || state === 'unread') state = 'live';
+      state = globalThis.TurnCore.stateAtTurnStart(state);
+      lastAssistantText = '';
     } else if (t === 'assistant') {
       const blocks = ev.message?.content || [];
       let hasTool = false, hasThink = false, gotText = null;
@@ -3113,18 +3116,25 @@ app.post('/api/mark-read', express.json({ limit: '2kb' }), (req, res) => {
 // et /api/mark-read n'y changeait rien (il ne touche que unread/idle). Cette
 // route AJOUTE un événement `notification/question_resolved` au log du musicien
 // (voir isQuestionResolved) : aucun tour, aucun coût. Refusée (409) s'il n'y a
-// pas de question ouverte ou si un tour tourne — dans ce cas la question est de
-// toute façon en train d'être dépassée.
+// pas de question ouverte.
+// 0.57.1 — user report: "Quand je click sur Repondu ca me met que j'ai deja
+// repondu et que le musicien tourne". A running turn no longer blocks the
+// acknowledgement: it only appends a notification, never touches the turn or a
+// paused pipeline run. A 409 now carries `alreadyHandled` so the client hides
+// the stale card instead of raising an error.
 app.post('/api/question/:project/resolve', express.json({ limit: '4kb' }), async (req, res) => {
   const name = String(req.params.project || '');
   if (!config.projects.find(p => p.name === name)) return res.status(404).json({ error: `unknown project "${name}"` });
   // Lecture fraîche du log (pas le cache /api/pupitre) : on décide sur l'état réel.
   const snap = scanFleetMember(name);
   if (snap.state !== 'input') {
-    return res.status(409).json({ error: `aucune question en attente pour ${name} (état : ${snap.state})`, state: snap.state });
-  }
-  if ((await dispatchPidAliveAsync(name)) != null) {
-    return res.status(409).json({ error: `${name} a un tour en cours — la question est déjà en train d'être traitée`, state: 'live' });
+    const running = snap.state === 'live' || snap.state === 'think';
+    return res.status(409).json({
+      error: running
+        ? `aucune question en attente pour ${name} : un nouveau tour l'a déjà prise en charge`
+        : `aucune question en attente pour ${name} (état : ${snap.state})`,
+      state: snap.state, alreadyHandled: true,
+    });
   }
   const note = typeof req.body?.note === 'string' ? req.body.note.replace(/\s+/g, ' ').trim().slice(0, 500) : '';
   const by = typeof req.body?.by === 'string' && /^[A-Za-z0-9_.\-]{1,32}$/.test(req.body.by) ? req.body.by : 'utilisateur';
@@ -3859,9 +3869,11 @@ function reduceMusician(name, ev) {
     return { prevState: state, newState: state, lastLine, awaitingChef, expectCallback: null, wakeGen, phantom: true, afterStop: true };
   }
   let stopped = prev.stopped ?? null;
-  // Sourced user_prompt (callback / @shortcut / notify) is not a turn start.
-  if ((t === 'user_prompt' && !ev.source) || (t === 'system' && ev.subtype === 'init')) {
-    if (state === 'idle' || state === 'unread') state = 'live';
+  // Sourced user_prompt (callback / @shortcut / notify) is not a turn start;
+  // pipeline_start / dual_start are (TurnCore.isTurnStart, 0.57.1).
+  if (globalThis.TurnCore.isTurnStart(ev)) {
+    state = globalThis.TurnCore.stateAtTurnStart(state);
+    lastAssistantText = '';
     awaitingChef = false;   // a new turn clears "waiting on the chef"
     stopped = null;
     // Only the user_prompt carries the expectation; the system/init that follows

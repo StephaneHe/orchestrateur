@@ -50,10 +50,22 @@
   function isResultError(ev) {
     return !!ev && (!!ev.is_error || (typeof ev.subtype === "string" && ev.subtype.startsWith("error")));
   }
-  /** Ouverture de tour (même règle que les réducteurs d'état). */
+  /** Ouverture de tour (même règle que les réducteurs d'état).
+   *  0.57.1 — a pipeline or dual-model run dispatched by the chef writes a
+   *  SOURCED user_prompt and no system/init in the musician's log (its steps have
+   *  their own logs): `pipeline_start` / `dual_start` is then the only sign that
+   *  a turn began. Without it, the previous question stayed `input` for the whole
+   *  run and came back at its result ("À examiner" kept answered questions). */
   function isTurnStart(ev) {
     if (!ev) return false;
-    return (ev.type === "user_prompt" && !ev.source) || (ev.type === "system" && ev.subtype === "init");
+    return (ev.type === "user_prompt" && !ev.source) ||
+      (ev.type === "system" && (ev.subtype === "init" || ev.subtype === "pipeline_start" || ev.subtype === "dual_start"));
+  }
+  /** State once a turn opens: a new turn supersedes a pending question, an
+   *  unread result or a failure (0.57.1 — `input` and `error` used to survive
+   *  until the first assistant event, which a pipeline run never writes). */
+  function stateAtTurnStart(state) {
+    return state === "idle" || state === "unread" || state === "input" || state === "error" ? "live" : state;
   }
   function stopInfo(ev) {
     const reason = typeof ev.reason === "string" && ev.reason.trim() ? ev.reason.trim() : "";
@@ -384,7 +396,7 @@
 
   g.TurnCore = {
     isAcknowledged, isQuestionResolved, isConductorStop, isPhantomResult,
-    isResultError, isTurnStart, stopInfo, stopWord, stopText, testInfo,
+    isResultError, isTurnStart, stateAtTurnStart, stopInfo, stopWord, stopText, testInfo,
     summarizePrompt, summarizeResult, cleanPrompt, createJournal, FULL_MAX,
   };
 })(typeof globalThis !== "undefined" ? globalThis : window);

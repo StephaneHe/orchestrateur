@@ -11,6 +11,52 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.57.1] - 2026-10-09
+
+Signalement de l'utilisateur : « J'ai repondu aux questions via le chef. Les
+panneaux A Examiner sont toujours affiches. Quand je click sur Repondu ca me
+met que j'ai deja repondu et que le musicien tourne ».
+
+### Fixed
+- (server, dashboard) **Une exécution de pipeline lancée par le chef ouvre bien
+  un tour.** Elle écrit dans le log du musicien un `user_prompt` sourcé
+  (`source: chef`) et aucun `system/init` : ses étapes ont leurs propres logs.
+  Aucun réducteur ne voyait donc le tour commencer :
+  - la question en attente (pause `[PIPELINE … ⏸]` ou `NEEDS_USER_INPUT`)
+    restait `input` pendant toute l'exécution ;
+  - à la fin, le `result`, qui n'est précédé d'aucun texte assistant, relisait
+    l'ancienne question et remettait la carte dans « À examiner ».
+
+  Correctifs, appliqués aux quatre réducteurs (`deriveState` de
+  fleet-status-core, `scanProjectState` et `reduceMusician` de server.js,
+  `Musician.transition` du client) :
+  - `TurnCore.isTurnStart` reconnaît `system/pipeline_start` et
+    `system/dual_start` ;
+  - `TurnCore.stateAtTurnStart` fait passer à `live` un tour qui s'ouvre sur
+    `input` ou `error` (avant : seulement `idle` et `unread`) ;
+  - le dernier texte assistant est remis à zéro à l'ouverture du tour.
+
+  Effet de bord corrigé dans le pump : le `result` d'une telle exécution
+  arrivait avec `prevState` `input` ou `error`, sans drain de file (et sans
+  notification après un échec). Il est maintenant traité comme une fin de tour
+  normale.
+- (server) **« Marquer comme répondue » n'est plus refusé pendant un tour.**
+  L'acquittement n'ajoute qu'un `notification/question_resolved` : il ne
+  relance rien et ne touche aucune exécution en pause. Quand il n'y a plus de
+  question ouverte, le 409 porte maintenant `alreadyHandled: true` et l'état
+  réel.
+- (dashboard) Le bouton « Répondu » d'une carte périmée l'aligne sur l'état du
+  serveur et redessine « À examiner », au lieu d'afficher « Acquittement
+  impossible ». `turn-core.js` et `app.js` sont rechargés (`?v=0.57.1`).
+
+### Tests
+- `scripts/_test_examine_after_chef.mjs` (24 contrôles) : séquence réelle
+  (pause, exécution du chef, fin sans texte assistant) sur les quatre vrais
+  réducteurs, la vraie route `resolve` (tour vivant, carte périmée, `run.json`
+  intact) et le client.
+- `_test_queue_api.mjs` : l'ancien contrôle « tour en cours ⇒ refus » devient
+  « acquittée même avec un tour en cours ».
+
 ## [0.57.0] - 2026-10-09
 
 Remarque de l'utilisateur sur un signalement de lacune : « là je répondais à une

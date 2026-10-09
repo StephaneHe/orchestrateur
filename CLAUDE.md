@@ -290,7 +290,9 @@ relancer :
 - `POST /api/question/:project/resolve {note?, by?}` (token-gated) ajoute au
   log du musicien un événement `notification/question_resolved` (question,
   note, auteur, horodatage). La route renvoie 409 si aucune question n'est
-  ouverte ou si un tour tourne.
+  ouverte, avec `alreadyHandled: true` et l'état réel : le client masque alors
+  la carte, sans erreur. Depuis 0.57.1, un tour en cours ne bloque plus
+  l'acquittement.
 - CLI : `node scripts/resolve-question.mjs <projet> [--note "…"]`. Codes de
   sortie : 0 acquittée, 2 rien à acquitter, 3 serveur < 0.25.0.
 - UI : bouton « ✓ Marquer comme répondue » sur la bulle de question du fil, la
@@ -305,6 +307,17 @@ main, l'acquittement survit au redémarrage, part au dashboard par le SSE et
 reste lisible dans le journal du panneau. `scanProject` ne remonte plus
 `needsInput` hors de l'état `input` (fleet-status n'affiche plus « needs: … »
 pour une question acquittée ou dépassée).
+
+**Ouverture de tour : une seule règle (0.57.1).** Elle est définie dans
+`TurnCore.isTurnStart` et `TurnCore.stateAtTurnStart`, utilisées par les quatre
+réducteurs.
+- Un tour s'ouvre sur un `user_prompt` sans source, un `system/init`, un
+  `system/pipeline_start` ou un `system/dual_start`. Une exécution de pipeline
+  lancée par le chef n'écrit qu'un `user_prompt` sourcé, sans `init`.
+- À l'ouverture, `idle`, `unread`, `input` et `error` passent à `live`, et le
+  dernier texte assistant est oublié : un `result` sans texte assistant ne
+  relit jamais la question du tour précédent.
+- Recette : `scripts/_test_examine_after_chef.mjs`.
 
 ---
 

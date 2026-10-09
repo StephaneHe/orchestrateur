@@ -202,11 +202,14 @@ export function deriveState(lines) {
     // Sourced user_prompt (callback / @shortcut / notify) is not a turn start;
     // only a source-less prompt or a system/init is (a --source dispatch emits
     // init too, so real turns are still covered).
-    if ((t === 'user_prompt' && !ev.source) || (t === 'system' && ev.subtype === 'init')) {
-      if (state === 'idle' || state === 'unread' || state === 'input') {
-        state = 'live';
+    if (TurnCore.isTurnStart(ev)) {
+      if (state !== 'live' && state !== 'think') {
+        state = TurnCore.stateAtTurnStart(state);
         turnStartTs = ev.timestamp ? Date.parse(ev.timestamp) : Date.now();
       }
+      // A result without assistant text (pipeline run) must not re-read the
+      // previous turn's NEEDS_USER_INPUT.
+      lastAssistantText = '';
       awaitingChef = false;   // a new turn clears the pending chef decision
       stopped = null;
     } else if (t === 'assistant') {

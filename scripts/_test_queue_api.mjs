@@ -290,14 +290,12 @@ scenario('POST /api/question/:p/resolve et resolve-question.mjs');
     c.on('close', (code) => resolve({ code, out, err }));
   });
 
+  // 0.57.1 (user report): a running turn no longer blocks the acknowledgement —
+  // it only appends a notification, the turn itself is left alone.
   pidState.alive = true;
-  let r = await rq('Alpha');
-  ok(r.code === 2 && /tour en cours/.test(r.out) && fs.readFileSync(qlog, 'utf8').trim().split('\n').length === ask.length,
-     'tour en cours ⇒ refus (409), exit 2, rien d’écrit');
+  let r = await rq('Alpha', '--note', 'répondu via le chef : hébreu');
+  ok(r.code === 0 && /acquittée/.test(r.out) && /Quelle langue/.test(r.out), 'acquittée même avec un tour en cours : sortie lisible (question + note)');
   pidState.alive = false;
-
-  r = await rq('Alpha', '--note', 'répondu via le chef : hébreu');
-  ok(r.code === 0 && /acquittée/.test(r.out) && /Quelle langue/.test(r.out), 'acquittée : sortie lisible (question + note)');
   const last = JSON.parse(fs.readFileSync(qlog, 'utf8').trim().split('\n').pop());
   ok(last.type === 'notification' && last.subtype === 'question_resolved' && last.note === 'répondu via le chef : hébreu' && last.by === 'chef',
      'l’événement est ajouté au log du musicien (par « chef »), avec la note');

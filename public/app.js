@@ -166,8 +166,9 @@ class Musician {
       if (!raw.source) {
         this.stopped = null;
         this.lastLang = null;
+        this.lastAssistantText = "";
         this.turnStartMs = Date.parse(raw.timestamp) || Date.now();
-        this.setState(this.state === "idle" || this.state === "unread" ? "live" : this.state);
+        this.setState(window.TurnCore.stateAtTurnStart(this.state));
       }
       this.lastLine = stripReplyPrefixes(String(raw.text || "")).replace(/\s+/g, " ").trim().slice(0, 140);
     } else if (t === "system") {
@@ -178,7 +179,15 @@ class Musician {
         this._toolUses      = {};
         this.turnCount++;
         this.turnStartMs = Date.parse(raw.timestamp) || Date.now();
-        this.setState(this.state === "idle" || this.state === "unread" ? "live" : this.state);
+        this.lastAssistantText = "";
+        this.setState(window.TurnCore.stateAtTurnStart(this.state));
+      } else if (window.TurnCore.isTurnStart(raw)) {
+        // pipeline_start / dual_start: the only turn opening of a run dispatched
+        // by the chef (sourced user_prompt, no system/init) — 0.57.1.
+        this.stopped = null;
+        this.lastAssistantText = "";
+        this.turnStartMs = Date.parse(raw.timestamp) || Date.now();
+        this.setState(window.TurnCore.stateAtTurnStart(this.state));
       }
     } else if (t === "notification" && raw.subtype === "question_resolved") {
       // Question acquittée sans relancer le musicien (même règle que les
@@ -3141,8 +3150,21 @@ const App = {
         body: JSON.stringify({ note, by: "utilisateur" }),
       });
       const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+      // 0.57.1 — nothing left to acknowledge (a newer turn already took the
+      // question over, or it was answered): the card is stale, align it on the
+      // server state instead of raising an error.
+      const already = resp.status === 409 && data.alreadyHandled;
+      if (!resp.ok && !already) throw new Error(data.error || `HTTP ${resp.status}`);
+      const m = this.musicians.get(name);
+      if (m && m.state === "input") {
+        const st = data.state;
+        m.setState(st === "live" || st === "think" ? st : (st === "error" || st === "unread" ? st : "idle"));
+        m.lastLine = already ? "✓ question déjà prise en charge" : "✓ question marquée répondue";
+      }
       this.pollPupitre();
+      window.Salle?.renderRail();
+      window.Salle?.renderAttention();
+      if (window.Salle?.diveName === name) window.Salle.renderDive();
     } catch (err) {
       alert("Acquittement impossible : " + (err.message || err));
     }
