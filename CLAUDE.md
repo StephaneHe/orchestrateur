@@ -45,12 +45,15 @@ Ce projet est hybride : **serveur Node.js** (`server.js` + `public/`) + **app An
   `?token=<hex>` query param or `X-Orchestrator-Token` header.
   Browser-side WS upgrades must use the query param (browsers can't
   set custom headers on WS).
-- **Binding is `0.0.0.0` + token gate only** (policy updated 2026-05-13).
-  The interface allowlist middleware has been disabled: trusted home LAN,
-  token gate is the sole authentication layer. Re-enable the middleware
-  (it's commented out in `server.js` near `// [1] Interface allowlist`)
-  if the operating network becomes untrusted (public Wi-Fi, conference,
-  etc.).
+- **Binding is `0.0.0.0` + network guard: loopback and Tailscale only**
+  (0.59.0, user decision 2026-10-09 « Protection puis redémarrage »). The
+  token gate is off since 2026-09-07, so the guard is the access control:
+  `scripts/network-guard.mjs`, first middleware (`// [1] Network guard` in
+  `server.js`) and in `wsVerifyClient`, serves only remote addresses in
+  `127.0.0.0/8`, `::1`, `100.64.0.0/10`, `fd7a:115c:a1e0::/48`; the home LAN
+  gets 403. No portproxy. Emergency widening only via `ORCH_ALLOW_CIDRS`
+  (server env, add-only). Test: `scripts/_test_network_guard.mjs`, HTTP
+  `network-guard`.
 - **Validate project names/paths against the `config.json` allowlist**
   before interpolating into any spawn. Pass argv as an array — never
   shell-concat.
@@ -1613,7 +1616,7 @@ Purge manually when it grows large, or wire a scheduled task in a future iterati
 - Don't resurrect Claude Agent SDK, native subagents, Agent Teams, or
   Cowork (all rejected in brief).
 - Don't add log rotation, multi-machine, or Telegram — deferred.
-- Don't disable the interface allowlist or the token gate.
+- Don't disable the network guard (loopback + Tailscale) or the token gate.
 
 ---
 

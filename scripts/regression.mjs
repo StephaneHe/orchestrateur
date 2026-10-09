@@ -280,6 +280,26 @@ async function apiChecks(sb) {
     const c = await json('/api/config');
     assert(c.projects.find(p => p.name === 'mu').currentState === 'idle', 'mu non repassé idle');
   });
+  // 0.59.0 — « Protection puis redémarrage » : boucle locale + Tailscale, LAN refusé.
+  await check(S, 'network-guard', 'Garde réseau du vrai server.js : boucle locale et Tailscale servis, IP LAN de la machine refusée (403)', async () => {
+    const src = fs.readFileSync(path.join(sb.root, 'server.js'), 'utf8');
+    if (!/networkGuard\.middleware/.test(src)) NA('garde réseau absente de cet état du code');
+    const os = await import('node:os');
+    const http = await import('node:http');
+    const port = Number(new URL(sb.url).port);
+    const status = (host) => new Promise((resolve) => {
+      const rq = http.request({ host, port, path: '/api/version', localAddress: host === '127.0.0.1' ? undefined : host, timeout: 5000 }, (r) => { r.resume(); r.on('end', () => resolve(r.statusCode)); });
+      rq.on('error', (e) => resolve(`erreur ${e.code}`)); rq.on('timeout', () => { rq.destroy(); resolve('délai'); }); rq.end();
+    });
+    const v4 = Object.values(os.networkInterfaces()).flat().filter(i => i && i.family === 'IPv4' && !i.internal).map(i => i.address);
+    const lan = v4.find(a => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(a));
+    const ts = v4.find(a => /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(a));
+    assert(await status('127.0.0.1') === 200, 'boucle locale refusée');
+    const notes = [];
+    if (lan) { const s = await status(lan); assert(s === 403, `IP LAN ${lan} : ${s} au lieu de 403`); notes.push(`LAN ${lan} → 403`); } else notes.push('pas d’IP LAN');
+    if (ts) { const s = await status(ts); assert(s === 200, `IP Tailscale ${ts} : ${s} au lieu de 200`); notes.push(`Tailscale ${ts} → 200`); } else notes.push('pas d’IP Tailscale');
+    return notes.join(', ');
+  });
   // 0.58.0 — « redémarrage requis » et tâches du Routage en attente, visibles.
   await check(S, 'routage-pending', '/api/version (repoVersion, restartRequired) et /api/pupitre (restartRequired, routagePending)', async () => {
     const v = await json('/api/version');

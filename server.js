@@ -67,6 +67,7 @@ import { scanProject as scanFleetMember, isPhantomResult, isQuestionResolved, is
 // Registre /downloads relu à chaud depuis downloads.json (0.23.0).
 import { createDownloadsRegistry, VERSION_NAME_RE } from './scripts/downloads-registry.mjs';
 import { trustWorkspace } from './scripts/workspace-trust.mjs';
+import { createNetworkGuard } from './scripts/network-guard.mjs';
 import { readPending, dependencyResult, releaseReady, staleEntries, markNotified, idOf as pendingIdOf } from './scripts/routage-pending.mjs';
 // Vue « Models par tâche » (0.39.0) : catalogue + model-routing.json.
 import { createModelRouting, incompatibility } from './scripts/model-routing.mjs';
@@ -298,6 +299,10 @@ const TAILSCALE_IP = detectTailscaleIPv4();
 
 const ALLOWED_LOCAL_ADDRS = new Set(['127.0.0.1', '::1']);
 if (TAILSCALE_IP) ALLOWED_LOCAL_ADDRS.add(TAILSCALE_IP);
+
+// Who may connect (0.59.0): loopback + Tailscale, LAN refused — see [1] below.
+const networkGuard = createNetworkGuard({ log: (m) => { console.log(m); debugLog(m); } });
+console.log(`[network-guard] clients servis : ${networkGuard.cidrs.join(', ')}`);
 
 function normalizeAddr(addr) {
   if (!addr) return '';
@@ -1565,7 +1570,9 @@ const httpServer = createHttpServer(app);
 // chain on upgrade requests, so we can't rely on the HTTP-side guards
 // alone — this is the only reliable pre-handshake gate.
 function wsVerifyClient(info) {
-  if (!TOKEN_GATE_ENABLED) return true;   // gate disabled — Tailscale-only access
+  // 0.59.0: loopback / Tailscale only, whatever the token gate says.
+  if (!networkGuard.verifyUpgrade(info.req)) return false;
+  if (!TOKEN_GATE_ENABLED) return true;   // gate disabled — Tailscale-only access (enforced above)
   // Allowlist disabled 2026-05-13 — token check below is the sole gate.
   const urlQ = /[?&]token=([^&#]+)/.exec(info.req.url || '');
   const qtok = urlQ ? decodeURIComponent(urlQ[1]) : null;
@@ -1583,20 +1590,14 @@ const _expressWsInstance = expressWs(app, httpServer, { wsOptions: { verifyClien
 // The real handling lives in httpServer.on('error') below.
 _expressWsInstance.getWss().on('error', () => {});
 
-// [1] Interface allowlist — DISABLED 2026-05-13 per user decision: home LAN
-// is trusted, token gate alone is sufficient. The middleware is kept here
-// (commented out) so re-enabling is a one-line revert if the network
-// environment changes (public Wi-Fi, conference, etc.).
-//
-// app.use((req, res, next) => {
-//   const local = normalizeAddr(req.socket.localAddress);
-//   if (!ALLOWED_LOCAL_ADDRS.has(local)) {
-//     res.status(403).type('text/plain')
-//        .end(`Forbidden: interface ${local} not in allowlist`);
-//     return;
-//   }
-//   next();
-// });
+// [1] Network guard — RE-ENABLED 0.59.0 per user decision (2026-10-09,
+// « Protection puis redémarrage »). The token gate is off (2026-09-07) on the
+// premise that only Tailscale reaches the fleet; the 2026-05-13 interface
+// allowlist had been disabled, so the 0.0.0.0 bind left every agent open to
+// the home LAN. Rule: the REMOTE address must be loopback or Tailscale
+// (scripts/network-guard.mjs); anything else gets 403, before any route.
+// Emergency widening: ORCH_ALLOW_CIDRS (add-only, server env).
+app.use(networkGuard.middleware);
 
 // ---------- Public routes (no token gate) ------------------------------------
 

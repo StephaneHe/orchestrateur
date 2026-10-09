@@ -11,6 +11,51 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.59.0] - 2026-10-09
+
+Décision de l'utilisateur : « Protection puis redémarrage ». Une tâche du chef
+(2026-09-07, « token-off EN SÉCURITÉ ») imposait, avant tout redémarrage, de
+limiter réellement l'accès à la boucle locale et à Tailscale. Le token gate est
+coupé depuis le 2026-09-07, au motif que seul Tailscale atteint la flotte. Or
+le serveur écoute sur `0.0.0.0`, et l'allowlist d'interface était désactivée
+depuis le 2026-05-13. N'importe quel appareil du réseau local pouvait donc
+piloter tous les agents, sans jeton.
+
+### Security
+- (server) **Garde réseau** (`scripts/network-guard.mjs`), premier middleware
+  avant toute route, et aussi sur la montée WebSocket (`wsVerifyClient`),
+  quel que soit l'état du token gate :
+  - seules les adresses **distantes** suivantes sont servies : boucle locale
+    (`127.0.0.0/8`, `::1`) et Tailscale (`100.64.0.0/10`,
+    `fd7a:115c:a1e0::/48`) ;
+  - tout le reste, dont le **réseau local (10.0.0.x…)**, reçoit **403** ;
+  - chaque adresse refusée est journalisée une fois
+    (`[network-guard] refusé : …`, console et `logs/server-debug.log`).
+- Aucun portproxy ; le bind reste `0.0.0.0`, filtré par la règle.
+- Élargissement d'urgence seulement, sans retrait des plages par défaut :
+  `ORCH_ALLOW_CIDRS="10.0.0.0/24"` dans l'environnement du serveur.
+- **Impact relevé** : dans `logs/server-debug.log` (809 950 requêtes depuis le
+  2026-04-29), toutes viennent de la boucle locale ou de Tailscale. L'app
+  Android (téléphone en 100.74.74.125) passe par Tailscale et n'est pas
+  touchée. Un client qui utiliserait une adresse LAN (`http://10.0.0.x:7777`)
+  sera refusé : il doit passer à l'adresse Tailscale du PC
+  (`http://100.113.178.120:7777`).
+- **Actif après redémarrage** seulement (`server.js`).
+
+### Changed
+- `CLAUDE.md` (règle « Binding ») : `0.0.0.0` + garde réseau
+  boucle locale/Tailscale.
+
+### Tests
+- `scripts/_test_network_guard.mjs` (17 contrôles) :
+  - la règle (IPv4, IPv6, formes mappées) ;
+  - de **vraies connexions** depuis les interfaces de la machine : IP LAN
+    → 403, boucle locale et IP Tailscale → 200 ;
+  - le branchement dans `server.js` : premier middleware, et WebSocket
+    contrôlé avant le court-circuit du token gate.
+- Parcours HTTP `network-guard` sur le vrai `server.js` de l'instance de
+  régression.
+
 ## [0.58.0] - 2026-10-09
 
 Signalement de l'utilisateur : « A nouveau, orchestrateur est termine, et plus
