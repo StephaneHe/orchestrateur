@@ -1611,6 +1611,39 @@ export async function browserChecks(sb, t) {
         fs.rmSync(path.join(sb.root, 'model-routing.json'), { force: true });
         return 'nemotron : en → en+fr ; Claude : toutes langues';
       });
+      // 0.52.0 — pipelines, phase 5 : le composer choisit le pipeline (demande du 2026-10-09).
+      await check(B, 'composer-pipeline', 'Composer : sélecteur de pipeline (auto, Discussion, Dév. léger, Dév. complet) — le choix part avec la demande, puis revient à « auto » ; utilisable sur mobile', async () => {
+        if (!(await lp.goto(`${sb.url}/?token=${sb.token}`).then(() => lp.locator('#composer-pipeline').count()))) NA('sélecteur absent de cet état du code');
+        await lp.locator('.brand').waitFor();
+        const sent = [];
+        await lp.route('**/api/dispatch', async (route) => {
+          sent.push(JSON.parse(route.request().postData() || '{}'));
+          await route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({ ok: true, project: 'chef', ticket: null }) });
+        });
+        try {
+          const opts = await lp.locator('#composer-pipeline option').evaluateAll(os => os.map(o => o.value));
+          assert(opts.join() === 'auto,discussion,dev:leger,dev:complet', `options : ${opts}`);
+          assert(await lp.getAttribute('#composer-pipeline', 'aria-label'), 'aria-label absent');
+          await lp.selectOption('#composer-pipeline', 'dev:complet');
+          await lp.fill('#composer-input', 'ajoute une page de statistiques (recette sélecteur)');
+          await lp.press('#composer-input', 'Enter');
+          assert(await until(async () => sent.length > 0, 5000), 'aucun envoi');
+          assert(sent[0].pipeline === 'dev' && sent[0].pipelineMode === 'complet' && sent[0].project === 'chef', `charge envoyée : ${JSON.stringify(sent[0])}`);
+          assert(await lp.inputValue('#composer-pipeline') === 'auto', 'le sélecteur doit revenir à « auto »');
+          await lp.fill('#composer-input', 'pourquoi ? (recette sélecteur auto)');
+          await lp.press('#composer-input', 'Enter');
+          assert(await until(async () => sent.length > 1, 5000) && !('pipeline' in sent[1]), `« auto » ne doit rien imposer : ${JSON.stringify(sent[1])}`);
+          await lp.setViewportSize({ width: 390, height: 844 });
+          const sel = await lp.locator('#composer-pipeline').boundingBox();
+          const ta = await lp.locator('#composer-input').boundingBox();
+          assert(sel && sel.height >= 40 && ta && ta.width >= 120 && sel.x + sel.width <= 390, `mobile : sélecteur ${JSON.stringify(sel)}, saisie ${JSON.stringify(ta)}`);
+          await shot(lp, 'composer-pipeline-mobile');
+          return `dev/complet envoyé puis retour à auto ; mobile : sélecteur ${Math.round(sel.height)} px, saisie ${Math.round(ta.width)} px`;
+        } finally {
+          await lp.unroute('**/api/dispatch');
+          await lp.setViewportSize({ width: 1600, height: 1000 });
+        }
+      });
       await lctx.close();
     }
 

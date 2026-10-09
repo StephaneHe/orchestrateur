@@ -79,14 +79,15 @@ export function readEnforcement(root) {
   const e = j?.enforcement && typeof j.enforcement === 'object' ? j.enforcement : {};
   const projects = Array.isArray(e.projects) ? e.projects.filter(p => typeof p === 'string') : [];
   const pipelines = (Array.isArray(e.pipelines) ? e.pipelines : ENGINE_PIPELINES).filter(p => ENGINE_PIPELINES.includes(p));
-  return { projects, pipelines, since: e.since || null, by: e.by || null };
+  // terminal (0.52.0) : le terminal interactif /ws/pty passe par le routeur.
+  return { projects, pipelines, terminal: e.terminal === true, since: e.since || null, by: e.by || null };
 }
 export function isEnforced(enf, project) {
   return enf.projects.includes(project) || enf.projects.includes('*');
 }
 
 /** Écriture atomique de la mise en service (CLI pipeline-enforce.mjs, route serveur). */
-export function writeEnforcement(root, { projects, pipelines, by }) {
+export function writeEnforcement(root, { projects, pipelines, terminal, by }) {
   const file = path.join(root, 'model-routing.json');
   let j = {};
   try { j = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* neuf */ }
@@ -96,8 +97,10 @@ export function writeEnforcement(root, { projects, pipelines, by }) {
   j.history = Array.isArray(j.history) ? j.history : [];
   const at = new Date().toISOString();
   const before = j.enforcement || null;
-  j.enforcement = { projects: [...new Set(projects)], pipelines: pipelines.filter(p => ENGINE_PIPELINES.includes(p)), since: at, by };
-  j.history.push({ at, task: 'enforcement', from: before ? `${(before.projects || []).join(',')} / ${(before.pipelines || []).join(',')}` : null, to: `${j.enforcement.projects.join(',') || '—'} / ${j.enforcement.pipelines.join(',')}`, by });
+  const term = typeof terminal === 'boolean' ? terminal : before?.terminal === true;
+  j.enforcement = { projects: [...new Set(projects)], pipelines: pipelines.filter(p => ENGINE_PIPELINES.includes(p)), ...(term ? { terminal: true } : {}), since: at, by };
+  const fmt = (e) => `${(e.projects || []).join(',') || '—'} / ${(e.pipelines || []).join(',')}${e.terminal ? ' / terminal' : ''}`;
+  j.history.push({ at, task: 'enforcement', from: before ? fmt(before) : null, to: fmt(j.enforcement), by });
   if (j.history.length > 500) j.history = j.history.slice(-500);
   j.updatedAt = at;
   const tmp = `${file}.${process.pid}.tmp`;
@@ -595,27 +598,36 @@ export async function runPipeline(o) {
   };
 
   // ── Reprise d'une exécution en pause, ou exécution neuve ─────────────────
+  // Un refus avant le départ est écrit dans le log du musicien (0.52.0) : une
+  // demande lancée depuis le dashboard ou l'app ne disparaît jamais en silence.
+  const refuse = (code, why) => {
+    console.error(`[pipeline] refusé : ${why}`);
+    writeEvent({ type: 'user_prompt', text: o.promptForLog ?? prompt, ...(sourceProject ? { source: sourceProject } : {}), ...(o.testLabel ? { test: { label: o.testLabel } } : {}) });
+    writeEvent({ type: 'result', subtype: 'error_pipeline_refused', is_error: true, num_turns: 0, duration_ms: 0, duration_api_ms: 0, total_cost_usd: 0,
+      result: `✕ pipeline ${o.pipeline || o.resumeRun || ''} refusé : ${why}` });
+    return code;
+  };
   let state;
   if (o.resumeRun) {
-    if (!RUN_RE.test(o.resumeRun)) { console.error(`[pipeline] exécution invalide : ${o.resumeRun}`); return 64; }
+    if (!RUN_RE.test(o.resumeRun)) return refuse(64, `exécution invalide : ${o.resumeRun}`);
     state = readJson(path.join(logsDir, 'runs', o.resumeRun, 'run.json'));
-    if (!state || state.project !== projectName) { console.error(`[pipeline] exécution ${o.resumeRun} introuvable pour ${projectName}`); return 64; }
-    if (state.status !== 'paused') { console.error(`[pipeline] exécution ${o.resumeRun} : statut « ${state.status} », seule une exécution en pause se reprend`); return 65; }
+    if (!state || state.project !== projectName) return refuse(64, `exécution ${o.resumeRun} introuvable pour ${projectName}`);
+    if (state.status !== 'paused') return refuse(65, `exécution ${o.resumeRun} : statut « ${state.status} », seule une exécution en pause se reprend`);
   }
   if (git(cwd, ['rev-parse', '--is-inside-work-tree']).out !== 'true') {
-    console.error(`[pipeline] refusé : ${cwd} n'est pas un dépôt git (les critères de sortie s'appuient sur git).`); return 64;
+    return refuse(64, `${cwd} n'est pas un dépôt git (les critères de sortie s'appuient sur git).`);
   }
   const cfg = readJson(path.join(cwd, '.orchestrateur', 'pipeline.json')) || {};
   const pipeline = state?.pipeline || o.pipeline;
-  if (!ENGINE_PIPELINES.includes(pipeline)) { console.error(`[pipeline] « ${pipeline} » n'est pas en service (phase 3 : ${ENGINE_PIPELINES.join(', ')}).`); return 64; }
+  if (!ENGINE_PIPELINES.includes(pipeline)) return refuse(64, `« ${pipeline} » n'est pas en service (${ENGINE_PIPELINES.join(', ')}).`);
   if (pipeline === 'dev' && !cfg.testCommand) {
-    console.error(`[pipeline] refusé : Développement exige .orchestrateur/pipeline.json avec testCommand dans ${cwd} (critères de sortie vérifiés par le code).`); return 64;
+    return refuse(64, `Développement exige .orchestrateur/pipeline.json avec testCommand dans ${cwd} (critères de sortie vérifiés par le code).`);
   }
   const base = state?.base || git(cwd, ['rev-parse', 'HEAD']).out;
-  if (!base) { console.error('[pipeline] refusé : dépôt sans commit.'); return 65; }
+  if (!base) return refuse(65, 'dépôt sans commit.');
   if (!state && pipeline === 'dev') {
     const dirty = git(cwd, ['status', '--porcelain']).out.split('\n').filter(l => l && !l.slice(3).startsWith(RUNS_PREFIX));
-    if (dirty.length) { console.error(`[pipeline] refusé : modifications non commitées (${dirty.length} fichier(s)) — l'étape Livrer doit produire UN commit propre. Commite ou range d'abord.`); return 65; }
+    if (dirty.length) return refuse(65, `modifications non commitées (${dirty.length} fichier(s)) — l'étape Livrer doit produire UN commit propre. Commite ou range d'abord.`);
   }
 
   // Artefacts jamais versionnés, même si le projet ne les ignore pas.

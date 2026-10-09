@@ -3047,6 +3047,15 @@ const App = {
       const payload = { project: target, prompt };
       if (attachmentPaths.length) payload.attachmentPaths = attachmentPaths;
       if (videoPaths.length) payload.videoPaths = videoPaths;
+      // Pipeline selector (0.52.0): an explicit choice wins over classification.
+      // It applies to this message only, then goes back to "auto".
+      const pipeSel = $("#composer-pipeline");
+      if (pipeSel && pipeSel.value !== "auto") {
+        const [pipe, mode] = pipeSel.value.split(":");
+        payload.pipeline = pipe;
+        if (mode) payload.pipelineMode = mode;
+        pipeSel.value = "auto";
+      }
 
       const resp = await fetch("/api/dispatch", {
         method: "POST",

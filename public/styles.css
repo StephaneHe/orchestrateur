@@ -1518,6 +1518,24 @@ a.pill { text-decoration: none; }   /* #btn-pupitre is an <a> styled as a pill *
 }
 .composer-attach:hover { color: var(--fg-0); background: var(--card-border); }
 
+/* Pipeline selector (0.52.0): "auto" stays discreet, an explicit choice stands out. */
+.composer-pipeline {
+  flex-shrink: 0;
+  max-width: 7.5rem;
+  height: 32px;
+  margin-bottom: 3px;
+  padding: 0 0.25rem;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg-2);
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+}
+.composer-pipeline:has(option:not([value="auto"]):checked) { color: var(--accent, var(--fg-0)); border-color: var(--accent, var(--fg-1)); }
+.composer-pipeline option { background: var(--bg-1, #111); color: var(--fg-0); }
+@media (max-width: 640px) { .composer-pipeline { max-width: 5.5rem; height: 44px; } }
+
 .composer-error {
   font-size: 0.6875rem;
   font-family: var(--font-mono);

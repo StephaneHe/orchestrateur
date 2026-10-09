@@ -127,7 +127,10 @@ console.log('\n── 7. Câblage : aucun point d’entrée n’échappe à l’
     t(`server.js observe l’entrée « ${kind} »`, new RegExp(`(entry|observeAs): '${kind}'`).test(srv));
   }
   t('/api/dispatch observe dashboard / android × chef / mention / musicien', /\$\{clientOf\(req\)\}:\$\{isChef \? \(mention \? 'mention' : 'chef'\) : 'musicien'\}/.test(srv));
-  t('terminal interactif : les deux chemins d’écriture sont observés', (srv.match(/observeTyping\(/g) || []).length >= 2 && /centralPty\.write\(parsed\.data\);\s*observeTyping\(parsed\.data\)/.test(srv) && /centralPty\.write\(text\);\s*observeTyping\(text\)/.test(srv));
+  // 0.52.0 : les deux chemins passent par writeInput, qui observe AVANT tout routage.
+  const legacyPaths = /centralPty\.write\(parsed\.data\);\s*observeTyping\(parsed\.data\)/.test(srv) && /centralPty\.write\(text\);\s*observeTyping\(text\)/.test(srv);
+  const routedPaths = /const writeInput = \(data\) => \{\s*observeTyping\(data\);/.test(srv) && /writeInput\(parsed\.data\)/.test(srv) && /writeInput\(text\)/.test(srv);
+  t('terminal interactif : les deux chemins d’écriture sont observés', legacyPaths || routedPaths);
   t('spawnDirectDispatch : filet de sécurité (lancement sans origine observé)', /function spawnDirectDispatch[\s\S]{0,900}observeEntry\(\{ entry, project: name, text: prompt \}\)/.test(srv));
   t('l’identifiant suit l’entrée jusqu’au tour (ORCH_OBS_ID) : file, pool, direct', (srv.match(/ORCH_OBS_ID/g) || []).length >= 3 && /obsId: t\.obsId/.test(srv) && /newSession, obsId,( secondModel, secondProvider, dualMode,)?( pipeline, pipelineResume, horsPipeline,( pipelineMode,)?)? noQueueIfBusy/.test(srv));
   t('dispatch.mjs : observe hors serveur et retire ORCH_OBS_ID de l’environnement du tour', /entry: 'dispatch-cli'/.test(dsp) && /delete process\.env\.ORCH_OBS_ID/.test(dsp));

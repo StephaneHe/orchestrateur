@@ -1047,6 +1047,56 @@ Suite de la demande du 2026-10-09. Plan : `docs/PLAN-pipeline-enforcement.md`.
   le nettoyage de l'env du serveur. Le moteur et la porte (`dispatch.mjs`)
   sont actifs tout de suite.
 
+## Pipelines obligatoires — phase 5 : toutes les entrées branchées (0.52.0)
+
+Suite de la demande du 2026-10-09. Plan : `docs/PLAN-pipeline-enforcement.md`.
+
+- **Classement** : `scripts/pipeline-classify.mjs` (`classifyEntry`), appelé
+  par la porte de `dispatch.mjs` pour toute demande sans choix explicite.
+  - Il utilise le model de la case `routage.classifier` (Claude seulement,
+    via `oneShotClaude`, sans outils).
+  - Sortie JSON validée, une nouvelle tentative, puis les règles
+    (`règles-v1`), avec une note.
+  - Chaque décision du model est comparée aux règles dans
+    `logs/pipeline-classify.ndjson`.
+- **Aucun tour hors pipeline** sur un projet en service. Un pipeline pas
+  encore en service donne une Discussion, avec
+  `classification.notInService` et une note. Seule sortie :
+  `--hors-pipeline`.
+- **Refus visibles** : les refus du moteur avant le départ écrivent
+  `user_prompt` et `result/error_pipeline_refused` dans le log du musicien.
+- **Sélecteur** : `#composer-pipeline` (dashboard) et `PipelineChoice`
+  (Android). Le corps `/api/dispatch` reçoit `pipeline` et `pipelineMode`.
+  - Côté serveur : `pipelineOptsFrom()`, `pipelineArgs()` et
+    `withPipelinePrefix()`.
+  - Le choix suit l'accès direct, l'@mention, la file, `spawnDirectDispatch`
+    et la session neuve.
+  - Vers le chef, il devient un préfixe `/dev /complet`.
+- **Session neuve** sur un projet en service : `spawnDirectDispatch`, puis
+  202 `{pipeline: true}`, sans sidecar.
+- **Terminal routé** : `enforcement.terminal`, réglé par `pipeline-enforce.mjs
+  on|off --terminal`, et désactivé par `off --all`.
+  - Module `scripts/terminal-route.mjs` (`TerminalRouter`,
+    `discussionArgs`, trames OSC `OrchRoute`).
+  - Le serveur retient les lignes d'action, envoie `route-confirm`, et
+    attend `{type:'route', id, action: run|discuss|cancel, project?}`.
+  - La lecture seule s'applique au **prochain lancement** du claude central.
+  - Aucun client du dashboard n'ouvre `/ws/pty` aujourd'hui : le protocole
+    est servi et testé, mais il n'y a pas d'interface.
+  - Doublure de test : `ORCH_CENTRAL_CMD` (JSON `[exe, …args]`), posée par
+    l'instance de régression.
+- Fake claude : `[CLASSIFY]`, `FAKE_CLAUDE_CLASSIFY`,
+  `FAKE_CLAUDE_CLASSIFY_LOG` et `--orch-fake-interactive`.
+- Recettes :
+  - `_test_pipeline_entries.mjs` ;
+  - HTTP `pipeline-all-entries` et `terminal-routing` ;
+  - navigateur `composer-pipeline` ;
+  - Android `testDebugUnitTest`.
+- **Redémarrage nécessaire** pour le serveur : sélecteur transmis à la file
+  et à l'@mention, préfixe vers le chef, session neuve, terminal. Le
+  classement par model et la règle « aucun tour hors pipeline » sont dans
+  `dispatch.mjs` : ils sont actifs tout de suite.
+
 ## Langue de discussion (0.51.0)
 
 Demande utilisateur : « La langue de la discussion doit pouvoir etre fixee et

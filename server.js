@@ -75,8 +75,10 @@ import { mountGatewayRoutes } from './scripts/responses-gateway.mjs';
 import { createApiKeys } from './scripts/api-keys.mjs';
 import { createPermissionStore, mountPermissionRoutes } from './scripts/permission-store.mjs';
 // Pipelines, phase 1 (0.41.0) : chaque entrée est classée et journalisée, sans effet.
-import { createObserver, TerminalLineBuffer, ENTRY_KINDS } from './scripts/pipeline-observe.mjs';
-import { readEnforcement, ENGINE_PIPELINES, RUN_RE } from './scripts/pipeline-engine.mjs';
+import { createObserver, TerminalLineBuffer, ENTRY_KINDS, classify as classifyEntrySync } from './scripts/pipeline-observe.mjs';
+import { readEnforcement, isEnforced, ENGINE_PIPELINES, RUN_RE } from './scripts/pipeline-engine.mjs';
+import { TerminalRouter, discussionArgs, encodeFrame, targetOf, HOLD_TIMEOUT_MS } from './scripts/terminal-route.mjs';
+import { pipelineOptsFrom, pipelineArgs, withPipelinePrefix } from './scripts/pipeline-entry-opts.mjs';
 import * as Lang from './scripts/language.mjs';
 import os from 'node:os';
 import path from 'node:path';
@@ -766,6 +768,9 @@ setInterval(() => sweepGaps(true), 60_000).unref?.();
 function clientOf(req) {
   return /okhttp|dalvik|android/i.test(req.get('user-agent') || '') ? 'android' : 'dashboard';
 }
+// Pipelines, phase 5 (0.52.0) : le choix du sélecteur (dashboard, app) ou de
+// l'appelant voyage avec la demande jusqu'au tour, file comprise
+// (pipelineOptsFrom / pipelineArgs / withPipelinePrefix, scripts/pipeline-entry-opts.mjs).
 
 function spawnDirectDispatch(name, prompt, attachmentPaths = [], videoPaths = [], opts = {}) {
   const dispatchScript = path.join(__dirname, 'scripts', 'dispatch.mjs');
@@ -810,10 +815,7 @@ function spawnDirectDispatch(name, prompt, attachmentPaths = [], videoPaths = []
     if (opts.dualMode === 'judge') args.push('--dual-mode', 'judge');
   }
   // Pipelines (0.48.0) : la demande garde son pipeline jusqu'au lancement.
-  if (opts.pipeline === 'discussion' || opts.pipeline === 'dev') args.push('--pipeline', opts.pipeline);
-  if (opts.pipelineMode === 'leger' || opts.pipelineMode === 'complet') args.push('--mode', opts.pipelineMode);
-  if (typeof opts.pipelineResume === 'string' && /^p-\d{8}T\d{6}-[a-z0-9]{4,8}$/.test(opts.pipelineResume)) args.push('--pipeline-resume', opts.pipelineResume);
-  if (typeof opts.horsPipeline === 'string' && opts.horsPipeline.trim()) args.push('--hors-pipeline', opts.horsPipeline.replace(/\s+/g, ' ').trim().slice(0, 300));
+  args.push(...pipelineArgs(pipelineOptsFrom(opts)));
 
   const child = spawn(process.execPath, args, {
     cwd: __dirname,
@@ -4440,6 +4442,17 @@ app.post('/api/projects/:name/sessions/new', express.json({ limit: '2mb' }), (re
   const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
   if (!prompt) return res.status(400).json({ error: 'prompt is required' });
 
+  // Projet en service (phase 5) : la demande part dans un pipeline comme toute
+  // autre entrée. Une exécution a ses propres sessions (par étape et par model) :
+  // il n'y a pas de sidecar à attendre, et celui du musicien n'est pas effacé.
+  if (isEnforced(readEnforcement(__dirname), proj.name)) {
+    const pOpts = pipelineOptsFrom(req.body);
+    const obsId = observeEntry({ entry: 'session-neuve', project: proj.name, text: prompt });
+    const pid = spawnDirectDispatch(proj.name, prompt, [], [], { obsId, ...pOpts });
+    return res.status(202).json({ ok: true, pipeline: true, pid,
+      note: 'projet en service : la demande part dans un pipeline ; chaque exécution démarre ses propres sessions' });
+  }
+
   // Delete sidecar so dispatch.mjs skips --resume and starts a fresh session.
   const sidePath = sessionFilePath(proj.name);
   try { fs.unlinkSync(sidePath); } catch {}
@@ -4971,10 +4984,7 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
       secondModel:    typeof req.body?.secondModel === 'string' ? req.body.secondModel : undefined,
       secondProvider: typeof req.body?.secondProvider === 'string' ? req.body.secondProvider : undefined,
       dualMode:       req.body?.dualMode === 'judge' ? 'judge' : undefined,
-      pipeline:       ['discussion', 'dev'].includes(req.body?.pipeline) ? req.body.pipeline : undefined,
-      pipelineResume: typeof req.body?.pipelineResume === 'string' ? req.body.pipelineResume : undefined,
-      horsPipeline:   typeof req.body?.horsPipeline === 'string' ? req.body.horsPipeline : undefined,
-      pipelineMode:   ['leger', 'complet'].includes(req.body?.pipelineMode) ? req.body.pipelineMode : undefined,
+      ...pipelineOptsFrom(req.body),
     };
     if (busy) {
       const len = queuePush(name, entry);
@@ -5015,15 +5025,17 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
         debugLog(`shortcut log → chef failed: ${e.message}`);
       }
       const st = musicianAutoStates.get(directProj.name)?.state ?? 'idle';
+      // Le choix du sélecteur suit la mention, file comprise (phase 5).
+      const pOpts = pipelineOptsFrom(req.body);
       if (st === 'live' || st === 'think') {
-        const len = queuePush(directProj.name, { prompt: stripped, attachmentPaths, videoPaths, obsId: obsId || undefined });
+        const len = queuePush(directProj.name, { prompt: stripped, attachmentPaths, videoPaths, obsId: obsId || undefined, ...pOpts });
         const id = dispatchQueue.get(directProj.name)[len - 1].id;
         console.log(`[queue] queued for ${directProj.name} (pos=${len}, state=${st}, id=${id})`);
         return res.status(202).json({
           ok: true, queued: true, project: directProj.name, queueLength: len, id,
         });
       }
-      const pid = spawnDirectDispatch(directProj.name, stripped, attachmentPaths, videoPaths, { obsId });
+      const pid = spawnDirectDispatch(directProj.name, stripped, attachmentPaths, videoPaths, { obsId, ...pOpts });
       console.log(`[queue] direct dispatch to ${directProj.name} (state=${st}) pid=${pid}`);
       return res.status(202).json({ ok: true, direct: true, project: directProj.name, pid });
     }
@@ -5090,7 +5102,7 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
     const ticket = poolEnqueue({
       obsId: obsId || undefined,
       class: 'user',
-      text: isOverride ? promptForRouting : prompt,
+      text: withPipelinePrefix(isOverride ? promptForRouting : prompt, pipelineOptsFrom(req.body)),
       attachmentPaths, videoPaths,
       traceId,
       interrupting: interruptedSlot != null,
@@ -5170,6 +5182,7 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
   // `newSession: true` dans le corps = --new-session (0.27.0) ; argv en tableau.
   const dispatchArgs = [dispatchScript, name, '--prompt-stdin'];
   if (req.body?.newSession === true) dispatchArgs.push('--new-session');
+  dispatchArgs.push(...pipelineArgs(pipelineOptsFrom(req.body)));
   const child = spawn(process.execPath, dispatchArgs, {
     cwd: __dirname,
     env: {
@@ -5489,7 +5502,26 @@ app.get('/healthz', (req, res) => {
 // ---------- WebSocket: central pty bridge -----------------------------------
 
 let centralPty = null;
+let centralPtyRouted = false;
 const wsClients = new Set();
+
+/** Ligne d'action du terminal confirmée : même chemin que le composer. */
+function runTerminalLine(line, project, cls, obsId) {
+  const conductor = conductorName();
+  const proj = project === conductor ? null : config.projects.find(p => p.name === project);
+  const pOpts = cls?.pipeline === 'dev' || cls?.pipeline === 'discussion'
+    ? { pipeline: cls.pipeline, ...(cls.pipeline === 'dev' && cls.mode ? { pipelineMode: cls.mode } : {}) } : {};
+  if (!proj) {
+    const ticket = poolEnqueue({ obsId: obsId || undefined, class: 'user', text: withPipelinePrefix(line, pOpts), attachmentPaths: [], videoPaths: [], traceId: newTraceId() });
+    return { project: conductor, ticket: ticket.id };
+  }
+  const st = musicianAutoStates.get(proj.name)?.state ?? 'idle';
+  if (st === 'live' || st === 'think') {
+    const len = queuePush(proj.name, { prompt: line, attachmentPaths: [], videoPaths: [], obsId: obsId || undefined, ...pOpts });
+    return { project: proj.name, queued: true, position: len };
+  }
+  return { project: proj.name, pid: spawnDirectDispatch(proj.name, line, [], [], { obsId, ...pOpts }) };
+}
 
 function broadcastToClients(data) {
   for (const client of wsClients) {
@@ -5505,11 +5537,16 @@ function startCentralPty() {
   env.TERM = 'xterm-256color';
   env.FORCE_COLOR = '1';
 
+  // Terminal routé (phase 5) : la session démarre en Discussion, lecture seule.
+  centralPtyRouted = readEnforcement(__dirname).terminal === true;
+  // ORCH_CENTRAL_CMD (JSON [exe, ...args]) : doublure de test uniquement.
+  let centralCmd = ['claude.exe'];
+  try { const c = JSON.parse(process.env.ORCH_CENTRAL_CMD || 'null'); if (Array.isArray(c) && c.length && c.every(x => typeof x === 'string')) centralCmd = c; } catch { /* défaut */ }
   try {
     // node-pty on Windows does NOT auto-append `.exe` like child_process
     // does — it hits the native CreateProcess with the exact string.
     // The package.json `os: ["win32"]` lock makes this safe.
-    centralPty = pty.spawn('claude.exe', [], {
+    centralPty = pty.spawn(centralCmd[0], [...centralCmd.slice(1), ...(centralPtyRouted ? discussionArgs() : [])], {
       name: 'xterm-256color',
       cols: 120,
       rows: 40,
@@ -5568,12 +5605,57 @@ app.ws('/ws/pty', (ws, req) => {
     try { for (const line of termLines.feed(data)) observeEntry({ entry: 'terminal', project: 'central', text: line }); }
     catch (e) { debugLog(`[observe] terminal: ${e.message}`); }
   };
+  // Phase 5 (0.52.0) : terminal routé — une ligne d'action est retenue jusqu'à
+  // confirmation (lancer en exécution, envoyer quand même en Discussion, annuler).
+  const router = new TerminalRouter({ classify: (line) => classifyEntrySync({ text: line }) });
+  let holdTimer = null;
+  const sendFrame = (obj) => { try { ws.send(encodeFrame(obj)); } catch {} };
+  const announce = (hold) => {
+    if (!hold) return;
+    const t = targetOf(hold.line, config.projects, conductorName());
+    const label = hold.shell ? 'commande directe (shell / mémoire), interdite en Discussion'
+      : `${hold.classification.pipeline}${hold.classification.pipeline === 'dev' ? ` (${hold.classification.mode === 'complet' ? 'complet' : 'léger'})` : ''}`;
+    sendFrame({ type: 'route-confirm', id: hold.id, line: hold.line, pipeline: hold.classification.pipeline, mode: hold.classification.mode || null,
+      shell: hold.shell, target: t.project, actions: hold.shell ? ['run', 'cancel'] : ['run', 'discuss', 'cancel'] });
+    try { ws.send(`\r\n\x1b[33m[orchestrateur] ligne retenue — ${label}. Confirmer : lancer en exécution vers « ${t.project} », ${hold.shell ? '' : 'l’envoyer en Discussion, '}ou annuler.\x1b[0m\r\n`); } catch {}
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(() => decide({ id: hold.id, action: 'cancel', timeout: true }), HOLD_TIMEOUT_MS);
+    holdTimer.unref?.();
+  };
+  const decide = ({ id, action, project, timeout }) => {
+    if (!['run', 'discuss', 'cancel'].includes(action)) return;
+    const r = router.resolve(id, action);
+    if (!r) return sendFrame({ type: 'route-done', id, ok: false, error: 'aucune ligne retenue sous cet identifiant' });
+    clearTimeout(holdTimer);
+    let result = null;
+    if (r.action === 'run') {
+      const t = targetOf(r.held.line, config.projects, conductorName());
+      const target = typeof project === 'string' && (project === conductorName() || config.projects.some(p => p.name === project)) ? project : t.project;
+      try {
+        const obsId = observeEntry({ entry: 'terminal', project: target, text: r.held.line, extra: { routed: true } });
+        result = runTerminalLine(target === t.project ? t.text : r.held.line, target, r.held.classification, obsId);
+      } catch (e) { result = { error: e.message }; }
+    }
+    if (centralPty && r.forward) centralPty.write(r.forward);
+    sendFrame({ type: 'route-done', id, ok: true, action: r.action, timeout: !!timeout, result });
+    announce(r.hold);
+  };
+  const writeInput = (data) => {
+    observeTyping(data);
+    if (!readEnforcement(__dirname).terminal) { centralPty.write(data); return; }
+    const { forward, hold } = router.feed(data);
+    if (forward) centralPty.write(forward);
+    announce(hold);
+  };
 
   if (!centralPty) startCentralPty();
 
   // Send a greeting if the pty didn't spawn.
   if (!centralPty) {
     try { ws.send('\r\n\x1b[31m[orchestrator] central pty unavailable — is `claude` on PATH?\x1b[0m\r\n'); } catch {}
+  } else if (readEnforcement(__dirname).terminal) {
+    sendFrame({ type: 'route-mode', routed: true, readOnly: centralPtyRouted });
+    if (!centralPtyRouted) try { ws.send('\r\n\x1b[33m[orchestrateur] terminal routé : les lignes d’action sont retenues. La session en cours a démarré avant la mise en service : elle ne sera en lecture seule qu’à son prochain lancement.\x1b[0m\r\n'); } catch {}
   }
 
   ws.on('message', (msg) => {
@@ -5584,21 +5666,24 @@ app.ws('/ws/pty', (ws, req) => {
       try {
         const parsed = JSON.parse(text);
         if (parsed.type === 'input' && typeof parsed.data === 'string') {
-          centralPty.write(parsed.data);
-          observeTyping(parsed.data);
+          writeInput(parsed.data);
           return;
         }
         if (parsed.type === 'resize' && parsed.cols && parsed.rows) {
           centralPty.resize(Number(parsed.cols), Number(parsed.rows));
           return;
         }
+        if (parsed.type === 'route' && typeof parsed.id === 'string') {
+          decide({ id: parsed.id, action: parsed.action, project: parsed.project });
+          return;
+        }
       } catch { /* fall through to raw */ }
     }
-    centralPty.write(text);
-    observeTyping(text);
+    writeInput(text);
   });
 
   ws.on('close', () => {
+    clearTimeout(holdTimer);
     wsClients.delete(ws);
     // Do NOT kill the pty — other tabs may still be attached, and we want
     // survival across accidental reloads.

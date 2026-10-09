@@ -275,6 +275,8 @@ export function serverEnv(root, port) {
     // add-tool also marks the workspace trusted: never in the real ~/.claude.json.
     ORCH_CLAUDE_JSON: path.join(root, '.claude.json'),
     MODEL_CATALOG_FIXTURES: path.join(root, '.model-catalog-fixtures'),
+    // Terminal central (0.52.0) : une doublure interactive, jamais le vrai claude.exe.
+    ORCH_CENTRAL_CMD: JSON.stringify([process.execPath, path.join(root, 'tests', 'fake_claude', 'fake_claude.mjs'), '--orch-fake-interactive']),
   });
   return env;
 }

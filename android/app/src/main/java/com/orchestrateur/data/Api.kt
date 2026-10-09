@@ -148,17 +148,9 @@ class Api(private val store: ServerStore) {
         prompt: String,
         attachmentPaths: List<String> = emptyList(),
         videoPaths: List<String> = emptyList(),
+        choice: PipelineChoice = PipelineChoice.AUTO,
     ) = withContext(Dispatchers.IO) {
-        val payload = buildJsonObject {
-            put("project", project)
-            put("prompt", prompt)
-            if (attachmentPaths.isNotEmpty()) {
-                put("attachmentPaths", buildJsonArray { attachmentPaths.forEach { add(it) } })
-            }
-            if (videoPaths.isNotEmpty()) {
-                put("videoPaths", buildJsonArray { videoPaths.forEach { add(it) } })
-            }
-        }
+        val payload = dispatchPayload(project, prompt, attachmentPaths, videoPaths, choice)
         val body = Json.encodeToString(payload).toRequestBody("application/json".toMediaType())
         http.newCall(
             req("/api/dispatch").post(body).header("Content-Type", "application/json").build()

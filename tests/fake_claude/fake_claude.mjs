@@ -42,6 +42,26 @@ import { spawn, spawnSync } from 'node:child_process';
 
 const argv = process.argv.slice(2);
 
+// Interactive central terminal double (0.52.0): started by the server through
+// ORCH_CENTRAL_CMD with `--orch-fake-interactive`. Prints its argv, then
+// "RECU:<line>" on Enter and "EFFACE" on Ctrl+U, so a test can see exactly
+// which bytes the router let through.
+if (argv.includes('--orch-fake-interactive')) {
+  process.stdout.write(`ARGS ${JSON.stringify(argv)}\r\n`);
+  let line = '';
+  try { process.stdin.setRawMode?.(true); } catch { /* not a tty */ }
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (d) => {
+    for (const ch of d) {
+      if (ch === '\r' || ch === '\n') { process.stdout.write(`\r\nRECU:${line}\r\n`); line = ''; }
+      else if (ch === '\x15') { process.stdout.write('\r\nEFFACE\r\n'); line = ''; }
+      else if (ch === '\x03') process.exit(0);
+      else if (ch >= ' ') line += ch;
+    }
+  });
+  await new Promise(() => {});
+}
+
 function flag(name) {
   const i = argv.indexOf(name);
   if (i < 0 || i + 1 >= argv.length) return null;
@@ -112,8 +132,19 @@ async function run() {
   // Langue (0.51.0) : trace du prompt reçu, réponse imposée, et rôle de « reformulateur ».
   if (process.env.FAKE_CLAUDE_DUMP_PROMPT) fs.appendFileSync(process.env.FAKE_CLAUDE_DUMP_PROMPT, JSON.stringify({ model: askedModel, prompt: userText }) + '\n');
   const isReformulation = /^\[REFORMULATION\]/.test(userText);
+  // Pipelines phase 5 (0.52.0): classifier slot. FAKE_CLAUDE_CLASSIFY = the JSON
+  // answer (or any text to simulate an invalid answer); default: a naive guess.
+  const isClassify = /^\[CLASSIFY\]/.test(userText);
+  if (isClassify && process.env.FAKE_CLAUDE_CLASSIFY_LOG) fs.appendFileSync(process.env.FAKE_CLAUDE_CLASSIFY_LOG, JSON.stringify({ model: askedModel }) + '\n');
+  const classifyReply = () => {
+    if (process.env.FAKE_CLAUDE_CLASSIFY) return process.env.FAKE_CLAUDE_CLASSIFY;
+    const req = (/Request:\n<<<\n([\s\S]*)\n>>>/.exec(userText) || [])[1] || '';
+    const dev = /\b(ajoute|corrige|implémente|implemente|modifie|fix|add)\b/i.test(req);
+    return JSON.stringify({ pipeline: dev ? 'dev' : 'discussion', mode: 'leger', raison: 'classement du faux claude' });
+  };
   const fixedReply = isReformulation
     ? (process.env.FAKE_CLAUDE_TRANSLATION || 'Réponse reformulée en français : la suite de tests passe, le travail est terminé et rien ne reste à faire pour cette demande.')
+    : isClassify ? classifyReply()
     : (process.env.FAKE_CLAUDE_REPLY || null);
 
   // 1. system/init

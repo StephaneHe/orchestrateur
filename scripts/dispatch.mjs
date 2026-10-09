@@ -1050,26 +1050,42 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
       process.exit(await pipeEngine.answerPausedRun({ logsDir: LOGS, project, projectName, run: paused, answer, promptForLog: prompt, sourceProject, callbackProject, testLabel }));
     }
   }
+  const pipeNotes = [];
   if (!pipe && !resumeRun) {
-    const obs = await import('./pipeline-observe.mjs');
-    const c = obs.classify({ text: prompt });
-    classification = { pipeline: c.pipeline, mode: c.mode, confidence: c.confidence, classifier: obs.CLASSIFIER, unclassifiable: !!c.unclassifiable };
+    // Phase 5 (0.52.0) : classement par le model de la case routage.classifier
+    // (règles de la phase 1 si la case est vide ou si le model échoue, tracé).
+    const { classifyEntry } = await import('./pipeline-classify.mjs');
+    const c = await classifyEntry({ root: ROOT, logsDir: LOGS, text: prompt, project: projectName, entry: sourceProject ? `source:${sourceProject}` : 'dispatch' });
+    classification = { pipeline: c.pipeline, mode: c.mode, confidence: c.confidence, classifier: c.classifier, unclassifiable: !!c.unclassifiable,
+      ...(c.rules ? { rules: c.rules, agree: c.agree } : {}), ...(c.raison ? { raison: c.raison } : {}), ...(c.note ? { note: c.note } : {}) };
+    if (c.note) pipeNotes.push(c.note);
     if (ENFORCEMENT.pipelines.includes(c.pipeline)) {
       pipe = c.pipeline;
       if (!mode) mode = c.mode;
     } else {
-      pipelineBypass = { reason: `pipeline « ${c.pipeline} » pas encore en service (phase 3 : ${ENFORCEMENT.pipelines.join(', ')})`, by: 'hors-perimetre', classification, enforced: true };
+      // Aucun tour hors pipeline (phase 5) : un pipeline pas encore en service
+      // n'est pas disponible — règle utilisateur « inclassable = Discussion ».
+      // La Discussion ne modifie rien ; elle dit comment relancer en /dev.
+      pipe = 'discussion';
+      classification.served = 'discussion';
+      classification.notInService = c.pipeline;
+      pipeNotes.push(`pipeline « ${c.pipeline} » pas encore en service — traité en Discussion (rien n'est modifié). Pour agir : relancer avec /dev (ou le sélecteur « Développement »).`);
     }
   }
+  if (NEW_SESSION) pipeNotes.push('--new-session sans effet : chaque exécution a ses propres sessions, par étape et par model');
   // --pipeline dev sans --mode : la classification choisit (Q9 : hésitation → léger).
   if (pipe === 'dev' && !mode) mode = (await import('./pipeline-observe.mjs')).classify({ text: `/dev ${prompt}` }).mode;
   if (pipe || resumeRun) {
     const code = await pipeEngine.runPipeline({
       root: ROOT, logsDir: LOGS, project, projectName,
-      prompt: imagePaths.length || videoPaths.length
+      prompt: (imagePaths.length || videoPaths.length
         ? `${prompt}\n\nPièces jointes (à lire avec l'outil Read) :\n${[...imagePaths, ...videoPaths].map(p => `- ${p}`).join('\n')}`
-        : prompt,
+        : prompt) + (classification?.notInService
+        ? `\n\n[Note de l'orchestrateur : cette demande relève du pipeline « ${classification.notInService} », pas encore en service sur ce projet. ` +
+          'Elle est traitée en Discussion : ne modifie rien ; si elle demande une action, termine ta réponse en disant à l’utilisateur de la relancer avec /dev.]'
+        : ''),
       promptForLog: prompt, pipeline: pipe, resumeRun, classification, mode,
+      ...(pipeNotes.length ? { modeNote: pipeNotes.join(' ; ') } : {}),
       callbackProject, sourceProject, obsId, testLabel,
       dispatchScript: fileURLToPath(import.meta.url),
     });

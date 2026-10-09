@@ -19,7 +19,8 @@
 > soient obligatoirement utlises. » Les phases 2 à 7 sont lancées dans l'ordre.
 > **Phase 2 (outillage NVIDIA / OpenRouter) livrée en 0.47.0** (§2.7, « État
 > livré »). **Phase 3 (moteur) livrée en 0.48.0** (§5, « État livré de la phase 3 »).
-> **Phase 4 (Développement complet) livrée en 0.49.0** (§5, « État livré de la phase 4 »). Prochaine : phase 5 (toutes les entrées branchées).
+> **Phase 4 (Développement complet) livrée en 0.49.0** (§5, « État livré de la phase 4 »).
+> **Phase 5 (toutes les entrées branchées) livrée en 0.52.0** (§5, « État livré de la phase 5 »). Prochaine : phase 6 (autres pipelines).
 
 ---
 
@@ -425,7 +426,7 @@ Chaque phase suit le protocole 0.29.0 : tag `pre-pipeline-enforce-pN-v<X.Y.Z>`, 
 | **P2 — Outillage NVIDIA / OpenRouter** ✅ (livrée en 0.47.0, voir §2.7 « État livré ») | §2.7 : codex + OpenRouter (Responses), passerelle Responses → chat intégrée au serveur pour NVIDIA, outil `web_fetch` de la passerelle, correspondance des `allowed-tools` avec le bac à sable codex, `system/init` complet, vérification du model servi, aucun repli. `AGENT_HARNESS` passe à `true` fournisseur par fournisseur | Sur `pipelineLab`, un tour NVIDIA (kimi-k3) et un tour OpenRouter (avec la clé) **lisent un fichier, le modifient et lancent `npm test`**, avec un journal JSONL identique à un tour codex. Un model indisponible donne `fallback_refused`, pas de repli | `_test_responses_shim.mjs` (traduction SSE, appels d'outils en flux, erreurs), HTTP `harness-nvidia` (faux NVIDIA local), contrôle réel sur `pipelineLab` | 3 à 4 j | Opus |
 | **P3 — Moteur + Discussion + Dev léger, sur `pipelineLab`** ✅ (livrée en 0.48.0) | Moteur d'exécution (`logs/runs/`), jeton d'étape, porte unique `startStep`, frise dans le journal, pause et escalade, **signaux de limite** (§2.5), avertissement « défaut du projet ». Classification par le model de `routage.classifier`, comparée au journal de la phase 1. Pipelines **Discussion** et **Développement léger** en service sur `pipelineLab` seulement | Sur le pilote, chaque tour porte `run/step/modelSource`, avec le bon model servi. Un `dispatch.mjs` lancé par un musicien est refusé. Un model indisponible met l'exécution en pause | HTTP `pipeline-run`, `pipeline-bypass`, `pipeline-unavailable`, `pipeline-limit-notice`. Navigateur `run-timeline` | 3 à 4 j | Opus |
 | **P4 — Développement complet** ✅ (livrée en 0.49.0) | Boucle TDD pilotée (4a → 4b → 4c, un test à la fois), critères vérifiés (§2.4), revue → 4, limites et signaux, montée léger → complet. Toujours sur `pipelineLab` | Sur `pipelineLab` : 4a échoue réellement, 4b qui modifie le test est refusé, la suite passe à la sortie, la boucle s'arrête quand la liste est vide, chaque limite prévient l'utilisateur | `_test_pipeline_gates.mjs`, HTTP `pipeline-tdd`, `pipeline-limits` | 3 j | Opus (critères), Sonnet (intégration) |
-| **P5 — Toutes les entrées branchées** (0.46.0, Android 0.9.0) | Sélecteur de pipeline dans le composer et l'app, préfixes, `@musicien`, `sessions/new`, file, pool, réveil, relais. **Terminal interactif routé** (décision n° 1) : sa session devient une Discussion en lecture seule, et une ligne classée comme action est confirmée puis lancée en exécution du bon pipeline. Refus sans pipeline (sauf `--hors-pipeline` tracé). Contrat du chef mis à jour (dispatch vers le musicien Chef) | **Test de la demande utilisateur** : pour chaque entrée E1 à E14 de l'instance de test, le tour lancé appartient à une exécution et tourne sur le model de sa case. Aucune entrée ne lance de tour hors pipeline | HTTP `pipeline-all-entries`, navigateur `composer-pipeline` et `terminal-routing`, Android `assembleDebug` et un test de ViewModel | 3 j | Sonnet |
+| **P5 — Toutes les entrées branchées** ✅ (livrée en 0.52.0, Android 0.11.0) | Sélecteur de pipeline dans le composer et l'app, préfixes, `@musicien`, `sessions/new`, file, pool, réveil, relais. **Terminal interactif routé** (décision n° 1) : sa session devient une Discussion en lecture seule, et une ligne classée comme action est confirmée puis lancée en exécution du bon pipeline. Refus sans pipeline (sauf `--hors-pipeline` tracé). Contrat du chef mis à jour (dispatch vers le musicien Chef) | **Test de la demande utilisateur** : pour chaque entrée E1 à E14 de l'instance de test, le tour lancé appartient à une exécution et tourne sur le model de sa case. Aucune entrée ne lance de tour hors pipeline | HTTP `pipeline-all-entries`, navigateur `composer-pipeline` et `terminal-routing`, Android `assembleDebug` et un test de ViewModel | 3 j | Sonnet |
 | **P6 — Autres pipelines** (0.47.x) | Incident, Recherche, Audit, Rédaction, Maintenance, Nouveau projet, Données, Routage complet, puis **média** (outils locaux exécutés par le moteur, models spécialisés) | Chaque pipeline a ses critères et un parcours de test | Une recette par pipeline | 3 à 5 j | Sonnet (Opus pour l'audit) |
 | **P7 — Généralisation** (0.48.0) | Tous les projets en service, mode observation retiré, rapport de coûts réels par pipeline | Une semaine d'usage sans contournement, et des coûts conformes aux estimations à ± 50 % | Non-régression complète | 1 j | Sonnet |
 
@@ -492,6 +493,48 @@ Chaque phase suit le protocole 0.29.0 : tag `pre-pipeline-enforce-pN-v<X.Y.Z>`, 
 - **Retour arrière** :
   - `node scripts/pipeline-enforce.mjs off --all` ;
   - ou le tag `pre-pipeline-enforce-p4-v0.48.0`.
+
+### État livré de la phase 5 (0.52.0, 2026-10-09)
+
+- **Livré** :
+  - classement par le model de la case `routage.classifier`
+    (`scripts/pipeline-classify.mjs`), avec repli tracé sur les règles et
+    comparaison journalisée (`logs/pipeline-classify.ndjson`). C'était
+    l'écart n° 1 de la phase 3 ;
+  - sélecteur de pipeline dans le composer du dashboard et de l'app Android
+    (0.11.0), avec des préfixes ;
+  - le choix suit l'accès direct, l'@mention, la file, le pool (préfixe vers
+    le chef) et la session neuve ;
+  - **plus aucun tour hors pipeline** sur un projet en service : un pipeline
+    pas encore en service donne une Discussion (règle « inclassable =
+    Discussion »), avec une note. Seule sortie : `--hors-pipeline`, tracée ;
+  - refus du moteur rendus visibles dans le fil ;
+  - terminal interactif routé (`enforcement.terminal`) : Discussion en
+    lecture seule, ligne d'action retenue puis lancée en exécution après
+    confirmation, `!…` et `#…` jamais transmis ;
+  - contrat du chef réécrit.
+- **Écarts assumés** :
+  1. **Le tour du chef n'est pas encore une exécution du pipeline Routage**
+     (E1, E8, E9, E11). Il reste un tour unique, et c'est lui qui dispatche
+     avec `--pipeline`. Le Routage complet (Lire → Classifier → … →
+     Rapporter, chaque étape sur sa case) est listé en phase 6.
+  2. **Terminal** : le serveur sert et teste le protocole de confirmation,
+     mais aucun client du dashboard n'ouvre `/ws/pty` aujourd'hui (le
+     terminal a quitté l'interface ; aucune entrée « terminal » n'a jamais été
+     observée). Le parcours prévu `terminal-routing` (navigateur) est donc un
+     parcours WebSocket dans `regression.mjs`. Désactivé par défaut :
+     l'activer (`pipeline-enforce.mjs on --terminal`) relève de la phase 7 ou
+     d'une décision de l'utilisateur.
+  3. Le classement par model n'est branché que pour un model **Claude**
+     (appel unique sans outils). Pour un autre fournisseur sur la case, ce
+     sont les règles, et la note le dit.
+  4. Le sélecteur, sur un projet **hors service**, force quand même
+     `--pipeline` : un choix explicite l'emporte. Si le projet n'a pas de
+     `pipeline.json` (Développement) ou pas de git, le refus est écrit dans le
+     fil.
+- **Retour arrière** :
+  - `node scripts/pipeline-enforce.mjs off --all` ;
+  - ou le tag `pre-pipeline-enforce-p5-v0.51.0`.
 
 **Retour arrière** : à chaque phase, le tag, plus le drapeau `enforcement` vidé. Sans redéploiement, le comportement redevient celui d'avant (un tour, un model).
 

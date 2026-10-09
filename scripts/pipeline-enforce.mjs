@@ -6,12 +6,16 @@
 //   node scripts/pipeline-enforce.mjs                 état
 //   node scripts/pipeline-enforce.mjs on  <projet>    met le projet en service
 //   node scripts/pipeline-enforce.mjs off <projet>    le retire
+//   node scripts/pipeline-enforce.mjs on  --terminal  terminal interactif routé (0.52.0)
+//   node scripts/pipeline-enforce.mjs off --terminal
 //   node scripts/pipeline-enforce.mjs off --all       retour arrière complet
 //
 // Écrit model-routing.json → enforcement (temp + rename, historique), relu à
 // chaque dispatch : aucun redémarrage. Les cases (models) ne sont pas touchées.
-// En service : toute demande au projet passe par Discussion ou Développement
-// léger ; un musicien ne peut plus y lancer de tour ; --model y est refusé.
+// En service : toute demande au projet passe par Discussion ou Développement ;
+// un musicien ne peut plus y lancer de tour ; --model y est refusé.
+// Terminal routé : le terminal central démarre en Discussion (lecture seule) à
+// son prochain lancement, et une ligne d'action est retenue pour confirmation.
 // ============================================================================
 
 import fs from 'node:fs';
@@ -22,18 +26,20 @@ import { readEnforcement, writeEnforcement, ENGINE_PIPELINES } from './pipeline-
 const ROOT = process.env.DISPATCH_ROOT_FOR_TESTS ? path.resolve(process.env.DISPATCH_ROOT_FOR_TESTS) : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const [cmd, target] = process.argv.slice(2);
 const cur = readEnforcement(ROOT);
-const show = (e) => console.log(`en service : ${e.projects.length ? e.projects.join(', ') : '(aucun projet)'} — pipelines : ${e.pipelines.join(', ')}${e.since ? ` — depuis ${e.since}${e.by ? ` (${e.by})` : ''}` : ''}`);
+const show = (e) => console.log(`en service : ${e.projects.length ? e.projects.join(', ') : '(aucun projet)'} — pipelines : ${e.pipelines.join(', ')} — terminal routé : ${e.terminal ? 'oui' : 'non'}${e.since ? ` — depuis ${e.since}${e.by ? ` (${e.by})` : ''}` : ''}`);
 
 if (!cmd || cmd === 'status') { show(cur); process.exit(0); }
 if (!['on', 'off'].includes(cmd) || !target) {
-  console.error('usage: node scripts/pipeline-enforce.mjs [status] | on <projet> | off <projet> | off --all');
+  console.error('usage: node scripts/pipeline-enforce.mjs [status] | on <projet> | off <projet> | on|off --terminal | off --all');
   process.exit(64);
 }
 let projects = cur.projects;
-if (cmd === 'off' && target === '--all') projects = [];
+let terminal = cur.terminal;
+if (target === '--terminal') terminal = cmd === 'on';
+else if (cmd === 'off' && target === '--all') { projects = []; terminal = false; }
 else {
   const config = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
   if (cmd === 'on' && !config.projects.some(p => p.name === target)) { console.error(`projet inconnu : ${target}`); process.exit(64); }
   projects = cmd === 'on' ? [...projects, target] : projects.filter(p => p !== target);
 }
-show(writeEnforcement(ROOT, { projects, pipelines: cur.pipelines.length ? cur.pipelines : ENGINE_PIPELINES, by: `pipeline-enforce ${cmd} ${target}` }));
+show(writeEnforcement(ROOT, { projects, terminal, pipelines: cur.pipelines.length ? cur.pipelines : ENGINE_PIPELINES, by: `pipeline-enforce ${cmd} ${target}` }));

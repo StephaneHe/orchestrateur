@@ -544,6 +544,104 @@ async function apiChecks(sb) {
     fs.rmSync(routingFile, { force: true });
     return 'les 3 signaux partent : log, dashboard, chef';
   });
+  // 0.52.0 — phase 5 : TOUTES les entrées passent par un pipeline (demande utilisateur du 2026-10-09).
+  const waitNewRun = async (before, ms = 120_000) => until(async () => {
+    const all = await runsOf();
+    const fresh = all.filter(x => !before.has(x.run));
+    return fresh.length && fresh.every(x => x.status !== 'running') ? fresh[0] : null;
+  }, ms, 500);
+  const runFile = (run) => JSON.parse(fs.readFileSync(path.join(sb.root, 'logs', 'runs', run, 'run.json'), 'utf8'));
+  await check(S, 'pipeline-all-entries', 'Pipelines, phase 5 : chaque entrée (API directe, app Android, session neuve, dispatch.mjs, relais du chef ; @mention et préfixe vers le chef en suite) lance une EXÉCUTION de pipeline ; classement par le model de la case routage.classifier ; pipeline pas en service → Discussion ; aucun tour hors pipeline', async () => {
+    if (!fs.existsSync(path.join(sb.root, 'scripts', 'pipeline-classify.mjs'))) NA('phase 5 absente de cet état du code');
+    const g = omegaRepo();
+    g('reset', '-q', '--hard', g('rev-list', '--max-parents=0', 'HEAD').stdout.trim()); g('clean', '-qfd', '-e', '.orchestrateur');
+    enforceOmega({ 'routage.classifier': { provider: 'anthropic', model: 'claude-haiku-5-5' } });
+    const done = [];
+    const entry = async (label, fire, expect) => {
+      const before = new Set((await runsOf()).map(x => x.run));
+      const nLog = readLog('omega').length;
+      const r = await fire();
+      if (r && 'status' in r) assert(r.status === 202, `${label} : HTTP ${r.status}`);
+      const run = await waitNewRun(before);
+      assert(run, `${label} : aucune exécution de pipeline lancée`);
+      const evs = readLog('omega').slice(nLog);
+      assert(!evs.some(e => e.type === 'user_prompt' && !e.pipeline), `${label} : un tour hors pipeline a été écrit`);
+      const st = runFile(run.run);
+      expect?.(run, st);
+      done.push(`${label}→${run.pipeline}${st.classification?.classifier ? `(${st.classification.classifier})` : '(choix explicite)'}`);
+      return { run, st };
+    };
+    // E2 — API / dashboard directement vers le musicien, choix du sélecteur.
+    await entry('API directe', () => post('/api/dispatch', { project: 'omega', prompt: 'Pourquoi la suite de tests passe-t-elle ?', pipeline: 'discussion' }),
+      (run, st) => assert(run.pipeline === 'discussion' && !st.classification, 'choix explicite : pas de classement'));
+    // E3 — app Android vers le musicien : l'entrée est observée « android:musicien ».
+    // (La @mention et le préfixe vers le chef sont couverts par _test_pipeline_entries.mjs :
+    // un tour du chef ici pousserait l'historique de référence hors de la fenêtre du fil.)
+    const nObs = fs.readFileSync(path.join(sb.root, 'logs', 'pipeline-observe.ndjson'), 'utf8').split('\n').length;
+    await entry('Android', () => fetch(sb.url + '/api/dispatch', { method: 'POST', headers: { ...H, 'Content-Type': 'application/json', 'User-Agent': 'okhttp/4.12.0' },
+      body: JSON.stringify({ project: 'omega', prompt: 'Pourquoi le dépôt a-t-il un seul commit ?', pipeline: 'discussion' }) }));
+    const obsTail = fs.readFileSync(path.join(sb.root, 'logs', 'pipeline-observe.ndjson'), 'utf8').split('\n').slice(nObs - 1).filter(Boolean).map(l => JSON.parse(l));
+    assert(obsTail.some(o => o.entry === 'android:musicien'), 'entrée Android non observée');
+    // E12 — session neuve sur un projet en service : exécution, pas d'attente de sidecar.
+    let sn;
+    await entry('session neuve', async () => { sn = await post('/api/projects/omega/sessions/new', { prompt: 'Pourquoi src/pipe.mjs existe-t-il ?' }); return sn; });
+    assert((await sn.json()).pipeline === true, 'session neuve : réponse « pipeline » attendue');
+    // E4/E5 — dispatch.mjs sans choix : classement par le model de la case.
+    const classifyLog = path.join(sb.root, 'logs', 'pipeline-classify.ndjson');
+    await entry('dispatch.mjs', () => pipeDispatch(['omega', 'Explique le rôle du fichier src/pipe.mjs']), (run, st) => {
+      assert(st.classification?.classifier === 'model:claude-haiku-5-5', `classement : ${JSON.stringify(st.classification)}`);
+      const rec = fs.readFileSync(classifyLog, 'utf8').trim().split('\n').map(l => JSON.parse(l)).pop();
+      assert(rec?.ok && rec.model === 'claude-haiku-5-5' && typeof rec.agree === 'boolean', `comparaison règles / model absente : ${JSON.stringify(rec)}`);
+    });
+    // E10 — réponse du chef relayée au musicien.
+    await entry('relais du chef', () => pipeDispatch(['omega', '[CHEF_ANSWER] Pourquoi garder un seul fichier source ?', '--source', 'chef']));
+    // Pipeline pas encore en service → Discussion, notée (plus aucun tour ordinaire).
+    await entry('pas en service', () => pipeDispatch(['omega', 'Compare les bibliothèques de tests'], { FAKE_CLAUDE_CLASSIFY: '{"pipeline":"recherche","mode":"complet","raison":"comparatif"}' }),
+      (run, st) => assert(run.pipeline === 'discussion' && st.classification?.notInService === 'recherche', `pas en service : ${JSON.stringify(st.classification)}`));
+    // Réponse du classifieur illisible deux fois → règles, tracé.
+    await entry('classifieur en échec', () => pipeDispatch(['omega', 'Pourquoi node --test ?'], { FAKE_CLAUDE_CLASSIFY: 'je ne sais pas' }),
+      (run, st) => assert(st.classification?.classifier === 'règles-v1' && /impossible/.test(st.classification.note || ''), `repli règles non tracé : ${JSON.stringify(st.classification)}`));
+    return `${done.length} entrées → exécutions : ${done.join(', ')}`;
+  });
+  await check(S, 'terminal-routing', 'Pipelines, phase 5 : terminal interactif routé — Discussion en lecture seule, ligne d’action retenue puis lancée en exécution après confirmation, commande shell directe jamais envoyée', async () => {
+    if (!fs.existsSync(path.join(sb.root, 'scripts', 'terminal-route.mjs'))) NA('phase 5 absente de cet état du code');
+    const { decodeFrames } = await import(pathToFileURL(path.join(sb.root, 'scripts', 'terminal-route.mjs')).href);
+    const g = omegaRepo();
+    g('reset', '-q', '--hard', g('rev-list', '--max-parents=0', 'HEAD').stdout.trim()); g('clean', '-qfd', '-e', '.orchestrateur');
+    fs.writeFileSync(routingFile, JSON.stringify({ version: 2, assignments: {}, history: [], enforcement: { projects: ['omega'], pipelines: ['discussion', 'dev'], terminal: true } }));
+    const ws = new WebSocket(`ws://127.0.0.1:${sb.port}/ws/pty?token=${sb.token}`);
+    let all = '';
+    ws.onmessage = (m) => { all += typeof m.data === 'string' ? m.data : Buffer.from(m.data).toString('utf8'); };
+    await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('websocket refusé')); });
+    const frames = () => decodeFrames(all);
+    const send = (o) => ws.send(JSON.stringify(o));
+    try {
+      await until(async () => /ARGS /.test(all) || null, 15_000);
+      const args = /ARGS (\[.*?\])\r\n/.exec(all)?.[1] || '';
+      assert(/--permission-mode","plan"/.test(args) && /Edit,Write/.test(args), `terminal pas en Discussion lecture seule : ${args}`);
+      send({ type: 'input', data: 'Pourquoi la suite de tests passe ?\r' });
+      assert(await until(async () => /RECU:Pourquoi la suite de tests passe \?/.test(all) || null, 8000), 'ligne de discussion non transmise');
+      const before = new Set((await runsOf()).map(x => x.run));
+      send({ type: 'input', data: '@omega ajoute une fonction moitie qui divise par deux\r' });
+      const conf = await until(async () => frames().find(f => f.type === 'route-confirm' && !f.shell) || null, 8000);
+      assert(conf?.target === 'omega' && conf.pipeline === 'dev' && !/RECU:@omega/.test(all), `ligne d’action non retenue : ${JSON.stringify(conf)}`);
+      send({ type: 'route', id: conf.id, action: 'run' });
+      const doneF = await until(async () => frames().find(f => f.type === 'route-done' && f.id === conf.id) || null, 8000);
+      assert(doneF?.ok && doneF.result?.project === 'omega' && /EFFACE/.test(all), `confirmation : ${JSON.stringify(doneF)}`);
+      const run = await waitNewRun(before);
+      assert(run?.pipeline === 'dev' && /moitie/.test(runFile(run.run).request || ''), `aucune exécution lancée depuis le terminal : ${JSON.stringify(run)}`);
+      send({ type: 'input', data: '!del src\\pipe.mjs\r' });
+      const sh = await until(async () => frames().find(f => f.type === 'route-confirm' && f.shell) || null, 8000);
+      assert(sh && !sh.actions.includes('discuss'), `commande shell : ${JSON.stringify(sh)}`);
+      send({ type: 'route', id: sh.id, action: 'discuss' });
+      const shDone = await until(async () => frames().find(f => f.type === 'route-done' && f.id === sh.id) || null, 8000);
+      assert(shDone?.action === 'cancel' && !/RECU:!del/.test(all), `commande shell transmise : ${JSON.stringify(shDone)}`);
+      return `discussion transmise, action retenue puis exécution ${run.run} (dev), « !… » annulée d’office`;
+    } finally {
+      try { ws.close(); } catch {}
+      fs.rmSync(routingFile, { force: true });
+    }
+  });
   // 0.49.0 — phase 4 : Développement COMPLET, TDD canonique un test à la fois.
   const omegaFresh = () => { const g = omegaRepo(); g('reset', '-q', '--hard', g('rev-list', '--max-parents=0', 'HEAD').stdout.trim()); g('clean', '-qfd', '-e', '.orchestrateur'); return g; };
   await check(S, 'pipeline-tdd', 'Pipelines, phase 4 : Développement complet — Comprendre, Concevoir, Liste de tests, puis UN test à la fois (4a échoue réellement, 4b la rend verte, 4c sautée si inutile), items cochés par le moteur, un commit ; montée léger → complet annoncée ; frise du journal', async () => {

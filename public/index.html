@@ -115,6 +115,13 @@
               <path d="M13.5 8.5 7.8 14.2a4 4 0 0 1-5.6-5.6l7-7a2.5 2.5 0 0 1 3.5 3.5L6.2 11.6a1 1 0 0 1-1.4-1.4L10.5 4.5"/>
             </svg>
           </button>
+          <select id="composer-pipeline" class="composer-pipeline" aria-label="Pipeline de la demande"
+                  title="Pipeline : auto = la classification décide ; sinon ton choix l’emporte">
+            <option value="auto">⇄ auto</option>
+            <option value="discussion">Discussion</option>
+            <option value="dev:leger">Dév. léger</option>
+            <option value="dev:complet">Dév. complet</option>
+          </select>
           <textarea id="composer-input"
                     placeholder="Écrivez au chef — tape @ pour citer un musicien"
                     rows="1"></textarea>

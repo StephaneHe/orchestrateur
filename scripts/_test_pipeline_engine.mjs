@@ -227,12 +227,18 @@ r = dispatch(['Q', 'fais autre chose'], { ORCH_TURN_PROJECT: 'P' });
 ok(r.code === 0, 'projet hors service : comportement inchangé (un musicien peut y dispatcher)');
 
 // ---------------------------------------------------------------------------
-section('8. Pipeline pas encore en service : tour ordinaire, tracé');
+// Phase 5 (0.52.0) : plus aucun tour hors pipeline. Un pipeline pas encore en
+// service n'est pas disponible → Discussion (règle « inclassable = Discussion »),
+// avec une note visible ; avant la 0.52.0, c'était un tour ordinaire.
+section('8. Pipeline pas encore en service : Discussion (lecture seule), notée — aucun tour ordinaire');
 n0 = logOf('P').length;
 r = dispatch(['P', 'fais un état de l\'art comparatif des bibliothèques de tests et donne les sources']);
 evs = since('P', n0);
-const byp = evs.find(e => e.subtype === 'pipeline_bypass');
-ok(r.code === 0 && byp?.by === 'hors-perimetre' && !evs.some(e => e.type === 'user_prompt' && e.pipeline), `classée hors périmètre → tour ordinaire, trace « ${byp?.text?.slice(0, 70)} »`);
+const up8 = evs.find(e => e.type === 'user_prompt');
+const st8 = evs.find(e => e.subtype === 'pipeline_start');
+ok(r.code === 0 && up8?.pipeline?.pipeline === 'discussion' && !evs.some(e => e.subtype === 'pipeline_bypass') && /pas encore en service/.test(st8?.note || ''),
+  `classée « recherche » (pas en service) → exécution Discussion, note « ${String(st8?.note || '').slice(0, 70)} »`, r.out.slice(-600));
+ok(runState(runOf(evs)).classification?.notInService === 'recherche', 'run.json garde le pipeline d’origine (notInService)');
 
 // ---------------------------------------------------------------------------
 section('9. Étape en mode double (principal + second de la case)');

@@ -11,6 +11,64 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.52.0] - 2026-10-09
+
+Pipelines obligatoires, phase 5 : toutes les entrées branchées. Suite de la
+demande utilisateur du 2026-10-09 : « il faut faire en sorte que ces pipelines
+soient obligatoirement utlises ».
+
+### Added
+- (server) Classement des entrées par le model de la case `routage.classifier`
+  (`scripts/pipeline-classify.mjs`). Sortie JSON validée, une nouvelle
+  tentative en cas de réponse invalide, puis les règles de la phase 1 en
+  repli, tracé. Le choix explicite (préfixe, sélecteur, `--pipeline`) ne passe
+  jamais par le model. Chaque décision du model est comparée aux règles dans
+  `logs/pipeline-classify.ndjson`.
+- (server) Sélecteur de pipeline dans le composer du dashboard : auto,
+  Discussion, Dév. léger, Dév. complet. Le choix part avec la demande
+  (`pipeline`, `pipelineMode`) puis revient à « auto ». Vers le chef, il
+  devient un préfixe visible (`/dev /complet …`) ; vers un musicien
+  (@mention, accès direct, file), il devient `--pipeline` / `--mode`.
+- (android) Même sélecteur dans le composer : « PIPELINE : AUTO ▾ », un appui
+  passe au choix suivant. Premier test unitaire JVM (`PipelineChoiceTest`).
+- (server) Terminal interactif routé (`scripts/terminal-route.mjs`),
+  activable par `pipeline-enforce.mjs on --terminal` (désactivé par défaut).
+  - Le claude central démarre en Discussion en lecture seule : mode plan,
+    sans Edit, Write, Bash ni PowerShell.
+  - Une ligne d'action est retenue (son Entrée n'est pas transmise) jusqu'à
+    une décision : la lancer en exécution du bon pipeline, l'envoyer quand
+    même en Discussion, ou l'annuler. Les trames de contrôle sont des
+    séquences OSC, ignorées par un terminal qui ne les connaît pas.
+  - Les lignes `!…` (shell) et `#…` (mémoire) ne partent jamais.
+  - Sans réponse au bout de 5 minutes, la ligne est annulée.
+- (server) Session neuve sur un projet en service : la demande part dans un
+  pipeline, sans effacer le sidecar ni attendre une session (chaque
+  exécution a les siennes).
+
+### Changed
+- (server) **Plus aucun tour hors pipeline** sur un projet en service. Un
+  pipeline pas encore en service (recherche, audit, incident…) est traité en
+  **Discussion** (lecture seule), avec une note qui dit de relancer en `/dev`
+  s'il faut agir. Avant, c'était un tour ordinaire tracé « hors périmètre ».
+  Seule sortie : `--hors-pipeline "raison"`.
+- (server) Un refus du moteur avant le départ (projet sans git, pas de
+  `pipeline.json` pour le Développement, dépôt non propre…) est écrit dans le
+  log du musicien (`result/error_pipeline_refused`) : une demande ne
+  disparaît plus en silence.
+- (server) `--new-session` sur une exécution de pipeline : sans effet, et
+  c'est désormais noté.
+- Contrat du chef (`I:\Dev\Chef\CLAUDE.md`, section « Pipelines
+  obligatoires ») réécrit : toujours `--pipeline`, jamais `--model` ;
+  préfixes du sélecteur transmis tels quels ; frise ; réponses aux pauses en
+  nommant l'exécution ; exigences relayées.
+
+### Tests
+- `scripts/_test_pipeline_entries.mjs` (43 contrôles, dont le câblage serveur du sélecteur), section 8 de
+  `_test_pipeline_engine.mjs` mise à jour (pipeline pas en service →
+  Discussion), parcours HTTP `pipeline-all-entries` et `terminal-routing`
+  (doublure de terminal `ORCH_CENTRAL_CMD`, jamais le vrai claude.exe),
+  parcours navigateur `composer-pipeline` ; Android `testDebugUnitTest`.
+
 ## [0.51.0] - 2026-10-09
 
 Langue de discussion. Demande utilisateur : « La langue de la discussion doit

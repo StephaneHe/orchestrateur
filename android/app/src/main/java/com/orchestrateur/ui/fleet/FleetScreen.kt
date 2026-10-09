@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.orchestrateur.BuildConfig
 import com.orchestrateur.data.Musician
+import com.orchestrateur.data.PipelineChoice
 import com.orchestrateur.data.State as MState
 import com.orchestrateur.ui.theme.Palette
 import kotlinx.coroutines.Dispatchers
@@ -615,6 +616,18 @@ private fun Composer(
                 if (directTarget != null) "À : ${directTarget.uppercase()} (DIRECT)" else "À : CHEF",
                 color = if (directTarget != null) Palette.StInput else Palette.Fg3,
                 fontSize = 9.sp, letterSpacing = 1.4.sp, fontFamily = FontFamily.Monospace,
+            )
+            // Sélecteur de pipeline (serveur 0.52.0) : un appui passe au choix suivant.
+            val choice = vm.pipelineChoice
+            Text(
+                "PIPELINE : ${choice.label.uppercase()} ▾",
+                color = if (choice == PipelineChoice.AUTO) Palette.Fg3 else Palette.Accent,
+                fontSize = 9.sp, letterSpacing = 1.2.sp, fontFamily = FontFamily.Monospace,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable { vm.pipelineChoice = choice.next() }
+                    .semantics { contentDescription = "Pipeline de la demande : ${choice.label}. Appuyer pour changer." }
+                    .padding(horizontal = 6.dp, vertical = 10.dp),
             )
             // Interruption coopérative : on le DIT avant, pas après.
             if (directTarget == null && chefBusy) {

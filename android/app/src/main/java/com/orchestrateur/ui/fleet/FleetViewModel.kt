@@ -14,6 +14,7 @@ import androidx.lifecycle.viewModelScope
 import com.orchestrateur.data.Api
 import com.orchestrateur.data.FleetStream
 import com.orchestrateur.data.Musician
+import com.orchestrateur.data.PipelineChoice
 import com.orchestrateur.data.RawEvent
 import com.orchestrateur.data.State
 import com.orchestrateur.data.toolArgPreview
@@ -956,10 +957,15 @@ class FleetViewModel(
         }
     }
 
+    /** Pipeline selector of the composer; back to AUTO after each send. */
+    var pipelineChoice by mutableStateOf(PipelineChoice.AUTO)
+
     fun dispatch(prompt: String, displayText: String = prompt, onDone: (Result<Unit>) -> Unit = {}) {
         val target = activeTab
         val attachments = pendingImages.toList()
         pendingImages.clear()
+        val choice = pipelineChoice
+        pipelineChoice = PipelineChoice.AUTO
 
         val imageUris = attachments.filter { !it.isVideo }.map { it.uri }
         val videoUris = attachments.filter { it.isVideo }.map { it.uri }
@@ -981,7 +987,7 @@ class FleetViewModel(
                 val videoPaths = attachments
                     .filter { it.isVideo }
                     .map { api.uploadFile(appContext, it.uri, it.mimeType) }
-                api.dispatch(target, prompt, attachmentPaths, videoPaths)
+                api.dispatch(target, prompt, attachmentPaths, videoPaths, choice)
             }
             onDone(r)
         }
