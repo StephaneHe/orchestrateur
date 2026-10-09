@@ -71,6 +71,17 @@ export async function browserChecks(sb, t) {
       assert(ok, `état : ${await page.textContent('#conn-status .conn-text')}`);
     });
     await check(B, 'thread', 'Fil du chef : historique rechargé', async () => {
+      // The fixture's old exchange can fall out of the 60-message window once the
+      // HTTP stage has added many result cards: re-seed the same kind of exchange
+      // in the chef log, then RELOAD — the assertion is still "history comes back".
+      const ts = new Date().toISOString();
+      fs.appendFileSync(path.join(sb.root, 'logs', 'chef.jsonl'), [
+        { type: 'user_prompt', text: 'Fais le point sur la flotte (historique)', timestamp: ts },
+        { type: 'assistant', message: { content: [{ type: 'text', text: 'Bonjour — la flotte est calme, rien à signaler.' }] }, timestamp: ts },
+        { type: 'result', subtype: 'success', is_error: false, num_turns: 1, duration_ms: 1000, duration_api_ms: 800, result: 'Bonjour — la flotte est calme, rien à signaler.', timestamp: ts },
+      ].map(e => JSON.stringify(e)).join('\n') + '\n');
+      await page.reload();
+      await page.locator('.brand').waitFor({ timeout: 10_000 });
       const ok = await until(async () => (await page.textContent('#cv-scroll')).includes('la flotte est calme'), 10_000);
       assert(ok, 'réponse historique du chef absente');
     });

@@ -536,6 +536,29 @@ Chaque phase suit le protocole 0.29.0 : tag `pre-pipeline-enforce-pN-v<X.Y.Z>`, 
   - `node scripts/pipeline-enforce.mjs off --all` ;
   - ou le tag `pre-pipeline-enforce-p5-v0.51.0`.
 
+### État livré de la phase 6, lot A (0.53.0, 2026-10-09)
+
+- **Livré** : Incident, Recherche, Audit sécurité, Maintenance, Nouveau projet,
+  Données et Rédaction.
+  - Ils sont décrits dans `scripts/pipeline-catalog.mjs` et exécutés par le
+    moteur, avec des critères génériques vérifiés par le code (détail dans
+    CHANGELOG 0.53.0).
+  - Le classement par model fonctionne pour tous les fournisseurs de la case
+    `routage.classifier`.
+- **Choix faits** :
+  1. **Historique (Maintenance)** : un rapport seulement. Une réécriture
+     d'historique git reste soumise à l'accord explicite de l'utilisateur.
+  2. **Incident sur une suite déjà rouge** : l'étape « test qui reproduit »
+     est sautée, en le disant, et la correction doit rendre la suite verte.
+  3. **Rédaction** : la livraison est un commit simple, sans version ni
+     CHANGELOG, car une rédaction n'est pas une release.
+  4. **Scans** : `scanCommands` du `pipeline.json` du projet, sinon gitleaks
+     s'il est installé. Le model ne fait qu'interpréter une sortie réelle.
+- **Reste de la phase 6** : le Routage complet (lot B), puis Images, Vidéo et
+  Audio (lot C).
+- **Retour arrière** : `node scripts/pipeline-enforce.mjs pipelines
+  discussion,dev`, ou le tag `pre-pipeline-enforce-p6a-v0.52.0`.
+
 **Retour arrière** : à chaque phase, le tag, plus le drapeau `enforcement` vidé. Sans redéploiement, le comportement redevient celui d'avant (un tour, un model).
 
 ---

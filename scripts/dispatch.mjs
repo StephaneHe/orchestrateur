@@ -253,9 +253,7 @@ if (pipelineStepArg) {
   PIPE_STEP = { run: m[1], key: m[2] };
 }
 if (pipelineSession && !/^[a-z0-9-]{1,40}$/.test(pipelineSession)) die(`--pipeline-session invalide : ${pipelineSession}`);
-if (pipelineArg && !['discussion', 'dev'].includes(pipelineArg)) {
-  die(`--pipeline ${pipelineArg} : pipeline pas encore en service (phase 3 : discussion, dev). Les autres arrivent en phase 6.`);
-}
+if (pipelineArg && !/^[a-z][a-z0-9-]{1,30}$/.test(pipelineArg)) die(`--pipeline invalide : ${pipelineArg}`);
 if (horsPipelineArg != null && !String(horsPipelineArg).trim()) die('--hors-pipeline exige une raison');
 const DUAL_RUN_RE = /^d-\d{8}T\d{6}-[a-z0-9]{4,8}$/;
 if (secondProvider && !['claude', 'codex', 'nvidia', 'openrouter'].includes(secondProvider)) die(`--second-provider must be "claude", "codex", "nvidia" or "openrouter" (got "${secondProvider}")`);
@@ -422,6 +420,9 @@ if (modelOverride && provider === 'claude' && OPENAI_MODEL_RE.test(modelOverride
 // Avant toute écriture. Les refus sont mécaniques (plan §3.3) : une consigne de
 // prompt ne suffit pas.
 const pipeEngine = await import('./pipeline-engine.mjs');
+if (pipelineArg && !pipeEngine.ENGINE_PIPELINES.includes(pipelineArg)) {
+  die(`--pipeline ${pipelineArg} : pipeline inconnu du moteur (connus : ${pipeEngine.ENGINE_PIPELINES.join(', ')})`);
+}
 const ENFORCEMENT = pipeEngine.readEnforcement(ROOT);
 const ENFORCED = pipeEngine.isEnforced(ENFORCEMENT, projectName);
 // 1. Une étape de pipeline ne lance aucun tour (le moteur est seul maître).

@@ -11,6 +11,73 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.53.0] - 2026-10-09
+
+Pipelines obligatoires, phase 6, lot A : sept autres pipelines, et le
+classement par model pour tous les fournisseurs. Demande utilisateur : « Branche
+les autres pipelines […] Chacun a ses critères de sortie vérifiés par le code et
+ses tests. Ajoute aussi le classement par model pour les fournisseurs non-Claude
+dans la case routage.classifier. »
+
+### Added
+- (server) **Catalogue déclaratif** (`scripts/pipeline-catalog.mjs`) exécuté par
+  le moteur. Une étape = un tour sur le model de SA case de la page Models.
+  Chaque étape a des critères vérifiés par le code : sections exigées, sources
+  avec URL, chemins cités existants, JSON valide, lecture seule (empreintes),
+  suite verte, fichiers requis, documents seulement, tests protégés, commit.
+  - **Incident** : Détecter → Évaluer l'impact → Contenir → Diagnostiquer →
+    test qui reproduit → correction → Post-mortem → Livrer. Une suite déjà
+    rouge au départ remplace le test qui reproduit (étape sautée, dit), et la
+    correction doit la rendre verte.
+  - **Recherche** : Cadrer → Rechercher → Lire → Recouper → Synthétiser, en
+    lecture seule, sources exigées. La synthèse est la réponse.
+  - **Audit sécurité** : Cartographier → Scans → Revue manuelle → Second avis
+    → Corriger → Re-vérifier → Livrer.
+    - Les scanners (`scanCommands` du `pipeline.json` du projet, sinon
+      gitleaks) sont lancés par l'orchestrateur lui-même, et leur sortie est
+      remise au model.
+    - Le second avis est **indépendant par construction** : la revue manuelle
+      est retirée du dossier pendant son tour.
+    - Re-vérifier → Corriger boucle tant qu'il reste des failles (borné).
+    - Rien à corriger ⇒ pas de livraison.
+  - **Maintenance** : Dépendances → Historique (rapport seulement, aucune
+    réécriture) → Tests instables (suite lancée deux fois) → Dette → Livrer.
+  - **Nouveau projet** : Cadrage → Squelette aux règles de la flotte (README,
+    CHANGELOG, registre des exigences, `pipeline.json` avec testCommand) →
+    MVP → Publication.
+  - **Données** : Collecter (sources citées) → Nettoyer → Stocker → Présenter
+    (Résultats, Limites) → Livrer.
+  - **Rédaction** : Rédiger (documents seulement) → Relire (JSON avec le
+    texte final) → Mettre en forme → Livrer (commit simple, sans version).
+  - « Rien à faire » est accepté seulement si l'étape l'écrit
+    (`RIEN_A_…`) et ne modifie rien.
+- (server) Classement par model pour **tous les fournisseurs** de la case
+  `routage.classifier` :
+  - codex via `codex exec` (lecture seule, abonnement) ;
+  - OpenRouter et NVIDIA via leur API chat, avec une clé lue côté
+    orchestrateur et envoyée seulement à son fournisseur.
+
+  Clé absente ou échec ⇒ règles, tracé. Le fournisseur est noté dans
+  `logs/pipeline-classify.ndjson`.
+- (server) `pipeline-enforce.mjs pipelines <liste|all>` choisit les
+  pipelines en service. « discussion » reste obligatoire.
+- (server) Libellés de frise pour les nouveaux pipelines dans le journal.
+
+### Changed
+- (server) `--pipeline` accepte tout pipeline du moteur. Une demande classée
+  vers un pipeline en service y part directement, au lieu d'être repliée en
+  Discussion.
+
+### Tests
+- `scripts/_test_pipeline_catalog.mjs` (42 contrôles, vrai dispatch) ; parcours navigateur `thread` rendu déterministe (il réécrit sa réponse de référence avant de recharger : les cartes de résultat du stade HTTP la sortaient de la fenêtre de 60 messages) : les 7
+  pipelines de bout en bout, les refus par critère (jugement qui modifie,
+  action qui casse la suite, rédaction qui touche du code), la boucle, les
+  scans, l'indépendance, la livraison sautée, le classement, la mise en
+  service.
+- `_test_pipeline_entries.mjs` : classement par codex (vraie doublure de
+  `codex exec`, `tests/fake_codex`), OpenRouter et NVIDIA.
+- Parcours HTTP `pipeline-catalog`.
+
 ## [0.52.0] - 2026-10-09
 
 Pipelines obligatoires, phase 5 : toutes les entrées branchées. Suite de la

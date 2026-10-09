@@ -642,6 +642,31 @@ async function apiChecks(sb) {
       fs.rmSync(routingFile, { force: true });
     }
   });
+  // 0.53.0 — phase 6, lot A : les autres pipelines (Recherche, Maintenance… ; les 7 sont couverts par _test_pipeline_catalog.mjs).
+  await check(S, 'pipeline-catalog', 'Pipelines, phase 6 (lot A) : une demande classée « recherche » part en exécution Recherche par l’API (sources exigées, lecture seule, synthèse = réponse) ; Maintenance lancée par dispatch.mjs va jusqu’à la livraison ; frises au journal', async () => {
+    if (!fs.existsSync(path.join(sb.root, 'scripts', 'pipeline-catalog.mjs'))) NA('catalogue absent de cet état du code');
+    const { ENGINE_PIPELINES } = await import(pathToFileURL(path.join(sb.root, 'scripts', 'pipeline-engine.mjs')).href);
+    const g = omegaRepo();
+    g('reset', '-q', '--hard', g('rev-list', '--max-parents=0', 'HEAD').stdout.trim()); g('clean', '-qfd', '-e', '.orchestrateur');
+    fs.writeFileSync(routingFile, JSON.stringify({ version: 2, assignments: {}, history: [], enforcement: { projects: ['omega'], pipelines: ENGINE_PIPELINES } }));
+    const h0 = g('rev-parse', 'HEAD').stdout.trim();
+    let before = new Set((await runsOf()).map(x => x.run));
+    const r = await post('/api/dispatch', { project: 'omega', prompt: 'fais un état de l\'art comparatif des bibliothèques de tests et donne les sources' });
+    assert(r.status === 202, `dispatch : ${r.status}`);
+    const rech = await waitNewRun(before, 150_000);
+    assert(rech?.pipeline === 'recherche' && rech.status === 'done' && rech.steps.filter(s => s.status === 'ok').length === 5, `Recherche : ${JSON.stringify(rech && { p: rech.pipeline, s: rech.status, st: rech.steps.map(x => `${x.id}:${x.status}:${x.why || ''}`) })}`);
+    const res = readLog('omega').filter(e => e.type === 'result').pop();
+    assert(/https?:\/\//.test(res?.result || '') && g('rev-parse', 'HEAD').stdout.trim() === h0, 'synthèse sans source, ou commit inattendu');
+    before = new Set((await runsOf()).map(x => x.run));
+    const m = await pipeDispatch(['omega', 'fais la maintenance du projet', '--pipeline', 'maintenance'], { FAKE_PIPE_NOTHING: 'dependances,tests-instables' });
+    const maint = (await runsOf()).find(x => !before.has(x.run));
+    assert(m.code === 0 && maint?.status === 'done' && maint.steps.map(s => s.id).join() === 'dependances,historique,tests-instables,dette,livrer', `Maintenance : ${m.code} ${JSON.stringify(maint?.steps?.map(x => `${x.id}:${x.status}`))} ${m.out.slice(-300)}`);
+    assert(g('rev-list', '--count', `${h0}..HEAD`).stdout.trim() === '1', 'un commit de livraison attendu');
+    const turns = (await json('/api/project/omega/journal?n=4')).turns || [];
+    assert(turns[0]?.pipeline?.pipeline === 'maintenance' && turns[1]?.pipeline?.pipeline === 'recherche', `journal : ${turns.slice(0, 2).map(t => t.pipeline?.pipeline).join(', ')}`);
+    fs.rmSync(routingFile, { force: true });
+    return `Recherche 5/5 par l’API (classée automatiquement), Maintenance livrée (commit ${g('log', '-1', '--format=%h').stdout.trim()}), frises au journal`;
+  });
   // 0.49.0 — phase 4 : Développement COMPLET, TDD canonique un test à la fois.
   const omegaFresh = () => { const g = omegaRepo(); g('reset', '-q', '--hard', g('rev-list', '--max-parents=0', 'HEAD').stdout.trim()); g('clean', '-qfd', '-e', '.orchestrateur'); return g; };
   await check(S, 'pipeline-tdd', 'Pipelines, phase 4 : Développement complet — Comprendre, Concevoir, Liste de tests, puis UN test à la fois (4a échoue réellement, 4b la rend verte, 4c sautée si inutile), items cochés par le moteur, un commit ; montée léger → complet annoncée ; frise du journal', async () => {

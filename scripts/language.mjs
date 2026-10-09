@@ -343,7 +343,7 @@ function testPrompt(lang) {
   return TEST_PROMPT[lang] || `Answer only in ${(LANGS[lang] || LANGS.en).en}, in three simple sentences: why do we write automated tests before changing a program?`;
 }
 
-async function chatCompletion({ url, key, model, prompt, fetchImpl = globalThis.fetch, timeoutMs = 120_000 }) {
+export async function chatCompletion({ url, key, model, prompt, fetchImpl = globalThis.fetch, timeoutMs = 120_000 }) {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), timeoutMs);
   try {

@@ -1097,6 +1097,41 @@ Suite de la demande du 2026-10-09. Plan : `docs/PLAN-pipeline-enforcement.md`.
   classement par model et la règle « aucun tour hors pipeline » sont dans
   `dispatch.mjs` : ils sont actifs tout de suite.
 
+## Pipelines obligatoires — phase 6, lot A : autres pipelines (0.53.0)
+
+- **Catalogue** : `scripts/pipeline-catalog.mjs`, données pures.
+  - Pipelines : incident, recherche, audit, maintenance, nouveau, donnees,
+    redaction.
+  - Chaque étape porte : `id`, `chain` (cases), `artefact`, `kind`
+    (`judge|action|deliver`), `role` (consigne), `checks` (critères), et
+    éventuellement `crit` (réutilise `rouge|vert|livrer` du Développement),
+    `loop`, `prerun: 'scans'`, `independent` et `ifChanged`.
+- **Moteur** :
+  - `checkCatalogCriteria` (sections, sources, chemins, JSON, lecture
+    seule, `headUnchanged`, `nothing`, `onlyGlobs`, `protectTests`,
+    `suiteTwice`, `requireFiles`, `reloadConfig`) ;
+  - `catalogStepPrompt`, qui annonce les critères en lignes `ATTENDU_*`,
+    `MODIFIER=`, `MARQUEUR_RIEN=` ;
+  - `runScanners` ;
+  - le second avis : fichiers `independent` retirés pendant le tour ;
+  - la boucle bornée par le budget des tours de revue ;
+  - la livraison `ifChanged` sautée quand rien n'a changé ;
+  - le résultat final via `catalogResult`.
+  - `ENGINE_PIPELINES` = discussion, dev + catalogue.
+- **Ajouter un pipeline** : une entrée dans le catalogue, puis une section
+  dans `_test_pipeline_catalog.mjs`. Le faux claude joue toute étape du
+  catalogue à partir des lignes `ATTENDU_*` (`FAKE_PIPE_NOTHING`,
+  `FAKE_PIPE_REMAINING`, `FAKE_PIPE_SEEN_LOG`, `FAKE_PIPE_BAD`).
+- **Classement par model, tout fournisseur** (`callerFor` de
+  `pipeline-classify.mjs`) :
+  - claude et codex en CLI (`oneShotCodex`, doublure
+    `tests/fake_codex/fake_codex.mjs`) ;
+  - OpenRouter et NVIDIA en API chat (`chatCompletion` de `language.mjs`,
+    clé du `.env` de l'orchestrateur).
+- **Mise en service** : `node scripts/pipeline-enforce.mjs pipelines all`
+  (ou une liste qui contient `discussion`).
+- Recettes : `_test_pipeline_catalog.mjs`, HTTP `pipeline-catalog`.
+
 ## Langue de discussion (0.51.0)
 
 Demande utilisateur : « La langue de la discussion doit pouvoir etre fixee et

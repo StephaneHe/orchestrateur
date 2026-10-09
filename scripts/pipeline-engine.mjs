@@ -37,6 +37,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import { derivedToken } from './local-secret.mjs';
 import { readBranchLog } from './dual-run.mjs';
 import { languageFor, languageGate, localize, workingLanguage } from './language.mjs';
+import { CATALOG_PIPELINES, catalogOf, catalogSteps } from './pipeline-catalog.mjs';
+import { PIPELINES } from './model-pipelines.mjs';
 
 export const RUN_RE = /^p-\d{8}T\d{6}-[a-z0-9]{4,8}$/;
 export const STEP_KEY_RE = /^\d{2}-[a-z0-9-]{1,40}$/;
@@ -60,15 +62,21 @@ const PLAIN_STEP = {
   rechercher: 'rechercher', repondre: 'rédiger la réponse', '@loop': 'boucle des tests',
 };
 /** Nom d'étape compréhensible par l'utilisateur, sans vocabulaire interne. */
-export function plainStep(id) { return PLAIN_STEP[id] || id || 'exécution'; }
+export function plainStep(id) {
+  if (PLAIN_STEP[id]) return PLAIN_STEP[id];
+  for (const p of CATALOG_PIPELINES) { const s = catalogOf(p).steps.find(x => x.id === id); if (s) return s.title.replace(/^\d+[a-z]?\s+/, '').toLowerCase(); }
+  return id || 'exécution';
+}
 export function pipelineLabel(pipeline, mode) {
-  return pipeline === 'dev' ? (mode === 'complet' ? 'Développement complet' : 'Développement léger') : 'Discussion';
+  if (pipeline === 'dev') return mode === 'complet' ? 'Développement complet' : 'Développement léger';
+  if (pipeline === 'discussion') return 'Discussion';
+  return PIPELINES.find(p => p.id === pipeline)?.label || pipeline;
 }
 const PROGRESS_MS = Number(process.env.ORCH_PIPE_PROGRESS_MS) > 0 ? Number(process.env.ORCH_PIPE_PROGRESS_MS) : 30_000;
 const TEST_TIMEOUT_MS = 10 * 60_000;
 
-/** Pipelines en service en phase 3 (les autres restent hors périmètre). */
-export const ENGINE_PIPELINES = ['discussion', 'dev'];
+/** Pipelines que le moteur sait exécuter (phase 6 : catalogue déclaratif en plus). */
+export const ENGINE_PIPELINES = ['discussion', 'dev', ...CATALOG_PIPELINES];
 
 // ---------------------------------------------------------------------------
 // Mise en service (model-routing.json → enforcement), relue à chaque dispatch
@@ -188,6 +196,7 @@ export function planSteps(pipeline, { mode = 'leger', kind = 'simple' } = {}) {
     if (mode === 'complet') return ['comprendre', 'concevoir', 'liste-tests', '@loop', 'revue', 'livrer'].map(id => D[id]);
     return [...(kind !== 'mecanique' ? [D.rouge] : []), D.vert, D.revue, D.livrer];
   }
+  if (catalogOf(pipeline)) return catalogSteps(pipeline);
   throw new Error(`pipeline « ${pipeline} » pas encore en service`);
 }
 
@@ -303,6 +312,25 @@ function runCommand(cwd, command, env) {
   return { ok: r.status === 0, code: r.status, out: out.slice(-12_000), ms: Date.now() - t0, timedOut: r.error?.code === 'ETIMEDOUT' };
 }
 
+/** Scanners de sécurité du projet (`scanCommands` de .orchestrateur/pipeline.json),
+ *  sinon gitleaks s'il est installé. Sorties masquées (--redact), tronquées. */
+export function runScanners(cwd, cfg, env) {
+  let cmds = Array.isArray(cfg?.scanCommands) ? cfg.scanCommands.filter(c => typeof c === 'string' && c.trim()) : null;
+  if (!cmds) {
+    cmds = [];
+    const gl = [process.env.GITLEAKS_BIN, 'I:\\tools\\gitleaks\\gitleaks.exe'].find(f => f && fs.existsSync(f));
+    if (gl) cmds.push(`"${gl}" dir . --no-banner --redact`);
+  }
+  const ran = [];
+  const parts = [];
+  for (const cmd of cmds) {
+    const t = runCommand(cwd, cmd, env);
+    ran.push({ name: cmd.replace(/^"[^"]*[\\/]([^\\/"]+)"/, '$1').slice(0, 80), code: t.code });
+    parts.push(`$ ${cmd}\n(code ${t.code})\n${t.out.slice(-6000)}`);
+  }
+  return { ran, text: parts.length ? parts.join('\n\n') : 'Aucun scanner configuré : ajouter "scanCommands" à .orchestrateur/pipeline.json (gitleaks absent).\n' };
+}
+
 function readJson(f) { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } }
 
 /** Version courante lue dans un fichier de version (package.json ou gradle). */
@@ -361,7 +389,8 @@ function stepPrompt(ctx, step, extra) {
   const art = (f) => path.join(artDir, f).replace(/\\/g, '/');
   const L = [];
   L.push(`[PIPELINE ${pipelineLabel(pipeline, ctx.mode)} — exécution ${run} — étape ${step.title}]`);
-  L.push(`PIPELINE_STEP=${step.id}`);
+  L.push(`PIPELINE_STEP=${step.devRole || step.id}`);
+  if (step.devRole) L.push(`ETAPE=${step.id}`);
   L.push(`ARTEFACT=${art(step.artefact)}`);
   L.push(`DOSSIER_ARTEFACTS=${artDir.replace(/\\/g, '/')}`);
   if (ctx.item && ['rouge', 'vert', 'refactor'].includes(step.id)) L.push(`ITEM=${ctx.item.n}: ${ctx.item.text}`);
@@ -369,7 +398,13 @@ function stepPrompt(ctx, step, extra) {
   L.push(`Demande d'origine : ${art('demande.md')} (lis-la d'abord). Les artefacts des étapes précédentes sont dans le même dossier : lis ceux qui existent.`);
   L.push('');
   const T = cfg.testCommand ? `« ${cfg.testCommand} »` : 'la suite de tests du projet';
-  switch (step.id) {
+  if (!step.devRole && (step.checks || step.role)) {
+    catalogStepPrompt(L, ctx, step, art, T);
+    if (extra?.retryWhy) L.push(`\n⚠ L'essai précédent de cette étape a été REFUSÉ par l'orchestrateur : ${extra.retryWhy}\nCorrige précisément ce point.`);
+    L.push(`\nRègles de l’étape : ne lance aucun dispatch (dispatch.mjs), ne pousse rien (git push interdit), ne commite pas${step.kind === 'deliver' ? ' sauf pour cette livraison' : ''}. Termine par un résumé court de ce que tu as fait.`);
+    return L.join('\n');
+  }
+  switch (step.devRole || step.id) {
     case 'comprendre':
       L.push(pipeline === 'dev'
         ? 'Ton rôle : étape 1 COMPRENDRE. Lis le code existant (et les logs utiles) avant toute modification : modules concernés, conventions, points d’entrée, tests existants.'
@@ -452,12 +487,138 @@ function stepPrompt(ctx, step, extra) {
   return L.join('\n');
 }
 
+/** Consigne d'une étape du catalogue (phase 6) : rôle, artefact, et les critères
+ *  que le code vérifiera, dits explicitement (lignes ATTENDU_* lisibles par tous). */
+function catalogStepPrompt(L, ctx, step, art, T) {
+  const c = step.checks || {};
+  L.push(`Ton rôle : ${step.role}`);
+  if (step.prerun === 'scans') L.push(`Sortie des scanners lancés par l'orchestrateur : ${art('scans-sortie.txt')} (lis-la).`);
+  if (step.independent?.length) L.push(`Indépendance : ${step.independent.join(', ')} n'est pas disponible pendant cette étape (retiré par l'orchestrateur) — fais ton propre examen.`);
+  const machine = [];
+  if (step.kind === 'deliver') machine.push('LIVRAISON=commit');
+  else if (step.kind === 'judge') machine.push('MODIFIER=non');
+  else if (c.onlyGlobs) machine.push(`MODIFIER=docs (${c.onlyGlobs.join(', ')})`);
+  else machine.push('MODIFIER=oui');
+  if (c.sections?.length) machine.push(`ATTENDU_SECTIONS=${c.sections.join(' | ')}`);
+  if (c.minSources) machine.push(`ATTENDU_SOURCES=${c.minSources}`);
+  if (c.json) machine.push(`ATTENDU_JSON=${Object.keys(c.json).join(',')}`);
+  if (step.jsonExample) machine.push(`JSON_EXEMPLE=${step.jsonExample}`);
+  if (c.nothing) machine.push(`MARQUEUR_RIEN=${c.nothing}`);
+  if (c.requireFiles?.length) machine.push(`FICHIERS_REQUIS=${c.requireFiles.join(', ')}`);
+  L.push(...machine);
+  L.push('');
+  if (step.kind === 'judge') {
+    L.push(`Écris ${art(step.artefact)}${c.json ? ', et UNIQUEMENT ce JSON' : ''}. Ne modifie AUCUN fichier du projet (lecture seule : l’orchestrateur compare les empreintes).`);
+  } else if (step.kind === 'deliver') {
+    L.push(step.role ? '' : 'Livre en un seul commit.');
+    L.push(`Écris ${art(step.artefact)} : le commit et ce qui a été livré. L'orchestrateur vérifie : commit créé, arbre propre.`);
+  } else {
+    L.push(`Écris ${art(step.artefact)} : ce que tu as fait et pourquoi.`);
+    if (c.onlyGlobs) L.push(`Tu ne modifies QUE des documents (motifs : ${c.onlyGlobs.join(', ')}) : aucun code, aucun test.`);
+    if (c.protectTests) L.push('Interdit : modifier les tests existants (l’orchestrateur compare leur empreinte).');
+    if (c.nothing) L.push(`S'il n'y a rien à faire, écris exactement « ${c.nothing} » dans l'artefact et ne modifie rien : c'est accepté.`);
+    if (c.requireFiles?.length) L.push(`À la fin, ces fichiers doivent exister : ${c.requireFiles.join(', ')}.`);
+    if (ctx.cfg.testCommand || c.needTestCommand) L.push(`Après ton tour, l'orchestrateur lance ${c.needTestCommand ? 'la commande de test déclarée dans .orchestrateur/pipeline.json' : T}${c.suiteTwice ? ' DEUX fois' : ''} : elle doit PASSER.`);
+    L.push('Ne commite pas (l’étape de livraison le fera).');
+  }
+  if (c.sections?.length) L.push(`L'artefact doit contenir les sections « ${c.sections.map(s => `## ${s}`).join(' », « ')} ».`);
+  if (c.minSources) L.push(`Au moins ${c.minSources} source(s) distincte(s), chacune avec son URL (https://…).`);
+  if (c.citedPaths) L.push('Cite les fichiers du projet entre accents graves (`chemin/relatif`) : chaque chemin cité doit exister.');
+  if (step.jsonExample) L.push(`Format exact : ${step.jsonExample}`);
+}
+
+const fold = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+/** Sections `##` présentes (mot-clé contenu dans un titre, sans accents). */
+export function missingSections(text, wanted) {
+  const heads = [...String(text || '').matchAll(/^#{2,4}\s+(.+)$/gm)].map(m => fold(m[1]));
+  return (wanted || []).filter(w => !heads.some(h => h.includes(fold(w))));
+}
+/** Sources distinctes : URL http(s), et (option) chemins cités entre accents graves. */
+export function countSources(text, { files = false } = {}) {
+  const urls = new Set([...String(text || '').matchAll(/https?:\/\/[^\s)>\]"'`]+/g)].map(m => m[0].replace(/[.,;:]+$/, '')));
+  if (files) for (const m of String(text || '').matchAll(/`([\w.\-/\\]+\.[a-z0-9]{1,6})`/gi)) urls.add(m[1]);
+  return urls.size;
+}
+function parseJsonArtefact(art) {
+  try { return JSON.parse(String(art).trim().replace(/^```(?:json)?\s*|\s*```$/g, '')); } catch { return null; }
+}
+
+/** Critères génériques d'une étape du catalogue. */
+function checkCatalogCriteria(ctx, step, before, after) {
+  const { cwd } = ctx;
+  const c = step.checks || {};
+  const changed = changedFiles(before, after);
+  const art = readArtefact(ctx, step.artefact);
+  // Un JSON court (« {"remaining":[]} ») est une vraie réponse : il est jugé sur sa forme.
+  const artOk = art != null && (c.json ? art.trim().length > 1 : art.trim().length >= 20);
+  const fail = (why, extra = {}) => ({ ok: false, why, changed, ...extra });
+  if (step.kind === 'deliver') {
+    const head = git(cwd, ['rev-parse', 'HEAD']).out;
+    if (!head || head === ctx.base) return fail('aucun commit créé');
+    const dirty = git(cwd, ['status', '--porcelain']).out.split('\n').filter(l => l && !l.slice(3).startsWith(RUNS_PREFIX));
+    if (dirty.length) return fail(`arbre non propre après le commit : ${dirty.slice(0, 6).join(' ; ')}`);
+    return { ok: true, changed, commit: head };
+  }
+  if (!artOk) return fail(`artefact ${step.artefact} absent ou vide`);
+  if (step.kind === 'judge') {
+    if (changed.length) return fail(`étape en lecture seule, mais des fichiers du projet ont changé : ${changed.slice(0, 8).join(', ')}`);
+    if (c.headUnchanged && git(cwd, ['rev-parse', 'HEAD']).out !== ctx.headAtStep) return fail('l’historique git a été modifié : interdit à cette étape (rapport seulement)');
+  } else {
+    const nothing = c.nothing && new RegExp(`\\b${c.nothing}\\b`).test(art);
+    if (nothing && changed.length && !c.onlyGlobs) return fail(`« ${c.nothing} » annoncé, mais des fichiers ont changé : ${changed.slice(0, 8).join(', ')}`);
+    if (!changed.length && !nothing) return fail(c.nothing ? `aucune modification — s'il n'y a rien à faire, écris « ${c.nothing} » dans l'artefact` : 'aucune modification');
+    if (c.onlyGlobs) {
+      const bad = changed.filter(f => !isTestFile(f, c.onlyGlobs));
+      if (bad.length) return fail(`seuls des documents peuvent changer à cette étape ; modifiés : ${bad.slice(0, 8).join(', ')}`);
+    }
+    if (c.protectTests && ctx.testPrint) {
+      const touched = [...ctx.testPrint.keys()].filter(f => after.get(f) !== ctx.testPrint.get(f));
+      if (touched.length) return fail(`fichiers de test modifiés (interdit à cette étape) : ${touched.slice(0, 8).join(', ')}`);
+    }
+    for (const f of c.requireFiles || []) if (!fs.existsSync(path.join(cwd, f))) return fail(`fichier requis absent : ${f}`);
+    if (c.reloadConfig) ctx.cfg = readJson(path.join(cwd, '.orchestrateur', 'pipeline.json')) || ctx.cfg;
+    if (c.needTestCommand && !ctx.cfg.testCommand) return fail('.orchestrateur/pipeline.json sans testCommand');
+    // Suite déjà rouge au départ (incident) : seule la correction doit la rendre
+    // verte ; les étapes d'avant ne peuvent pas être jugées sur elle.
+    if (ctx.cfg.testCommand && changed.length && !ctx.suiteRedAtStart) {
+      for (let i = 0; i < (c.suiteTwice ? 2 : 1); i++) {
+        const t = runCommand(cwd, ctx.cfg.testCommand, ctx.testEnv);
+        if (!t.ok) return fail(`la suite échoue${c.suiteTwice ? ` (passage ${i + 1}/2)` : ''} (${ctx.cfg.testCommand}, code ${t.code}) :\n${t.out.slice(-1500)}`, { test: t });
+      }
+    }
+  }
+  if (c.sections?.length) {
+    const miss = missingSections(art, c.sections);
+    if (miss.length) return fail(`${step.artefact} : sections manquantes « ${miss.map(s => `## ${s}`).join(' », « ')} »`);
+  }
+  if (c.minSources && countSources(art, { files: step.kind !== 'judge' }) < c.minSources) {
+    return fail(`${step.artefact} : au moins ${c.minSources} source(s) distincte(s) avec URL attendue(s) (${countSources(art)} trouvée(s))`);
+  }
+  if (c.citedPaths) {
+    const missing = missingCitedPaths(art, cwd);
+    if (missing.length) return fail(`chemins cités inexistants : ${missing.slice(0, 6).join(', ')}`);
+  }
+  let json = null;
+  if (c.json) {
+    json = parseJsonArtefact(art);
+    if (!json || typeof json !== 'object') return fail(`${step.artefact} n’est pas un JSON valide`);
+    for (const [k, type] of Object.entries(c.json)) {
+      if (type === 'array' && !Array.isArray(json[k])) return fail(`${step.artefact} : champ « ${k} » (liste) absent`);
+      if (type === 'string' && typeof json[k] !== 'string') return fail(`${step.artefact} : champ « ${k} » (texte) absent`);
+    }
+  }
+  return { ok: true, changed, json };
+}
+
 // ---------------------------------------------------------------------------
 // Critères de sortie (plan §2.4)
 // ---------------------------------------------------------------------------
 function readArtefact(ctx, f) { try { return fs.readFileSync(path.join(ctx.artDir, f), 'utf8'); } catch { return null; } }
 
 function checkCriteria(ctx, step, before, after) {
+  // Catalogue (phase 6) : critères génériques, ou critère du Développement réutilisé.
+  if (!step.crit && (step.checks || step.kind)) return checkCatalogCriteria(ctx, step, before, after);
+  if (step.crit) step = { ...step, id: step.crit };
   const { cwd, cfg } = ctx;
   const changed = changedFiles(before, after);
   const art = readArtefact(ctx, step.artefact);
@@ -620,12 +781,13 @@ export async function runPipeline(o) {
   const cfg = readJson(path.join(cwd, '.orchestrateur', 'pipeline.json')) || {};
   const pipeline = state?.pipeline || o.pipeline;
   if (!ENGINE_PIPELINES.includes(pipeline)) return refuse(64, `« ${pipeline} » n'est pas en service (${ENGINE_PIPELINES.join(', ')}).`);
-  if (pipeline === 'dev' && !cfg.testCommand) {
-    return refuse(64, `Développement exige .orchestrateur/pipeline.json avec testCommand dans ${cwd} (critères de sortie vérifiés par le code).`);
+  const needs = pipeline === 'dev' ? { tests: true, clean: true } : catalogOf(pipeline)?.needs || {};
+  if (needs.tests && !cfg.testCommand) {
+    return refuse(64, `${pipelineLabel(pipeline, 'leger').replace(/ léger$/, '')} exige .orchestrateur/pipeline.json avec testCommand dans ${cwd} (critères de sortie vérifiés par le code).`);
   }
   const base = state?.base || git(cwd, ['rev-parse', 'HEAD']).out;
   if (!base) return refuse(65, 'dépôt sans commit.');
-  if (!state && pipeline === 'dev') {
+  if (!state && needs.clean) {
     const dirty = git(cwd, ['status', '--porcelain']).out.split('\n').filter(l => l && !l.slice(3).startsWith(RUNS_PREFIX));
     if (dirty.length) return refuse(65, `modifications non commitées (${dirty.length} fichier(s)) — l'étape Livrer doit produire UN commit propre. Commite ou range d'abord.`);
   }
@@ -661,7 +823,7 @@ export async function runPipeline(o) {
   fs.mkdirSync(runDir, { recursive: true });
   fs.mkdirSync(artDir, { recursive: true });
   const mode = state?.mode || (pipeline === 'dev' && o.mode === 'complet' ? 'complet' : 'leger');
-  const kind = state?.kind || (pipeline === 'dev' ? devKind(prompt) : null);
+  const kind = state?.kind || (pipeline === 'dev' ? devKind(prompt) : pipeline === 'incident' ? 'bugfix' : null);
   const assignments = readAssignments(root);
   if (!state) {
     state = {
@@ -713,6 +875,7 @@ export async function runPipeline(o) {
   // Le musicien est occupé pendant toute l'exécution : le parent tient le .pid.
   try { fs.writeFileSync(pidPath, String(process.pid)); } catch {}
   let stepDefs = pipeline === 'dev' ? devCatalog({ mode: state.mode, kind }) : Object.fromEntries(planSteps(pipeline, { mode, kind }).map(s => [s.id, s]));
+  const catalog = catalogOf(pipeline);
   // Frise annoncée : la boucle TDD se lit 4a → 4b → 4c, répétée par item.
   const planned = state.plan.flatMap(id => (id === '@loop' ? ['rouge', 'vert', 'refactor'].map(x => ({ id: x, loop: true })) : id === '@check' ? [] : [{ id }]))
     .map(p => ({ ...p, title: stepDefs[p.id].title, slot: resolveCase(assignments, stepDefs[p.id].chain) }));
@@ -752,7 +915,7 @@ export async function runPipeline(o) {
   const testEnv = { ...childEnv };
   delete testEnv.ORCH_OBS_ID;
   const ctx = { run, pipeline, kind, mode: state.mode, cwd, cfg, artDir, base, testEnv, reviewItems: null, testPrint: null, limits,
-    item: state.item || null, escalated: !!state.escalated, coveredItems: state.coveredItems || [], deliveryFixes: state.deliveryFixes || [] };
+    item: state.item || null, escalated: !!state.escalated, coveredItems: state.coveredItems || [], deliveryFixes: state.deliveryFixes || [], suiteRedAtStart: !!state.suiteRedAtStart };
   // Durée ACTIVE : le temps passé en pause à attendre l'utilisateur ne compte
   // pas dans la limite de 90 min (une reprise repart du temps déjà consommé).
   const sessionStart = Date.now();
@@ -979,7 +1142,20 @@ export async function runPipeline(o) {
   };
 
   // ── Préconditions de Développement : la suite doit être verte au départ ──
-  if (pipeline === 'dev' && state.index === 0 && (!resumed || state.pausedLimit === 'precondition')) {
+  // Incident : une suite déjà rouge reproduit le problème — l'étape « test qui
+  // reproduit » est alors sautée (dit), et la correction doit la rendre verte.
+  if (pipeline === 'incident' && state.index === 0 && !resumed && cfg.testCommand && !runCommand(cwd, cfg.testCommand, testEnv).ok) {
+    state.suiteRedAtStart = ctx.suiteRedAtStart = true;
+    const i = state.plan.indexOf('corriger-rouge');
+    if (i >= 0) {
+      state.plan.splice(i, 1);
+      const why = `la suite (${cfg.testCommand}) échoue déjà au départ : elle reproduit le problème, aucun nouveau test n'est nécessaire pour le montrer`;
+      state.steps.push({ id: 'corriger-rouge', key: '00-corriger-rouge', title: stepDefs['corriger-rouge'].title, status: 'skipped', why, attempt: 1, durationMs: 0 });
+      writeEvent({ type: 'system', subtype: 'pipeline_step_done', pipeline: { run, step: 'corriger-rouge', key: '00-corriger-rouge', attempt: 1 }, status: 'skipped', why, durationMs: 0, text: `étape ${stepDefs['corriger-rouge'].title} : sautée — ${why}` });
+      saveState();
+    }
+  }
+  if ((pipeline === 'dev' || pipeline === 'maintenance') && state.index === 0 && (!resumed || state.pausedLimit === 'precondition')) {
     const t = runCommand(cwd, cfg.testCommand, testEnv);
     if (!t.ok) {
       writeEvent({ type: 'system', subtype: 'pipeline_precondition', pipeline: { run }, text: `la suite (${cfg.testCommand}) est déjà rouge avant l'étape 4a`, output: t.out.slice(-2000) });
@@ -995,7 +1171,7 @@ export async function runPipeline(o) {
   }
   // Empreinte des tests protégés : à la reprise, celle de l'état actuel.
   const testsNow = () => new Map([...snapshot(cwd)].filter(([f]) => isTestFile(f, cfg.testGlobs)));
-  if (pipeline === 'dev') ctx.testPrint = testsNow();
+  if (pipeline === 'dev' || (catalog && (cfg.testGlobs || []).length)) ctx.testPrint = testsNow();
   if (state.reviewItems) ctx.reviewItems = state.reviewItems;
 
   // ── Boucle des étapes ─────────────────────────────────────────────────────
@@ -1039,10 +1215,30 @@ export async function runPipeline(o) {
     }
     // Un seul commit à la livraison : points d'étape du mode double, commits de
     // sa relecture… tout ce qui a été commité depuis le départ est replié.
-    if (step.id === 'livrer' && git(cwd, ['rev-parse', 'HEAD']).out !== base) {
+    const delivering = step.id === 'livrer' || step.kind === 'deliver';
+    if (delivering && git(cwd, ['rev-parse', 'HEAD']).out !== base) {
       git(cwd, ['reset', '--soft', base]);
       state.checkpoints = 0; saveState();
     }
+    // Livraison « seulement s'il y a quelque chose » (audit, maintenance…) : rien
+    // n'a changé dans le projet → étape sautée, en le disant.
+    if (delivering && step.ifChanged && !git(cwd, ['status', '--porcelain']).out.split('\n').some(l => l && !l.slice(3).startsWith(RUNS_PREFIX))) {
+      const why = 'aucune modification du projet : rien à livrer';
+      const key = `${String(state.steps.length + 1).padStart(2, '0')}-${id}`;
+      state.steps.push({ id, key, title: step.title, status: 'skipped', why, attempt: 1, durationMs: 0 });
+      writeEvent({ type: 'system', subtype: 'pipeline_step_done', pipeline: { run, step: id, key, attempt: 1 }, status: 'skipped', why, durationMs: 0, text: `étape ${step.title} : sautée — ${why}` });
+      state.index++;
+      saveState();
+      continue;
+    }
+    // Scanners lancés par l'orchestrateur lui-même : le model interprète une
+    // sortie réelle, il ne peut pas inventer un scan.
+    if (step.prerun === 'scans') {
+      const out = runScanners(cwd, ctx.cfg, testEnv);
+      fs.writeFileSync(path.join(artDir, 'scans-sortie.txt'), out.text);
+      writeEvent({ type: 'system', subtype: 'pipeline_scans', pipeline: { run, step: id }, scanners: out.ran, text: `scanners lancés par l’orchestrateur : ${out.ran.length ? out.ran.map(s => `${s.name} (code ${s.code})`).join(', ') : 'aucun configuré'}` });
+    }
+    ctx.headAtStep = git(cwd, ['rev-parse', 'HEAD']).out;
     if (step.id === 'revue') {
       const tracked = git(cwd, ['diff', base]).out;
       const untracked = git(cwd, ['ls-files', '-o', '--exclude-standard']).out.split('\n').filter(f => f && !f.startsWith(RUNS_PREFIX));
@@ -1055,20 +1251,40 @@ export async function runPipeline(o) {
     for (;;) {
       attempt++;
       if (step.id !== 'revue') { try { fs.unlinkSync(path.join(artDir, step.artefact)); } catch {} }
-      const r = await runStep(step, attempt, { retryWhy });
+      // Second avis indépendant : l'avis précédent est retiré du dossier pendant
+      // l'étape (indépendance garantie par le code), puis remis.
+      const hidden = (step.independent || []).filter(f => fs.existsSync(path.join(artDir, f)));
+      for (const f of hidden) fs.renameSync(path.join(artDir, f), path.join(runDir, `hidden-${f}`));
+      let r;
+      try { r = await runStep(step, attempt, { retryWhy }); }
+      finally { for (const f of hidden) { try { fs.renameSync(path.join(runDir, `hidden-${f}`), path.join(artDir, f)); } catch {} } }
       record(r);
       if (r.unavailable) return pauseForModel(step, r.info, r.rec.why);
       last = r;
       if (r.rec.status === 'ok') break;
       // Un essai refusé n'est pas gardé : retour à l'état d'avant l'essai.
-      if (!step.judge && r.before && r.after) restoreFiles(cwd, r.before, r.after, step.id === 'livrer' ? base : null);
+      if (!step.judge && r.before && r.after) restoreFiles(cwd, r.before, r.after, delivering ? base : null);
       if (step.judge && r.before && r.after) restoreFiles(cwd, r.before, r.after, null);
       retryWhy = r.rec.why;
       if (attempt >= maxAttempts) {
         return pauseForLimit({ limit: step.id === 'vert' ? 'green' : 'criteria', value: attempt, step, why: r.rec.why, lastOutput: r.crit?.test?.out });
       }
     }
-    if (step.id === 'rouge') ctx.testPrint = testsNow();
+    if (step.id === 'rouge' || step.crit === 'rouge') ctx.testPrint = testsNow();
+    if (step.crit === 'vert') ctx.suiteRedAtStart = state.suiteRedAtStart = false;
+    // Boucle déclarée (audit : re-vérifier → corriger tant qu'il reste des failles),
+    // bornée par le budget des tours de revue — comme la revue du Développement.
+    if (step.loop && Array.isArray(last.crit?.json?.[step.loop.field]) && last.crit.json[step.loop.field].length) {
+      const left = last.crit.json[step.loop.field];
+      const leftTxt = left.slice(0, 5).map(x => (typeof x === 'string' ? x : x.issue || JSON.stringify(x))).join(' ; ');
+      if (state.reviewRounds >= (state.budgets?.review || limits.reviewRounds)) {
+        return pauseForLimit({ limit: 'review', value: state.reviewRounds, step, why: `la revue relève encore : ${leftTxt}` });
+      }
+      state.reviewRounds++;
+      state.plan.splice(state.index + 1, 0, ...step.loop.back);
+      writeEvent({ type: 'system', subtype: 'pipeline_loop', pipeline: { run, from: id, to: step.loop.back[0], round: state.reviewRounds },
+        text: `${step.title} : ${left.length} point(s) restant(s) → retour à « ${stepDefs[step.loop.back[0]].title} » (tour ${state.reviewRounds}/${limits.reviewRounds})` });
+    }
     if (step.id === 'rouge' && last.crit?.covered) {
       // Q10 (A) : item déjà couvert — 4b et 4c de CET item sont sautées, en le disant.
       const why = `item déjà couvert par le code existant (DEJA_COUVERT déclaré ; seuls des tests ont changé, suite verte)`;
@@ -1134,9 +1350,37 @@ export async function runPipeline(o) {
   }
 
   // ── Fin : la réponse (Discussion) ou la livraison (Développement) ────────
+  function catalogResult() {
+    const label = pipelineLabel(pipeline, state.mode);
+    const finalStep = catalog.final ? stepDefs[catalog.final] : null;
+    let body = '';
+    if (finalStep) {
+      const raw = (readArtefact(ctx, finalStep.artefact) || '').trim();
+      const j = finalStep.checks?.json ? parseJsonArtefact(raw) : null;
+      if (j && typeof j.final === 'string') body = j.final.trim();
+      else if (j && Array.isArray(j.remaining)) {
+        const fmt = (x) => (typeof x === 'string' ? x : `${x.severity ? `[${x.severity}] ` : ''}${x.file ? `${x.file} : ` : ''}${x.issue || JSON.stringify(x)}`);
+        body = `**Failles restantes** : ${j.remaining.length ? `\n${j.remaining.map(x => `- ${fmt(x)}`).join('\n')}` : 'aucune (gravité haute ou moyenne).'}` +
+          (Array.isArray(j.verified) && j.verified.length ? `\n\n**Corrigées et vérifiées** :\n${j.verified.map(x => `- ${fmt(x)}`).join('\n')}` : '');
+      } else body = raw;
+    }
+    // Recherche : lecture seule, la synthèse EST la réponse.
+    if (pipeline === 'recherche') return body || '(synthèse vide)';
+    const head = git(cwd, ['rev-parse', 'HEAD']).out;
+    const delivered = head && head !== base ? git(cwd, ['log', '-1', '--format=%h %s']).out : null;
+    const skipped = state.steps.filter(s => s.status === 'skipped');
+    return `✓ ${projectName} — pipeline ${label} terminé (${run}).\n\n` +
+      `- Étapes : ${state.steps.filter(s => s.status === 'ok').map(s => `${s.title.replace(/^\d+[a-z]?\s+/, '')} (${s.model || 'défaut'})`).join(' → ')}\n` +
+      (skipped.length ? `- Sautées : ${skipped.map(s => `${s.title.replace(/^\d+[a-z]?\s+/, '')} — ${s.why}`).join(' ; ')}\n` : '') +
+      `- ${delivered ? `Commit : ${delivered}` : 'Aucun commit (rien à livrer)'} ; pas de push (soumis à autorisation).\n` +
+      `- Critères vérifiés par l'orchestrateur à chaque étape (artefacts, lecture seule, suite verte, livraison).\n` +
+      (body ? `\n${body.slice(0, 8000)}` : (readArtefact(ctx, 'livraison.md') || '').trim().slice(0, 4000) ? `\n${(readArtefact(ctx, 'livraison.md') || '').trim().slice(0, 4000)}` : '');
+  }
   let result;
   if (pipeline === 'discussion') {
     result = (readArtefact(ctx, 'reponse.md') || '').trim() || '(réponse vide)';
+  } else if (catalog) {
+    result = catalogResult();
   } else {
     const head = git(cwd, ['log', '-1', '--format=%h %s']).out;
     result = `✓ ${projectName} — pipeline ${pipelineLabel(pipeline, state.mode)} terminé (${run}).\n\n` +

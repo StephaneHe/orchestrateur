@@ -67,9 +67,25 @@ r = await C.classifyEntry({ root: T, logsDir: path.join(T, 'logs'), text: '/dev 
 ok(s.calls.length === 0 && r.explicit && r.pipeline === 'dev' && r.mode === 'complet', 'préfixe explicite → jamais de model (le choix l’emporte)');
 
 routing({ 'routage.classifier': { provider: 'openai', model: 'gpt-6-astra' } });
-s = fakeShot([]);
-r = await C.classifyEntry({ root: T, logsDir: path.join(T, 'logs'), text: 'ajoute un bouton', oneShot: s.fn });
-ok(s.calls.length === 0 && r.classifier === 'règles-v1' && /seul un model Claude/.test(r.note), 'case non Claude → règles, dit pourquoi');
+// 0.53.0 : tout fournisseur classe. codex : vrai lancement d'une doublure de `codex exec`.
+const codexLog = path.join(T, 'codex.log');
+r = await C.classifyEntry({ root: T, logsDir: path.join(T, 'logs'), text: 'compare les bibliothèques de graphiques',
+  env: { ...process.env, CODEX_BIN: path.join(ROOT, 'tests', 'fake_codex', 'fake_codex.mjs'), FAKE_CODEX_LOG: codexLog } });
+const cl = fs.existsSync(codexLog) ? JSON.parse(fs.readFileSync(codexLog, 'utf8').trim().split('\n').pop()) : {};
+ok(r.classifier === 'model:gpt-6-astra' && r.pipeline === 'recherche' && cl.model === 'gpt-6-astra' && cl.sandbox === 'read-only' && cl.classify, 'case OpenAI → codex exec (model de la case, lecture seule) classe', JSON.stringify({ r: r.classifier, cl }));
+// OpenRouter / NVIDIA : API chat, clé lue côté orchestrateur, envoyée seulement à son fournisseur.
+const calls = [];
+const fakeFetch = async (url, init) => { calls.push({ url, auth: init.headers.authorization, model: JSON.parse(init.body).model }); return { ok: true, json: async () => ({ choices: [{ message: { content: '{"pipeline":"redaction","mode":"leger","raison":"courriel"}' } }] }) }; };
+routing({ 'routage.classifier': { provider: 'openrouter', model: 'vendor/small-1' } });
+r = await C.classifyEntry({ root: T, logsDir: path.join(T, 'logs'), text: 'écris un courriel au client', keys: () => 'key-or-0000000000000000', fetchImpl: fakeFetch });
+ok(r.classifier === 'model:vendor/small-1' && r.pipeline === 'redaction' && new URL(calls[0].url).host === 'openrouter.ai' && calls[0].auth === 'Bearer key-or-0000000000000000', 'case OpenRouter → API chat d’OpenRouter seulement');
+routing({ 'routage.classifier': { provider: 'nvidia', model: 'moonshotai/kimi-k3' } });
+r = await C.classifyEntry({ root: T, logsDir: path.join(T, 'logs'), text: 'écris un courriel au client', keys: () => 'key-nv-0000000000000000', fetchImpl: fakeFetch });
+ok(r.classifier === 'model:moonshotai/kimi-k3' && new URL(calls[1].url).host === 'integrate.api.nvidia.com' && calls[1].model === 'moonshotai/kimi-k3', 'case NVIDIA → API de NVIDIA seulement');
+r = await C.classifyEntry({ root: T, logsDir: path.join(T, 'logs'), text: 'ajoute un bouton', keys: () => null, fetchImpl: fakeFetch });
+ok(r.classifier === 'règles-v1' && /clé NVIDIA absente/.test(r.note), 'clé absente → règles, dit pourquoi');
+const last = fs.readFileSync(path.join(T, 'logs', C.CLASSIFY_FILE), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+ok(last.some(x => x.provider === 'openrouter' && x.ok) && last.some(x => x.provider === 'codex' && x.ok), 'fournisseur tracé dans la comparaison');
 
 // ---------------------------------------------------------------------------
 section('2. Terminal routé : lignes retenues, confirmation, octets transmis');

@@ -305,6 +305,8 @@ function pipelineStep(text) {
   const bad = once(process.env.FAKE_PIPE_BAD, step);
   const w = (rel, s) => { const abs = path.isAbsolute(rel) ? rel : path.join(cwd, rel); fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, s); };
   const g = (...a) => spawnSync('git', ['-c', 'user.name=fake', '-c', 'user.email=fake@localhost', ...a], { cwd, encoding: 'utf8' });
+  // Catalog steps (phase 6) carry MODIFIER=… lines: same id as a dev step does not mean same contract.
+  if (/^MODIFIER=/m.test(text)) return catalogStep(text, step, artefact, bad, w, once);
   switch (step) {
     case 'comprendre': w(artefact, `# Compréhension\n\nLa question porte sur le projet. Fichiers utiles : \`package.json\`${bad ? ', `inexistant/fichier.js`' : ''}.\n`); break;
     case 'rechercher': w(artefact, '# Recherche\n\n- package.json : script de test « node --test ».\n'); if (bad) w('pollution.txt', 'modifié par la recherche\n'); break;
@@ -392,7 +394,60 @@ function pipelineStep(text) {
       if (!bad) { g('add', '-A'); g('commit', '-q', '-m', `feat: double (v${pkg.version})`); }
       break;
     }
+    default: catalogStep(text, step, artefact, bad, w, once);
   }
+}
+
+// Pipelines phase 6 (0.53.0): any catalog step, driven by the ATTENDU_* lines
+// of the step prompt. FAKE_PIPE_NOTHING=<step,…> writes the "nothing to do"
+// marker; FAKE_PIPE_REMAINING=<n> makes the re-check report one remaining flaw
+// n times; FAKE_PIPE_BAD=<step> breaks that step's contract.
+function catalogStep(text, step, artefact, bad, w, once) {
+  const line = (k) => (new RegExp(`^${k}=(.+)$`, 'm').exec(text) || [])[1]?.trim() || '';
+  const modify = line('MODIFIER');
+  const sections = line('ATTENDU_SECTIONS').split('|').map(s => s.trim()).filter(Boolean);
+  const nSources = Number(line('ATTENDU_SOURCES') || 0);
+  const jsonKeys = line('ATTENDU_JSON').split(',').filter(Boolean);
+  const nothing = line('MARQUEUR_RIEN');
+  const files = line('FICHIERS_REQUIS').split(',').map(s => s.trim()).filter(Boolean);
+  const wantNothing = String(process.env.FAKE_PIPE_NOTHING || '').split(',').includes(step);
+  if (process.env.FAKE_PIPE_SEEN_LOG) fs.appendFileSync(process.env.FAKE_PIPE_SEEN_LOG, JSON.stringify({ step, files: fs.readdirSync(path.dirname(artefact)) }) + '\n');
+  const urls = Array.from({ length: nSources }, (_, i) => `- Source ${i + 1} : https://example.org/source-${i + 1}`).join('\n');
+  if (jsonKeys.length) {
+    const j = {};
+    for (const k of jsonKeys) j[k] = k === 'final' ? 'Texte final relu : tout est clair.' : [];
+    if (jsonKeys.includes('remaining') && Number(process.env.FAKE_PIPE_REMAINING || 0) > 0) {
+      const f = path.join(path.dirname(artefact), '.fake-remaining.count');
+      let c = 0; try { c = Number(fs.readFileSync(f, 'utf8')) || 0; } catch {}
+      fs.writeFileSync(f, String(c + 1));
+      if (c < Number(process.env.FAKE_PIPE_REMAINING)) j.remaining = [{ severity: 'haute', file: 'src/pipe.mjs', issue: 'entrée non validée' }];
+    }
+    if (jsonKeys.includes('findings')) j.findings = [{ severity: 'moyenne', file: 'src/pipe.mjs', issue: 'entrée non validée' }];
+    w(artefact, bad ? 'pas du JSON' : JSON.stringify(j));
+    return;
+  }
+  const body = [`# ${step}`, '', ...sections.flatMap(s => [`## ${s}`, `Contenu simulé pour « ${s} » (voir \`package.json\`).`, '']), urls, ''].join('\n') || `# ${step}\n\nContenu simulé, assez long pour le critère.\n`;
+  if (modify === 'non') {
+    w(artefact, `${body}\nRapport simulé (lecture seule, \`package.json\`).\n`);
+    if (bad) w('pollution.txt', `modifié par l'étape ${step}\n`);
+    return;
+  }
+  if (nothing && wantNothing) { w(artefact, `${nothing}\n\n${body}`); return; }
+  for (const f of files) {
+    if (f === '.orchestrateur/pipeline.json') w(f, JSON.stringify({ testCommand: 'node --test', testGlobs: ['test/**'], versionFiles: ['package.json'], changelog: 'CHANGELOG.md', requirements: 'docs/USER_REQUIREMENTS.md' }));
+    else if (f === 'CHANGELOG.md') w(f, '# Changelog\n\n## [1.0.0] - 2026-10-09\n- squelette\n');
+    else w(f, `# ${f}\n\nCréé par l'étape ${step}.\n`);
+  }
+  if (modify.startsWith('docs')) w(bad ? `src/${step}.mjs` : `docs/${step}.md`, `# ${step}\n\nTexte simulé.\n`);
+  else if (bad) w(`test/zz-${step}.test.mjs`, "import { test } from 'node:test';\nimport assert from 'node:assert';\ntest('cassé', () => assert.equal(1, 2));\n");
+  else {
+    // A step played again (loop) must change something new each time.
+    const f = path.join(path.dirname(artefact), `.fake-${step}.passes`);
+    let n = 0; try { n = Number(fs.readFileSync(f, 'utf8')) || 0; } catch {}
+    fs.writeFileSync(f, String(n + 1));
+    w(`src/pipe-${step}.mjs`, `export const ${step.replace(/[^a-z]/g, '')} = ${n + 1};\n`);
+  }
+  w(artefact, `${body}\nModification simulée pour l'étape ${step}.\n`);
 }
 
 /** Comme le CLI : lance le serveur MCP de --mcp-config, poignée de main, puis
