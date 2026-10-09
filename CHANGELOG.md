@@ -11,6 +11,52 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.61.0] - 2026-10-10
+
+Décision de l'utilisateur : « c+d », pour imposer des tâches atomiques dans le
+pipeline Développement. Contexte : une exécution a tourné 3 h, en 98 étapes
+et 6 tours de Revue, parce que ses 15 cases de tests regroupaient chacune 5 à
+10 comportements. Cette version livre la **partie d, étape 1** : la
+déclaration et son contrôle à l'étape Liste de tests. La vérification après
+coup (tests réellement écrits) et la livraison par item (c) viendront
+ensuite.
+
+### Added
+- (server) **Nombre de tests annoncé par case** (`pipeline-engine.mjs`) :
+  - chaque case ouverte de `tests.md` doit porter `(tests: N)`, par exemple
+    `- [ ] (tests: 1) « lentille » trouve « Lentilles »` ;
+  - la Liste de tests est **refusée** si une case n'a pas de déclaration,
+    déclare 0, ou dépasse le plafond. Le message nomme les cases fautives et
+    demande de les redécouper (un comportement par case, vérifiable par 1 à N
+    tests) ;
+  - les essais refusés suivent la règle habituelle : 2 refus, puis pause.
+  - Plafond : **2 par défaut** (`LIMITS.testsPerItem`), réglable par
+    `ORCH_PIPE_TESTS_PER_ITEM`.
+  - La consigne de l'étape explique le format et le découpage.
+- (server) **Même règle pour les défauts de la Revue** en mode complet, qui
+  deviennent des cases `(revue)` : chaque entrée de `revue.json` commence par
+  `(tests: N)` (la forme `{"text", "tests"}` est aussi acceptée), sinon la
+  Revue est refusée avec le même message. En mode léger, ces défauts vont à
+  l'étape « écrire le code » sans passer par `tests.md` : rien n'est exigé.
+- `parseItems` expose `declared`, avec les fonctions `declaredTests`,
+  `declarationProblems` et `declarationWhy`.
+- Les cases déjà cochées et les exécutions déjà passées par la Liste de tests
+  ne sont pas concernées. Seules les nouvelles Revues en mode complet exigent
+  la déclaration.
+
+### Tests
+- `scripts/_test_tests_per_item.mjs` (19 contrôles, vrai dispatch). Il
+  vérifie :
+  - le format et le plafond par défaut ;
+  - la consigne réellement envoyée au model ;
+  - le refus d'une case sans déclaration, puis la correction ;
+  - le refus d'une case qui annonce 3 tests ;
+  - le plafond réglable ;
+  - la pause après 2 refus, sans aucune case lancée ;
+  - les cases `(revue)` déclarées ou refusées, et le mode léger non concerné.
+- Faux claude : déclaration écrite par défaut, avec les variantes
+  `FAKE_PIPE_DECL=none|over[:n]` et `FAKE_PIPE_REVIEW_DECL=none|over[:n]`.
+
 ## [0.60.0] - 2026-10-09
 
 Demande de l'utilisateur : « il faut une reaction aux Erreurs 1 (quand le model

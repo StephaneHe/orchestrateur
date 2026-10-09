@@ -336,7 +336,12 @@ function pipelineStep(text) {
     case 'liste-tests': {
       const n = Number(process.env.FAKE_PIPE_ITEMS || 2);
       const head = /dépassé le périmètre/.test(text) ? '- [x] double(x) = 2x (déjà couvert par le premier test)\n' : '';
-      w(artefact, `# Liste de tests\n\n${head}${Array.from({ length: n }, (_, i) => `- [ ] multiplier par ${i + 2}`).join('\n')}\n`);
+      // 0.61.0 « c+d » : each case states "(tests: N)". FAKE_PIPE_DECL=none[:n]
+      // omits it on case 1, over[:n] declares one test more than the cap.
+      const cap = Number(process.env.ORCH_PIPE_TESTS_PER_ITEM) || 2;
+      const noDecl = once(process.env.FAKE_PIPE_DECL, 'none'), over = once(process.env.FAKE_PIPE_DECL, 'over');
+      const decl = (i) => (i === 0 && noDecl ? '' : `(tests: ${i === 0 && over ? cap + 1 : 1}) `);
+      w(artefact, `# Liste de tests\n\n${head}${Array.from({ length: n }, (_, i) => `- [ ] ${decl(i)}multiplier par ${i + 2}`).join('\n')}\n`);
       break;
     }
     case 'rouge': {
@@ -398,9 +403,12 @@ function pipelineStep(text) {
       // le même, rangé par la revue dans hors_tdd ; « mixte » : un de chaque.
       if (once(spec, 'doc')) { w(artefact, JSON.stringify({ verdict: 'problèmes', items: ['docs/USER_REQUIREMENTS.md : la demande est absente du registre'] })); break; }
       if (once(spec, 'hors')) { w(artefact, JSON.stringify({ verdict: 'problèmes', items: [], hors_tdd: ['README : documenter la nouvelle fonction'] })); break; }
-      if (once(spec, 'mixte')) { w(artefact, JSON.stringify({ verdict: 'problèmes', items: ['nommer le paramètre de double', 'CHANGELOG : décrire la fonction'] })); break; }
+      if (once(spec, 'mixte')) { w(artefact, JSON.stringify({ verdict: 'problèmes', items: ['(tests: 1) nommer le paramètre de double', 'CHANGELOG : décrire la fonction'] })); break; }
       const prob = once(spec, 'problemes');
-      w(artefact, JSON.stringify(prob ? { verdict: 'problèmes', items: ['nommer le paramètre de double'] } : { verdict: 'ok', items: [] }));
+      // 0.61.0: a behaviour item declares its tests; FAKE_PIPE_REVIEW_DECL=none[:n] / over[:n].
+      const rcap = Number(process.env.ORCH_PIPE_TESTS_PER_ITEM) || 2;
+      const rdecl = once(process.env.FAKE_PIPE_REVIEW_DECL, 'none') ? '' : once(process.env.FAKE_PIPE_REVIEW_DECL, 'over') ? `(tests: ${rcap + 1}) ` : '(tests: 1) ';
+      w(artefact, JSON.stringify(prob ? { verdict: 'problèmes', items: [`${rdecl}nommer le paramètre de double`] } : { verdict: 'ok', items: [] }));
       break;
     }
     case 'livrer': {

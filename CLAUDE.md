@@ -1383,6 +1383,15 @@ probleme pour le model utilise ».
 - **Critères** :
   - `plan.md` : au moins deux sections `##` ;
   - `tests.md` : au moins une case `- [ ]`, et au plus `LIMITS.items` (15) ;
+  - **0.61.0** (décision « c+d ») : chaque case ouverte annonce
+    `(tests: N)`, avec N de 1 à `LIMITS.testsPerItem` (2 par défaut,
+    `ORCH_PIPE_TESTS_PER_ITEM`). Une case sans déclaration ou au-delà du
+    plafond est refusée, avec un message qui demande de redécouper.
+    - Même règle pour les entrées de `revue.json` en mode complet, qui
+      deviennent des cases `(revue)`.
+    - Recette : `_test_tests_per_item.mjs`.
+    - La vérification après coup (tests réellement écrits) et la livraison
+      par item (c) viendront dans les étapes suivantes.
   - 4c : tests inchangés et suite verte. Avec `RIEN_A_REFACTORER`, aucune
     modification n'est permise. 4c est sautée (`skipped`, motif écrit) si 4b
     a changé moins de `refactorMinLines` (10) lignes (`lineDelta`).

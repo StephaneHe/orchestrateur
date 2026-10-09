@@ -56,6 +56,7 @@ export const LIMITS = {
   reviewRounds: 2,         // tours de revue → correction
   runMs: 90 * 60_000,      // durée totale d'une exécution
   items: 15,               // items de la liste de tests (au-delà : découper)
+  testsPerItem: 2,         // tests prévus déclarés par item, au plus (0.61.0, décision « c+d »)
   refactorMinLines: 10,    // 4c sautée si 4b a changé moins de lignes
 };
 // Garde-fou du léger (plan §4) : au-delà, l'exécution monte en complet.
@@ -252,14 +253,40 @@ export function isDeliveryFix(text) {
   return /(user_requirements|registre des exigences|registre d.exigence|changelog|readme|claude\.md|documentation|\bdocs?\b|docs\/|\.md\b|numero de version|version (non |pas )?(incrementee|bumpee|a jour)|\bbump|versionname|versioncode|commentaire|tracabilite|faute d.orthographe dans la doc)/.test(t);
 }
 
-/** Items de tests.md : « - [ ] texte » / « - [x] texte », dans l'ordre. */
+/** Items de tests.md : « - [ ] texte » / « - [x] texte », dans l'ordre.
+ *  `declared` : nombre de tests prévus annoncé par « (tests: N) », sinon null. */
 export function parseItems(md) {
   const out = [];
   for (const line of String(md || '').split(/\r?\n/)) {
     const m = /^\s*[-*]\s+\[( |x|X)\]\s+(.+?)\s*$/.exec(line);
-    if (m) out.push({ n: out.length + 1, done: m[1] !== ' ', text: m[2] });
+    if (m) out.push({ n: out.length + 1, done: m[1] !== ' ', text: m[2], declared: declaredTests(m[2]) });
   }
   return out;
+}
+// User decision « c+d » (2026-10-10): each item states how many tests it needs,
+// "(tests: N)", and the code refuses an item without it or above the cap — so
+// a list is made of atomic behaviours, not of 5-to-10-behaviour bundles.
+export const TESTS_DECL_RE = /\(\s*tests?\s*:\s*(\d+)\s*\)/i;
+export function declaredTests(text) {
+  const m = TESTS_DECL_RE.exec(String(text || ''));
+  return m ? Number(m[1]) : null;
+}
+/** Items (open ones) whose declaration is missing, zero or above `cap`. */
+export function declarationProblems(items, cap) {
+  const missing = [], over = [];
+  for (const i of items) {
+    if (i.done) continue;
+    if (!Number.isInteger(i.declared) || i.declared < 1) missing.push(i.n);
+    else if (i.declared > cap) over.push({ n: i.n, declared: i.declared });
+  }
+  return { missing, over, ok: !missing.length && !over.length };
+}
+export function declarationWhy(where, { missing, over }, cap, label = 'item') {
+  const parts = [];
+  if (missing.length) parts.push(`sans déclaration du nombre de tests : ${label}(s) n° ${missing.join(', ')}`);
+  if (over.length) parts.push(`plus de ${cap} tests annoncés : ${over.map(o => `n° ${o.n} (${o.declared})`).join(', ')}`);
+  return `${where} : chaque ${label} doit annoncer son nombre de tests prévus au format « (tests: N) », N de 1 à ${cap} — ${parts.join(' ; ')}. `
+    + `Redécoupe ces ${label}s en comportements plus petits : un ${label} = un comportement vérifiable par 1 à ${cap} test(s).`;
 }
 /** Coche l'item n (1-based) dans le texte de tests.md. */
 export function checkItem(md, n) {
@@ -467,7 +494,11 @@ function stepPrompt(ctx, step, extra) {
       break;
     case 'liste-tests':
       L.push('Ton rôle : étape 3 LISTE DE TESTS (TDD canonique, Kent Beck). Liste les COMPORTEMENTS attendus, un par ligne, avec leurs critères d’acceptation — sans aucune décision d’implémentation.');
-      L.push(`Écris ${art('tests.md')} : une case à cocher par comportement, au format exact « - [ ] <comportement observable> ». Au plus ${ctx.limits?.items || LIMITS.items} cases (au-delà : la demande doit être découpée).`);
+      {
+        const cap = ctx.limits?.testsPerItem || LIMITS.testsPerItem;
+        L.push(`Écris ${art('tests.md')} : une case à cocher par comportement, au format exact « - [ ] (tests: N) <comportement observable> », où N est le nombre de tests automatisés prévus pour vérifier cette case, de 1 à ${cap}. Exemple : « - [ ] (tests: 1) « lentille » trouve les produits « Lentilles » ». Au plus ${ctx.limits?.items || LIMITS.items} cases (au-delà : la demande doit être découpée).`);
+        L.push(`Une case = UN comportement atomique. Si un comportement demande plus de ${cap} tests (plusieurs variantes, plusieurs champs, plusieurs routes…), découpe-le en plusieurs cases : l’orchestrateur refuse toute case sans « (tests: N) » ou avec N > ${cap}.`);
+      }
       if (ctx.escalated) L.push('La demande a dépassé le périmètre du mode léger : un premier test existe déjà (voir rouge.md) et passe. Mets-le en tête, déjà coché « - [x] », puis les comportements RESTANTS à couvrir.');
       L.push('Ne modifie AUCUN fichier du projet. L’orchestrateur traitera ensuite les cases UNE PAR UNE (4a → 4b → 4c).');
       break;
@@ -505,6 +536,10 @@ function stepPrompt(ctx, step, extra) {
       L.push('Ne relève PAS l’absence de numéro de version incrémenté, d’entrée CHANGELOG ni de ligne dans le registre des exigences : l’étape Livrer, qui suit, les ajoute, et l’orchestrateur les vérifie.');
       L.push(`Écris ${art('revue.json')}, et UNIQUEMENT ce JSON : {"verdict": "ok" | "problèmes", "items": ["défaut de comportement 1", …], "hors_tdd": ["correction de doc ou de commentaire 1", …]}.`);
       L.push('« items » : uniquement des défauts de COMPORTEMENT, qu’un test peut prouver (ils repartent dans la boucle de tests). « hors_tdd » : ce qui ne se teste pas (documentation, README, commentaires…) — ce sera fait à la livraison. « problèmes » seulement pour un défaut réel, à corriger maintenant.');
+      if (ctx.mode === 'complet') {
+        const cap = ctx.limits?.testsPerItem || LIMITS.testsPerItem;
+        L.push(`Chaque entrée de « items » devient une case de tests.md : commence-la par « (tests: N) », N = nombre de tests prévus pour la prouver, de 1 à ${cap} (ex. « (tests: 1) [P2] … »). Un défaut qui en demande plus doit être découpé en plusieurs entrées.`);
+      }
       L.push('Ne modifie AUCUN fichier du projet.');
       break;
     case 'livrer': {
@@ -1012,7 +1047,11 @@ function checkCriteria(ctx, step, before, after) {
     if (step.id === 'liste-tests') {
       const items = parseItems(art);
       const open = items.filter(i => !i.done);
-      if (!items.length || (!open.length && !ctx.escalated)) return { ok: false, why: 'tests.md : aucune case « - [ ] <comportement> »', changed };
+      if (!items.length || (!open.length && !ctx.escalated)) return { ok: false, why: 'tests.md : aucune case « - [ ] (tests: N) <comportement> »', changed };
+      // Décision « c+d » (0.61.0) : chaque case annonce ses tests, au plus le plafond.
+      const cap = ctx.limits?.testsPerItem || LIMITS.testsPerItem;
+      const pb = declarationProblems(items, cap);
+      if (!pb.ok) return { ok: false, why: declarationWhy('tests.md', pb, cap, 'case'), changed, items, declaration: pb };
       return { ok: true, changed, items };
     }
     if (step.id === 'revue') {
@@ -1020,12 +1059,24 @@ function checkCriteria(ctx, step, before, after) {
       try { j = JSON.parse(art.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')); } catch { return { ok: false, why: 'revue.json n’est pas un JSON valide', changed }; }
       const verdict = STRIP(j?.verdict || '');
       if (!['ok', 'problemes'].includes(verdict) || !Array.isArray(j.items)) return { ok: false, why: 'revue.json : il faut {"verdict": "ok"|"problèmes", "items": [...]}', changed };
-      const txt = (x) => String(typeof x === 'string' ? x : x?.text || JSON.stringify(x)).replace(/\s+/g, ' ').trim().slice(0, 400);
+      const txt = (x) => {
+        let s = String(typeof x === 'string' ? x : x?.text || JSON.stringify(x)).replace(/\s+/g, ' ').trim();
+        // {"text": "…", "tests": N} est accepté : la déclaration rejoint le texte.
+        if (x && typeof x === 'object' && Number.isInteger(x.tests) && declaredTests(s) == null) s = `(tests: ${x.tests}) ${s}`;
+        return s.slice(0, 400);
+      };
       const all = j.items.map(txt).filter(Boolean);
       // Comportements à corriger (boucle TDD) d'un côté ; corrections de
       // livraison (doc, registre, CHANGELOG, version) de l'autre, pour Livrer.
       const delivery = [...(Array.isArray(j.hors_tdd) ? j.hors_tdd.map(txt).filter(Boolean) : []), ...all.filter(isDeliveryFix)];
       const items = all.filter(i => !isDeliveryFix(i)).slice(0, 15);
+      // Complet : ces items deviennent des cases « (revue) » de tests.md — même
+      // règle que la Liste de tests (décision « c+d », 0.61.0).
+      if (ctx.mode === 'complet' && items.length) {
+        const cap = ctx.limits?.testsPerItem || LIMITS.testsPerItem;
+        const pb = declarationProblems(items.map((t, i) => ({ n: i + 1, done: false, declared: declaredTests(t) })), cap);
+        if (!pb.ok) return { ok: false, why: declarationWhy('revue.json', pb, cap, 'entrée'), changed, declaration: pb };
+      }
       return { ok: true, changed, review: { verdict: items.length ? verdict : 'ok', items, delivery: [...new Set(delivery)].slice(0, 15) } };
     }
     return { ok: true, changed };
@@ -1141,6 +1192,7 @@ export async function runPipeline(o) {
     reviewRounds: Number.isFinite(Number(process.env.ORCH_PIPE_REVIEW_ROUNDS)) && process.env.ORCH_PIPE_REVIEW_ROUNDS !== undefined ? Number(process.env.ORCH_PIPE_REVIEW_ROUNDS) : LIMITS.reviewRounds,
     runMs: Number(process.env.ORCH_PIPE_RUN_MS) || LIMITS.runMs,
     items: Number(process.env.ORCH_PIPE_ITEMS) || LIMITS.items,
+    testsPerItem: Number(process.env.ORCH_PIPE_TESTS_PER_ITEM) || LIMITS.testsPerItem,
     refactorMinLines: Number.isFinite(Number(process.env.ORCH_PIPE_REFACTOR_MIN)) && process.env.ORCH_PIPE_REFACTOR_MIN !== undefined ? Number(process.env.ORCH_PIPE_REFACTOR_MIN) : LIMITS.refactorMinLines,
   };
 
