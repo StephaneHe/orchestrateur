@@ -38,6 +38,8 @@ import { derivedToken } from './local-secret.mjs';
 import { readBranchLog } from './dual-run.mjs';
 import { languageFor, languageGate, localize, workingLanguage } from './language.mjs';
 import { CATALOG_PIPELINES, catalogOf, catalogSteps } from './pipeline-catalog.mjs';
+import { readPending, addPending, releaseReady, launchTask, detectReprise, logOffset, taskKey, RUN_ID_RE } from './routage-pending.mjs';
+export { readPending };
 import { PIPELINES } from './model-pipelines.mjs';
 import { checkMediaFiles, listedFiles, wordErrorRate } from './media-check.mjs';
 
@@ -618,6 +620,12 @@ export function validateTasks(root, tasks) {
     if (t.mode != null && !['leger', 'complet'].includes(t.mode)) return `${n} : mode « ${t.mode} » (leger ou complet)`;
     if (typeof t.demande !== 'string' || t.demande.trim().length < 8) return `${n} : demande absente ou trop courte`;
     if (t.apres != null && !(Number.isInteger(t.apres) && t.apres >= 1 && t.apres <= i)) return `${n} : « apres » doit désigner une tâche précédente (1 à ${i})`;
+    // 0.58.0: resuming a paused run is explicit, and only a real paused run of
+    // that project can be resumed (otherwise a NEW run would start).
+    if (t.reprise != null) {
+      if (typeof t.reprise !== 'string' || !new RegExp(`^${RUN_ID_RE.source}$`).test(t.reprise)) return `${n} : « reprise » doit être un identifiant d'exécution (p-AAAAMMJJTHHMMSS-xxxxxx)`;
+      if (!detectReprise(path.join(root, 'logs'), { projet: t.projet, reprise: t.reprise })) return `${n} : l'exécution ${t.reprise} n'est pas une exécution en pause de ${t.projet}`;
+    }
   }
   return null;
 }
@@ -672,40 +680,40 @@ const CODE_STEPS = {
   async dispatcher({ root, logsDir, state, artDir, dispatchScript, run }) {
     if (process.env.DISPATCH_REPORT_ONLY === '1') return { ok: false, why: 'réveil en rapport seul : aucun dispatch permis (chaîne de réveils au maximum)' };
     const done = [], waiting = [];
-    const tasks = state.tasks || [];
+    // A task citing a paused run of its project resumes it (0.58.0), even if the
+    // Decomposer forgot the « reprise » field: never a second, new run.
+    const tasks = (state.tasks || []).map(t => ({ ...t, reprise: detectReprise(logsDir, t) }));
     tasks.forEach((t, i) => {
-      // « puis » : une tâche qui attend la fin d'une autre part au réveil qui
-      // apporte ce résultat (étape Relancer), jamais avant.
+      // « puis » : une tâche qui attend la fin d'une autre part quand ce résultat
+      // arrive (libération mécanique en fin de tour, 0.58.0), jamais avant.
       if (t.apres) { waiting.push({ ...t, n: i + 1, after: tasks[t.apres - 1].projet }); return; }
       done.push({ n: i + 1, ...launchTask(root, t, dispatchScript) });
     });
+    let duplicates = [];
     if (waiting.length) {
-      const now = new Date().toISOString();
-      const pend = readPending(logsDir);
-      for (const w of waiting) {
+      const entries = waiting.map(w => {
+        const depTask = tasks[w.apres - 1];
         const dep = done.find(d => d.n === w.apres);
-        pend.push({ run, projet: w.projet, pipeline: w.pipeline, mode: w.mode || null, served: w.served, demande: w.demande, rattache: w.rattache || null,
-          after: { projet: w.after, since: dep?.at || now }, createdAt: now });
-      }
-      writePending(logsDir, pend);
+        // Anchor: the awaited log position when the awaited task was launched
+        // (or now, if it is itself still waiting) plus its text.
+        return { run, projet: w.projet, pipeline: w.pipeline, mode: w.mode || null, served: w.served, demande: w.demande, rattache: w.rattache || null,
+          ...(w.reprise ? { reprise: w.reprise } : {}),
+          after: { projet: w.after, offset: dep ? dep.offset : logOffset(logsDir, w.after), key: taskKey(depTask.demande), since: dep?.at || new Date().toISOString() } };
+      });
+      duplicates = addPending(logsDir, entries).duplicates;
     }
-    fs.writeFileSync(path.join(artDir, 'dispatch.json'), JSON.stringify({ dispatched: done, waiting: waiting.map(w => ({ n: w.n, projet: w.projet, apres: w.apres, after: w.after })) }, null, 2));
+    fs.writeFileSync(path.join(artDir, 'dispatch.json'), JSON.stringify({ dispatched: done, waiting: waiting.map(w => ({ n: w.n, projet: w.projet, apres: w.apres, after: w.after, ...(w.reprise ? { reprise: w.reprise } : {}) })), ...(duplicates.length ? { duplicates } : {}) }, null, 2));
     const lost = done.filter(d => !d.pid);
     return lost.length ? { ok: false, why: `lancement impossible pour : ${lost.map(d => d.projet).join(', ')}` } : { ok: true };
   },
   /** Réveil : lance les tâches dont la tâche attendue a rendu son résultat depuis. */
   async relancer({ root, logsDir, artDir, dispatchScript }) {
-    const pend = readPending(logsDir);
-    const launched = [], still = [], blocked = [];
-    for (const p of pend) {
-      const r = lastResultSince(path.join(logsDir, `${p.after.projet}.jsonl`), p.after.since);
-      if (!r) { still.push(p); continue; }
-      if (r.is_error) { blocked.push({ projet: p.projet, after: p.after.projet, why: `la tâche attendue (${p.after.projet}) a échoué : non relancée` }); still.push(p); continue; }
-      if (process.env.DISPATCH_REPORT_ONLY === '1') { still.push(p); continue; }
-      launched.push({ ...launchTask(root, p, dispatchScript), after: p.after.projet });
-    }
-    writePending(logsDir, still);
-    fs.writeFileSync(path.join(artDir, 'relance.json'), JSON.stringify({ launched, waiting: still.map(p => ({ projet: p.projet, after: p.after.projet })), blocked }, null, 2));
+    // Same mechanical release as the end of every turn (routage-pending.mjs);
+    // usually already done by then — this is the safety net of the wake-up.
+    const r = process.env.DISPATCH_REPORT_ONLY === '1'
+      ? { launched: [], blocked: [], still: readPending(logsDir) }
+      : releaseReady({ root, logsDir, dispatchScript });
+    fs.writeFileSync(path.join(artDir, 'relance.json'), JSON.stringify({ launched: r.launched, waiting: r.still.map(p => ({ projet: p.projet, after: p.after?.projet })), blocked: r.blocked }, null, 2));
     return { ok: true };
   },
 };
@@ -724,25 +732,7 @@ async function emitRoutingGap(logsDir, project, text, why) {
   return gap;
 }
 
-const PENDING_FILE = 'routage-pending.json';
-export function readPending(logsDir) { return readJson(path.join(logsDir, PENDING_FILE))?.tasks || []; }
-function writePending(logsDir, tasks) {
-  const f = path.join(logsDir, PENDING_FILE);
-  fs.writeFileSync(`${f}.tmp`, JSON.stringify({ tasks }, null, 2));
-  fs.renameSync(`${f}.tmp`, f);
-}
-/** Dernier result réel (pas un résultat fantôme) écrit après `since`, ou null. */
-function lastResultSince(logFile, since) {
-  let found = null;
-  for (const l of tailText(logFile, 2 * 1024 * 1024).split('\n')) {
-    if (!l.includes('"result"')) continue;
-    let e; try { e = JSON.parse(l); } catch { continue; }
-    if (e.type !== 'result' || !e.timestamp || e.timestamp <= since) continue;
-    if (e.num_turns === 0 && e.duration_api_ms === 0) continue;
-    found = e;
-  }
-  return found;
-}
+// Pending Routage tasks live in routage-pending.mjs (0.58.0).
 function tailText(file, max) {
   try {
     const st = fs.statSync(file);
@@ -754,19 +744,6 @@ function tailText(file, max) {
     return buf.toString('utf8');
   } catch { return ''; }
 }
-/** Lance une tâche par dispatch.mjs (file si le musicien est occupé), avec retour au chef. */
-function launchTask(root, t, dispatchScript) {
-  const conductor = conductorOf(root);
-  const args = [dispatchScript, t.projet, '--prompt-stdin', '--callback', conductor, '--source', conductor, '--queue-if-busy'];
-  if (t.served) { args.push('--pipeline', t.pipeline); if (t.pipeline === 'dev' && t.mode) args.push('--mode', t.mode); }
-  const env = { ...process.env };
-  for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'ORCH_TURN_PROJECT', 'ORCH_TURN_STEP', 'ORCH_STEP_TOKEN', 'ORCH_OBS_ID']) delete env[k];
-  const c = spawn(process.execPath, args, { cwd: root, env, detached: true, stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
-  c.stdin.end(t.rattache ? `${t.demande}\n\n(Rattachée à : ${t.rattache})` : t.demande);
-  c.unref();
-  return { projet: t.projet, pipeline: t.served ? t.pipeline : null, mode: t.mode || null, pid: c.pid || null, at: new Date().toISOString() };
-}
-
 /**
  * Contexte utile au Routage (0.57.0) : ce que le chef a dit et demandé en
  * dernier, les questions en attente des musiciens, les demandes qu'il a mises
@@ -823,8 +800,25 @@ export function routingContext(root, { logsDir, chefLog, chefDir }) {
   L.push('## Demandes mises en attente (TODO_LIST du chef)', '', parked.length ? parked.slice(0, 20).map(x => `- ${x.slice(0, 400)}`).join('\n') : '(aucune)', '');
   // 4. Tâches de Routage qui attendent la fin d'une autre.
   const pend = readPending(logsDir);
-  if (pend.length) L.push('## Tâches déjà décidées, en attente d’une autre', '', pend.map(p => `- ${p.projet} (après ${p.after.projet}) : ${String(p.demande).slice(0, 200)}`).join('\n'), '');
+  if (pend.length) L.push('## Tâches déjà décidées, en attente d’une autre', '', pend.map(p => `- ${p.projet} (après ${p.after?.projet || '?'})${p.reprise ? ` — reprise ${p.reprise}` : ''} : ${String(p.demande).slice(0, 200)}`).join('\n'), '');
+  // 5. Paused pipeline runs (0.58.0): resuming one is a task with « reprise ».
+  const paused = pausedRuns(logsDir);
+  L.push('## Exécutions de pipeline en pause (pour les reprendre : tâche avec « reprise »: "<identifiant>")', '',
+    paused.length ? paused.map(p => `- ${p.project} : ${p.run} (${p.pipeline}${p.mode ? ` ${p.mode}` : ''}, en pause : ${p.pausedLimit || 'question'}) — ${String(p.request || '').replace(/\s+/g, ' ').slice(0, 160)}`).join('\n') : '(aucune)', '');
   return L.join('\n');
+}
+
+/** Paused runs, most recent first (logs/runs/<run>/run.json). */
+export function pausedRuns(logsDir, { max = 20 } = {}) {
+  let dirs = [];
+  try { dirs = fs.readdirSync(path.join(logsDir, 'runs')).filter(d => /^p-\d{8}T\d{6}-[0-9a-f]{6}$/.test(d)).sort().reverse(); } catch { return []; }
+  const out = [];
+  for (const d of dirs) {
+    const st = readJson(path.join(logsDir, 'runs', d, 'run.json'));
+    if (st?.status === 'paused') out.push({ run: d, project: st.project, pipeline: st.pipeline, mode: st.mode || null, pausedLimit: st.pausedLimit || null, request: st.request || '' });
+    if (out.length >= max) break;
+  }
+  return out;
 }
 
 /** Critères génériques d'une étape du catalogue. */

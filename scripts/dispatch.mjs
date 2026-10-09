@@ -127,6 +127,7 @@ import https from 'node:https';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { derivedToken } from './local-secret.mjs';
+import { readPending, releaseReady } from './routage-pending.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // DISPATCH_ROOT_FOR_TESTS : racine alternative (config.json, logs/, .env)
@@ -510,6 +511,28 @@ function modelMatches(requested, actual) {
 
 const LOGS = path.join(ROOT, 'logs');
 fs.mkdirSync(LOGS, { recursive: true });
+
+// End of EVERY turn (0.58.0): Routage tasks waiting for a result that is now in
+// a log are launched mechanically, without waiting for the chef's wake-up turn
+// (which never came for tasks the Routage launched itself: the fleet froze).
+// process.exit is only called once the log stream is flushed (endLogAndExit),
+// so this turn's own result is visible. Internal step / branch processes are
+// part of a parent's turn and do not release.
+if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && process.env.ORCH_NO_PENDING_RELEASE !== '1') {
+  let pendingReleased = false;
+  const releasePending = () => {
+    if (pendingReleased) return;
+    pendingReleased = true;
+    try {
+      if (!readPending(LOGS).length) return;
+      const r = releaseReady({ root: ROOT, logsDir: LOGS, dispatchScript: fileURLToPath(import.meta.url) });
+      for (const l of r.launched) console.error(`[dispatch] tâche en attente ${l.skipped ? `non relancée (${l.skipped})` : `relancée : ${l.projet}${l.reprise ? ` — reprise ${l.reprise}` : ''}`}`);
+    } catch (e) { console.error(`[dispatch] libération des tâches en attente : ${e.message}`); }
+  };
+  const realExit = process.exit.bind(process);
+  process.exit = (code) => { releasePending(); return realExit(code); };
+  process.once('beforeExit', releasePending);
+}
 
 // Kill-switch failover : si logs/no-failover existe, aucune bascule de modèle.
 const NO_FAILOVER = fs.existsSync(path.join(LOGS, 'no-failover'));
@@ -1327,6 +1350,14 @@ logStream.write(`\n`); // ensure boundary from previous turn
  * We therefore exit from the stream's finish callback, with a 2 s ceiling so
  * a wedged stream can never hang a dispatch.
  */
+/** The CLI writes `result` without a timestamp: stamp it (0.58.0), so every
+ *  turn end can be dated (Routage dependencies, journal, supervision). */
+function stampResultLine(l) {
+  if (!/"type"\s*:\s*"result"/.test(l) || /"timestamp"\s*:/.test(l)) return l;
+  try { const ev = JSON.parse(l); if (ev.type !== 'result') return l; ev.timestamp = new Date().toISOString(); return JSON.stringify(ev); }
+  catch { return l; }
+}
+
 function endLogAndExit(code) {
   let exited = false;
   const go = () => {
@@ -2339,16 +2370,16 @@ function runClaude() {
   let heldResultLine = null;
   let gateReleased = false;
   child.stdout.on('data', (chunk) => {
-    if (!LANG_GATE) logStream.write(chunk);   // O(1): append bytes to log + line buffer, defer parse work.
     stdoutTail += chunk.toString('utf8');
     const lines = stdoutTail.split(/\r?\n/);   // Patch 1.1: CRLF-tolerant
     stdoutTail = lines.pop() ?? '';
     if (lines.length) {
       for (const l of lines) {
-        if (LANG_GATE && gateReleased) logStream.write(l + '\n');
-        else if (LANG_GATE) {
+        // Lines are written whole (0.58.0) so a CLI `result` can be stamped.
+        if (!LANG_GATE || gateReleased) logStream.write(stampResultLine(l) + '\n');
+        else {
           if (/"type"\s*:\s*"result"/.test(l) && !/"num_turns"\s*:\s*0\b/.test(l)) {
-            if (heldResultLine) logStream.write(heldResultLine + '\n');   // un result précédent n'était pas le dernier
+            if (heldResultLine) logStream.write(stampResultLine(heldResultLine) + '\n');   // un result précédent n'était pas le dernier
             heldResultLine = l;
           } else logStream.write(l + '\n');
         }
@@ -2359,14 +2390,16 @@ function runClaude() {
   });
 
   async function releaseHeldResult() {
-    if (!LANG_GATE || gateReleased) return;
+    if (!LANG_GATE) { if (stdoutTail) { logStream.write(stampResultLine(stdoutTail) + '\n'); stdoutTail = ''; } return; }
+    if (gateReleased) return;
     gateReleased = true;
-    if (stdoutTail) { logStream.write(stdoutTail + '\n'); stdoutTail = ''; }
+    if (stdoutTail) { logStream.write(stampResultLine(stdoutTail) + '\n'); stdoutTail = ''; }
     const line = heldResultLine;
     heldResultLine = null;
     if (!line) return;
     let ev;
     try { ev = JSON.parse(line); } catch { logStream.write(line + '\n'); return; }
+    if (!ev.timestamp) ev.timestamp = new Date().toISOString();
     const isErr = !!ev.is_error || (typeof ev.subtype === 'string' && ev.subtype.startsWith('error')) || !!ev.synthetic;
     if (!isErr) {
       const text = typeof ev.result === 'string' && ev.result.trim() ? ev.result : lastAssistantTextSeen;
@@ -2398,7 +2431,9 @@ function runClaude() {
     lifecycleClosed = true;
     // Portier : `exit` peut précéder les derniers octets de stdout — on attend la
     // fin du flux (3 s au plus) pour ne retenir aucun result tardif.
-    if (LANG_GATE && !child.stdout.readableEnded) await new Promise(r => { child.stdout.once('end', r); setTimeout(r, 3000); });
+    // Since 0.58.0 stdout is written line by line in both modes: wait for the
+    // end of the stream as well, so the last line is not left in the buffer.
+    if (!child.stdout.readableEnded) await new Promise(r => { child.stdout.once('end', r); setTimeout(r, 3000); });
     // Drain any pending queued lines before we shut the log so we don't lose
     // a final `result` observation (which may carry the limit message).
     try { processLineQueue(); } catch {}

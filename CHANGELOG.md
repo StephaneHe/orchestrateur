@@ -11,6 +11,90 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.58.0] - 2026-10-09
+
+Signalement de l'utilisateur : « A nouveau, orchestrateur est termine, et plus
+rien ne se passe. Il faut corriger la situation ». C'était la deuxième fois que
+la flotte restait figée à la fin d'un tour d'orchestrateur. Les reprises que le
+Routage avait mises « après orchestrateur » et « après panierIL » ne partaient
+jamais, pour quatre raisons :
+
+1. le chef n'était jamais réveillé à la fin d'une tâche lancée par le Routage
+   (`--source chef`) ;
+2. la dépendance exigeait un `result` horodaté, que les tours ordinaires du CLI
+   n'écrivent pas ;
+3. une reprise libérée aurait démarré une nouvelle exécution au lieu de
+   reprendre celle en pause ;
+4. une même exécution en pause était attendue deux fois.
+
+### Added
+- (server) `scripts/routage-pending.mjs`, seul propriétaire de
+  `logs/routage-pending.json` :
+  - fichier écrit en atomique, sous verrou ;
+  - chaque entrée reçoit un identifiant ;
+  - CLI `list [--json]`, `release [<id>…] [--force]` et
+    `drop <id>… | --run <routage> [--projet <p>] | --all`. Le fichier ne
+    s'édite plus à la main.
+- (server) **Libération mécanique à la fin de CHAQUE tour** (`dispatch.mjs`,
+  crochet sur `process.exit`, appelé après le vidage du log). Les tâches dont
+  la tâche attendue a rendu son résultat partent aussitôt, sans LLM et sans
+  attendre le réveil du chef. Cela vaut pour les tours ordinaires comme pour
+  les pipelines. Les tours d'étape et les branches du mode double ne libèrent
+  rien. Désactivable pour un processus par `ORCH_NO_PENDING_RELEASE=1`.
+  L'étape Relancer du Routage appelle la même fonction (`releaseReady`).
+- (server, **après redémarrage**) **Balayage de secours toutes les 60 s** :
+  - libère ce qu'un tour tué n'aurait pas libéré ;
+  - **signale une seule fois** une tâche en attente depuis plus de 2 h : un
+    message dans le fil du chef et une notification de bureau
+    (`ORCH_PENDING_STALE_MS`).
+- (server, **après redémarrage**) **« Redémarrage requis »** :
+  - `/api/version` renvoie `repoVersion` et `restartRequired` (version du dépôt
+    plus récente que la version servie) ;
+  - `/api/pupitre` les expose aussi, avec `routagePending` (les tâches en
+    attente, prêtes ou non) ;
+  - le pied de page du tableau de bord affiche « ⚠ redémarrage requis ».
+
+### Fixed
+- (server) **Reprise explicite** :
+  - une tâche du Routage qui reprend une exécution en pause porte `reprise`
+    (consigne et format de Décomposer, liste des exécutions en pause dans
+    `contexte.md`) ;
+  - elle part par `dispatch.mjs <projet> --pipeline-resume <run>`, jamais par
+    `--pipeline`, qui démarrait une nouvelle exécution ;
+  - si Décomposer omet le champ, un identifiant d'exécution en pause du projet
+    cité dans la demande suffit ;
+  - `validateTasks` refuse une reprise d'une exécution qui n'est pas en pause ;
+  - au lancement, une reprise devenue sans objet (exécution plus en pause) est
+    retirée sans rien lancer ;
+  - **protection des anciennes entrées** : une entrée écrite avant cette
+    version, donc sans `reprise`, part elle aussi en reprise dès que sa demande
+    cite une exécution en pause du projet. Pendant la livraison, une telle
+    entrée avait lancé une exécution en double, avant que cette protection
+    n'existe ; elle a été signalée au chef.
+- (server) **Dépendance fiable** : la tâche attendue est repérée par la
+  **position dans son log** au moment de son lancement, puis par le **texte**
+  de sa demande. N'importe quel `result` réel de ce tour la satisfait, horodaté
+  ou non. Le résultat d'un autre tour (tâche attendue mise en file) ou un
+  `result` fantôme ne comptent jamais. Les anciennes entrées (heure seule)
+  gardent la règle d'avant.
+- (server) **Tous les `result` sont horodatés**, y compris ceux des tours
+  ordinaires du CLI claude. `dispatch.mjs` écrit désormais la sortie du CLI
+  ligne par ligne, et le `result` retenu par le portier de langue est
+  horodaté lui aussi.
+- (server) **Dédoublonnage** des tâches en attente (même projet + même
+  exécution reprise, ou même demande), à l'ajout comme à la libération.
+- (server, **après redémarrage**) **Le chef est de nouveau réveillé** à la fin
+  d'une tâche lancée par le Routage : le pump enregistre l'attente `callback`
+  d'un `user_prompt` sourcé. Un message notify, qui n'a pas de `callback`,
+  n'y change rien.
+
+### Tests
+- `scripts/_test_routage_pending.mjs` (52 contrôles), dont un parcours de bout
+  en bout sur le vrai `dispatch.mjs` : la fin d'un tour ordinaire non horodaté
+  libère « après O », et l'exécution en pause est reprise et terminée, sans
+  nouvelle exécution ni doublon.
+- Parcours HTTP `routage-pending`.
+
 ## [0.57.2] - 2026-10-09
 
 Décision de l'utilisateur : « si c'est un probleme de pipeline, il faut

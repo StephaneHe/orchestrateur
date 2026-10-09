@@ -1253,6 +1253,38 @@ Suite de la demande du 2026-10-09. Plan : `docs/PLAN-pipeline-enforcement.md`.
 - Rejet avec motif : `decideGap(…, {reason})`.
 - Recette : `_test_pipeline_routage.mjs`, sections 8 et 9.
 
+## Tâches du Routage en attente : jamais bloquées (0.58.0)
+
+Signalement utilisateur : « A nouveau, orchestrateur est termine, et plus rien
+ne se passe. Il faut corriger la situation ».
+
+- **Propriétaire unique** : `scripts/routage-pending.mjs`, pour
+  `logs/routage-pending.json` (verrou, écriture atomique, identifiants).
+  - CLI : `list [--json]`, `release [<id>…] [--force]`,
+    `drop <id>… | --run <routage> [--projet <p>] | --all`.
+  - **Ne jamais éditer le fichier à la main.**
+- **Libération mécanique** (`releaseReady`) :
+  - à la fin de CHAQUE tour, par le crochet `process.exit` de `dispatch.mjs` ;
+  - par l'étape Relancer ;
+  - par le balayage serveur de 60 s (après redémarrage).
+  - Pas de LLM, ni de réveil du chef nécessaire.
+- **Dépendance** : `after: {projet, offset, key}`, c'est-à-dire la position
+  dans le log de la tâche attendue au lancement, puis le texte de sa demande.
+  Un `result` fantôme ou celui d'un autre tour ne comptent pas.
+- **Reprise** : une tâche `reprise: <run>` part en `--pipeline-resume`. Le
+  `dispatcher` la détecte aussi d'après un identifiant cité.
+- **Doublons** : refusés, sur la clé projet + exécution reprise (ou texte).
+- **Tous les `result` sont horodatés** par `dispatch.mjs`.
+- **Actif tout de suite** (`dispatch.mjs`, moteur, catalogue) : reprise,
+  libération en fin de tour, dépendance, dédoublonnage, CLI.
+- **Après redémarrage** (`server.js`, `public/app.js`) :
+  - réveil du chef pour ses tâches (le pump lit `callback` d'un prompt
+    sourcé) ;
+  - balayage avec signalement des attentes de plus de 2 h ;
+  - `restartRequired` dans `/api/version` et `/api/pupitre`, et dans le pied
+    de page.
+- Recettes : `_test_routage_pending.mjs`, HTTP `routage-pending`.
+
 ## Langue de discussion (0.51.0)
 
 Demande utilisateur : « La langue de la discussion doit pouvoir etre fixee et

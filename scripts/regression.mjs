@@ -280,6 +280,14 @@ async function apiChecks(sb) {
     const c = await json('/api/config');
     assert(c.projects.find(p => p.name === 'mu').currentState === 'idle', 'mu non repassé idle');
   });
+  // 0.58.0 — « redémarrage requis » et tâches du Routage en attente, visibles.
+  await check(S, 'routage-pending', '/api/version (repoVersion, restartRequired) et /api/pupitre (restartRequired, routagePending)', async () => {
+    const v = await json('/api/version');
+    if (!('restartRequired' in v)) NA('champs absents de cet état du code');
+    assert(v.repoVersion === v.version && v.restartRequired === false, `instance lancée depuis le dépôt : pas de redémarrage requis (${JSON.stringify(v)})`);
+    const p = await json('/api/pupitre');
+    assert(p.restartRequired === false && Array.isArray(p.routagePending), `pupitre : ${JSON.stringify({ r: p.restartRequired, n: p.routagePending })}`);
+  });
   // 0.31.0 — arrêt par le chef présenté comme tel, « vu » persistant sans relance.
   await check(S, 'ack-stopped', 'Arrêt par le chef (motif, result parasite ignoré) puis « vu » : 200, 409, idle, événement dans le log', async () => {
     const probe = await post('/api/ack/nope', {});

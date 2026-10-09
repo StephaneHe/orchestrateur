@@ -1102,7 +1102,12 @@ const App = {
       .then(r => r.ok ? r.json() : null)
       .then(j => {
         const el = document.getElementById("app-version");
-        if (el && j?.version) el.textContent = "serveur v" + j.version;
+        if (el && j?.version) {
+          // 0.58.0 : le dépôt est plus récent que le serveur en service.
+          el.textContent = "serveur v" + j.version + (j.restartRequired ? ` · ⚠ redémarrage requis (dépôt v${j.repoVersion})` : "");
+          el.dataset.restartRequired = j.restartRequired ? "1" : "0";
+          if (j.restartRequired) el.setAttribute("title", "Le code du dépôt (v" + j.repoVersion + ") n'est pas encore chargé : redémarrer le serveur (restart-orchestrateur.mjs, lancé par le chef).");
+        }
       })
       .catch(() => {});
     await this.loadChatHistory();

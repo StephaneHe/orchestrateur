@@ -67,6 +67,7 @@ import { scanProject as scanFleetMember, isPhantomResult, isQuestionResolved, is
 // Registre /downloads relu à chaud depuis downloads.json (0.23.0).
 import { createDownloadsRegistry, VERSION_NAME_RE } from './scripts/downloads-registry.mjs';
 import { trustWorkspace } from './scripts/workspace-trust.mjs';
+import { readPending, dependencyResult, releaseReady, staleEntries, markNotified, idOf as pendingIdOf } from './scripts/routage-pending.mjs';
 // Vue « Models par tâche » (0.39.0) : catalogue + model-routing.json.
 import { createModelRouting, incompatibility } from './scripts/model-routing.mjs';
 import { createRecommendations } from './scripts/model-reco.mjs';
@@ -943,6 +944,28 @@ function sweepQueues() {
   }
 }
 setInterval(sweepQueues, QUEUE_SWEEP_MS).unref();
+
+// ---------- Tâches du Routage en attente : filet de sécurité (0.58.0) ---------
+// dispatch.mjs libère les tâches en attente à la fin de chaque tour ; ce
+// balayage rattrape un tour tué avant sa fin, et SIGNALE (une fois) une tâche
+// qui attend depuis trop longtemps, au lieu de la laisser dormir en silence.
+const PENDING_STALE_MS = Number(process.env.ORCH_PENDING_STALE_MS) || 2 * 3600_000;
+function sweepRoutagePending() {
+  try {
+    if (!readPending(LOGS_DIR).length) return;
+    const r = releaseReady({ root: __dirname, logsDir: LOGS_DIR, dispatchScript: path.join(__dirname, 'scripts', 'dispatch.mjs') });
+    for (const l of r.launched) { const m = `[routage-pending] ${l.projet} ${l.skipped ? `non relancée : ${l.skipped}` : `relancée (balayage)${l.reprise ? ` — reprise ${l.reprise}` : ''}`}`; console.log(m); debugLog(m); }
+    const stale = staleEntries(readPending(LOGS_DIR), { maxMs: PENDING_STALE_MS });
+    if (!stale.length) return;
+    const text = `⏳ ${stale.length} tâche(s) du Routage en attente depuis plus de ${Math.round(PENDING_STALE_MS / 60_000)} min :\n` +
+      stale.map(t => `- ${t.projet} (après ${t.after?.projet || '?'})${t.reprise ? ` — reprise ${t.reprise}` : ''} — node scripts/routage-pending.mjs list`).join('\n');
+    try { fs.appendFileSync(path.join(LOGS_DIR, `${conductorName()}.jsonl`), '\n' + JSON.stringify({ type: 'user_prompt', text, source: 'routage-pending', timestamp: new Date().toISOString() }) + '\n'); } catch {}
+    try { fireDesktopNotification('routage-pending', text); } catch {}
+    markNotified(LOGS_DIR, stale.map(pendingIdOf));
+    debugLog(`[routage-pending] signalé : ${stale.map(t => t.projet).join(', ')}`);
+  } catch (e) { debugLog(`[routage-pending] balayage : ${e.message}`); }
+}
+setInterval(sweepRoutagePending, 60_000).unref();
 
 // ---------- File de direction (pool P0-A, 0.22.0) ---------------------------
 //
@@ -2445,8 +2468,18 @@ function scanProjectState(name) {
   return { state, lastLine, unreadCount, questionResolved, stopped: state === 'error' ? stopped : null };
 }
 
+// 0.58.0: the served version is read once at boot; the repository's is read on
+// each call. When they differ, code is waiting for a restart (dispatch.mjs and
+// the engine are hot, server.js / turn-core.js / fleet-status-core.mjs are not).
+function repoVersion() {
+  try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version || null; } catch { return null; }
+}
+function restartInfo() {
+  const repo = repoVersion();
+  return { version: PKG_VERSION, repoVersion: repo, restartRequired: !!repo && repo !== PKG_VERSION };
+}
 app.get('/api/version', (req, res) => {
-  res.json({ version: PKG_VERSION });
+  res.json(restartInfo());
 });
 
 app.get('/api/config', (req, res) => {
@@ -2987,8 +3020,22 @@ app.get('/api/pupitre', (req, res) => {
     fleet,
     pool: poolSnapshot(stateOf),
     ui: uiFlags(),
+    // Additifs 0.58.0 : code en attente de redémarrage, et tâches du Routage
+    // qui attendent la fin d'une autre (visibles au lieu de dormir en silence).
+    ...restartInfo(),
+    routagePending: routagePendingView(),
   });
 });
+
+function routagePendingView() {
+  try {
+    return readPending(LOGS_DIR).map(t => ({
+      id: pendingIdOf(t), projet: t.projet, after: t.after?.projet || null, reprise: t.reprise || null,
+      createdAt: t.createdAt || null, ready: !!(t.after && dependencyResult(LOGS_DIR, t.after)), blocked: t.blocked || null,
+      demande: String(t.demande || '').replace(/\s+/g, ' ').slice(0, 160),
+    }));
+  } catch { return []; }
+}
 
 // ---------- Actions sur la file de direction (0.22.0) -----------------------
 //
@@ -3869,6 +3916,14 @@ function reduceMusician(name, ev) {
     return { prevState: state, newState: state, lastLine, awaitingChef, expectCallback: null, wakeGen, phantom: true, afterStop: true };
   }
   let stopped = prev.stopped ?? null;
+  // 0.58.0: a task launched by the chef's Routage carries `--source chef` AND
+  // `--callback chef`. Its prompt is not a turn start, but the expectation must
+  // be recorded, or the chef is never woken when it ends (the fleet froze).
+  // A sourced prompt without `callback` (notify, @shortcut) changes nothing.
+  if (t === 'user_prompt' && ev.source && typeof ev.callback === 'string' && ev.callback) {
+    expectCallback = ev.callback;
+    wakeGen = Number.isFinite(ev.wakeGen) ? ev.wakeGen : 0;
+  }
   // Sourced user_prompt (callback / @shortcut / notify) is not a turn start;
   // pipeline_start / dual_start are (TurnCore.isTurnStart, 0.57.1).
   if (globalThis.TurnCore.isTurnStart(ev)) {
