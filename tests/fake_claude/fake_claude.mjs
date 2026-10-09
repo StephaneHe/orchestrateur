@@ -326,10 +326,18 @@ function pipelineStep(text) {
     case 'rouge': {
       const k = item(text);
       // Item déjà couvert par le code existant (Q10) : test fidèle qui passe d'emblée.
-      if (k && String(process.env.FAKE_PIPE_COVERED || '').split(',').includes(String(k))) {
-        w(`test/pipe-${k}.test.mjs`, `import { test } from 'node:test';\nimport assert from 'node:assert';\nimport { id } from '../src/pipe.mjs';\ntest('pipe item ${k} déjà couvert', () => {\n  assert.equal(id(${k}), ${k});\n});\n`);
+      // k = 0 in light mode: FAKE_PIPE_COVERED=0 means the request itself is
+      // already implemented. FAKE_PIPE_PROOF=none[:n] omits the proof,
+      // FAKE_PIPE_NOTEST=1[:n] claims DEJA_COUVERT without (re)writing the test.
+      if (String(process.env.FAKE_PIPE_COVERED || '').split(',').includes(String(k))) {
+        const noTest = once(process.env.FAKE_PIPE_NOTEST && `notest:${String(process.env.FAKE_PIPE_NOTEST).split(':')[1] || ''}`.replace(/:$/, ''), 'notest');
+        const noProof = once(process.env.FAKE_PIPE_PROOF && `noproof:${String(process.env.FAKE_PIPE_PROOF).split(':')[1] || ''}`.replace(/:$/, ''), 'noproof');
+        const name = k ? `pipe-${k}` : 'pipe-covered';
+        if (!noTest) w(`test/${name}.test.mjs`, `import { test } from 'node:test';\nimport assert from 'node:assert';\nimport { id } from '../src/pipe.mjs';\ntest('${name} déjà couvert', () => {\n  assert.equal(id(${k || 7}), ${k || 7});\n});\n`);
         if (bad) w('src/pipe.mjs', 'export const id = (x) => x; // retouché\n');
-        w(artefact, process.env.FAKE_PIPE_NOCLAIM === '1' ? `# Rouge\n\nLe test « pipe item ${k} » passe déjà.\n` : `DEJA_COUVERT\n\n# Rouge\n\nid() de src/pipe.mjs assure déjà l'item ${k} : le test passe d'emblée.\n`);
+        const head = (g('rev-parse', '--short', 'HEAD').stdout || '').trim();
+        const proof = noProof ? 'Le code existant le fait déjà.' : (k ? `id() de src/pipe.mjs assure déjà l'item ${k}.` : `Preuve : commit ${head}, src/pipe.mjs:1 (id).`);
+        w(artefact, process.env.FAKE_PIPE_NOCLAIM === '1' ? `# Rouge\n\nLe test « ${name} » passe déjà.\n` : `DEJA_COUVERT\n\n# Rouge\n\n${proof} Le test passe d'emblée.\n`);
         break;
       }
       if (k) {

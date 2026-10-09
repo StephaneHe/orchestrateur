@@ -478,7 +478,7 @@ function stepPrompt(ctx, step, extra) {
       L.push(`Tu ne modifies QUE des fichiers de test (motifs : ${(cfg.testGlobs || []).join(', ')}). Aucun code de production.`);
       L.push(`Après ton tour, l'orchestrateur lance ${T} : elle doit ÉCHOUER, à cause de ton test.`);
       L.push(`Écris ${art('rouge.md')} : le nom du test, le fichier, et pourquoi il échoue aujourd'hui.`);
-      if (ctx.item) L.push('Exception : si ce comportement est DÉJÀ assuré par le code existant (tout test fidèle à l’item passe d’emblée), ne fausse jamais le test pour le faire échouer. Garde ce test fidèle comme documentation, écris le mot DEJA_COUVERT en tête de rouge.md et explique quel code le couvre déjà. L’orchestrateur vérifie que seuls des tests ont changé et que toute la suite passe, coche l’item sans 4b ni 4c, et la Revue jugera le test.');
+      L.push(`Exception : si ce comportement est DÉJÀ assuré par le code existant (tout test fidèle ${ctx.item ? 'à l’item' : 'à la demande'} passe d’emblée), ne fausse jamais le test pour le faire échouer. Garde ce test fidèle comme documentation (il doit être écrit dans CE tour, même si tu l’avais écrit lors d’un essai précédent), écris le mot DEJA_COUVERT en tête de rouge.md, puis la PREUVE : le commit (hash) et/ou le fichier:ligne du code de production qui l’implémente déjà. L’orchestrateur vérifie la preuve, que seuls des tests ont changé et que toute la suite passe ; ${ctx.item ? 'il coche l’item sans 4b ni 4c' : 'il passe alors directement à la revue, sans 4b'}, et la Revue jugera le test.`);
       break;
     case 'vert':
       if (ctx.reviewItems?.length) {
@@ -497,7 +497,7 @@ function stepPrompt(ctx, step, extra) {
     case 'revue':
       L.push('Ton rôle : REVUE du changement en cours (défauts, sécurité, cohérence, tests suffisants). Le diff complet est dans le fichier :');
       L.push(`  ${art('diff.patch')}`);
-      if (ctx.coveredItems?.length) L.push(`Items acceptés comme DÉJÀ COUVERTS (leur test passait d'emblée, sans nouveau code) : ${ctx.coveredItems.map(i => `n° ${i.n} « ${i.text} »`).join(' ; ')}. Vérifie que chacun de ces tests est FIDÈLE à son item et qu'il échouerait si le comportement disparaissait ; un test vide de sens est un « problème ».`);
+      if (ctx.coveredItems?.length) L.push(`Items acceptés comme DÉJÀ COUVERTS (leur test passait d'emblée, sans nouveau code) : ${ctx.coveredItems.map(coveredLabel).join(' ; ')}. Vérifie que chacun de ces tests est FIDÈLE à son item et qu'il échouerait si le comportement disparaissait ; un test vide de sens est un « problème ».`);
       L.push('Ne relève PAS l’absence de numéro de version incrémenté, d’entrée CHANGELOG ni de ligne dans le registre des exigences : l’étape Livrer, qui suit, les ajoute, et l’orchestrateur les vérifie.');
       L.push(`Écris ${art('revue.json')}, et UNIQUEMENT ce JSON : {"verdict": "ok" | "problèmes", "items": ["défaut de comportement 1", …], "hors_tdd": ["correction de doc ou de commentaire 1", …]}.`);
       L.push('« items » : uniquement des défauts de COMPORTEMENT, qu’un test peut prouver (ils repartent dans la boucle de tests). « hors_tdd » : ce qui ne se teste pas (documentation, README, commentaires…) — ce sera fait à la livraison. « problèmes » seulement pour un défaut réel, à corriger maintenant.');
@@ -505,6 +505,7 @@ function stepPrompt(ctx, step, extra) {
       break;
     case 'livrer': {
       L.push('Ton rôle : LIVRER et DOCUMENTER (règles de la flotte), dans cet ordre :');
+      if (ctx.coveredItems?.length) L.push(`Comportement(s) DÉJÀ assuré(s) par le code existant, sans nouveau code de production (le test ajouté sert de documentation) : ${ctx.coveredItems.map(coveredLabel).join(' ; ')}. Mentionne-le dans l'entrée CHANGELOG et dans ${art('livraison.md')}.`);
       if (ctx.deliveryFixes?.length) L.push(`0. d'abord, les corrections relevées par la relecture qui ne relèvent pas des tests (documentation, commentaires…) :\n${ctx.deliveryFixes.map(f => `   - ${f}`).join('\n')}`);
       L.push(`1. incrémente la version (patch pour une correction, minor pour une fonctionnalité) dans : ${(cfg.versionFiles || []).join(', ') || '(fichier de version du projet)'} ;`);
       L.push(`2. ajoute l'entrée « ## [X.Y.Z] - AAAA-MM-JJ » correspondante dans ${cfg.changelog || 'CHANGELOG.md'} ;`);
@@ -931,9 +932,70 @@ function checkCatalogCriteria(ctx, step, before, after) {
 // ---------------------------------------------------------------------------
 function readArtefact(ctx, f) { try { return fs.readFileSync(path.join(ctx.artDir, f), 'utf8'); } catch { return null; } }
 
+/**
+ * Proof behind a DEJA_COUVERT claim (0.57.2): at least one commit that exists in
+ * the repository, or one existing production file (optionally `file:line`, the
+ * line must exist). Test files and orchestrator-local files are no proof.
+ */
+export function coveredProof(cwd, text, cfg) {
+  const proof = [];
+  const src = String(text || '');
+  for (const m of new Set(src.match(/\b[0-9a-f]{7,40}\b/g) || [])) {
+    if (git(cwd, ['cat-file', '-e', `${m}^{commit}`]).ok) proof.push({ kind: 'commit', ref: m });
+  }
+  for (const m of src.matchAll(/(?<![\w/.-])((?:[\w.-]+\/)*[\w.-]+\.[A-Za-z][\w]{0,9})(?::(\d+))?(?![\w/])/g)) {
+    const rel = m[1].replace(/^\.\//, '');
+    if (rel.includes('..') || isLocalOnly(rel) || isTestFile(rel, cfg?.testGlobs)) continue;
+    const abs = path.join(cwd, rel);
+    let st; try { st = fs.statSync(abs); } catch { continue; }
+    if (!st.isFile()) continue;
+    if (m[2]) {
+      let n = 0; try { n = fs.readFileSync(abs, 'utf8').split('\n').length; } catch {}
+      if (Number(m[2]) < 1 || Number(m[2]) > n) continue;
+    }
+    if (!proof.some(p => p.kind === 'file' && p.ref === rel)) proof.push({ kind: 'file', ref: rel, ...(m[2] ? { line: Number(m[2]) } : {}) });
+  }
+  return proof;
+}
+// Network / environment failure signatures across Node, Python, JVM and .NET.
+const ENV_FAILURE_RES = [
+  [/\bE(?:TIMEDOUT|CONNREFUSED|CONNRESET|NOTFOUND|AI_AGAIN|HOSTUNREACH|NETUNREACH)\b/, 'erreur réseau'],
+  [/\b(?:TimeoutError|socket\.timeout|SocketTimeoutException|ReadTimeout(?:Error)?|ConnectTimeout(?:Error)?|TaskCanceledException)\b/, 'délai dépassé'],
+  [/\b(?:read operation|connection|request|operation) timed out\b/i, 'délai dépassé'],
+  [/\b(?:ConnectionError|ConnectionRefusedError|ConnectionResetError|ConnectException|UnknownHostException|NoRouteToHostException|HttpRequestException|getaddrinfo|Name or service not known|Temporary failure in name resolution|Network is unreachable|No such host is known)\b/i, 'réseau indisponible'],
+];
+
+/**
+ * Why a test command failed (0.57.2): `environment` when the output carries
+ * network / timeout signatures (an unreachable remote service, not a broken
+ * test), `tests` otherwise. Used at the "green base" precondition to report
+ * the two cases apart; the base is still refused either way.
+ */
+export function classifyTestFailure(out) {
+  const text = String(out || '');
+  const signals = [];
+  for (const [re, label] of ENV_FAILURE_RES) {
+    const m = re.exec(text);
+    if (m && !signals.some(s => s.match === m[0])) signals.push({ label, match: m[0] });
+  }
+  return { cause: signals.length ? 'environment' : 'tests', signals };
+}
+
+function proofText(list) {
+  return (list || []).map(p => (p.kind === 'commit' ? `commit ${p.ref}` : `${p.ref}${p.line ? `:${p.line}` : ''}`)).join(', ');
+}
+function coveredLabel(i) {
+  const proof = proofText(i.proof);
+  return `${i.n ? `n° ${i.n} ` : ''}« ${i.text} »${proof ? ` (preuve : ${proof})` : ''}`;
+}
+const COVERED_HINT ='si le comportement existe déjà dans le code, garde ce test fidèle (il passe), écris DEJA_COUVERT en tête de rouge.md avec la preuve : le commit et/ou le fichier:ligne du code de production qui l’implémente déjà';
+
 function checkCriteria(ctx, step, before, after) {
   // Catalogue (phase 6) : critères génériques, ou critère du Développement réutilisé.
   if (!step.crit && (step.checks || step.kind)) return checkCatalogCriteria(ctx, step, before, after);
+  // DEJA_COUVERT belongs to the Development pipeline's own 4a, not to catalog
+  // steps that reuse its criterion (an Incident reproduction must fail).
+  const devRouge = !step.crit && step.id === 'rouge';
   if (step.crit) step = { ...step, id: step.crit };
   const { cwd, cfg } = ctx;
   const changed = changedFiles(before, after);
@@ -973,17 +1035,27 @@ function checkCriteria(ctx, step, before, after) {
     return { ok: true, changed };
   }
   if (step.id === 'rouge') {
-    if (!changed.length) return { ok: false, why: 'aucun test ajouté ni modifié', changed };
+    const claimed = devRouge && /\bDEJA_COUVERT\b/.test(art || '');
+    if (!changed.length) {
+      return claimed
+        ? { ok: false, why: 'DEJA_COUVERT déclaré, mais aucun test ajouté ni modifié : les fichiers d’un essai refusé sont retirés, réécris le test fidèle (il doit passer) et garde la preuve dans rouge.md', changed, claimedCovered: true }
+        : { ok: false, why: 'aucun test ajouté ni modifié', changed };
+    }
     const notTests = changed.filter(f => !isTestFile(f, cfg.testGlobs));
     if (notTests.length) return { ok: false, why: `l’étape Rouge ne touche que des tests ; modifiés hors tests : ${notTests.slice(0, 8).join(', ')}`, changed };
     const t = runCommand(cwd, cfg.testCommand, ctx.testEnv);
     if (t.ok) {
-      // Décision utilisateur Q10 (« A », 2026-10-09) : un item DÉJÀ COUVERT par le
-      // code existant est accepté si le model le DÉCLARE (DEJA_COUVERT), que seuls
-      // des tests ont changé (vérifié ci-dessus) et que toute la suite passe. Le
-      // test reste comme documentation ; 4b et 4c sont sautées ; la Revue juge.
-      if (ctx.item && /\bDEJA_COUVERT\b/.test(readArtefact(ctx, step.artefact) || '')) return { ok: true, changed, test: t, covered: true };
-      return { ok: false, why: `la suite passe encore : le nouveau test n’échoue pas (${cfg.testCommand})${ctx.item ? ' — si le comportement est déjà couvert par le code existant, écris DEJA_COUVERT dans rouge.md et garde le test' : ''}`, changed, test: t };
+      // Décision utilisateur Q10 (« A », 2026-10-09) : un comportement DÉJÀ
+      // assuré par le code existant est accepté si le model le DÉCLARE
+      // (DEJA_COUVERT), que seuls des tests ont changé et que toute la suite
+      // passe. 0.57.2 : aussi en mode léger (sans item), et avec une preuve
+      // vérifiée (commit existant, fichier[:ligne] de production existant).
+      if (claimed) {
+        const proof = coveredProof(cwd, art, cfg);
+        if (!proof.length) return { ok: false, why: 'DEJA_COUVERT déclaré sans preuve vérifiable : cite le commit (hash) et/ou le fichier:ligne du code de production qui implémente déjà le comportement', changed, test: t, claimedCovered: true };
+        return { ok: true, changed, test: t, covered: true, proof };
+      }
+      return { ok: false, why: `la suite passe encore : le nouveau test n’échoue pas (${cfg.testCommand})${devRouge ? ` — ${COVERED_HINT}` : ''}`, changed, test: t };
     }
     const names = changed.map(f => path.basename(f).replace(/\.[^.]+$/, '').replace(/\.(test|spec)$/, ''));
     const titles = [];
@@ -1492,7 +1564,23 @@ export async function runPipeline(o) {
   if ((pipeline === 'dev' || pipeline === 'maintenance') && state.index === 0 && (!resumed || state.pausedLimit === 'precondition')) {
     const t = runCommand(cwd, cfg.testCommand, testEnv);
     if (!t.ok) {
-      writeEvent({ type: 'system', subtype: 'pipeline_precondition', pipeline: { run }, text: `la suite (${cfg.testCommand}) est déjà rouge avant l'étape 4a`, output: t.out.slice(-2000) });
+      const failure = classifyTestFailure(t.out);
+      const envSigns = failure.signals.map(s => `${s.label} (${s.match})`).join(', ');
+      writeEvent({ type: 'system', subtype: 'pipeline_precondition', pipeline: { run }, cause: failure.cause, signals: failure.signals,
+        text: failure.cause === 'environment'
+          ? `la suite (${cfg.testCommand}) échoue avant l'étape 4a pour une raison d'ENVIRONNEMENT, probablement pas un test cassé : ${envSigns}`
+          : `la suite (${cfg.testCommand}) est déjà rouge avant l'étape 4a`,
+        output: t.out.slice(-2000) });
+      if (failure.cause === 'environment') {
+        return finish({ code: 2, paused: true, limit: 'precondition', notice: `⏸ ${projectName} : les tests échouent à cause de l'environnement (${failure.signals[0].label}), pas forcément d'un test cassé`,
+          question: `${projectName} en pause — répondez « continuer » (une fois le réseau ou le service revenu) ou « abandonner » (je recommande « continuer » plus tard) : ses tests échouent pour une raison d'environnement (${envSigns}).`,
+          result: pauseText({
+            what: `avant de commencer, j’ai lancé les tests du projet (« ${cfg.testCommand} ») : ils échouent, mais les erreurs viennent de l’environnement (${envSigns}) — un service distant injoignable ou trop lent —, et probablement pas d’un test cassé. Je ne peux pas démarrer sur une base qui ne passe pas, quelle qu’en soit la cause.`,
+            options: [['continuer', 'je relance les tests ; si le réseau ou le service est revenu et qu’ils passent, je commence le travail.'],
+              ['abandonner', 'j’arrête sans rien modifier ; vous pourrez par exemple demander que ces tests dépendants du réseau soient isolés ou rendus optionnels.']],
+            recommend: ['continuer', 'réessayer quand le réseau ou le service distant répond de nouveau.'],
+          }) });
+      }
       return finish({ code: 2, paused: true, limit: 'precondition', notice: `⏸ ${projectName} : les tests du projet échouent déjà avant toute modification`,
         question: `${projectName} en pause — répondez « continuer » (tests réparés) ou « abandonner » (je recommande « abandonner ») : ses tests échouent déjà avant toute modification.`,
         result: pauseText({
@@ -1610,7 +1698,11 @@ export async function runPipeline(o) {
       fs.writeFileSync(path.join(artDir, 'diff.patch'), `${tracked}\n${extraTxt}\n`);
       try { fs.unlinkSync(path.join(artDir, 'revue.json')); } catch {}
     }
-    const maxAttempts = step.id === 'vert' ? limits.greenAttempts : limits.criteriaAttempts;
+    let maxAttempts = step.id === 'vert' ? limits.greenAttempts : limits.criteriaAttempts;
+    // An honest "already covered" claim refused on form (missing proof, test not
+    // rewritten after a refused try) is not a failure: it does not consume the
+    // retry budget — once per step, so the loop stays bounded (0.57.2).
+    let graceLeft = 1;
     let attempt = 0, last = null, retryWhy = null;
     for (;;) {
       attempt++;
@@ -1630,6 +1722,12 @@ export async function runPipeline(o) {
       if (!step.judge && r.before && r.after) restoreFiles(cwd, r.before, r.after, delivering ? base : null);
       if (step.judge && r.before && r.after) restoreFiles(cwd, r.before, r.after, null);
       retryWhy = r.rec.why;
+      if (r.crit?.claimedCovered && graceLeft > 0) {
+        graceLeft--;
+        maxAttempts++;
+        writeEvent({ type: 'system', subtype: 'pipeline_retry_not_counted', pipeline: { run, step: step.id, key: r.rec.key, attempt },
+          text: `essai ${attempt} de « ${step.title} » non compté : « déjà couvert » déclaré, à compléter (${plainWhy(r.rec.why)})` });
+      }
       if (attempt >= maxAttempts) {
         return pauseForLimit({ limit: step.id === 'vert' ? 'green' : 'criteria', value: attempt, step, why: r.rec.why, lastOutput: r.crit?.test?.out });
       }
@@ -1666,8 +1764,15 @@ export async function runPipeline(o) {
         state.steps.push({ id: sid, key, title: stepDefs[sid].title, item: ctx.item?.n, status: 'skipped', why, attempt: 1, durationMs: 0 });
         writeEvent({ type: 'system', subtype: 'pipeline_step_done', pipeline: { run, step: sid, key, attempt: 1, ...(ctx.item ? { item: ctx.item.n } : {}) }, status: 'skipped', why, durationMs: 0, text: `étape ${stepDefs[sid].title} : sautée — ${why}` });
       }
-      state.coveredItems = ctx.coveredItems = [...(state.coveredItems || []), { n: ctx.item?.n, text: ctx.item?.text }];
-      writeEvent({ type: 'system', subtype: 'pipeline_item_covered', pipeline: { run, item: ctx.item?.n }, text: `↺ item ${ctx.item?.n} déjà couvert : test gardé comme documentation, sans 4b ni 4c — la Revue le jugera` });
+      // Light mode has no item: the request itself is what is already covered.
+      const coveredText = ctx.item?.text || String(state.request || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+      const proof = last.crit.proof || [];
+      state.coveredItems = ctx.coveredItems = [...(state.coveredItems || []), { n: ctx.item?.n ?? null, text: coveredText, proof }];
+      const proofTxt = proof.length ? `(preuve : ${proofText(proof)})` : '';
+      writeEvent({ type: 'system', subtype: 'pipeline_item_covered', pipeline: { run, item: ctx.item?.n ?? null }, proof,
+        text: ctx.item
+          ? `↺ item ${ctx.item.n} déjà couvert : test gardé comme documentation, sans 4b ni 4c — la Revue le jugera ${proofTxt}`.trim()
+          : `↺ comportement déjà présent dans le code : test gardé comme documentation, sans 4b — la Revue le jugera ${proofTxt}`.trim() });
     }
     if (step.id === 'liste-tests' && (last.crit?.items || []).filter(i => !i.done).length > (state.budgets?.items || limits.items)) {
       return pauseForLimit({ limit: 'items', value: limits.items, step, why: `${last.crit.items.filter(i => !i.done).length} items listés (maximum ${limits.items}) — découper la demande en plusieurs exécutions` });
@@ -1769,6 +1874,7 @@ export async function runPipeline(o) {
       `- Étapes : ${state.steps.filter(s => s.status === 'ok').map(s => `${s.title.split(' ')[0]} ${s.model || 'défaut'}`).join(' → ')}\n` +
       (state.mode === 'complet' ? `- TDD : ${state.itemsDone || 0} item(s) de la liste de tests, un à la fois (4a → 4b → 4c)\n` : '') +
       (state.escalated ? '- ⇧ Monté de léger en complet : la demande dépassait le périmètre du mode léger\n' : '') +
+      ((state.coveredItems || []).length ? `- ↺ Déjà assuré par le code existant (test ajouté comme documentation, sans nouveau code) : ${state.coveredItems.map(coveredLabel).join(' ; ')}\n` : '') +
       `- Critères vérifiés par l'orchestrateur : test rouge puis vert, tests inchangés en 4b, revue, version, CHANGELOG${cfg.requirements ? ', exigence' : ''}, suite verte\n` +
       `- Pas de push (soumis à autorisation).\n\n${(readArtefact(ctx, 'livraison.md') || '').trim().slice(0, 4000)}`;
   }

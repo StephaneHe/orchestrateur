@@ -1331,6 +1331,19 @@ probleme pour le model utilise ».
   motif. L'événement `pipeline_item_covered` est écrit, et la Revue reçoit la
   liste `coveredItems`. Sans `DEJA_COUVERT`, le refus strict s'applique, avec
   l'indication.
+  - **0.57.2** : la règle vaut aussi en **mode léger**, sans item ; c'est
+    alors la demande qui est déjà couverte, et 4b est sautée.
+  - La déclaration exige une **preuve vérifiée** (`coveredProof`) : commit
+    existant, ou fichier de production `fichier[:ligne]` existant.
+  - Un refus de forme d'une déclaration honnête (preuve absente, test non
+    réécrit) ne compte pas dans la limite, une fois par étape
+    (`pipeline_retry_not_counted`).
+  - Livrer et le résultat final la mentionnent.
+  - Les étapes du catalogue qui réutilisent le critère `rouge` (Incident)
+    n'acceptent pas `DEJA_COUVERT`.
+  - À la précondition « base verte », `classifyTestFailure` signale à part un
+    échec d'environnement (réseau, délais : `cause: environment`).
+  - Recette : `_test_pipeline_covered.mjs`.
 - **Durée active** (0.50.0) : la limite compte `activeMs` (cumul des sessions
   d'exécution), jamais le temps passé en pause.
 - **« continuer » après une limite** (0.50.0) :

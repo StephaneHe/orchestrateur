@@ -11,6 +11,68 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.57.2] - 2026-10-09
+
+Décision de l'utilisateur : « si c'est un probleme de pipeline, il faut
+corriger le pipeline, puis seulement reprendre le deroulement ». Une exécution
+Développement léger s'est mise en pause à l'étape 4a alors que le changement
+demandé était déjà commité. Le model avait écrit un test honnête, vert, et
+refusé de le rendre rouge artificiellement. Le moteur l'a refusé deux fois
+(« la suite passe encore », puis « aucun test ajouté ni modifié »), et la
+limite de 2 refus a mis l'exécution en pause.
+
+### Fixed
+- (server) **`DEJA_COUVERT` accepté à l'étape 4a en mode léger.** La décision
+  Q10 « A » n'était raccordée qu'au mode complet, avec un item : en léger, la
+  consigne ne la proposait pas et le critère l'ignorait. Le comportement
+  demandé lui-même tient lieu d'item. 4b est alors sautée, avec son motif.
+- (server) **Un refus de forme d'un `DEJA_COUVERT` honnête n'est plus compté
+  comme un échec.** Cas visés : preuve manquante, ou test non réécrit après un
+  essai refusé (les fichiers d'un essai refusé sont retirés). L'essai suivant
+  n'entame pas la limite (événement `pipeline_retry_not_counted`). Cette
+  faveur est accordée une seule fois par étape, pour que la boucle reste
+  bornée. Le refus dit maintenant explicitement de réécrire le test.
+- (server) Une exécution déjà en pause sur cette limite (`criteria`) en profite
+  à la reprise : « continuer » ou `--pipeline-resume` relance l'étape avec la
+  nouvelle consigne et des essais neufs.
+
+### Changed
+- (server) **`DEJA_COUVERT` exige une preuve vérifiée** (`coveredProof`) :
+  - au moins un commit existant dans le dépôt, ou un fichier de production
+    existant (`fichier:ligne`, la ligne doit exister) ;
+  - les fichiers de test et les fichiers locaux de l'orchestrateur ne valent
+    pas preuve ;
+  - la preuve est gardée dans `coveredItems` et l'événement
+    `pipeline_item_covered`.
+- (server) La consigne de Livrer et le résultat final mentionnent le
+  comportement déjà assuré par le code existant, avec sa preuve.
+- (server) Les étapes du catalogue qui réutilisent le critère de 4a (la
+  reproduction d'un Incident) n'acceptent pas `DEJA_COUVERT` : elles doivent
+  échouer.
+
+### Added
+- (server) **Précondition « base verte » : l'environnement est distingué d'un
+  test cassé** (`classifyTestFailure`). Les signatures réseau et délai sont
+  reconnues (ETIMEDOUT, TimeoutError, « timed out », ENOTFOUND, getaddrinfo,
+  ConnectionError…). Dans ce cas :
+  - l'événement `pipeline_precondition` porte `cause: environment` et les
+    signaux trouvés ;
+  - le message de pause dit qu'il ne s'agit probablement pas d'un test cassé,
+    et recommande « continuer » une fois le service revenu.
+
+  Dans tous les cas, l'exécution ne démarre pas sur une base qui ne passe pas.
+
+### Tests
+- `scripts/_test_pipeline_covered.mjs` (31 contrôles, vrai dispatch) :
+  - acceptation en léger, avec preuve vérifiée et livraison qui la mentionne ;
+  - essai non compté, une seule fois, borné ;
+  - cas réel du test non réécrit ;
+  - règle stricte sans déclaration ;
+  - reprise par « continuer » d'une exécution en pause ;
+  - environnement contre test cassé.
+- Le faux claude ajoute `FAKE_PIPE_COVERED=0` (léger), `FAKE_PIPE_PROOF=none[:n]`
+  et `FAKE_PIPE_NOTEST=1[:n]`.
+
 ## [0.57.1] - 2026-10-09
 
 Signalement de l'utilisateur : « J'ai repondu aux questions via le chef. Les
