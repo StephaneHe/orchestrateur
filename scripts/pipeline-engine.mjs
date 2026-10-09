@@ -616,6 +616,7 @@ export function validateTasks(root, tasks) {
     if (!ENGINE_PIPELINES.includes(t.pipeline) || t.pipeline === 'routage') return `${n} : pipeline inconnu « ${t.pipeline} »`;
     if (t.mode != null && !['leger', 'complet'].includes(t.mode)) return `${n} : mode « ${t.mode} » (leger ou complet)`;
     if (typeof t.demande !== 'string' || t.demande.trim().length < 8) return `${n} : demande absente ou trop courte`;
+    if (t.apres != null && !(Number.isInteger(t.apres) && t.apres >= 1 && t.apres <= i)) return `${n} : « apres » doit désigner une tâche précédente (1 à ${i})`;
   }
   return null;
 }
@@ -667,25 +668,163 @@ const CODE_STEPS = {
     return { ok: true };
   },
   /** Chaque tâche part par dispatch.mjs (file si le musicien est occupé), avec retour au chef. */
-  async dispatcher({ root, state, artDir, dispatchScript }) {
+  async dispatcher({ root, logsDir, state, artDir, dispatchScript, run }) {
     if (process.env.DISPATCH_REPORT_ONLY === '1') return { ok: false, why: 'réveil en rapport seul : aucun dispatch permis (chaîne de réveils au maximum)' };
-    const conductor = conductorOf(root);
-    const done = [];
-    for (const t of state.tasks || []) {
-      const args = [dispatchScript, t.projet, '--prompt-stdin', '--callback', conductor, '--source', conductor, '--queue-if-busy'];
-      if (t.served) { args.push('--pipeline', t.pipeline); if (t.pipeline === 'dev' && t.mode) args.push('--mode', t.mode); }
-      const env = { ...process.env };
-      for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'ORCH_TURN_PROJECT', 'ORCH_TURN_STEP', 'ORCH_STEP_TOKEN', 'ORCH_OBS_ID']) delete env[k];
-      const c = spawn(process.execPath, args, { cwd: root, env, detached: true, stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
-      c.stdin.end(t.demande);
-      c.unref();
-      done.push({ projet: t.projet, pipeline: t.served ? t.pipeline : null, mode: t.mode || null, pid: c.pid || null });
+    const done = [], waiting = [];
+    const tasks = state.tasks || [];
+    tasks.forEach((t, i) => {
+      // « puis » : une tâche qui attend la fin d'une autre part au réveil qui
+      // apporte ce résultat (étape Relancer), jamais avant.
+      if (t.apres) { waiting.push({ ...t, n: i + 1, after: tasks[t.apres - 1].projet }); return; }
+      done.push({ n: i + 1, ...launchTask(root, t, dispatchScript) });
+    });
+    if (waiting.length) {
+      const now = new Date().toISOString();
+      const pend = readPending(logsDir);
+      for (const w of waiting) {
+        const dep = done.find(d => d.n === w.apres);
+        pend.push({ run, projet: w.projet, pipeline: w.pipeline, mode: w.mode || null, served: w.served, demande: w.demande, rattache: w.rattache || null,
+          after: { projet: w.after, since: dep?.at || now }, createdAt: now });
+      }
+      writePending(logsDir, pend);
     }
-    fs.writeFileSync(path.join(artDir, 'dispatch.json'), JSON.stringify({ dispatched: done }, null, 2));
+    fs.writeFileSync(path.join(artDir, 'dispatch.json'), JSON.stringify({ dispatched: done, waiting: waiting.map(w => ({ n: w.n, projet: w.projet, apres: w.apres, after: w.after })) }, null, 2));
     const lost = done.filter(d => !d.pid);
     return lost.length ? { ok: false, why: `lancement impossible pour : ${lost.map(d => d.projet).join(', ')}` } : { ok: true };
   },
+  /** Réveil : lance les tâches dont la tâche attendue a rendu son résultat depuis. */
+  async relancer({ root, logsDir, artDir, dispatchScript }) {
+    const pend = readPending(logsDir);
+    const launched = [], still = [], blocked = [];
+    for (const p of pend) {
+      const r = lastResultSince(path.join(logsDir, `${p.after.projet}.jsonl`), p.after.since);
+      if (!r) { still.push(p); continue; }
+      if (r.is_error) { blocked.push({ projet: p.projet, after: p.after.projet, why: `la tâche attendue (${p.after.projet}) a échoué : non relancée` }); still.push(p); continue; }
+      if (process.env.DISPATCH_REPORT_ONLY === '1') { still.push(p); continue; }
+      launched.push({ ...launchTask(root, p, dispatchScript), after: p.after.projet });
+    }
+    writePending(logsDir, still);
+    fs.writeFileSync(path.join(artDir, 'relance.json'), JSON.stringify({ launched, waiting: still.map(p => ({ projet: p.projet, after: p.after.projet })), blocked }, null, 2));
+    return { ok: true };
+  },
 };
+
+/** Signalement de lacune émis par le Routage (classement « lacune »). */
+async function emitRoutingGap(logsDir, project, text, why) {
+  const obs = await import('./pipeline-observe.mjs');
+  const c = obs.classify({ text });
+  const detected = obs.detectGap({ text, classification: { ...c, explicit: false } });
+  const key = detected?.key || `routage:${crypto.createHash('sha1').update(String(text)).digest('hex').slice(0, 16)}`;
+  const gap = {
+    ...(detected || { reason: 'aucun-pipeline', proposal: { kind: 'rattachement', pipeline: 'discussion', text: 'rattacher la demande à un pipeline existant' } }),
+    key, why: `Routage : aucune question ouverte ni aucun contexte ne rattache ce message${why ? ` (${String(why).slice(0, 200)})` : ''}`,
+  };
+  try { obs.createObserver({ logsDir }).record({ entry: 'signalement', project, text, caller: 'routage', gap }); } catch { /* jamais bloquant */ }
+  return gap;
+}
+
+const PENDING_FILE = 'routage-pending.json';
+export function readPending(logsDir) { return readJson(path.join(logsDir, PENDING_FILE))?.tasks || []; }
+function writePending(logsDir, tasks) {
+  const f = path.join(logsDir, PENDING_FILE);
+  fs.writeFileSync(`${f}.tmp`, JSON.stringify({ tasks }, null, 2));
+  fs.renameSync(`${f}.tmp`, f);
+}
+/** Dernier result réel (pas un résultat fantôme) écrit après `since`, ou null. */
+function lastResultSince(logFile, since) {
+  let found = null;
+  for (const l of tailText(logFile, 2 * 1024 * 1024).split('\n')) {
+    if (!l.includes('"result"')) continue;
+    let e; try { e = JSON.parse(l); } catch { continue; }
+    if (e.type !== 'result' || !e.timestamp || e.timestamp <= since) continue;
+    if (e.num_turns === 0 && e.duration_api_ms === 0) continue;
+    found = e;
+  }
+  return found;
+}
+function tailText(file, max) {
+  try {
+    const st = fs.statSync(file);
+    const len = Math.min(st.size, max);
+    const fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, st.size - len);
+    fs.closeSync(fd);
+    return buf.toString('utf8');
+  } catch { return ''; }
+}
+/** Lance une tâche par dispatch.mjs (file si le musicien est occupé), avec retour au chef. */
+function launchTask(root, t, dispatchScript) {
+  const conductor = conductorOf(root);
+  const args = [dispatchScript, t.projet, '--prompt-stdin', '--callback', conductor, '--source', conductor, '--queue-if-busy'];
+  if (t.served) { args.push('--pipeline', t.pipeline); if (t.pipeline === 'dev' && t.mode) args.push('--mode', t.mode); }
+  const env = { ...process.env };
+  for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'ORCH_TURN_PROJECT', 'ORCH_TURN_STEP', 'ORCH_STEP_TOKEN', 'ORCH_OBS_ID']) delete env[k];
+  const c = spawn(process.execPath, args, { cwd: root, env, detached: true, stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
+  c.stdin.end(t.rattache ? `${t.demande}\n\n(Rattachée à : ${t.rattache})` : t.demande);
+  c.unref();
+  return { projet: t.projet, pipeline: t.served ? t.pipeline : null, mode: t.mode || null, pid: c.pid || null, at: new Date().toISOString() };
+}
+
+/**
+ * Contexte utile au Routage (0.57.0) : ce que le chef a dit et demandé en
+ * dernier, les questions en attente des musiciens, les demandes qu'il a mises
+ * en attente. Sans lui, une réponse courte (« passe à la suite ») n'a pas de sens.
+ */
+export function routingContext(root, { logsDir, chefLog, chefDir }) {
+  const L = ['# Contexte du message (fourni par l’orchestrateur)', ''];
+  // 1. Dernière réponse du chef et questions qu'il a posées.
+  const replies = [];
+  for (const l of tailText(chefLog, 4 * 1024 * 1024).split('\n')) {
+    if (!l.includes('"assistant"')) continue;
+    let e; try { e = JSON.parse(l); } catch { continue; }
+    if (e.type !== 'assistant') continue;
+    const txt = (e.message?.content || []).filter(b => b?.type === 'text').map(b => b.text).join('\n').trim();
+    if (txt) replies.push(txt);
+  }
+  const last = replies[replies.length - 1] || '';
+  L.push('## Ta dernière réponse', '', last ? last.slice(0, 6000) : '(aucune)', '');
+  const asked = [];
+  for (const r of replies.slice(-3)) {
+    for (const line of r.split(/\r?\n/)) {
+      const t = line.replace(/^[\s>*-]*(\d+[.)]\s*)?/, '').trim();
+      if (/^NEEDS_USER_INPUT:/.test(t) || (/\?\s*$/.test(t) && t.length > 12)) asked.push(t.replace(/^NEEDS_USER_INPUT:\s*/, ''));
+    }
+  }
+  L.push('## Questions que tu as posées (les plus récentes)', '', asked.length ? [...new Set(asked)].slice(-12).map(q => `- ${q.slice(0, 400)}`).join('\n') : '(aucune)', '');
+  // 2. Questions en attente des musiciens (dernier tour fini sur NEEDS_USER_INPUT, non acquitté).
+  const waiting = [];
+  const cfg = readConfig(root);
+  for (const p of cfg.projects || []) {
+    if (p.name === (cfg.conductor || 'chef')) continue;
+    let lastQ = null;
+    for (const l of tailText(path.join(logsDir, `${p.name}.jsonl`), 256 * 1024).split('\n')) {
+      let e; try { e = JSON.parse(l); } catch { continue; }
+      if (e.type === 'user_prompt' || (e.type === 'notification' && e.subtype === 'question_resolved')) lastQ = null;
+      else if (e.type === 'result' && typeof e.result === 'string') {
+        const m = /^NEEDS_USER_INPUT:\s*(.+)$/m.exec(e.result);
+        lastQ = m ? m[1].trim() : null;
+      }
+    }
+    if (lastQ) waiting.push(`- **${p.name}** : ${lastQ.slice(0, 400)}`);
+  }
+  L.push('## Questions en attente des musiciens', '', waiting.join('\n') || '(aucune)', '');
+  // 3. Demandes mises en attente par le chef (TODO_LIST.md, entrées « EN ATTENTE »).
+  const parked = [];
+  try {
+    const lines = fs.readFileSync(path.join(chefDir, 'TODO_LIST.md'), 'utf8').split(/\r?\n/);
+    lines.forEach((line, i) => {
+      if (!/EN ATTENTE/i.test(line)) return;
+      const next = lines[i + 1] && !/^\s*([-*#]|$)/.test(lines[i + 1]) ? lines[i + 1].trim() : '';
+      parked.push(`${line.replace(/^[\s*-]+/, '').trim()}${next ? ` ${next}` : ''}`);
+    });
+  } catch { /* pas de TODO_LIST */ }
+  L.push('## Demandes mises en attente (TODO_LIST du chef)', '', parked.length ? parked.slice(0, 20).map(x => `- ${x.slice(0, 400)}`).join('\n') : '(aucune)', '');
+  // 4. Tâches de Routage qui attendent la fin d'une autre.
+  const pend = readPending(logsDir);
+  if (pend.length) L.push('## Tâches déjà décidées, en attente d’une autre', '', pend.map(p => `- ${p.projet} (après ${p.after.projet}) : ${String(p.demande).slice(0, 200)}`).join('\n'), '');
+  return L.join('\n');
+}
 
 /** Critères génériques d'une étape du catalogue. */
 function checkCatalogCriteria(ctx, step, before, after) {
@@ -1430,8 +1569,9 @@ export async function runPipeline(o) {
     // précédente, lue dans son artefact — en le disant.
     if (step.skipIf) {
       const j = parseJsonArtefact(readArtefact(ctx, step.skipIf.artefact) || '') || {};
-      if (j[step.skipIf.field] !== step.skipIf.unless) {
-        const why = `${step.skipIf.field} = « ${j[step.skipIf.field] ?? '—'} » (étape utile seulement pour « ${step.skipIf.unless} »)`;
+      const allowed = [].concat(step.skipIf.unless);
+      if (!allowed.includes(j[step.skipIf.field])) {
+        const why = `${step.skipIf.field} = « ${j[step.skipIf.field] ?? '—'} » (étape utile seulement pour « ${allowed.join(' » ou « ')} »)`;
         const key = `${String(state.steps.length + 1).padStart(2, '0')}-${id}`;
         state.steps.push({ id, key, title: step.title, status: 'skipped', why, attempt: 1, durationMs: 0 });
         writeEvent({ type: 'system', subtype: 'pipeline_step_done', pipeline: { run, step: id, key, attempt: 1 }, status: 'skipped', why, durationMs: 0, text: `étape ${step.title} : sautée — ${why}` });
@@ -1439,13 +1579,16 @@ export async function runPipeline(o) {
       }
     }
     // Contexte du chef : la conversation récente, extraite de son log par le code.
-    if (step.prerun === 'conversation') fs.writeFileSync(path.join(artDir, 'conversation.md'), conversationExcerpt(projectLog));
+    if (step.prerun === 'conversation') {
+      fs.writeFileSync(path.join(artDir, 'conversation.md'), conversationExcerpt(projectLog));
+      fs.writeFileSync(path.join(artDir, 'contexte.md'), routingContext(root, { logsDir, chefLog: projectLog, chefDir: cwd }));
+    }
     // Étapes exécutées par le CODE (Routage : affecter, dispatcher) — aucun tour de model.
     if (step.kind === 'code') {
       const key = `${String(state.steps.length + 1).padStart(2, '0')}-${id}`;
       const t0 = Date.now();
       let out;
-      try { out = await CODE_STEPS[step.handler]({ root, logsDir, ctx, state, artDir, projectName, dispatchScript }); }
+      try { out = await CODE_STEPS[step.handler]({ root, logsDir, ctx, state, artDir, projectName, dispatchScript, run }); }
       catch (e) { out = { ok: false, why: e.message }; }
       const rec = { id, key, title: step.title, slot: null, model: null, source: 'code', status: out.ok ? 'ok' : 'refused', why: out.ok ? null : out.why, attempt: 1, durationMs: Date.now() - t0 };
       record({ rec });
@@ -1496,6 +1639,12 @@ export async function runPipeline(o) {
     if (last.crit?.media?.length) { ctx.lastMedia = state.lastMedia = last.crit.media.map(f => f.path); state.media = [...new Set([...(state.media || []), ...ctx.lastMedia])]; }
     // Boucle déclarée (audit : re-vérifier → corriger tant qu'il reste des failles),
     // bornée par le budget des tours de revue — comme la revue du Développement.
+    // Routage : une lacune n'est signalée qu'ICI, après lecture du contexte et
+    // essai de rattachement (0.57.0) — jamais au simple vu du texte.
+    if (pipeline === 'routage' && step.id === 'classifier' && last.crit?.json?.nature === 'lacune') {
+      const g = await emitRoutingGap(logsDir, projectName, state.request, last.crit.json.raison);
+      writeEvent({ type: 'system', subtype: 'pipeline_gap', pipeline: { run }, gap: g?.key || null, text: `⚑ lacune signalée après lecture du contexte : ${String(last.crit.json.raison || '').slice(0, 200)}` });
+    }
     if (step.loop && Array.isArray(last.crit?.json?.[step.loop.field]) && last.crit.json[step.loop.field].length) {
       const left = last.crit.json[step.loop.field];
       const leftTxt = left.slice(0, 5).map(x => (typeof x === 'string' ? x : x.issue || JSON.stringify(x))).join(' ; ');

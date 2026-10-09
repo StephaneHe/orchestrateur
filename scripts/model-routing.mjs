@@ -232,14 +232,14 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
    * locale, puis l'utilisateur choisit le model de la nouvelle case ; « Rejeter »
    * la retire de la liste. `gap` vient du journal d'observation, jamais du client.
    */
-  function decideGap(gap, decision, { choice = 'primary', by = 'dashboard' } = {}) {
+  function decideGap(gap, decision, { choice = 'primary', by = 'dashboard', reason = null } = {}) {
     if (!gap?.key) return { ok: false, status: 404, error: 'lacune inconnue' };
     const data = readRouting();
     data.gapDecisions = data.gapDecisions || {};
     if (data.gapDecisions[gap.key]) return { ok: false, status: 409, error: 'lacune déjà traitée' };
     const at = new Date().toISOString();
     if (decision === 'reject') {
-      data.gapDecisions[gap.key] = { decision: 'rejected', at, by: clean(by, 40) };
+      data.gapDecisions[gap.key] = { decision: 'rejected', at, by: clean(by, 40), ...(reason ? { reason: clean(reason, 300) } : {}) };
       data.updatedAt = at;
       writeRouting(data);
       return { ok: true, status: 200, decision: 'rejected' };

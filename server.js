@@ -2890,7 +2890,7 @@ app.post('/api/pipeline-gaps/:key/accept', express.json({ limit: '2kb' }), (req,
 app.post('/api/pipeline-gaps/:key/reject', express.json({ limit: '2kb' }), (req, res) => {
   const gap = findOpenGap(req.params.key);
   if (!gap) return res.status(404).json({ ok: false, error: 'lacune inconnue ou déjà traitée' });
-  const r = modelRouting.decideGap(gap, 'reject', { by: req.body?.by });
+  const r = modelRouting.decideGap(gap, 'reject', { by: req.body?.by, reason: typeof req.body?.reason === 'string' ? req.body.reason : null });
   if (!r.ok) return res.status(r.status).json({ ok: false, error: r.error });
   res.json({ ok: true });
 });
@@ -4963,6 +4963,9 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
     obsId = observeEntry({
       entry: `${clientOf(req)}:${isChef ? (mention ? 'mention' : 'chef') : 'musicien'}`,
       project: name, text: prompt, target: mention ? mention[1] : undefined,
+      // 0.57.0 : le Routage (chef) ou le classement par model (projet en service)
+      // lit le CONTEXTE avant de conclure à une lacune ; pas de signalement ici.
+      deferGap: (() => { const e = readEnforcement(__dirname); return (isChef && !mention) ? e.chef : isEnforced(e, mention ? mention[1] : name); })(),
     });
   }
 

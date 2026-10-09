@@ -121,9 +121,9 @@ x = chefTurn('Réponds', { FAKE_PIPE_JSON: JSON.stringify({ classifier: { nature
 ok(x.st.steps.find(s => s.id === 'classifier' && s.status === 'refused')?.why?.includes('aucune question'), '« question » sans question : refusé');
 
 // ---------------------------------------------------------------------------
-section('5. Réveil (résultats de musiciens) : Lire → Callback → Rapporter ; question d’un musicien : [ANSWER]');
+section('5. Réveil (résultats de musiciens) : Lire → Relancer → Callback → Rapporter ; question d’un musicien : [ANSWER]');
 x = chefTurn('[CALLBACK_WAKE lot=1 gen=1]\n[P] Tour terminé. La suite passe.', {}, ['--source', 'wake']);
-ok(x.r.code === 0 && x.st.mode === 'callback' && statusOf(x.st) === 'lire:ok callback:ok rapporter:ok', `réveil : ${statusOf(x.st || { steps: [] })}`, x.r.out.slice(-600));
+ok(x.r.code === 0 && x.st.mode === 'callback' && statusOf(x.st) === 'lire:ok relancer:ok callback:ok rapporter:ok', `réveil : ${statusOf(x.st || { steps: [] })}`, x.r.out.slice(-600));
 const dump = path.join(T, 'prompts.ndjson');
 x = chefTurn('[NEEDS_CHEF_INPUT_FROM:P] Faut-il suivre la convention de nommage de Q ?', { FAKE_CLAUDE_DUMP_PROMPT: dump, FAKE_PIPE_JSON: JSON.stringify({ classifier: { nature: 'reponse', raison: 'convention transverse' } }) });
 const prompts = fs.readFileSync(dump, 'utf8').trim().split('\n').map(l => JSON.parse(l));
@@ -135,6 +135,58 @@ x = chefTurn('Pourquoi ?', { DISPATCH_SLOT: '1', DISPATCH_TICKET: 't-test-1', FA
 ok(x.up?.ticket === 't-test-1' && x.up.slot === 1, 'user_prompt du Routage : ticket et slot (le pool clôt le bon ticket)');
 x = chefTurn('Relance P', { DISPATCH_REPORT_ONLY: '1', DISPATCH_SLOT: '1', DISPATCH_TICKET: 't-test-2', FAKE_PIPE_JSON: JSON.stringify({ classifier: { nature: 'taches', raison: 'x' }, decomposer: { taches: [tasks[0]] } }) }, ['--pool-assign']);
 ok(x.st.steps.find(s => s.id === 'dispatcher')?.status === 'refused' && /rapport seul/.test(x.st.steps.find(s => s.id === 'dispatcher').why), 'réveil en rapport seul : le Dispatcher refuse (aucun lancement)', statusOf(x.st) + ' ' + x.r.out.slice(-500));
+
+// ---------------------------------------------------------------------------
+// Remarque utilisateur (2026-10-09) : « là je répondais à une question que tu as
+// dans ton contexte donc le routeur devrait pouvoir décomposer pour voir si
+// plusieurs musiciens sont impactés, puis distribuer ».
+section('8. Réponse à des questions ouvertes : contexte, « suite », une tâche par musicien, « puis » respecté, AUCUNE lacune');
+const obsFile = path.join(T, 'logs', 'pipeline-observe.ndjson');
+const obsCount = () => { try { return fs.readFileSync(obsFile, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)); } catch { return []; } };
+// Ce que le chef venait de demander, la question d'un musicien, et une demande mise en attente.
+fs.appendFileSync(path.join(T, 'logs', 'chef.jsonl'), [
+  { type: 'user_prompt', text: 'Où en sont les pipelines ?', timestamp: new Date().toISOString() },
+  { type: 'assistant', message: { content: [{ type: 'text', text: 'Phase 6 livrée.\n1. Lance-t-on la phase 7 (tous les projets en service) ?\n2. Active-t-on le Routage pour le chef ?\n3. Quels models pour les cases Décomposer et Rapporter ?\n4. Ensuite, je reprends la demande en attente sur Q ?' }] }, timestamp: new Date().toISOString() },
+  { type: 'result', subtype: 'success', is_error: false, num_turns: 1, duration_ms: 1000, duration_api_ms: 900, result: 'Phase 6 livrée.', timestamp: new Date().toISOString() },
+].map(e => JSON.stringify(e)).join('\n') + '\n');
+fs.writeFileSync(path.join(T, 'chef', 'TODO_LIST.md'), '# TODO\n\n- EN ATTENTE : Q — ajouter l’export CSV demandé par l’utilisateur\n- fait : autre chose\n');
+fs.appendFileSync(path.join(T, 'logs', 'P.jsonl'), JSON.stringify({ type: 'result', subtype: 'success', is_error: false, num_turns: 2, duration_ms: 1000, duration_api_ms: 900, result: 'Analyse faite.\n\nNEEDS_USER_INPUT: Garde-t-on le format JSON ?', timestamp: new Date().toISOString() }) + '\n');
+const reply = 'passes décomposer et rapporter en opus 5.5. passes tout en pipeline puis passe à la suite';
+const suiteTasks = [
+  { projet: 'P', pipeline: 'discussion', demande: 'Le chef a demandé : lance-t-on la phase 7 et quels models pour Décomposer et Rapporter ? Réponse de l’utilisateur : opus 5.5, tout en pipeline. Applique-le.', rattache: 'questions 1 à 3 du chef' },
+  { projet: 'Q', pipeline: 'dev', mode: 'leger', demande: 'Reprends la demande en attente : ajouter l’export CSV demandé par l’utilisateur.', rattache: 'question 4 du chef (la suite)', apres: 1 },
+];
+const nObs = obsCount().length, nQ8 = logOf('Q').length;
+x = chefTurn(reply, { FAKE_PIPE_JSON: JSON.stringify({ classifier: { nature: 'suite', raison: 'répond aux questions 1 à 4 du chef', rattache: ['phase 7', 'Routage', 'models', 'la suite'] }, decomposer: { taches: suiteTasks } }) });
+ok(x.r.code === 0 && statusOf(x.st) === 'lire:ok classifier:ok decomposer:ok affecter:ok dispatcher:ok rapporter:ok', `réponse reconnue comme « suite » et décomposée : ${statusOf(x.st || { steps: [] })}`, x.r.out.slice(-800));
+const art8 = path.join(T, 'chef', '.orchestrateur', 'runs', x.run);
+const ctx8 = fs.readFileSync(path.join(art8, 'contexte.md'), 'utf8');
+ok(/Lance-t-on la phase 7/.test(ctx8) && /Ensuite, je reprends la demande en attente sur Q/.test(ctx8), 'contexte : dernière réponse du chef et ses questions ouvertes');
+ok(/\*\*P\*\* : Garde-t-on le format JSON/.test(ctx8) && /EN ATTENTE : Q — ajouter l’export CSV/.test(ctx8), 'contexte : question en attente d’un musicien, demande mise en attente (TODO_LIST du chef)');
+const disp = JSON.parse(fs.readFileSync(path.join(art8, 'dispatch.json'), 'utf8'));
+ok(disp.dispatched.map(d => d.projet).join() === 'P' && disp.waiting.map(w => `${w.projet}<${w.after}`).join() === 'Q<P', 'une tâche par musicien : P lancée tout de suite, Q en attente de P (« puis »)');
+ok(E.readPending(path.join(T, 'logs')).length === 1 && logOf('Q').slice(nQ8).every(e => e.type !== 'user_prompt'), 'Q n’est PAS lancée avant la fin de P');
+const newObs = obsCount().slice(nObs);
+ok(newObs.length >= 1 && !newObs.some(o => o.gap), `aucune lacune signalée pour cette réponse (${newObs.length} entrée(s) observée(s), toutes sans lacune)`);
+for (let i = 0; i < 60 && fs.existsSync(path.join(T, 'logs', 'P.pid')); i++) await sleep(500);
+x = chefTurn('[CALLBACK_WAKE lot=1 gen=1]\n[P] Tour terminé.', {}, ['--source', 'wake']);
+ok(x.r.code === 0 && statusOf(x.st) === 'lire:ok relancer:ok callback:ok rapporter:ok', `réveil : ${statusOf(x.st || { steps: [] })}`, x.r.out.slice(-600));
+let qUp8 = null;
+for (let i = 0; i < 60 && !qUp8; i++) { await sleep(500); qUp8 = logOf('Q').slice(nQ8).find(e => e.type === 'user_prompt'); }
+ok(qUp8 && /export CSV/.test(qUp8.text) && /Rattachée à : question 4/.test(qUp8.text) && !E.readPending(path.join(T, 'logs')).length, 'après le résultat de P, le réveil lance Q (demande rattachée), file d’attente vidée');
+for (let i = 0; i < 60 && fs.existsSync(path.join(T, 'logs', 'Q.pid')); i++) await sleep(500);
+ok(E.validateTasks(T, [{ projet: 'P', pipeline: 'dev', demande: 'quelque chose', apres: 1 }]).includes('apres'), '« apres » qui ne désigne pas une tâche précédente : refusé');
+
+section('9. Vrai message inclassable, sans aucun contexte qui le rattache : toujours une lacune');
+const nObs9 = obsCount().length;
+x = chefTurn('planifie mes vacances en Italie avec un budget serré', { FAKE_PIPE_JSON: JSON.stringify({ classifier: { nature: 'lacune', raison: 'aucun pipeline ni aucune question ouverte ne correspond' } }) });
+const gap9 = obsCount().slice(nObs9).find(o => o.gap);
+ok(x.r.code === 0 && gap9?.entry === 'signalement' && gap9.caller === 'routage' && gap9.gap.proposal && /aucune question ouverte/.test(gap9.gap.why), `lacune signalée APRÈS lecture du contexte, avec proposition (${gap9?.gap?.key})`);
+ok(x.evs.some(e => e.subtype === 'pipeline_gap'), 'le fil du chef le dit (⚑ lacune signalée)');
+const O = await import('./pipeline-observe.mjs');
+const ob = O.createObserver({ logsDir: path.join(T, 'obs-unit') });
+ok(!ob.record({ entry: 'dashboard:chef', project: 'chef', text: 'planifie mes vacances en Italie avec un budget serré', deferGap: true }).gap
+  && !!ob.record({ entry: 'dashboard:chef', project: 'chef', text: 'planifie mes vacances en Italie avec un budget serré' }).gap, 'à l’observation : lacune reportée quand le Routage décidera, émise sinon (comportement d’avant)');
 
 // ---------------------------------------------------------------------------
 section('7. Mise en service : désactivé par défaut, --model refusé, --hors-pipeline tracé');

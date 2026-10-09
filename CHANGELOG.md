@@ -11,6 +11,57 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.57.0] - 2026-10-09
+
+Remarque de l'utilisateur sur un signalement de lacune : « là je répondais à une
+question que tu as dans ton contexte donc le routeur devrait pouvoir décomposer
+pour voir si plusieurs musiciens sont impactés, puis distribuer ». Sa réponse
+aux questions du chef (« passes décomposer et rapporter en opus 5.5. passes
+tout en pipeline puis passe à la suite ») avait été signalée comme une lacune.
+
+### Added
+- (server) **Contexte du Routage** (`routingContext`, artefact `contexte.md`
+  donné à Lire, Classifier et Décomposer). Il contient :
+  - la dernière réponse du chef et les questions qu'il a posées ;
+  - les questions en attente des musiciens (dernier tour fini sur
+    `NEEDS_USER_INPUT`, non acquitté) ;
+  - les demandes mises en attente (entrées « EN ATTENTE » du `TODO_LIST.md`
+    du chef) ;
+  - les tâches de Routage qui attendent la fin d'une autre.
+- (server) Nature **« suite »** au Classifier : le message répond à une
+  question ouverte ou relance une demande en attente. Décomposer :
+  - la rattache aux questions concernées (`rattache`) ;
+  - identifie **tous** les musiciens impactés ;
+  - produit une tâche par musicien, avec l'ordre (`apres` : « puis » =
+    après).
+- (server) Tâches ordonnées : une tâche `apres` attend dans
+  `logs/routage-pending.json`. La nouvelle étape **Relancer** (réveil du chef)
+  la lance quand la tâche attendue a rendu son résultat. Si celle-ci a
+  échoué, la tâche n'est pas relancée, et c'est dit.
+- (server) Nature **« lacune »** : seul le Routage émet le signalement,
+  **après** lecture du contexte et essai de rattachement (entrée
+  `signalement`, auteur `routage`, événement `pipeline_gap` dans le fil).
+- (server) Rejet d'une lacune avec **motif** (`reason`, route
+  `POST /api/pipeline-gaps/:key/reject`).
+
+### Changed
+- (server) Plus de lacune au simple vu du texte pour un message adressé au chef
+  routé ou à un projet en service (`deferGap` de l'observateur). Pour un
+  projet en service, une lacune n'est signalée que si le classement a dû se
+  faire par les règles, le model n'ayant pas pu trancher.
+
+### Fixed
+- Les deux signalements émis pour ce message sont rejetés comme faux positifs,
+  avec leur motif, sans action de l'utilisateur.
+
+### Tests
+- `_test_pipeline_routage.mjs`, sections 8 et 9 (37 contrôles) :
+  - le cas exact : réponse multi-cibles aux questions du chef ⇒ « suite »,
+    contexte complet, une tâche pour le premier musicien tout de suite, la
+    seconde seulement après son résultat (réveil), aucune lacune ;
+  - un vrai message inclassable, sans contexte ⇒ toujours une lacune, avec
+    une proposition.
+
 ## [0.56.0] - 2026-10-09
 
 Pipelines obligatoires, phase 7 : mise en service générale. Décisions de

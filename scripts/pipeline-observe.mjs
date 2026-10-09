@@ -353,11 +353,13 @@ export class TerminalLineBuffer {
 /** Journal append-only des classifications. */
 export function createObserver({ logsDir, now = () => new Date(), extraRules = () => [] }) {
   const file = path.join(logsDir, OBSERVE_FILE);
-  function record({ entry, project, text, caller, target, link, extra, gap: reported } = {}) {
+  function record({ entry, project, text, caller, target, link, extra, gap: reported, deferGap = false } = {}) {
     let rules = [];
     try { rules = extraRules() || []; } catch { /* sans règles ajoutées */ }
     const c = classify({ text, entry, extra: rules });
-    const gap = reported || detectGap({ text, entry, classification: c });
+    // deferGap (0.57.0) : le Routage ou le classement par model décidera, CONTEXTE compris ;
+    // une lacune n'est jamais signalée au simple vu du texte d'une entrée qu'ils traitent.
+    const gap = reported || (deferGap ? null : detectGap({ text, entry, classification: c }));
     const rec = {
       at: now().toISOString(),
       id: `obs-${Date.now().toString(36)}-${crypto.randomBytes(3).toString('hex')}`,

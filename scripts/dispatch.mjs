@@ -1022,6 +1022,9 @@ if (!obsId) {
       entry: 'dispatch-cli', project: projectName, text: prompt,
       caller: obs.projectFromCwd(process.cwd(), config.projects) || 'humain/script',
       extra: { fromAgent: !!process.env.CLAUDECODE },
+      // 0.57.0 : chef routé ou projet en service → la lacune se décide après
+      // lecture du contexte (Routage) ou classement par model, pas ici.
+      deferGap: !!(CHEF_ROUTED || ENFORCED),
     });
     obsId = rec.id;
   } catch { /* l'observation ne bloque jamais un dispatch */ }
@@ -1089,6 +1092,15 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
     classification = { pipeline: c.pipeline, mode: c.mode, confidence: c.confidence, classifier: c.classifier, unclassifiable: !!c.unclassifiable,
       ...(c.rules ? { rules: c.rules, agree: c.agree } : {}), ...(c.raison ? { raison: c.raison } : {}), ...(c.note ? { note: c.note } : {}) };
     if (c.note) pipeNotes.push(c.note);
+    // Lacune (0.57.0) : seulement si le classement s'est fait par les règles (le
+    // model n'a pas pu trancher) et qu'elles ne rattachent pas la demande.
+    if (c.classifier === 'règles-v1') {
+      try {
+        const obs = await import('./pipeline-observe.mjs');
+        const gap = obs.detectGap({ text: prompt, classification: c });
+        if (gap) obs.createObserver({ logsDir: LOGS }).record({ entry: 'signalement', project: projectName, text: prompt, caller: 'porte', gap });
+      } catch { /* jamais bloquant */ }
+    }
     if (ENFORCEMENT.pipelines.includes(c.pipeline)) {
       pipe = c.pipeline;
       if (!mode) mode = c.mode;

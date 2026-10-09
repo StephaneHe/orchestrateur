@@ -1218,6 +1218,28 @@ Suite de la demande du 2026-10-09. Plan : `docs/PLAN-pipeline-enforcement.md`.
 - Recettes : `_test_pipeline_onboard.mjs`, HTTP `pipeline-health`,
   navigateur `health-view`.
 
+## Routage : contexte, « suite », lacunes tardives (0.57.0)
+
+- **`routingContext`** (moteur) écrit `contexte.md` avant Lire. Il contient :
+  - la dernière réponse du chef et ses questions ;
+  - les questions en attente des musiciens ;
+  - les entrées « EN ATTENTE » du `TODO_LIST.md` du chef ;
+  - les tâches en attente.
+- **Classifier** : `suite | taches | reponse | question | lacune`.
+  `skipIf.unless` accepte une liste : Décomposer, Affecter et Dispatcher
+  tournent pour `taches` et `suite`.
+- **Tâches ordonnées** : un champ `apres` (n° d'une tâche précédente) fait
+  attendre la tâche dans `logs/routage-pending.json`. Le mode réveil passe
+  par l'étape **Relancer** (code), qui la lance après un result réel de la
+  tâche attendue.
+- **Lacunes** : l'observateur a l'option `deferGap`. Pour un message au chef
+  routé ou à un projet en service, aucune lacune n'est signalée à
+  l'observation : le Routage la signale (`emitRoutingGap`) si le Classifier
+  conclut à « lacune », et la porte de `dispatch.mjs` seulement si le
+  classement a fini par les règles.
+- Rejet avec motif : `decideGap(…, {reason})`.
+- Recette : `_test_pipeline_routage.mjs`, sections 8 et 9.
+
 ## Langue de discussion (0.51.0)
 
 Demande utilisateur : « La langue de la discussion doit pouvoir etre fixee et
