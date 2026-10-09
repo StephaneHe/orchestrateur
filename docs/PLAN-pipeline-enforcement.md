@@ -479,7 +479,12 @@ Chaque phase suit le protocole 0.29.0 : tag `pre-pipeline-enforce-pN-v<X.Y.Z>`, 
   - item 1 : 4a ✓ (opus-5-5), 4b ✓ (sonnet-5-5), 4c sautée (3 lignes) ;
   - **item 2 : 4a refusée deux fois** (« la suite passe encore »), puis pause avec ses trois signaux. Le code de l'item 1 couvrait déjà l'item 2 : tout test fidèle passe d'emblée. Le model l'a constaté lui-même (`rouge.md`) et a refusé de fausser le test ;
   - **Question ouverte posée à l'utilisateur** : comment traiter un item déjà couvert. Voir « Questions de la phase 4 ».
-- **Questions de la phase 4** (en attente de l'utilisateur) :
+- **Suite de l'essai réel, après la décision Q10 (0.50.0)** : reprise par « continuer ».
+  - Les items 2 à 15 sont traités : **11 acceptés « déjà couverts »** (test gardé, sans 4b ni 4c) et 4 avec du code.
+  - La Revue (gpt-6-astra) relève un faux problème : la ligne d'exigence manquante, que Livrer ajoute ensuite. Ce 16ᵉ item déclenche la limite « items ». Le contrat de la Revue est corrigé.
+  - « continuer » relance l'exécution : une allocation de plus est accordée. L'item 16 passe par 4a et 4b, puis Revue ✓ et Livrer ✓.
+  - Résultat : un seul commit `9e023cf` (pipelineLab v1.1.0), 24 tests sur 24, et la CLI `compte` répond.
+- **Questions de la phase 4** — Q10 **tranchée le 2026-10-09 : « A »**, livrée en 0.50.0 (avec la durée active : une pause ne compte plus dans les 90 min) :
   - Q10 — un item de la liste **déjà couvert** par le code existant (le nouveau test passe d'emblée) :
     - (A, recommandé) accepter, si le model l'écrit explicitement (`DEJA_COUVERT` dans `rouge.md`) et que le moteur vérifie que seuls des tests ont changé et que la suite passe : le test reste comme documentation, l'item est coché sans 4b/4c, et c'est tracé dans la frise ; la Revue juge ensuite si le test est vide de sens ;
     - (B) garder la règle stricte : pause et question à chaque fois, comme aujourd'hui.

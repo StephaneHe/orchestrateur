@@ -178,6 +178,60 @@ reset();
 r = await go(['x', '--mode', 'moyen']);
 ok(r.code === 64, '--mode inconnu refusé (64)');
 
+// ---------------------------------------------------------------------------
+section('8. Décision Q10 (« A ») : item DÉJÀ COUVERT — accepté seulement s’il est déclaré, tests seuls, suite verte');
+r = await go(['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '2', FAKE_PIPE_COVERED: '2' });
+ok(r.code === 0 && seq(r.done) === 'comprendre,concevoir,liste-tests,rouge,vert,refactor:skipped,rouge,vert:skipped,refactor:skipped,revue,livrer', `item 2 couvert : sans 4b ni 4c (${seq(r.done)})`, r.out.slice(-600));
+const cov = r.done.filter(d => d.pipeline.step === 'rouge')[1];
+ok(cov?.covered === true && cov.test?.ok === true && cov.status === 'ok', '4a de l’item 2 : acceptée « déjà couvert », suite verte vérifiée par l’orchestrateur');
+ok(r.done.filter(d => d.status === 'skipped' && d.pipeline.item === 2).every(d => /DEJA_COUVERT/.test(d.why)) && r.evs.some(e => e.subtype === 'pipeline_item_covered'), 'tracé : 4b/4c sautées avec le motif, événement pipeline_item_covered');
+ok(fs.existsSync(path.join(P, 'test', 'pipe-2.test.mjs')) && !g('status', '--porcelain').stdout.trim() && E.parseItems(fs.readFileSync(path.join(P, '.orchestrateur', 'runs', r.run, 'tests.md'), 'utf8')).every(i => i.done), 'le test reste (documentation, commité) et l’item est coché');
+const rv = fs.readFileSync(path.join(T, 'logs', 'runs', r.run, r.done.find(d => d.pipeline.step === 'revue').pipeline.key + '.jsonl'), 'utf8');
+ok(/DÉJÀ COUVERTS/.test(rv) && /multiplier par 3/.test(rv), 'la Revue reçoit la liste des items déjà couverts, à juger');
+ok(runState(r.run).coveredItems?.length === 1, 'run.json : coveredItems');
+reset();
+r = await go(['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '1', FAKE_PIPE_COVERED: '1', FAKE_PIPE_NOCLAIM: '1' });
+const nc = r.done.filter(d => d.pipeline.step === 'rouge');
+ok(r.code === 2 && nc.length === 2 && nc.every(d => d.status === 'refused' && /DEJA_COUVERT/.test(d.why)), 'test qui passe SANS déclaration : refusé (avec l’indication), puis pause — la règle stricte reste par défaut');
+reset();
+r = await go(['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '1', FAKE_PIPE_COVERED: '1', FAKE_PIPE_BAD: 'rouge' });
+const bc = r.done.filter(d => d.pipeline.step === 'rouge');
+ok(r.code === 2 && bc.every(d => d.status === 'refused' && /hors tests/.test(d.why)), 'DEJA_COUVERT déclaré mais du code modifié : refusé (seuls des tests peuvent changer)');
+reset();
+
+// ---------------------------------------------------------------------------
+section('9. Durée ACTIVE : l’attente d’une réponse ne compte pas dans les 90 min');
+r = await go(['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '1', FAKE_PIPE_BAD: 'vert' });
+const pausedRun = r.run;
+const f9 = path.join(T, 'logs', 'runs', pausedRun, 'run.json');
+const s9 = JSON.parse(fs.readFileSync(f9, 'utf8'));
+ok(r.code === 2 && Number(s9.activeMs) > 0 && Number(s9.activeMs) < 10 * 60_000, `pause : temps actif consigné (${Math.round(s9.activeMs / 1000)} s)`);
+s9.createdAt = new Date(Date.now() - 3 * 3600_000).toISOString();   // pause de 3 h
+fs.writeFileSync(f9, JSON.stringify(s9));
+r = await go(['continuer']);
+ok(r.code === 0 && r.run === pausedRun && !r.evs.some(e => e.subtype === 'pipeline_limit'), 'reprise après 3 h de pause : aucune limite de durée, exécution terminée');
+reset();
+
+// ---------------------------------------------------------------------------
+section('10. « continuer » après une limite : UNE allocation de plus, tracée (sinon la reprise retombait aussitôt)');
+r = await go(['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '2', ORCH_PIPE_ITEMS: '2', FAKE_PIPE_REVIEW: 'problemes:1' });
+const run10 = r.run;
+ok(r.code === 2 && r.evs.find(e => e.subtype === 'pipeline_limit')?.limit === 'items' && runState(run10).pausedLimit === 'items', 'revue → 3ᵉ item, au-delà de 2 : pause « items »');
+r = await go(['continuer'], { FAKE_PIPE_ITEMS: '2', ORCH_PIPE_ITEMS: '2' });
+const ext = r.evs.find(e => e.subtype === 'pipeline_limit_extended');
+ok(r.code === 0 && r.run === run10 && ext?.limit === 'items' && ext.to === 4, `reprise : allocation accordée (« ${ext?.text} »), exécution terminée`, r.out.slice(-500));
+ok(seq(r.done) === 'rouge,vert,refactor:skipped,revue,livrer' && runState(run10).budgets?.items === 4, `l’item de revue est traité, puis Revue et Livrer (${seq(r.done)})`);
+reset();
+r = await go(['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '1', FAKE_PIPE_REVIEW: 'problemes:2', ORCH_PIPE_REVIEW_ROUNDS: '1' });
+const run10b = r.run;
+ok(r.code === 2 && runState(run10b).pausedLimit === 'review', 'tours de revue épuisés : pause « review »');
+// Pause écrite par un moteur antérieur à 0.50.0 : pas de pausedLimit dans l'état.
+const f10 = path.join(T, 'logs', 'runs', run10b, 'run.json');
+const s10 = JSON.parse(fs.readFileSync(f10, 'utf8')); delete s10.pausedLimit; fs.writeFileSync(f10, JSON.stringify(s10));
+r = await go(['continuer'], { ORCH_PIPE_REVIEW_ROUNDS: '1' });
+ok(r.code === 0 && r.run === run10b && r.evs.some(e => e.subtype === 'pipeline_limit_extended' && e.limit === 'review'), `reprise : un tour de revue de plus, puis livraison (${seq(r.done)})`, r.out.slice(-400));
+reset();
+
 srv.close();
 fs.rmSync(T, { recursive: true, force: true });
 console.log(`\n${pass} ok, ${fail} KO`);

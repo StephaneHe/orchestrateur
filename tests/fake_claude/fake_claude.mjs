@@ -243,6 +243,8 @@ async function run() {
 //   FAKE_PIPE_ITEMS=<n>         Liste de tests : n items (défaut 2) ; « ITEM=k » → test/pipe-k, src/pipe-k
 //   FAKE_PIPE_BIG=1             4b léger crée 4 fichiers de code (montée en complet)
 //   FAKE_PIPE_REFACTOR=1        4c modifie vraiment le code (sinon RIEN_A_REFACTORER)
+//   FAKE_PIPE_COVERED=<k>[,…]   l'item k est déjà couvert : test qui passe + DEJA_COUVERT
+//   FAKE_PIPE_NOCLAIM=1         … mais sans écrire DEJA_COUVERT
 /** Numéro de l'item de la liste de tests (« ITEM=<n>: … »), ou 0 en léger. */
 function item(text) { return Number((/^ITEM=(\d+):/m.exec(text) || [])[1] || 0); }
 
@@ -277,6 +279,13 @@ function pipelineStep(text) {
     }
     case 'rouge': {
       const k = item(text);
+      // Item déjà couvert par le code existant (Q10) : test fidèle qui passe d'emblée.
+      if (k && String(process.env.FAKE_PIPE_COVERED || '').split(',').includes(String(k))) {
+        w(`test/pipe-${k}.test.mjs`, `import { test } from 'node:test';\nimport assert from 'node:assert';\nimport { id } from '../src/pipe.mjs';\ntest('pipe item ${k} déjà couvert', () => {\n  assert.equal(id(${k}), ${k});\n});\n`);
+        if (bad) w('src/pipe.mjs', 'export const id = (x) => x; // retouché\n');
+        w(artefact, process.env.FAKE_PIPE_NOCLAIM === '1' ? `# Rouge\n\nLe test « pipe item ${k} » passe déjà.\n` : `DEJA_COUVERT\n\n# Rouge\n\nid() de src/pipe.mjs assure déjà l'item ${k} : le test passe d'emblée.\n`);
+        break;
+      }
       if (k) {
         w(`test/pipe-${k}.test.mjs`, `import { test } from 'node:test';\nimport assert from 'node:assert';\ntest('pipe item ${k}', async () => {\n  const m = await import('../src/pipe-${k}.mjs');\n  assert.equal(m.f(2), ${2 * k});\n});\n`);
         if (bad) w(`src/pipe-${k}.mjs`, `export const f = (x) => x * ${k};\n`);

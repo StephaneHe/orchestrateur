@@ -11,6 +11,39 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.50.0] - 2026-10-09
+
+Décision utilisateur Q10 (« A ») et fin de la phase 4.
+
+### Added
+- (server) Développement complet : un item de la liste de tests **déjà
+  couvert** par le code existant est accepté.
+  - Conditions : le model écrit `DEJA_COUVERT` dans `rouge.md`, le moteur
+    vérifie que seuls des tests ont changé, et toute la suite passe.
+  - Le test reste comme documentation. L'item est coché sans 4b ni 4c, qui
+    sont tracées « sautées » avec leur motif.
+  - `system/pipeline_item_covered` est écrit dans le log. La Revue reçoit la
+    liste de ces items, à juger.
+  - Le journal affiche « ↺ déjà couvert ».
+  - Sans déclaration, la règle stricte reste : refus, avec l'indication, puis
+    pause.
+
+### Fixed
+- (server) La limite de durée (90 min) compte le temps **actif** d'une
+  exécution (`activeMs`). Avant, une exécution reprise après une pause,
+  c'est-à-dire après avoir attendu la réponse de l'utilisateur, s'arrêtait
+  aussitôt sur « durée maximale ».
+- (server) « continuer » après une limite (items, durée, revue) accorde UNE
+  allocation de plus, de la même taille, pour cette exécution.
+  - C'est tracé : `system/pipeline_limit_extended`, et la frise le montre.
+  - Avant, la reprise retombait aussitôt sur la même limite. L'option
+    « continuer » proposée par la question de pause ne menait donc nulle part.
+  - Les valeurs des limites ne changent pas.
+- (server) Contrat de la Revue : elle ne relève plus l'absence de version, de
+  CHANGELOG ou de ligne d'exigence, que l'étape Livrer ajoute ensuite et que
+  l'orchestrateur vérifie. L'essai réel avait transformé ce faux problème en
+  item supplémentaire.
+
 ## [0.49.0] - 2026-10-09
 
 Pipelines obligatoires, phase 4 : le Développement complet (TDD canonique,

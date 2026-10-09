@@ -211,13 +211,17 @@
         } else if (ev.subtype === "pipeline_escalate") {
           // 0.49.0 : le léger a dépassé son périmètre, l'exécution passe en complet.
           p.mode = "complet"; p.escalated = ev.text || "monté en complet";
+        } else if (ev.subtype === "pipeline_limit_extended") {
+          p.extended = ev.text || "allocation supplémentaire"; p.limit = null;
+        } else if (ev.subtype === "pipeline_item_covered") {
+          p.covered = (p.covered || 0) + 1;
         } else if (ev.subtype === "pipeline_item_done") {
           p.items = (p.items || 0) + 1;
         } else if (ev.subtype === "pipeline_step_done") {
           let s = p.steps.find(x => x.key === q.key);
           if (!s) { s = { key: q.key, id: q.step, slot: q.slot, attempt: q.attempt || 1, item: q.item || null }; p.steps.push(s); }
           Object.assign(s, { status: ev.status, why: ev.why || null, durationMs: ev.durationMs ?? null, served: ev.served || null,
-            model: ev.model || s.model || null, source: ev.modelSource || s.source || null, costUsd: ev.costUsd ?? null, test: ev.test || null });
+            model: ev.model || s.model || null, source: ev.modelSource || s.source || null, costUsd: ev.costUsd ?? null, test: ev.test || null, covered: !!ev.covered });
         } else if (ev.subtype === "pipeline_warning") {
           p.warnings.push(ev.text || "");
         } else if (ev.subtype === "pipeline_loop") {

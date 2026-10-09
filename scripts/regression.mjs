@@ -595,6 +595,29 @@ async function apiChecks(sb) {
     fs.rmSync(routingFile, { force: true });
     return `limites ${got.join(', ')} : les 3 signaux partent`;
   });
+  // Décision utilisateur Q10 (« A ») : un item déjà couvert est accepté s'il est
+  // déclaré (DEJA_COUVERT), tests seuls, suite verte — sans 4b ni 4c, tracé.
+  await check(S, 'pipeline-covered', 'Pipelines (Q10 « A ») : item déjà couvert accepté s’il est déclaré DEJA_COUVERT (tests seuls, suite verte) — coché sans 4b/4c, tracé, journal « ↺ déjà couvert » ; sans déclaration : refusé', async () => {
+    if ((await get('/api/pipeline-enforcement')).status === 404) NA('moteur absent de cet état du code');
+    const js = await (await fetch(`${sb.url}/activite.js`, { headers: H })).text();
+    if (!/jt-covered/.test(js)) NA('« déjà couvert » absent de cet état du code');
+    omegaFresh(); enforceOmega();
+    const n0 = readLog('omega').length;
+    let r = await pipeDispatch(['omega', 'Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '2', FAKE_PIPE_COVERED: '2' });
+    const evs = readLog('omega').slice(n0);
+    const done = evs.filter(e => e.subtype === 'pipeline_step_done');
+    const covered = done.find(e => e.pipeline.step === 'rouge' && e.covered);
+    assert(r.code === 0 && covered?.pipeline.item === 2 && done.filter(e => e.status === 'skipped' && e.pipeline.item === 2).length === 2, `item 2 couvert : ${done.map(e => `${e.pipeline.step}:${e.status}`).join(',')} (code ${r.code})`);
+    const t0 = (await json('/api/project/omega/journal?n=3')).turns[0];
+    assert(t0?.pipeline?.covered === 1 && t0.pipeline.steps.some(s => s.covered), 'journal : « déjà couvert » absent');
+    omegaFresh();
+    r = await pipeDispatch(['omega', 'Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '1', FAKE_PIPE_COVERED: '1', FAKE_PIPE_NOCLAIM: '1' });
+    assert(r.code === 2, `sans déclaration : pause attendue (code ${r.code})`);
+    await post('/api/question/omega/resolve', { note: 'recette' });
+    omegaFresh();
+    fs.rmSync(routingFile, { force: true });
+    return 'déclaré → accepté sans 4b/4c ; non déclaré → refusé';
+  });
   await check(S, 'mark-read', 'Marquer lu (/api/mark-read) persiste le marqueur', async () => {
     const r = await post('/api/mark-read', { project: 'lambda' });
     assert(r.ok, `HTTP ${r.status}`);

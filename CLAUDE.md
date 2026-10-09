@@ -1063,6 +1063,27 @@ Suite de la demande du 2026-10-09. Plan : `docs/PLAN-pipeline-enforcement.md`.
   - 4c : tests inchangés et suite verte. Avec `RIEN_A_REFACTORER`, aucune
     modification n'est permise. 4c est sautée (`skipped`, motif écrit) si 4b
     a changé moins de `refactorMinLines` (10) lignes (`lineDelta`).
+- **Item déjà couvert** (décision utilisateur Q10 « A », 0.50.0). Un 4a dont
+  le test passe d'emblée est accepté (`covered`) si :
+  - `rouge.md` contient `DEJA_COUVERT` ;
+  - seuls des tests ont changé ;
+  - toute la suite passe.
+
+  4b et 4c de cet item sont retirées du plan et tracées `skipped` avec leur
+  motif. L'événement `pipeline_item_covered` est écrit, et la Revue reçoit la
+  liste `coveredItems`. Sans `DEJA_COUVERT`, le refus strict s'applique, avec
+  l'indication.
+- **Durée active** (0.50.0) : la limite compte `activeMs` (cumul des sessions
+  d'exécution), jamais le temps passé en pause.
+- **« continuer » après une limite** (0.50.0) :
+  - `state.pausedLimit` est gardé ;
+  - à la reprise, `state.budgets[items|duration|review]` accorde UNE
+    allocation de plus, de la même taille ;
+  - l'événement `pipeline_limit_extended` est écrit.
+
+  Les valeurs de `LIMITS` restent celles décidées par l'utilisateur (n° 5).
+- **Revue** : elle ne relève jamais l'absence de version, de CHANGELOG ou de
+  ligne d'exigence. C'est l'étape Livrer qui les ajoute et les fait vérifier.
 - **Revue en complet** : chaque problème devient un item `(revue) …`, puis
   retour à `@loop`, au plus 2 tours. En léger : retour à 4b, comme en 0.48.0.
 - **Montée léger → complet** : après 4b en léger, `lightScope` mesure le

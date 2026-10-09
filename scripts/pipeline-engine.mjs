@@ -386,6 +386,7 @@ function stepPrompt(ctx, step, extra) {
       L.push(`Tu ne modifies QUE des fichiers de test (motifs : ${(cfg.testGlobs || []).join(', ')}). Aucun code de production.`);
       L.push(`Après ton tour, l'orchestrateur lance ${T} : elle doit ÉCHOUER, à cause de ton test.`);
       L.push(`Écris ${art('rouge.md')} : le nom du test, le fichier, et pourquoi il échoue aujourd'hui.`);
+      if (ctx.item) L.push('Exception : si ce comportement est DÉJÀ assuré par le code existant (tout test fidèle à l’item passe d’emblée), ne fausse jamais le test pour le faire échouer. Garde ce test fidèle comme documentation, écris le mot DEJA_COUVERT en tête de rouge.md et explique quel code le couvre déjà. L’orchestrateur vérifie que seuls des tests ont changé et que toute la suite passe, coche l’item sans 4b ni 4c, et la Revue jugera le test.');
       break;
     case 'vert':
       if (ctx.reviewItems?.length) {
@@ -404,6 +405,8 @@ function stepPrompt(ctx, step, extra) {
     case 'revue':
       L.push('Ton rôle : REVUE du changement en cours (défauts, sécurité, cohérence, tests suffisants). Le diff complet est dans le fichier :');
       L.push(`  ${art('diff.patch')}`);
+      if (ctx.coveredItems?.length) L.push(`Items acceptés comme DÉJÀ COUVERTS (leur test passait d'emblée, sans nouveau code) : ${ctx.coveredItems.map(i => `n° ${i.n} « ${i.text} »`).join(' ; ')}. Vérifie que chacun de ces tests est FIDÈLE à son item et qu'il échouerait si le comportement disparaissait ; un test vide de sens est un « problème ».`);
+      L.push('Ne relève PAS l’absence de numéro de version incrémenté, d’entrée CHANGELOG ni de ligne dans le registre des exigences : l’étape Livrer, qui suit, les ajoute, et l’orchestrateur les vérifie.');
       L.push(`Écris ${art('revue.json')}, et UNIQUEMENT ce JSON : {"verdict": "ok" | "problèmes", "items": ["problème 1", …]}. « problèmes » seulement pour un défaut réel, à corriger maintenant.`);
       L.push('Ne modifie AUCUN fichier du projet.');
       break;
@@ -466,7 +469,14 @@ function checkCriteria(ctx, step, before, after) {
     const notTests = changed.filter(f => !isTestFile(f, cfg.testGlobs));
     if (notTests.length) return { ok: false, why: `l’étape Rouge ne touche que des tests ; modifiés hors tests : ${notTests.slice(0, 8).join(', ')}`, changed };
     const t = runCommand(cwd, cfg.testCommand, ctx.testEnv);
-    if (t.ok) return { ok: false, why: `la suite passe encore : le nouveau test n’échoue pas (${cfg.testCommand})`, changed, test: t };
+    if (t.ok) {
+      // Décision utilisateur Q10 (« A », 2026-10-09) : un item DÉJÀ COUVERT par le
+      // code existant est accepté si le model le DÉCLARE (DEJA_COUVERT), que seuls
+      // des tests ont changé (vérifié ci-dessus) et que toute la suite passe. Le
+      // test reste comme documentation ; 4b et 4c sont sautées ; la Revue juge.
+      if (ctx.item && /\bDEJA_COUVERT\b/.test(readArtefact(ctx, step.artefact) || '')) return { ok: true, changed, test: t, covered: true };
+      return { ok: false, why: `la suite passe encore : le nouveau test n’échoue pas (${cfg.testCommand})${ctx.item ? ' — si le comportement est déjà couvert par le code existant, écris DEJA_COUVERT dans rouge.md et garde le test' : ''}`, changed, test: t };
+    }
     const names = changed.map(f => path.basename(f).replace(/\.[^.]+$/, '').replace(/\.(test|spec)$/, ''));
     const titles = [];
     for (const f of changed) {
@@ -630,6 +640,30 @@ export async function runPipeline(o) {
     fs.renameSync(`${f}.tmp`, f);
   };
   const resumed = state.status === 'paused';
+  // « continuer » après une limite (items, durée, revue) : l'utilisateur accepte
+  // UNE allocation de plus, de la même taille, pour cette exécution — sans quoi
+  // la reprise retomberait aussitôt sur la même limite. Tracé dans le log.
+  let extended = null;
+  if (resumed && !state.pausedLimit) {
+    // Exécution mise en pause par un moteur antérieur à 0.50.0 : la limite est
+    // relue dans le log du musicien (dernier pipeline_limit de CETTE exécution).
+    try {
+      const lines = fs.readFileSync(projectLog, 'utf8').split('\n');
+      for (let i = lines.length - 1; i >= 0 && i > lines.length - 5000; i--) {
+        if (!lines[i].includes('"pipeline_limit"')) continue;
+        const ev = JSON.parse(lines[i]);
+        if (ev.subtype === 'pipeline_limit' && ev.pipeline?.run === state.run) { state.pausedLimit = ev.limit; break; }
+      }
+    } catch { /* log illisible : pas d'allocation */ }
+  }
+  if (resumed && ['items', 'duration', 'review'].includes(state.pausedLimit)) {
+    state.budgets = state.budgets || {};
+    const L = state.pausedLimit;
+    if (L === 'items') state.budgets.items = (state.itemsDone || 0) + limits.items;
+    if (L === 'duration') state.budgets.duration = (Number(state.activeMs) || 0) + limits.runMs;
+    if (L === 'review') state.budgets.review = (state.reviewRounds || 0) + limits.reviewRounds;
+    extended = { limit: L, to: state.budgets[L] };
+  }
   state.status = 'running';
   state.pid = process.pid;
   saveState();
@@ -650,6 +684,11 @@ export async function runPipeline(o) {
   writeEvent({ type: 'system', subtype: 'pipeline_start', pipeline: { run, pipeline, mode: state.mode, kind, base },
     text: `${resumed ? 'reprise de l’exécution' : 'exécution'} ${run} : pipeline ${pipelineLabel(pipeline, state.mode)} — ${state.plan.filter(id => id !== '@check').map(id => stepDefs[id].title).join(' → ')}`,
     ...(o.modeNote ? { note: o.modeNote } : {}) });
+  if (extended) {
+    const what = { items: `${extended.to} items au total`, duration: `${fmtDur(extended.to)} de temps actif`, review: `${extended.to} tours de revue` }[extended.limit];
+    writeEvent({ type: 'system', subtype: 'pipeline_limit_extended', pipeline: { run }, limit: extended.limit, to: extended.to,
+      text: `↻ « continuer » après la limite « ${extended.limit} » : une allocation de plus accordée pour cette exécution (${what})` });
+  }
   for (const p of planned) {
     if (p.slot.source === 'project-default') {
       writeEvent({ type: 'system', subtype: 'pipeline_warning', pipeline: { run, step: p.id, slot: p.slot.slot },
@@ -671,20 +710,25 @@ export async function runPipeline(o) {
   const testEnv = { ...childEnv };
   delete testEnv.ORCH_OBS_ID;
   const ctx = { run, pipeline, kind, mode: state.mode, cwd, cfg, artDir, base, testEnv, reviewItems: null, testPrint: null, limits,
-    item: state.item || null, escalated: !!state.escalated };
-  const started = Date.parse(state.createdAt) || Date.now();
+    item: state.item || null, escalated: !!state.escalated, coveredItems: state.coveredItems || [] };
+  // Durée ACTIVE : le temps passé en pause à attendre l'utilisateur ne compte
+  // pas dans la limite de 90 min (une reprise repart du temps déjà consommé).
+  const sessionStart = Date.now();
+  const elapsed = () => (Number(state.activeMs) || 0) + (Date.now() - sessionStart);
   const totals = { costUsd: 0, apiMs: 0, turns: 0 };
 
   const finish = async ({ code, result, isError = false, paused = false, question = null, limit = null }) => {
     clearInterval(progress);
     state.status = paused ? 'paused' : isError ? 'failed' : 'done';
     state.endedAt = new Date().toISOString();
+    state.activeMs = elapsed();
     if (question) state.question = question;
+    state.pausedLimit = paused ? limit : null;
     saveState();
     const summary = {
       type: 'system', subtype: 'pipeline_summary', pipeline: { run, pipeline, mode: state.mode, kind, status: state.status, escalated: state.escalated || undefined, items: state.itemsDone || undefined },
       steps: state.steps.map(s => ({ id: s.id, key: s.key, title: s.title, slot: s.slot, model: s.model, served: s.served, source: s.source, status: s.status, why: s.why, durationMs: s.durationMs, costUsd: s.costUsd, attempt: s.attempt })),
-      totalMs: Date.now() - started, costUsd: totals.costUsd || null,
+      totalMs: elapsed(), costUsd: totals.costUsd || null,
       text: `exécution ${run} : ${state.status === 'done' ? 'terminée' : state.status === 'paused' ? 'en pause' : 'échec'} — ${state.steps.filter(s => s.status === 'ok').length} étape(s) validée(s)`,
     };
     writeEvent(summary);
@@ -693,7 +737,7 @@ export async function runPipeline(o) {
     // Ni « fantôme » (0 tour / 0 ms d'API) ni « synthétique » : le chef doit
     // recevoir ce résultat et son réveil, comme pour un tour ordinaire.
     writeEvent({ type: 'result', subtype: isError ? 'error_pipeline' : 'success', is_error: isError,
-      num_turns: Math.max(1, totals.turns), duration_ms: Date.now() - started, duration_api_ms: Math.max(1, totals.apiMs),
+      num_turns: Math.max(1, totals.turns), duration_ms: elapsed(), duration_api_ms: Math.max(1, totals.apiMs),
       stop_reason: 'end_turn', pipeline: { run, pipeline, status: state.status, ...(limit ? { limit } : {}) },
       ...(paused ? { pipeline_paused: true } : {}), result: text });
     try { fs.unlinkSync(pidPath); } catch {}
@@ -776,6 +820,7 @@ export async function runPipeline(o) {
     rec.why = c.ok ? null : c.why;
     rec.changed = c.changed?.slice(0, 50);
     if (c.test) rec.test = { ok: c.test.ok, code: c.test.code, ms: c.test.ms };
+    if (c.covered) rec.covered = true;
     return { rec, crit: c, info, before, after, log };
   };
 
@@ -785,7 +830,7 @@ export async function runPipeline(o) {
     const s = r.rec;
     writeEvent({ type: 'system', subtype: 'pipeline_step_done', pipeline: { run, step: s.id, key: s.key, slot: s.slot, attempt: s.attempt, ...(s.item ? { item: s.item } : {}) },
       model: s.model, served: s.served, provider: s.provider, modelSource: s.source, status: s.status, why: s.why ? String(s.why).slice(0, 2000) : undefined,
-      durationMs: s.durationMs, costUsd: s.costUsd, changed: s.changed, test: s.test, log: `logs/runs/${run}/${s.key}.jsonl`,
+      durationMs: s.durationMs, costUsd: s.costUsd, changed: s.changed, test: s.test, ...(s.covered ? { covered: true } : {}), log: `logs/runs/${run}/${s.key}.jsonl`,
       text: `étape ${s.title} : ${s.status === 'ok' ? '✓ critère vérifié' : s.status === 'refused' ? `✕ refusée — ${String(s.why).split('\n')[0].slice(0, 200)}` : s.status === 'model_unavailable' ? '⏸ model indisponible' : `✕ échec — ${String(s.why).split('\n')[0].slice(0, 200)}`}` });
   };
 
@@ -808,13 +853,13 @@ export async function runPipeline(o) {
   const readItems = () => parseItems(readArtefact(ctx, 'tests.md') || '');
   while (state.index < state.plan.length) {
     const id = state.plan[state.index];
-    if (Date.now() - started > limits.runMs) return pauseForLimit({ limit: 'duration', value: limits.runMs, step: stepDefs[id] });
+    if (elapsed() > (state.budgets?.duration || limits.runMs)) return pauseForLimit({ limit: 'duration', value: state.budgets?.duration || limits.runMs, step: stepDefs[id] });
     // ── Boucle TDD (0.49.0) : UN item de tests.md à la fois, 4a → 4b → 4c,
     //    tant que la liste n'est pas vide. Le moteur coche l'item, pas le model.
     if (id === '@loop') {
       const next = readItems().find(i => !i.done);
       if (!next) { state.plan.splice(state.index, 1); state.item = ctx.item = null; saveState(); continue; }
-      if ((state.itemsDone || 0) >= limits.items) {
+      if ((state.itemsDone || 0) >= (state.budgets?.items || limits.items)) {
         return pauseForLimit({ limit: 'items', value: limits.items, step: stepDefs['@loop'], why: `la liste n'est pas vide après ${limits.items} items (suivant : « ${next.text} ») — découper la demande` });
       }
       state.item = ctx.item = next;
@@ -875,7 +920,20 @@ export async function runPipeline(o) {
       }
     }
     if (step.id === 'rouge') ctx.testPrint = testsNow();
-    if (step.id === 'liste-tests' && (last.crit?.items || []).filter(i => !i.done).length > limits.items) {
+    if (step.id === 'rouge' && last.crit?.covered) {
+      // Q10 (A) : item déjà couvert — 4b et 4c de CET item sont sautées, en le disant.
+      const why = `item déjà couvert par le code existant (DEJA_COUVERT déclaré ; seuls des tests ont changé, suite verte)`;
+      for (const sid of ['vert', 'refactor']) {
+        if (state.plan[state.index + 1] !== sid) continue;
+        state.plan.splice(state.index + 1, 1);
+        const key = `${String(state.steps.length + 1).padStart(2, '0')}-${sid}`;
+        state.steps.push({ id: sid, key, title: stepDefs[sid].title, item: ctx.item?.n, status: 'skipped', why, attempt: 1, durationMs: 0 });
+        writeEvent({ type: 'system', subtype: 'pipeline_step_done', pipeline: { run, step: sid, key, attempt: 1, ...(ctx.item ? { item: ctx.item.n } : {}) }, status: 'skipped', why, durationMs: 0, text: `étape ${stepDefs[sid].title} : sautée — ${why}` });
+      }
+      state.coveredItems = ctx.coveredItems = [...(state.coveredItems || []), { n: ctx.item?.n, text: ctx.item?.text }];
+      writeEvent({ type: 'system', subtype: 'pipeline_item_covered', pipeline: { run, item: ctx.item?.n }, text: `↺ item ${ctx.item?.n} déjà couvert : test gardé comme documentation, sans 4b ni 4c — la Revue le jugera` });
+    }
+    if (step.id === 'liste-tests' && (last.crit?.items || []).filter(i => !i.done).length > (state.budgets?.items || limits.items)) {
       return pauseForLimit({ limit: 'items', value: limits.items, step, why: `${last.crit.items.filter(i => !i.done).length} items listés (maximum ${limits.items}) — découper la demande en plusieurs exécutions` });
     }
     if (step.id === 'vert') {
@@ -898,7 +956,7 @@ export async function runPipeline(o) {
       }
     }
     if (step.id === 'revue' && last.crit?.review?.verdict === 'problemes' && last.crit.review.items.length) {
-      if (state.reviewRounds >= limits.reviewRounds) {
+      if (state.reviewRounds >= (state.budgets?.review || limits.reviewRounds)) {
         return pauseForLimit({ limit: 'review', value: state.reviewRounds, step, why: `la revue relève encore : ${last.crit.review.items.slice(0, 5).join(' ; ')}` });
       }
       state.reviewRounds++;

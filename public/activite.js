@@ -229,15 +229,16 @@
       const rows = p.steps.map(s => `<li class="jt-step" data-step-status="${esc(s.status || "running")}" data-step="${esc(s.id)}">
           <b>${esc(titleOf(s.id))}</b>${s.item ? ` <span class="jt-item" title="${esc(s.itemText || "")}">item ${esc(s.item)}</span>` : ""}${s.attempt > 1 ? ` <span class="jt-dim">essai ${esc(s.attempt)}</span>` : ""}
           · ${esc(shortModel(s.served || s.model || "") || "défaut du projet")}${s.source === "project-default" ? ' <span class="jt-warn" title="aucune case affectée dans la page Models">⚠ défaut du projet</span>' : ""}
-          · ${esc(ST[s.status] || s.status || "")}${s.durationMs != null && fmtDur(s.durationMs) ? " · " + esc(fmtDur(s.durationMs)) : ""}
+          · ${esc(ST[s.status] || s.status || "")}${s.covered ? ' <span class="jt-covered" title="le test passait d’emblée : comportement déjà assuré par le code existant">↺ déjà couvert</span>' : ""}${s.durationMs != null && fmtDur(s.durationMs) ? " · " + esc(fmtDur(s.durationMs)) : ""}
           ${s.why ? `<div class="jt-dim jt-why">${esc(String(s.why).split("\n")[0].slice(0, 220))}</div>` : ""}</li>`).join("");
       const todo = p.status === "running" || p.status === "paused"
         ? p.planned.filter(x => !p.steps.some(s => s.id === x.id && s.status === "ok")).filter(x => !p.steps.some(s => s.id === x.id && s.status === "running"))
           .map(x => `<li class="jt-step is-todo" data-step="${esc(x.id)}"><b>${esc(x.title)}</b> · ${esc(shortModel(x.model || "") || "défaut du projet")} · à venir</li>`).join("")
         : "";
       pipe = `<div class="jt-pipeline" data-run="${esc(p.run)}"><span class="jt-k">⇄ pipeline ${esc(PIPE_LABEL[p.pipeline] || p.pipeline)}</span>
-        <span class="jt-dim">${esc(p.run)}${p.resumed ? " · reprise" : ""}${p.items ? ` · ${esc(p.items)} item(s) cochés` : ""}${p.loops ? ` · ${esc(p.loops)} retour(s) de revue` : ""}</span>
+        <span class="jt-dim">${esc(p.run)}${p.resumed ? " · reprise" : ""}${p.items ? ` · ${esc(p.items)} item(s) cochés` : ""}${p.covered ? ` dont ${esc(p.covered)} déjà couvert(s)` : ""}${p.loops ? ` · ${esc(p.loops)} retour(s) de revue` : ""}</span>
         ${p.escalated ? `<div class="jt-escalate">${esc(p.escalated)}</div>` : ""}
+        ${p.extended ? `<div class="jt-dim">${esc(p.extended)}</div>` : ""}
         ${p.limit ? `<div class="jt-warn" data-limit="${esc(p.limit.limit)}">${esc(p.limit.text)}</div>` : ""}
         <ol class="jt-steps">${rows}${todo}</ol></div>`;
     } else if (t.bypass) {
