@@ -36,6 +36,7 @@ import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { derivedToken } from './local-secret.mjs';
 import { readBranchLog } from './dual-run.mjs';
+import { languageFor, languageGate, localize, workingLanguage } from './language.mjs';
 
 export const RUN_RE = /^p-\d{8}T\d{6}-[a-z0-9]{4,8}$/;
 export const STEP_KEY_RE = /^\d{2}-[a-z0-9-]{1,40}$/;
@@ -761,6 +762,26 @@ export async function runPipeline(o) {
       text: `exécution ${run} : ${state.status === 'done' ? 'terminée' : state.status === 'paused' ? 'en pause' : 'échec'} — ${state.steps.filter(s => s.status === 'ok').length} étape(s) validée(s)`,
     };
     writeEvent(summary);
+    // Langue de discussion (0.51.0) : le résultat final (réponse, livraison)
+    // passe par le même portier que les tours ; les messages rédigés par
+    // l'orchestrateur lui-même (pause, échec) sont mis dans la langue choisie.
+    const target = languageFor(root, projectName);
+    let resultLang = null;
+    if (paused || isError) {
+      result = await localize(root, result, target);
+      if (question) question = await localize(root, question, target);
+      if (notice) notice = await localize(root, notice, target);
+    } else {
+      const lastModel = [...state.steps].reverse().find(s => s.status === 'ok' && s.model)?.model || null;
+      const g = await languageGate(root, { text: result, target, working: lastModel ? workingLanguage(root, lastModel, target).working : target, model: lastModel, project: projectName });
+      for (const e of g.events) writeEvent(e);
+      if (g.lang) {
+        writeEvent({ type: 'assistant', message: { model: '<synthetic>', content: [{ type: 'text', text: g.text }] }, lang: g.lang });
+        result = g.text;
+        const { original, ...meta } = g.lang;
+        resultLang = meta;
+      }
+    }
     const text = paused ? `${result}\n\nNEEDS_USER_INPUT: ${question}` : result;
     if (paused) writeEvent({ type: 'assistant', message: { model: '<synthetic>', content: [{ type: 'text', text }] } });
     // Ni « fantôme » (0 tour / 0 ms d'API) ni « synthétique » : le chef doit
@@ -768,7 +789,7 @@ export async function runPipeline(o) {
     writeEvent({ type: 'result', subtype: isError ? 'error_pipeline' : 'success', is_error: isError,
       num_turns: Math.max(1, totals.turns), duration_ms: elapsed(), duration_api_ms: Math.max(1, totals.apiMs),
       stop_reason: 'end_turn', pipeline: { run, pipeline, status: state.status, ...(limit ? { limit } : {}) },
-      ...(paused ? { pipeline_paused: true } : {}), result: text });
+      ...(paused ? { pipeline_paused: true } : {}), ...(resultLang ? { lang: resultLang } : {}), result: text });
     try { fs.unlinkSync(pidPath); } catch {}
     // Une pause part au chef avec TOUTE l'explication (ce qui s'est passé, où en
     // est le travail, les choix et la recommandation), pas seulement la question.
@@ -1151,6 +1172,7 @@ export async function answerPausedRun({ logsDir, project, projectName, run, answ
         : 'Aucune modification n’est restée dans le projet.') +
       (answer === 'simplifier' ? '\n\nEnvoyez-moi maintenant une demande plus petite pour la suite : elle partira dans une nouvelle exécution.' : '');
   }
+  text = await localize(path.dirname(logsDir), text, languageFor(path.dirname(logsDir), projectName));
   // Toujours un message : l'état du musicien se lit sur le dernier texte du tour
   // (sans lui, l'ancienne question restait affichée après « abandonner »).
   writeEvent({ type: 'assistant', message: { model: '<synthetic>', content: [{ type: 'text', text }] } });

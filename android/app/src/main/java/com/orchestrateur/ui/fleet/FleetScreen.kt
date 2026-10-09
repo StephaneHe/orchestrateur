@@ -20,6 +20,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -452,11 +454,47 @@ fun SettingsScreen(vm: FleetViewModel, onBack: () -> Unit) {
             "${vm.musicians.size} musiciens",
             color = Palette.Fg2, fontSize = 12.sp,
         )
+        LanguageSetting(vm)
         Text(
             "Les projets, sessions et outils se gèrent depuis le tableau de bord web.",
             color = Palette.Fg3, fontSize = 11.sp,
         )
     }
+}
+
+/** Langue de discussion (0.51.0) : la langue du chef et des musiciens, réglée sur le serveur. */
+@Composable
+private fun LanguageSetting(vm: FleetViewModel) {
+    val lang by vm.language.collectAsState()
+    val err by vm.languageError.collectAsState()
+    LaunchedEffect(Unit) { vm.refreshLanguage() }
+    Text("Langue de discussion", color = Palette.Fg0, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+    if (lang == null) {
+        Text("Réglage disponible avec un serveur 0.51.0 ou plus récent.", color = Palette.Fg3, fontSize = 11.sp)
+        return
+    }
+    val options = listOf("fr" to "Français", "en" to "English", "es" to "Español", "de" to "Deutsch", "it" to "Italiano", "pt" to "Português")
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        options.forEach { (code, label) ->
+            val on = code == lang
+            Text(
+                label,
+                color = if (on) Palette.Bg0 else Palette.Fg1,
+                fontSize = 13.sp,
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (on) Palette.Fg1 else Palette.Bg0)
+                    .clickable { vm.setLanguage(code) }
+                    .wrapContentHeight()
+                    .padding(horizontal = 12.dp)
+                    .semantics { contentDescription = "Langue de discussion : $label" + if (on) " (choisie)" else "" },
+            )
+        }
+    }
+    Text("Chef et musiciens répondent dans cette langue ; le code et la documentation technique restent en anglais. Une exception par projet se règle dans le tableau de bord web.",
+        color = Palette.Fg3, fontSize = 11.sp)
+    err?.let { Text("Échec : $it", color = Palette.Fg2, fontSize = 11.sp) }
 }
 
 @Composable

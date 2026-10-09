@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "$comment": "Languages each model writes reliably (0.51.0). Pattern rules on the model id, first match wins. \"*\" = all usual languages. Unknown model = English only until verified (the Models page « Tester la langue » button records a local override in language-settings.json). A model that does not handle the discussion language works in English; its user-facing output is rewritten automatically. Notes are shown in the Models page (French UI).",
+  "usual": [
+    "fr",
+    "en",
+    "es",
+    "de",
+    "it",
+    "pt"
+  ],
+  "default": [
+    "en"
+  ],
+  "rules": [
+    {
+      "match": "^claude-|^(opus|sonnet|haiku|fable)$",
+      "langs": "*",
+      "note": "Claude : multilingue"
+    },
+    {
+      "match": "^(gpt|o\\d|codex)",
+      "langs": "*",
+      "note": "OpenAI : multilingue"
+    },
+    {
+      "match": "deepseek",
+      "langs": "*",
+      "note": "DeepSeek (V3 et suivants) : grand model multilingue"
+    },
+    {
+      "match": "qwen",
+      "langs": "*",
+      "note": "Qwen : grand model multilingue"
+    },
+    {
+      "match": "kimi|moonshot",
+      "langs": "*",
+      "note": "Kimi : grand model multilingue"
+    },
+    {
+      "match": "mistral-(large|medium)|magistral",
+      "langs": "*",
+      "note": "Mistral grands models : multilingues (français natif)"
+    },
+    {
+      "match": "gemini|gemma-3",
+      "langs": "*",
+      "note": "Gemini / Gemma 3 : multilingues"
+    },
+    {
+      "match": "llama-(3\\.[1-9].*(70b|405b)|4)",
+      "langs": "*",
+      "note": "Llama 70B+ / Llama 4 : multilingues"
+    }
+  ]
+}

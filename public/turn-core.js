@@ -293,8 +293,15 @@
         if (l) l.resolved = { ts: ev.timestamp || null, note: ev.note || "" };
         return;
       }
+      // Langue de discussion (0.51.0) : écart détecté, reformulé ou non.
+      if (t === "system" && ev.subtype === "language_mismatch") {
+        const tr = cur || last();
+        if (tr) tr.langIssue = { detected: ev.lang?.detected || null, target: ev.lang?.target || null, reason: ev.lang?.reason || null, reformulated: !!ev.lang?.reformulated, error: ev.lang?.error || null };
+        return;
+      }
       if (t === "assistant") {
         if (!cur) open(ev, null);
+        if (ev.lang && ev.lang.reformulated) cur.lang = { detected: ev.lang.detected, target: ev.lang.target, reason: ev.lang.reason, by: ev.lang.by || null, original: typeof ev.lang.original === "string" ? capped(ev.lang.original) : null };
         const m = ev.message || {};
         if (m.model && m.model !== "<synthetic>") cur.model = m.model;
         for (const b of m.content || []) {

@@ -1543,6 +1543,77 @@ export async function browserChecks(sb, t) {
       return 'frise complète : items, 4c sautée, montée annoncée';
     });
 
+    // 0.51.0 — langue de discussion : réglage, badge « ⚠ langue », table des models.
+    {
+      const lctx = await browser.newContext({ viewport: { width: 1600, height: 1000 }, locale: 'fr-FR' });
+      const lp = await lctx.newPage();
+      wire(lp);
+      const hasLang = async () => (await (await fetch(`${sb.url}/api/language`, { headers: H })).status) === 200;
+      await check(B, 'lang-settings', 'Langue de discussion : réglage global et exception par projet dans le panneau ⚙, enregistrés côté serveur', async () => {
+        if (!(await hasLang())) NA('réglage de langue absent de cet état du code');
+        await lp.goto(`${sb.url}/?token=${sb.token}`);
+        await lp.locator('.brand').waitFor();
+        await lp.click('#btn-tweaks');
+        assert(await until(async () => (await lp.locator('#lang-default option').count()) >= 2, 8000), 'menu des langues absent');
+        assert(await lp.inputValue('#lang-default') === 'fr', 'langue par défaut ≠ français');
+        await lp.selectOption('#lang-default', 'en');
+        assert(await until(async () => (await api('/api/language')).default === 'en', 5000), 'langue globale non enregistrée');
+        await lp.selectOption('#lang-settings .lang-add-project', 'omega');
+        await lp.selectOption('#lang-settings .lang-add-lang', 'es');
+        await lp.click('#lang-settings .lang-add-btn');
+        assert(await until(async () => (await api('/api/language')).projects.omega === 'es', 5000), 'exception de projet non enregistrée');
+        assert(await until(async () => (await lp.locator('#lang-settings [data-lang-project="omega"]').count()) === 1, 3000), 'exception non affichée');
+        await shot(lp, 'langue-reglage');
+        await lp.click('#lang-settings [data-lang-del="omega"]');
+        await lp.selectOption('#lang-default', 'fr');
+        assert(await until(async () => { const v = await api('/api/language'); return v.default === 'fr' && !v.projects.omega; }, 5000), 'retour au français impossible');
+        await lp.click('#btn-tweaks');
+        return 'fr → en → fr, exception omega → es puis retirée';
+      });
+      await check(B, 'lang-badge', 'Réponse du chef reformulée : badge « ⚠ langue » et « voir l’original », en direct et au rechargement', async () => {
+        if (!(await hasLang())) NA('langue de discussion absente de cet état du code');
+        const orig = 'I am waiting for the two background runs to finish, then I will commit everything to the main branch.';
+        const fixed = 'J’attends la fin des deux exécutions en arrière-plan, puis je commiterai tout sur la branche principale.';
+        appendLog('chef', [
+          { type: 'user_prompt', text: 'Où en es-tu ? (recette langue)' },
+          { type: 'system', subtype: 'init', model: 'claude-opus-5-5' },
+          { type: 'assistant', message: { content: [{ type: 'text', text: orig }] } },
+          { type: 'system', subtype: 'language_mismatch', lang: { target: 'fr', detected: 'en', reason: 'mismatch', reformulated: true, by: 'claude-haiku-5-5' }, text: '⚠ langue' },
+          { type: 'assistant', message: { model: '<synthetic>', content: [{ type: 'text', text: fixed }] }, lang: { target: 'fr', detected: 'en', reason: 'mismatch', reformulated: true, by: 'claude-haiku-5-5', original: orig } },
+          { type: 'result', subtype: 'success', is_error: false, num_turns: 1, duration_ms: 2000, duration_api_ms: 1500, result: fixed, lang: { target: 'fr', detected: 'en', reformulated: true } },
+        ]);
+        await lp.goto(`${sb.url}/?token=${sb.token}`);
+        await lp.locator('.brand').waitFor();
+        const bubble = lp.locator('#cv-scroll .cv-bubble.is-conductor', { hasText: 'J’attends la fin des deux exécutions' }).last();
+        assert(await until(async () => (await bubble.count()) > 0, 10_000), 'bulle reformulée absente');
+        assert(await bubble.locator('.cv-langtag').count() === 1, 'badge « ⚠ langue » absent');
+        assert(!(await bubble.locator('.cv-body').textContent()).includes('I am waiting'), 'le texte affiché doit être la version reformulée');
+        await bubble.locator('.cv-lang-orig summary').click();
+        assert((await bubble.locator('.cv-lang-orig').textContent()).includes('I am waiting'), 'original non consultable');
+        await shot(lp, 'langue-badge');
+        return 'badge + original au rechargement';
+      });
+      await check(B, 'models-langs', 'Page Models : table « models × langues fiables » éditable (valeurs prudentes, case cochée enregistrée)', async () => {
+        if (!(await hasLang())) NA('table des langues absente de cet état du code');
+        fs.writeFileSync(path.join(sb.root, 'model-routing.json'), JSON.stringify({ version: 2, assignments: { 'dev.vert': { provider: 'nvidia', model: 'nvidia/nemotron-mini-4b' }, 'dev.rouge': { provider: 'anthropic', model: 'claude-opus-5-5' } }, history: [] }));
+        await lp.goto(`${sb.url}/?token=${sb.token}#/models`);
+        await lp.locator('.mr-langs-btn').waitFor();
+        await lp.click('.mr-langs-btn');
+        const row = lp.locator('[data-ml-row="nvidia/nemotron-mini-4b"]');
+        assert(await until(async () => (await row.count()) === 1, 8000), 'model absent de la table');
+        assert(await row.locator('[data-ml-lang="fr"]').isChecked() === false && await row.locator('[data-ml-lang="en"]').isChecked(), 'model inconnu : anglais seulement attendu');
+        assert(await lp.locator('[data-ml-row="claude-opus-5-5"] [data-ml-lang="fr"]').isChecked(), 'Claude : français attendu');
+        await row.locator('[data-ml-lang="fr"]').check();
+        assert(await until(async () => (await api('/api/model-languages')).models.find(m => m.model === 'nvidia/nemotron-mini-4b')?.langs.includes('fr'), 5000), 'case cochée non enregistrée');
+        assert(await row.locator('[data-ml-test]').count() === 1, 'bouton « Tester la langue » absent');
+        await shot(lp, 'models-langues');
+        await fetch(`${sb.url}/api/model-languages/${encodeURIComponent('nvidia/nemotron-mini-4b')}`, { method: 'PUT', headers: { ...H, 'content-type': 'application/json' }, body: JSON.stringify({ langs: null }) });
+        fs.rmSync(path.join(sb.root, 'model-routing.json'), { force: true });
+        return 'nemotron : en → en+fr ; Claude : toutes langues';
+      });
+      await lctx.close();
+    }
+
     await check(B, 'js-errors', 'Aucune erreur JavaScript non interceptée pendant les parcours', async () => {
       assert(!pageErrors.length, pageErrors.slice(0, 3).join(' | '));
     });

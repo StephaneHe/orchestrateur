@@ -165,6 +165,7 @@ class Musician {
       // only a source-less prompt is (a --source dispatch also emits system/init).
       if (!raw.source) {
         this.stopped = null;
+        this.lastLang = null;
         this.turnStartMs = Date.parse(raw.timestamp) || Date.now();
         this.setState(this.state === "idle" || this.state === "unread" ? "live" : this.state);
       }
@@ -216,6 +217,8 @@ class Musician {
           if (b.id && b.name) { this._toolIdToName[b.id] = b.name; this._toolUses[b.id] = { name: b.name, input: b.input }; }
         }
       }
+      // Reformulation de langue (0.51.0) : le texte remplacé et son original.
+      if (raw.lang?.reformulated) this.lastLang = raw.lang;
       if (gotText) {
         this.lastAssistantText = gotText;
         this.lastLine = gotText.replace(/\s+/g, " ").trim().slice(0, 140);
@@ -1259,6 +1262,8 @@ const App = {
           ...(m.queued ? { queued: true } : {}),
           ...(m.answersTicket ? { answersTicket: m.answersTicket } : {}),
           ...(Number.isFinite(m.slot) ? { slot: m.slot } : {}),
+          // 0.51.0 — badge « ⚠ langue » et original, retrouvés au rechargement.
+          ...(m.lang ? { lang: m.lang } : {}),
         };
         // A source-less "[musician] Tour terminé…" is a relayed callback, not a
         // user message — reclassify so it's never shown as the user.
@@ -2094,13 +2099,18 @@ const App = {
         }
       }
     }
-    return `<div class="cv-bubble is-conductor${qCls}${rCls}">
-          <div class="cv-byline">${esc(byline)}${tsChip}${qTag}${usageChip}
+    // Langue (0.51.0) : badge, et l'original reste consultable.
+    const L = b.lang;
+    const langTag = L ? `<span class="cv-langtag" title="Réponse ${L.reason === 'model-language' ? 'écrite par un model qui travaille' : 'reçue'} en ${esc(L.detected || '?')}, reformulée automatiquement en ${esc(L.target || '?')}${L.by ? ` (${esc(L.by)})` : ''}">⚠ langue</span>` : "";
+    const langOrig = L?.original ? `<details class="cv-lang-orig"><summary>voir l'original (${esc(L.detected || '?')})</summary><div class="md">${mdToHtml(L.original)}</div></details>` : "";
+    return `<div class="cv-bubble is-conductor${qCls}${rCls}${L ? " is-lang-fixed" : ""}">
+          <div class="cv-byline">${esc(byline)}${tsChip}${qTag}${langTag}${usageChip}
             <button class="cv-reply-btn" data-reply-idx="${idx}" title="Répondre à ce message">↩ répondre</button>
             ${window.Tts ? window.Tts.buttonHtml(idx) : ""}
           </div>
           ${answers}${hint}${takingHtml(b)}
           <div class="cv-body md">${mdToHtml(b.text || "")}</div>
+          ${langOrig}
         </div>`;
   },
 
@@ -2721,6 +2731,8 @@ const App = {
           role: "conductor", text: txt, ts: Date.now(), usage,
           // A chef reply ending on NEEDS_USER_INPUT is a QUESTION, not a report.
           ...(/^NEEDS_USER_INPUT:/m.test(txt) ? { question: true } : {}),
+          // « ⚠ langue » : réponse reformulée dans la langue de discussion (0.51.0).
+          ...(musician.lastLang ? { lang: musician.lastLang } : {}),
           // Réveil observé ⇒ « CHEF — POINT SUR LES RÉSULTATS ».
           ...(this._turnIsReport ? { report: true } : {}),
           // No reflection this turn → the "prend en compte" header belongs here.

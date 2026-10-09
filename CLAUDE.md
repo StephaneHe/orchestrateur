@@ -1047,6 +1047,58 @@ Suite de la demande du 2026-10-09. Plan : `docs/PLAN-pipeline-enforcement.md`.
   le nettoyage de l'env du serveur. Le moteur et la porte (`dispatch.mjs`)
   sont actifs tout de suite.
 
+## Langue de discussion (0.51.0)
+
+Demande utilisateur : « La langue de la discussion doit pouvoir etre fixee et
+tu dois t'y tenir. Seul le code et les documents qui s'y attachent doivent etre
+en anglais » — y compris pour les musiciens, « si la langue choisie n'est pas un
+probleme pour le model utilise ».
+
+- **Réglage** : `language-settings.json`, non versionné, écrit par le serveur
+  seulement.
+  - Contenu : `default`, `projects` (exceptions), `models` (overrides),
+    `reformulateModel` et `check`.
+  - Module : `scripts/language.mjs`.
+  - Routes : `/api/language`, `/api/language/project/:name`,
+    `/api/model-languages` et `POST /api/model-languages/test`, toutes en
+    `sameOriginOnly` pour les écritures.
+  - Interface : panneau ⚙ (`public/langue.js`), page Models (« 🌐 Langues des
+    models ») et app Android (Réglages).
+- **Injection** (`dispatch.mjs`) : `languageRule(target, working)` est ajoutée
+  à la fin de CHAQUE prompt, chef compris.
+  - `working` vaut `en` quand le model ne maîtrise pas la cible
+    (`reliableLanguages` : override, puis règle de `data/model-languages.json`,
+    puis anglais par défaut).
+  - Traçabilité : `user_prompt.lang`.
+- **Portier** (`gateFinalText`) : il agit sur les tours destinés à
+  l'utilisateur, c'est-à-dire ni les branches du mode double ni les tours
+  d'étape.
+  - Claude : la ligne `result` est retenue jusqu'à la fin du flux
+    (`releaseHeldResult`).
+  - codex : `finishCodex` est asynchrone, et le portier passe avant le result.
+  - Moteur : le résultat final passe par le portier ; les messages de
+    l'orchestrateur passent par `localize`.
+  - En cas d'écart : `system/language_mismatch` et un message assistant
+    synthétique `lang` (avec `original`), puis le result reformulé
+    (`result.lang`).
+- **Détection** (`detectLanguage`) : part des mots-outils sur la prose, après
+  avoir retiré le code, les chemins, les URL et les identifiants.
+  - Moins de 12 mots, ou un écart insuffisant : `unknown`, pas de jugement.
+  - Reformulation : `oneShotClaude` (CLI, cwd temporaire, aucun outil, aucune
+    clé).
+- **Lecture** : le fil du chef (`app.js` en direct, `/api/conductor-chat`
+  après redémarrage) et le journal (`turn-core.js`, `activite.js`) affichent
+  le badge « ⚠ langue » et « voir l'original ».
+- Fake claude : `FAKE_CLAUDE_DUMP_PROMPT`, `FAKE_CLAUDE_REPLY`,
+  `FAKE_CLAUDE_TRANSLATION` et `FAKE_PIPE_LANG=en`.
+- Recettes :
+  - `_test_language.mjs` (48 contrôles, vrai dispatch) ;
+  - HTTP `language-settings` ;
+  - navigateur `lang-settings`, `lang-badge` et `models-langs`.
+- **Nouveaux fichiers de code : commentaires en anglais.** Un fichier existant
+  garde sa langue tant que l'utilisateur n'a pas décidé (liste fournie le
+  2026-10-09).
+
 ## Pipelines obligatoires — phase 4 : Développement complet (0.49.0)
 
 - **Plan complet** (`devCatalog`, `planSteps`) : Comprendre → Concevoir →

@@ -645,6 +645,35 @@ async function apiChecks(sb) {
     fs.rmSync(routingFile, { force: true });
     return 'constat de doc → Livrer ; pause claire ; abandon effectif';
   });
+  // 0.51.0 — « La langue de la discussion doit pouvoir etre fixee et tu dois t'y tenir ».
+  await check(S, 'language-settings', 'Langue de discussion : réglage global + exception par projet (fichier dédié, pas config.json), table « models × langues fiables », essai de langue, origine étrangère refusée', async () => {
+    const g0 = await get('/api/language');
+    if (g0.status === 404) NA('réglage de langue absent de cet état du code');
+    let v = await g0.json();
+    assert(v.default === 'fr' && v.langs.fr && v.projectNames.includes('omega'), `défaut : ${JSON.stringify({ d: v.default })}`);
+    const put = (p, body, extra = {}) => fetch(sb.url + p, { method: 'PUT', headers: { ...H, 'content-type': 'application/json', ...extra }, body: JSON.stringify(body) });
+    assert((await put('/api/language', { default: 'xx' })).status === 400, 'langue inconnue acceptée');
+    assert((await put('/api/language', { default: 'en' }, { Origin: 'http://evil.example' })).status === 403, 'origine étrangère acceptée');
+    v = await (await put('/api/language', { default: 'en' })).json();
+    assert(v.default === 'en', 'langue globale non enregistrée');
+    v = await (await put('/api/language/project/omega', { lang: 'es' })).json();
+    assert(v.projects.omega === 'es', 'exception non enregistrée');
+    assert((await put('/api/language/project/inconnu', { lang: 'es' })).status === 404, 'projet inconnu accepté');
+    const file = JSON.parse(fs.readFileSync(path.join(sb.root, 'language-settings.json'), 'utf8'));
+    assert(file.default === 'en' && file.projects.omega === 'es' && !fs.readFileSync(path.join(sb.root, 'config.json'), 'utf8').includes('"projects":{"omega"'), 'fichier dédié attendu');
+    await put('/api/language/project/omega', { lang: null });
+    await put('/api/language', { default: 'fr' });
+    const ml = await json('/api/model-languages');
+    assert(ml.defaults?.rules?.length && Array.isArray(ml.models), 'table des models absente');
+    const pm = await (await put(`/api/model-languages/${encodeURIComponent('vendor/petit-1')}`, { langs: ['en'] })).json();
+    assert(pm.models.find(m => m.model === 'vendor/petit-1')?.source === 'override', 'override de model non enregistré');
+    const t = await fetch(`${sb.url}/api/model-languages/test`, { method: 'POST', headers: { ...H, 'content-type': 'application/json' }, body: JSON.stringify({ provider: 'anthropic', model: 'claude-essai-1', lang: 'fr' }) });
+    const tj = await t.json();
+    assert('detected' in tj || tj.why, `essai de langue : ${JSON.stringify(tj).slice(0, 200)}`);
+    await put(`/api/model-languages/${encodeURIComponent('vendor/petit-1')}`, { langs: null });
+    fs.rmSync(path.join(sb.root, 'language-settings.json'), { force: true });
+    return `réglage, exception, table (${ml.defaults.rules.length} règles), essai (${tj.detected || tj.why})`;
+  });
   await check(S, 'mark-read', 'Marquer lu (/api/mark-read) persiste le marqueur', async () => {
     const r = await post('/api/mark-read', { project: 'lambda' });
     assert(r.ok, `HTTP ${r.status}`);

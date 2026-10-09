@@ -215,6 +215,28 @@ class Api(private val store: ServerStore) {
         }
     }
 
+    /** Langue de discussion (serveur 0.51.0) : code courant, ou null si la route n'existe pas encore. */
+    suspend fun fetchLanguage(): String? = withContext(Dispatchers.IO) {
+        try {
+            http.newCall(req("/api/language").build()).execute().use { resp ->
+                if (!resp.isSuccessful) null
+                else (json.parseToJsonElement(resp.body!!.string()) as? kotlinx.serialization.json.JsonObject)
+                    ?.get("default")?.toString()?.trim('"')
+            }
+        } catch (_: Exception) { null }
+    }
+
+    /** Change la langue de discussion (chef et musiciens), pour tous les projets sans exception. */
+    suspend fun setLanguage(lang: String) = withContext(Dispatchers.IO) {
+        val payload = buildJsonObject { put("default", lang); put("by", "android") }
+        val body = Json.encodeToString(payload).toRequestBody("application/json".toMediaType())
+        http.newCall(
+            req("/api/language").put(body).header("Content-Type", "application/json").build()
+        ).execute().use { resp ->
+            if (!resp.isSuccessful) error("langue refusée (${resp.code})")
+        }
+    }
+
     suspend fun markRead(project: String) = withContext(Dispatchers.IO) {
         val payload = buildJsonObject {
             put("project", project)

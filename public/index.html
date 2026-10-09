@@ -178,6 +178,7 @@
         <button class="mr-obs-btn" type="button" aria-expanded="false" title="Classifications récentes des entrées (pipelines, phase 1 : observation)">Observation</button>
         <button class="mr-gaps-btn" type="button" aria-expanded="false" title="Demandes ou étapes sans case précise : propositions à accepter ou rejeter">Lacunes proposées</button>
         <button class="mr-keys-btn" type="button" aria-expanded="false" title="Clés NVIDIA et OpenRouter : état, saisie, test, suppression">🔑 Clés API</button>
+        <button class="mr-langs-btn" type="button" aria-expanded="false" title="Langues dans lesquelles chaque model écrit de façon fiable (0.51.0)">🌐 Langues des models</button>
       </div>
       <p class="mr-note">Choix enregistrés pour plus tard : les tours en cours ne les utilisent pas encore.</p>
       <div class="mr-body"></div>
@@ -339,6 +340,15 @@
       <button data-v="codex">CODEX</button>
     </div>
   </div>
+  <!-- Langue de discussion (0.51.0, public/langue.js) -->
+  <div id="lang-settings" class="tweaks-row lang-settings">
+    <div class="tweaks-lbl">Langue de discussion (chef et musiciens)</div>
+    <label class="lang-field">Langue
+      <select id="lang-default" aria-label="Langue de discussion"></select>
+    </label>
+    <div class="lang-projects"></div>
+    <div class="lang-note" aria-live="polite"></div>
+  </div>
   <!-- Lecture audio des réponses du chef (0.35.0, public/tts.js) -->
   <div id="tts-settings" class="tweaks-row tts-settings">
     <div class="tweaks-lbl">Lecture audio (voix du navigateur, locale)</div>
@@ -375,6 +385,7 @@
      app.js les appelle, et `App` est résolu au moment de l'appel. -->
 <script src="./turn-core.js?v=0.45.0"></script>
 <script src="./tts.js?v=0.35.0"></script>
+<script src="./langue.js?v=0.51.0"></script>
 <script src="./activite.js?v=0.45.0"></script>
 <script src="./salle.js?v=0.45.0"></script>
 <script src="./projets.js?v=0.31.0"></script>

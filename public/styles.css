@@ -916,6 +916,17 @@ a.pill { text-decoration: none; }   /* #btn-pupitre is an <a> styled as a pill *
   border-radius: 999px; padding: 1px 6px; margin-left: 6px;
 }
 
+/* Language of discussion (0.51.0): reply rewritten into the chosen language. */
+.cv-langtag {
+  font-size: 0.5625rem; letter-spacing: 0.08em;
+  color: var(--st-input);
+  border: 1px dashed color-mix(in srgb, var(--st-input) 55%, transparent);
+  border-radius: 999px; padding: 1px 6px; margin-left: 6px; cursor: help;
+}
+.cv-lang-orig { margin-top: 6px; font-size: 0.75rem; color: var(--fg-2); }
+.cv-lang-orig > summary { cursor: pointer; }
+.jt-langtag { font-size: 0.625rem; color: var(--st-input); border: 1px dashed currentColor; border-radius: 999px; padding: 0 5px; margin-left: 6px; }
+
 /* Musician question — jumps the basket, needs an answer now. */
 .cv-bubble.is-question {
   align-self: flex-start;
@@ -2812,3 +2823,18 @@ html.anim-paused *::after {
   /* Au-dessus du fil, pas des cadres du Pilotage (rail de 330 px à droite). */
   .tts-bar { right: 372px; }
 }
+
+/* Language of discussion settings (0.51.0) */
+.lang-settings { border-top: 1px solid var(--card-border); padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.lang-field { display: flex; flex-direction: column; gap: 4px; font-size: 0.75rem; color: var(--fg-1); }
+.lang-settings select { background: var(--input-bg); color: var(--fg-0); border: 1px solid var(--card-border); border-radius: 6px; padding: 4px; font-size: 0.75rem; max-width: 100%; min-height: 32px; }
+.lang-sub { font-size: 0.6875rem; color: var(--fg-2); margin-top: 4px; }
+.lang-list { list-style: none; margin: 0; padding: 0; font-size: 0.75rem; }
+.lang-list li { display: flex; gap: 6px; align-items: center; }
+.lang-empty { color: var(--fg-3); }
+.lang-add { display: flex; gap: 6px; flex-wrap: wrap; }
+.lang-add button, .lang-del { font-size: 0.75rem; min-height: 32px; }
+.lang-note { font-size: 0.6875rem; color: var(--fg-2); }
+.ml-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+.ml-table td, .ml-table th { border-bottom: 1px solid var(--card-border); padding: 4px 6px; text-align: left; vertical-align: top; }
+.ml-lang { white-space: nowrap; margin-right: 6px; }

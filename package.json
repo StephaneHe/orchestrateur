@@ -1,6 +1,6 @@
 {
   "name": "claude-code-orchestrator",
-  "version": "0.50.1",
+  "version": "0.51.0",
   "private": true,
   "description": "Local Windows dashboard that pilots a fleet of headless Claude Code sub-agents from one central interactive session.",
   "type": "module",

@@ -183,5 +183,7 @@ export function createApiKeys({ root, statusFile, env = {}, fetch: fetchImpl = g
     return { ok: true, status: 200, key: status(name) };
   }
 
-  return { status, all, set, remove, test, envFile };
+  // `valueFor` : usage interne du serveur (essai de langue d'un model) ; la
+  // valeur ne part jamais dans une réponse HTTP ni dans un log.
+  return { status, all, set, remove, test, envFile, valueFor: (envName) => { const n = Object.keys(KEY_DEFS).find(k => KEY_DEFS[k].env === envName); return n ? valueOf(n)?.value || null : null; } };
 }

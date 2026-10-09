@@ -77,6 +77,9 @@ model-routing.json.v1-bak
 # Règles « toujours autoriser » par projet (0.45.0) — locales, noms de projets privés
 permission-rules.json
 permission-rules.json.*.tmp
+# Langue de discussion (0.51.0) : réglage local écrit par le serveur
+language-settings.json
+language-settings.json.*.tmp
 
 # Captures d'écran de l'UI réelle (conversations, noms de projets)
 docs/*.png

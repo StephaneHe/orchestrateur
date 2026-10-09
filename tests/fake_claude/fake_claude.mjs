@@ -109,6 +109,12 @@ async function run() {
   const userText = await readUserTurn();
   const askedModel = flag('--model');
   const servedModel = process.env.FAKE_CLAUDE_ECHO_MODEL === '1' && askedModel ? askedModel : 'fake-claude';
+  // Langue (0.51.0) : trace du prompt reçu, réponse imposée, et rôle de « reformulateur ».
+  if (process.env.FAKE_CLAUDE_DUMP_PROMPT) fs.appendFileSync(process.env.FAKE_CLAUDE_DUMP_PROMPT, JSON.stringify({ model: askedModel, prompt: userText }) + '\n');
+  const isReformulation = /^\[REFORMULATION\]/.test(userText);
+  const fixedReply = isReformulation
+    ? (process.env.FAKE_CLAUDE_TRANSLATION || 'Réponse reformulée en français : la suite de tests passe, le travail est terminé et rien ne reste à faire pour cette demande.')
+    : (process.env.FAKE_CLAUDE_REPLY || null);
 
   // 1. system/init
   emit({
@@ -139,7 +145,7 @@ async function run() {
     fs.writeFileSync(path.join(process.cwd(), rel), `écrit par ${askedModel || 'fake'}\n`);
   }
 
-  if (process.env.FAKE_CLAUDE_PIPELINE === '1' && /^PIPELINE_STEP=/m.test(userText)) pipelineStep(userText);
+  if (!isReformulation && process.env.FAKE_CLAUDE_PIPELINE === '1' && /^PIPELINE_STEP=/m.test(userText)) pipelineStep(userText);
 
   // 2. Optional tool_use rounds
   for (let i = 0; i < TOOL_USES; i++) {
@@ -197,7 +203,7 @@ async function run() {
     message: {
       ...(process.env.FAKE_CLAUDE_ECHO_MODEL === '1' ? { model: servedModel } : {}),
       content: [
-        { type: 'text', text: `fake reply to: ${userText.slice(0, 60)}${synthesisNote}${permNote}` },
+        { type: 'text', text: fixedReply || `fake reply to: ${userText.slice(0, 60)}${synthesisNote}${permNote}` },
       ],
     },
   });
@@ -217,7 +223,7 @@ async function run() {
   emit({
     type: 'result',
     session_id: sessionId,
-    result: (synthesisNote ? `fake result${synthesisNote}` : 'fake result') + permNote,
+    result: fixedReply || ((synthesisNote ? `fake result${synthesisNote}` : 'fake result') + permNote),
     ...(process.env.FAKE_CLAUDE_PERM ? { permission_denials: permDenials } : {}),
     total_cost_usd: 0,
     duration_ms: elapsed,
@@ -245,6 +251,9 @@ async function run() {
 //   FAKE_PIPE_REFACTOR=1        4c modifie vraiment le code (sinon RIEN_A_REFACTORER)
 //   FAKE_PIPE_COVERED=<k>[,…]   l'item k est déjà couvert : test qui passe + DEJA_COUVERT
 //   FAKE_PIPE_NOCLAIM=1         … mais sans écrire DEJA_COUVERT
+//   FAKE_CLAUDE_DUMP_PROMPT=<f>  ajoute chaque prompt reçu à ce fichier (JSON par ligne)
+//   FAKE_CLAUDE_REPLY=<texte>    réponse finale imposée (ex. un paragraphe en anglais)
+//   FAKE_CLAUDE_TRANSLATION=<t>  réponse d'une demande « [REFORMULATION] » (défaut : un texte français)
 //   FAKE_PIPE_REVIEW=doc|hors|mixte[:n]  revue : constat de doc (items / hors_tdd / les deux sortes)
 /** Numéro de l'item de la liste de tests (« ITEM=<n>: … »), ou 0 en léger. */
 function item(text) { return Number((/^ITEM=(\d+):/m.exec(text) || [])[1] || 0); }
@@ -268,7 +277,10 @@ function pipelineStep(text) {
   switch (step) {
     case 'comprendre': w(artefact, `# Compréhension\n\nLa question porte sur le projet. Fichiers utiles : \`package.json\`${bad ? ', `inexistant/fichier.js`' : ''}.\n`); break;
     case 'rechercher': w(artefact, '# Recherche\n\n- package.json : script de test « node --test ».\n'); if (bad) w('pollution.txt', 'modifié par la recherche\n'); break;
-    case 'repondre': w(artefact, '# Réponse\n\nRéponse simulée : le projet se teste avec `npm test`. Recommandation : rien à changer.\n'); break;
+    // FAKE_PIPE_LANG=en : la réponse est écrite en anglais (portier de langue du moteur).
+    case 'repondre': w(artefact, process.env.FAKE_PIPE_LANG === 'en'
+      ? '# Answer\n\nSimulated answer: the project is tested with `npm test`, and there is nothing to change for this request at the moment.\n'
+      : '# Réponse\n\nRéponse simulée : le projet se teste avec `npm test`. Recommandation : rien à changer.\n'); break;
     case 'concevoir':
       w(artefact, bad ? 'Un plan sans sections.\n' : '# Plan\n\n## Approche\nUn module par comportement.\n\n## Étapes\n1. un test par item\n');
       break;

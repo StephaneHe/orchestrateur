@@ -896,6 +896,7 @@
       <section class="mr-history" ${st.showHistory ? "" : "hidden"} aria-label="Historique des changements">
         <h2 class="mr-h2">Historique</h2>${historyHtml()}
       </section>
+      <section class="mr-langs" hidden aria-label="Langues des models"></section>
       <section class="mr-keys" ${st.showKeys ? "" : "hidden"} aria-label="Clés API">
         <h2 class="mr-h2">Clés API</h2>${keysHtml()}
       </section>
@@ -1194,6 +1195,7 @@
       if (e.target.closest(".mr-reco-empty")) { st.recoNotice = null; recoPrepare("empty"); return; }
       if (e.target.closest(".mr-reco-ok-btn")) { recoConfirm(); return; }
       if (e.target.closest(".mr-reco-cancel")) { st.recoConfirm = null; patch(); return; }
+      if (e.target.closest(".mr-langs-btn") && global.Langue) { global.Langue.toggleModels(root()); return; }
       if (e.target.closest(".mr-keys-btn")) { st.showKeys = !st.showKeys; renderKeys(); if (st.showKeys) loadKeys(); return; }
       const kt = e.target.closest(".mr-key-test");
       if (kt) { keyAction(kt.closest("form").dataset.key, "test"); return; }

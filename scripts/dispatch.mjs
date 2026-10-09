@@ -1206,6 +1206,25 @@ if (projectName !== CONDUCTOR) prompt = prompt + backgroundRule(callbackProject 
 if (projectName !== CONDUCTOR) prompt = prompt + userRequirementsRule();
 if (projectName !== CONDUCTOR) prompt = prompt + simpleCommandsRule();
 
+// ---------- langue de discussion (0.51.0) ------------------------------------
+// Demande utilisateur : « La langue de la discussion doit pouvoir etre fixee et
+// tu dois t'y tenir. » Une consigne écrite une fois (CLAUDE.md du chef) n'a pas
+// suffi : le chef dérivait vers l'anglais au fil d'un long contexte anglais.
+// La consigne part donc à la FIN de CHAQUE tour (chef, slots, musiciens, étapes,
+// branches et relecture du mode double, codex/NVIDIA/OpenRouter), là où elle
+// pèse le plus. Un model qui maîtrise mal la langue choisie travaille en
+// anglais ; sa sortie destinée à l'utilisateur est reformulée (portier, plus bas).
+const langMod = await import('./language.mjs');
+const LANG_TARGET = langMod.languageFor(ROOT, projectName);
+const LANG_MODEL = modelOverride || (provider === 'claude' ? model
+  : provider === 'codex' ? (project.codexModel || config.defaults?.codexModel || 'gpt (config codex)')
+  : project[`${provider}Model`] || '');
+const LANG_WORK = langMod.workingLanguage(ROOT, LANG_MODEL, LANG_TARGET);
+prompt = prompt + langMod.languageRule(LANG_TARGET, LANG_WORK.working);
+// Le portier ne vérifie que ce qui est destiné à l'utilisateur : ni une branche
+// du mode double, ni un tour d'étape (le moteur vérifie le résultat final).
+const LANG_GATE = !DUAL_BRANCH && !PIPE_STEP;
+
 // ---------- env scrub -------------------------------------------------------
 
 const env = { ...process.env };
@@ -1291,6 +1310,31 @@ if (Number.isFinite(inheritedWakeGen) && inheritedWakeGen > 0) {
 // Diagnostic en une ligne : le tour de chef dit lui-même qu'il est en rapport seul.
 if (POOL_ASSIGN && process.env.DISPATCH_REPORT_ONLY === '1') userPromptEvent.reportOnly = true;
 if (testLabel) userPromptEvent.test = { label: testLabel };
+// Langue du tour : cible, langue de travail du model, et pourquoi.
+userPromptEvent.lang = { target: LANG_TARGET, working: LANG_WORK.working, model: LANG_MODEL || null, reliable: LANG_WORK.reliable, source: LANG_WORK.source };
+
+/**
+ * Portier de langue (0.51.0) : vérifie le texte final destiné à l'utilisateur ;
+ * en cas d'écart, écrit l'événement du journal, puis la version reformulée
+ * (message synthétique marqué `lang`, l'original y reste consultable), et
+ * renvoie le texte à mettre dans le result. Jamais bloquant : une erreur rend
+ * le texte tel quel.
+ */
+let lastAssistantTextSeen = '';
+async function gateFinalText(text) {
+  if (!LANG_GATE || !text || !String(text).trim()) return { text };
+  try {
+    const g = await langMod.languageGate(ROOT, { text, target: LANG_TARGET, working: LANG_WORK.working, model: LANG_MODEL, project: projectName });
+    for (const e of g.events) logStream.write(JSON.stringify({ ...e, timestamp: new Date().toISOString() }) + '\n');
+    if (g.lang) {
+      logStream.write(JSON.stringify({ type: 'assistant', message: { model: '<synthetic>', role: 'assistant', content: [{ type: 'text', text: g.text }] },
+        lang: g.lang, timestamp: new Date().toISOString() }) + '\n');
+      const { original, ...meta } = g.lang;
+      return { text: g.text, lang: meta };
+    }
+  } catch (e) { console.error(`[dispatch] portier de langue : ${e.message}`); }
+  return { text };
+}
 // Trace du --new-session : ce tour ne reprend PAS la session précédente.
 if (NEW_SESSION && provider === 'claude') {
   userPromptEvent.newSession = true;
@@ -1899,7 +1943,7 @@ function runCodex(isFailover = false) {
   });
 
   let codexDone = false;
-  function finishCodex(code, signal) {
+  async function finishCodex(code, signal) {
     if (codexDone) return;
     codexDone = true;
     clearInterval(heartbeat);
@@ -1958,6 +2002,10 @@ function runCodex(isFailover = false) {
       } catch {}
     }
 
+    // Portier de langue (0.51.0) : texte final destiné à l'utilisateur.
+    let resultLang = null;
+    if (!isErr && !isFailover) { const g = await gateFinalText(finalText); finalText = g.text; resultLang = g.lang || null; }
+
     // THE event everything downstream keys on: server.js's reducer, the
     // viewer's panel state, fleet-status.mjs and the chef's callback all
     // look for a Claude-shaped `result`. Without it the panel never leaves
@@ -1967,6 +2015,7 @@ function runCodex(isFailover = false) {
       subtype: isErr ? 'error' : 'success',
       is_error: isErr,
       result: finalText,
+      ...(resultLang ? { lang: resultLang } : {}),
       session_id: fakeSid,
       thread_id: codexThreadId,
       num_turns: 1,
@@ -2218,24 +2267,56 @@ function runClaude() {
       } else if (ev.type === 'assistant') {
         // The CLI often surfaces the limit notice as the final assistant text.
         for (const b of ev.message?.content || []) {
-          if (b?.type === 'text') noteLimitEvidence(b.text);
+          if (b?.type === 'text') { noteLimitEvidence(b.text); if (b.text?.trim()) lastAssistantTextSeen = b.text; }
         }
       }
     }
     if (lineQueue.length) scheduleDrain();
   }
 
+  // Portier de langue (0.51.0) : le result final est RETENU le temps de vérifier
+  // sa langue (et de le reformuler au besoin), pour que le pump, les questions,
+  // le fil du chef et le journal voient tous la bonne version. Hors portier,
+  // les octets partent tels quels, comme avant.
+  let heldResultLine = null;
+  let gateReleased = false;
   child.stdout.on('data', (chunk) => {
-    // O(1): append bytes to log + line buffer, defer parse work.
-    logStream.write(chunk);
+    if (!LANG_GATE) logStream.write(chunk);   // O(1): append bytes to log + line buffer, defer parse work.
     stdoutTail += chunk.toString('utf8');
     const lines = stdoutTail.split(/\r?\n/);   // Patch 1.1: CRLF-tolerant
     stdoutTail = lines.pop() ?? '';
     if (lines.length) {
-      for (const l of lines) lineQueue.push(l);
+      for (const l of lines) {
+        if (LANG_GATE && gateReleased) logStream.write(l + '\n');
+        else if (LANG_GATE) {
+          if (/"type"\s*:\s*"result"/.test(l) && !/"num_turns"\s*:\s*0\b/.test(l)) {
+            if (heldResultLine) logStream.write(heldResultLine + '\n');   // un result précédent n'était pas le dernier
+            heldResultLine = l;
+          } else logStream.write(l + '\n');
+        }
+        lineQueue.push(l);
+      }
       scheduleDrain();
     }
   });
+
+  async function releaseHeldResult() {
+    if (!LANG_GATE || gateReleased) return;
+    gateReleased = true;
+    if (stdoutTail) { logStream.write(stdoutTail + '\n'); stdoutTail = ''; }
+    const line = heldResultLine;
+    heldResultLine = null;
+    if (!line) return;
+    let ev;
+    try { ev = JSON.parse(line); } catch { logStream.write(line + '\n'); return; }
+    const isErr = !!ev.is_error || (typeof ev.subtype === 'string' && ev.subtype.startsWith('error')) || !!ev.synthetic;
+    if (!isErr) {
+      const text = typeof ev.result === 'string' && ev.result.trim() ? ev.result : lastAssistantTextSeen;
+      const g = await gateFinalText(text);
+      if (g.lang) { ev.result = g.text; ev.lang = g.lang; }
+    }
+    logStream.write(JSON.stringify(ev) + '\n');
+  }
 
   child.stderr.on('data', (chunk) => {
     logStream.write(chunk);
@@ -2254,12 +2335,17 @@ function runClaude() {
   // (in either order, both with reasonable timing); this guarantees we do the
   // flush + sidecar cleanup exactly once.
   let lifecycleClosed = false;
-  function lifecycleEnd(code, signal) {
+  async function lifecycleEnd(code, signal) {
     if (lifecycleClosed) return;
     lifecycleClosed = true;
+    // Portier : `exit` peut précéder les derniers octets de stdout — on attend la
+    // fin du flux (3 s au plus) pour ne retenir aucun result tardif.
+    if (LANG_GATE && !child.stdout.readableEnded) await new Promise(r => { child.stdout.once('end', r); setTimeout(r, 3000); });
     // Drain any pending queued lines before we shut the log so we don't lose
     // a final `result` observation (which may carry the limit message).
     try { processLineQueue(); } catch {}
+    // Le result retenu par le portier de langue part maintenant (reformulé au besoin).
+    try { await releaseHeldResult(); } catch (e) { console.error(`[dispatch] portier de langue : ${e.message}`); }
 
     // Did this turn die because the Claude account is exhausted? Requires
     // BOTH a limit message and an actual failure — see noteLimitEvidence.

@@ -11,6 +11,59 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.51.0] - 2026-10-09
+
+Langue de discussion. Demande utilisateur : « La langue de la discussion doit
+pouvoir etre fixee et tu dois t'y tenir. Seul le code et les documents qui s'y
+attachent (doc, ...) doivent etre en anglais. » — et : « Cette regle doit
+s'appliquer aux musiciens aussi, si la langue choisie n'est pas un probleme
+pour le model utilise ».
+
+### Added
+- (server) **Réglage « langue de discussion »** : global, avec une exception
+  possible par projet.
+  - Il vit dans `language-settings.json`, écrit par le serveur et non
+    versionné (jamais config.json). Valeur actuelle : français.
+  - Routes `GET/PUT /api/language` et `PUT /api/language/project/:name` ; les
+    écritures exigent la même origine (`sameOriginOnly`).
+  - Il se règle dans le panneau ⚙ du dashboard et dans l'app Android.
+- (server) **Consigne injectée par le code à la fin de CHAQUE tour** : chef,
+  slots du pool, musiciens, étapes de pipeline, branches et relecture du mode
+  double, codex/NVIDIA/OpenRouter.
+  - Réponses, rapports, questions, NEEDS_USER_INPUT et messages de pause sont
+    dans la langue de discussion.
+  - Code, commentaires, messages de commit et documentation technique sont en
+    anglais ; un document existant garde sa langue.
+  - La cible est tracée dans `user_prompt.lang`.
+- (server) **Vérification par le code (portier de langue)** : la langue du
+  texte final destiné à l'utilisateur (result du chef, des musiciens, du
+  moteur ; questions comprises) est détectée par une heuristique locale.
+  - Méthode : mots-outils de six langues, sur la prose seulement, sans
+    dépendance ni clé.
+  - En cas d'écart, le result est retenu, puis reformulé par un appel court
+    (`claude-haiku-5-5` par défaut), sans changer le fond.
+  - Le texte publié est la version reformulée ; l'original reste consultable.
+  - `system/language_mismatch` est écrit dans le journal, et le badge
+    « ⚠ langue » s'affiche dans le fil du chef et dans le journal du musicien,
+    avec « voir l'original ».
+  - Jamais bloquant : si la reformulation échoue, le badge reste et le texte
+    d'origine est gardé.
+- (server) **Table « models × langues fiables »** : `data/model-languages.json`
+  (règles par motif) et overrides locaux.
+  - Valeurs par défaut prudentes : Claude, GPT et grands models multilingues =
+    toutes les langues usuelles ; model inconnu = anglais seulement.
+  - Elle est éditable dans la page Models (« 🌐 Langues des models »), avec un
+    bouton « Tester la langue » : court essai, jugé par la détection, puis
+    enregistré.
+  - Un model qui maîtrise mal la langue choisie reçoit la consigne en anglais ;
+    sa sortie destinée à l'utilisateur est reformulée, et c'est indiqué dans le
+    journal (« ↺ langue »).
+- (server) Les messages produits par l'orchestrateur suivent la langue de
+  discussion : pauses de pipeline, réponses aux pauses, échecs, lacunes,
+  autorisations et notifications de bureau.
+- (android) 0.10.0 : réglage « Langue de discussion » dans l'écran Réglages
+  (versionCode 20).
+
 ## [0.50.1] - 2026-10-09
 
 Retour utilisateur sur une pause incomprise (« la liste n'est pas vide après

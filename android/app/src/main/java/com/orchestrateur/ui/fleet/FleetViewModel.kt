@@ -152,6 +152,22 @@ class FleetViewModel(
     private val _serverVersion = MutableStateFlow<String?>(null)
     val serverVersion: StateFlow<String?> = _serverVersion
 
+    // Langue de discussion (serveur 0.51.0) : null = route absente (serveur plus ancien).
+    private val _language = MutableStateFlow<String?>(null)
+    val language: StateFlow<String?> = _language
+    private val _languageError = MutableStateFlow<String?>(null)
+    val languageError: StateFlow<String?> = _languageError
+
+    fun refreshLanguage() { viewModelScope.launch { _language.value = api.fetchLanguage() } }
+
+    fun setLanguage(lang: String) {
+        viewModelScope.launch {
+            runCatching { api.setLanguage(lang) }
+                .onSuccess { _language.value = lang; _languageError.value = null }
+                .onFailure { _languageError.value = it.message }
+        }
+    }
+
     /** Contexte de réponse du composer (réponse via le chef / à propos de X). */
     var answerContext: AnswerContext? by mutableStateOf(null)
         private set

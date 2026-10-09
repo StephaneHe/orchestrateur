@@ -77,6 +77,7 @@ import { createPermissionStore, mountPermissionRoutes } from './scripts/permissi
 // Pipelines, phase 1 (0.41.0) : chaque entrée est classée et journalisée, sans effet.
 import { createObserver, TerminalLineBuffer, ENTRY_KINDS } from './scripts/pipeline-observe.mjs';
 import { readEnforcement, ENGINE_PIPELINES, RUN_RE } from './scripts/pipeline-engine.mjs';
+import * as Lang from './scripts/language.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -738,12 +739,16 @@ function notifyGap(rec) {
     `${g.why}. Traitée en ${rec.pipeline}. Proposition : ${g.proposal?.text || '—'}` +
     (g.alternative ? `. Alternative : ${g.alternative.text}` : '') +
     `. À accepter ou rejeter dans la page Models → « Lacunes ». Remonte-la à l'utilisateur.`;
-  try {
-    fs.appendFileSync(path.join(LOGS_DIR, `${conductorName()}.jsonl`),
-      '\n' + JSON.stringify({ type: 'user_prompt', text, timestamp: new Date().toISOString(), source: 'pipeline-gap' }) + '\n');
-    fireDesktopNotification('pipeline-gap', `Lacune de pipeline : ${String(rec.head || '').slice(0, 80)}`);
-    console.log(`[pipeline-gap] ${g.key} signalée au chef`);
-  } catch (e) { debugLog(`[pipeline-gap] ${e.message}`); }
+  // Langue de discussion (0.51.0) : le message et la notification de bureau.
+  (async () => {
+    try {
+      const said = await inChatLanguage(text);
+      fs.appendFileSync(path.join(LOGS_DIR, `${conductorName()}.jsonl`),
+        '\n' + JSON.stringify({ type: 'user_prompt', text: said, timestamp: new Date().toISOString(), source: 'pipeline-gap' }) + '\n');
+      fireDesktopNotification('pipeline-gap', await inChatLanguage(`Lacune de pipeline : ${String(rec.head || '').slice(0, 80)}`));
+      console.log(`[pipeline-gap] ${g.key} signalée au chef`);
+    } catch (e) { debugLog(`[pipeline-gap] ${e.message}`); }
+  })();
 }
 function sweepGaps(notify) {
   try {
@@ -2602,6 +2607,63 @@ function sameOriginOnly(req, res, next) {
   }
   next();
 }
+// ---------- Langue de discussion (0.51.0) ------------------------------------
+// Demande utilisateur : « La langue de la discussion doit pouvoir etre fixee et
+// tu dois t'y tenir. » Réglage global + override par projet + table « models ×
+// langues fiables », dans language-settings.json (écrit ici seulement ; jamais
+// config.json). dispatch.mjs le relit à chaque tour : aucun redémarrage.
+function languageView() {
+  const s = Lang.readSettings(__dirname);
+  return { ok: true, langs: Lang.LANGS, default: s.default, projects: s.projects,
+    projectNames: config.projects.map(p => p.name), reformulateModel: s.reformulateModel, check: s.check, updatedAt: s.updatedAt };
+}
+app.get('/api/language', (req, res) => res.json(languageView()));
+app.put('/api/language', sameOriginOnly, express.json({ limit: '2kb' }), (req, res) => {
+  const r = Lang.setDefaultLanguage(__dirname, String(req.body?.default || ''), req.body?.by || 'dashboard');
+  if (!r.ok) return res.status(r.status).json(r);
+  console.log(`[langue] langue de discussion : ${req.body.default}`);
+  res.json(languageView());
+});
+app.put('/api/language/project/:name', sameOriginOnly, express.json({ limit: '2kb' }), (req, res) => {
+  const name = String(req.params.name || '');
+  if (!config.projects.some(p => p.name === name)) return res.status(404).json({ ok: false, error: `projet inconnu : ${name}` });
+  const lang = req.body?.lang == null || req.body.lang === '' ? null : String(req.body.lang);
+  const r = Lang.setProjectLanguage(__dirname, name, lang, req.body?.by || 'dashboard');
+  if (!r.ok) return res.status(r.status).json(r);
+  res.json(languageView());
+});
+/** Models connus : ceux des cases de la page Models, plus les overrides. */
+function modelLanguagesView() {
+  let assignments = {};
+  try { assignments = JSON.parse(fs.readFileSync(path.join(__dirname, 'model-routing.json'), 'utf8')).assignments || {}; } catch {}
+  const seen = new Map();
+  for (const a of Object.values(assignments)) {
+    for (const x of [a, a?.second]) if (x?.model && x.provider !== 'local') seen.set(x.model, x.provider);
+  }
+  for (const id of Object.keys(Lang.readSettings(__dirname).models)) if (!seen.has(id)) seen.set(id, null);
+  const models = [...seen].map(([model, provider]) => ({ model, provider, ...Lang.reliableLanguages(__dirname, model) }))
+    .sort((a, b) => a.model.localeCompare(b.model));
+  return { ok: true, langs: Lang.LANGS, defaults: Lang.modelLanguageDefaults(__dirname), models };
+}
+app.get('/api/model-languages', (req, res) => res.json(modelLanguagesView()));
+app.put('/api/model-languages/:model', sameOriginOnly, express.json({ limit: '2kb' }), (req, res) => {
+  const langs = req.body?.langs == null ? null : req.body.langs;
+  const r = Lang.setModelLanguages(__dirname, String(req.params.model || ''), langs, { by: req.body?.by || 'dashboard' });
+  if (!r.ok) return res.status(r.status).json(r);
+  res.json(modelLanguagesView());
+});
+app.post('/api/model-languages/test', sameOriginOnly, express.json({ limit: '2kb' }), async (req, res) => {
+  const { provider, model, lang } = req.body || {};
+  if (!model || !/^[A-Za-z0-9][A-Za-z0-9._:\/@+~-]{0,159}$/.test(String(model))) return res.status(400).json({ ok: false, error: 'model invalide' });
+  const r = await Lang.testModelLanguage(__dirname, { provider: String(provider || ''), model: String(model), lang: String(lang || Lang.readSettings(__dirname).default),
+    keys: (name) => BOOT_PROVIDER_KEYS[name] || apiKeys.valueFor(name) });
+  res.status(r.why && !('detected' in r) ? 502 : 200).json({ ...r, ...modelLanguagesView() });
+});
+/** Message du serveur à l'utilisateur ou au chef, dans la langue de discussion (rédigé en français). */
+function inChatLanguage(text, project = conductorName()) {
+  return Lang.localize(__dirname, text, Lang.languageFor(__dirname, project));
+}
+
 app.get('/api/api-keys', (req, res) => {
   res.json({ ok: true, keys: apiKeys.all() });
 });
@@ -2666,15 +2728,15 @@ const permissions = createPermissionStore({
   onNew(req) {
     const min = Math.max(1, Math.round((req.deadline - Date.now()) / 60000));
     console.log(`[autorisation] ${req.project} attend : ${req.tool} — ${req.preview} (${min} min)`);
-    fireDesktopNotification(`${req.project} attend une autorisation`, `${req.tool} : ${req.preview}`);
+    inChatLanguage(`${req.project} attend une autorisation`, req.project).then(title => fireDesktopNotification(title, `${req.tool} : ${req.preview}`)).catch(() => {});
     // Le chef est prévenu pour le signaler à l'utilisateur (pas pour décider).
     if (!isConductorSlot(req.project)) {
       const text = `[AUTORISATION EN ATTENTE] ${req.project} attend la décision de l'utilisateur pour ${req.tool} : « ${req.preview} » ` +
         `(risque ${req.risk.level} : ${req.risk.tags.join(', ')}). Son tour est en pause ${min} min, puis refus « expiré sans réponse ». ` +
         `Signale-le à l'utilisateur : il décide depuis le dashboard (bandeau 🔐) ou l'app. Tu ne peux pas décider à sa place.`;
-      try {
-        fs.appendFileSync(path.join(LOGS_DIR, `${conductorName()}.jsonl`), '\n' + JSON.stringify({ type: 'user_prompt', text, source: 'permission', timestamp: new Date().toISOString() }) + '\n');
-      } catch (e) { debugLog(`[autorisation] notification du chef impossible : ${e.message}`); }
+      inChatLanguage(text).then((said) => {
+        fs.appendFileSync(path.join(LOGS_DIR, `${conductorName()}.jsonl`), '\n' + JSON.stringify({ type: 'user_prompt', text: said, source: 'permission', timestamp: new Date().toISOString() }) + '\n');
+      }).catch((e) => debugLog(`[autorisation] notification du chef impossible : ${e.message}`));
     }
   },
   onDecided(req) {
@@ -3650,6 +3712,7 @@ app.get('/api/conductor-chat', (req, res) => {
 
   const msgs = [];
   let lastAssistantText = '';
+  let lastLang = null;     // reformulation de langue du tour (0.51.0)
   // The claude CLI's own stream-json lines carry no timestamp — only the
   // events dispatch.mjs writes itself (user_prompt, codex results) do. The
   // old `: Date.now()` fallback therefore stamped EVERY conductor bubble with
@@ -3695,6 +3758,7 @@ app.get('/api/conductor-chat', (req, res) => {
       for (const b of content) {
         if (b?.type === 'text' && b.text?.trim()) lastAssistantText = b.text.trim();
       }
+      if (ev.lang?.reformulated) lastLang = ev.lang;
     } else if (ev.type === 'result' && !ev.is_error && lastAssistantText && !isPhantomResult(ev)) {
       // A chef reply that ENDS with NEEDS_USER_INPUT used to be dropped here, so
       // the chef's own question vanished from the thread on every reload. Keep
@@ -3702,6 +3766,8 @@ app.get('/api/conductor-chat', (req, res) => {
       const needs = /^NEEDS_USER_INPUT:/m.test(lastAssistantText);
       const entry = { role: 'conductor', text: lastAssistantText, ts: monotonic(stampFrom(ev)) };
       if (needs) entry.question = true;
+      // Badge « ⚠ langue » et original consultable (0.51.0).
+      if (lastLang) { entry.lang = { detected: lastLang.detected, target: lastLang.target, reason: lastLang.reason, by: lastLang.by, original: lastLang.original }; lastLang = null; }
       if (lastTicket) { entry.answersTicket = lastTicket; lastTicket = null; }
       msgs.push(entry);
       lastAssistantText = '';

@@ -188,6 +188,10 @@
     if (t.outcome === "stopped" && t.stop && global.TurnCore?.stopWord) word = global.TurnCore.stopWord(t.stop).toLowerCase();
     if (t.outcome === "error" && t.subtype) word += ` · ${t.subtype}`;
     if (t.test) word = `🧪 ${word} · test « ${t.test.label} »`;
+    // Langue de discussion (0.51.0) : « ⚠ langue », réponse reformulée et original.
+    const LI = t.lang || (t.langIssue && !t.langIssue.reformulated ? t.langIssue : null);
+    const langTag = LI ? `<span class="jt-langtag" title="${t.lang ? `reçue en ${esc(LI.detected || '?')}, reformulée en ${esc(LI.target || '?')}` : `en ${esc(LI.detected || '?')} au lieu de ${esc(LI.target || '?')} — reformulation impossible${LI.error ? ` : ${esc(LI.error)}` : ''}`}">⚠ langue</span>` : "";
+    const langOrig = t.lang?.original?.text ? `<details class="cv-lang-orig"><summary>voir l'original (${esc(t.lang.detected || '?')})</summary><div class="md">${typeof mdToHtml === 'function' ? mdToHtml(t.lang.original.text) : esc(t.lang.original.text)}</div></details>` : "";
     const meta = [fmtDur(t.durationMs), Number.isFinite(t.costUsd) ? `$${t.costUsd.toFixed(2)}` : null, shortModel(t.model) || null]
       .filter(Boolean).join(" · ");
     const ask = t.prompt
@@ -261,10 +265,10 @@
         <header class="jt-head">
           <span class="jt-mark">${esc(o.mark)}</span>
           <span class="jt-when">${esc(fmtWhen(t.start || t.end))}</span>
-          <span class="jt-outcome">${esc(word)}</span>
+          <span class="jt-outcome">${esc(word)}</span>${langTag}
           <span class="jt-meta">${esc(meta)}</span>
         </header>
-        ${ask}${pipe}${dual}${perms}${did}${q}
+        ${ask}${pipe}${dual}${perms}${did}${q}${langOrig}
         ${chips.length ? `<div class="jt-chips">${chips.join("")}</div>` : ""}
         ${after.length ? `<div class="jt-after">${after.join(" · ")}</div>` : ""}
         ${toggleBtn}
