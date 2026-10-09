@@ -36,6 +36,13 @@
 // CRITICAL: scrub ANTHROPIC_API_KEY from our own env before anything spawns.
 // Any child we launch (central pty, dispatch script) inherits this env.
 delete process.env.ANTHROPIC_API_KEY;
+// Pipelines (0.48.0) : un serveur relancé DEPUIS un tour (restart-orchestrateur
+// lancé par le chef ou un musicien) hériterait de ces marqueurs, et tous ses
+// dispatches passeraient pour des lancements de ce tour (refusés sur un projet
+// en service). Le jeton d'étape, lui, n'a rien à faire dans le serveur.
+delete process.env.ORCH_TURN_PROJECT;
+delete process.env.ORCH_TURN_STEP;
+delete process.env.ORCH_STEP_TOKEN;
 // Clés des fournisseurs (0.43.0) : retirées de process.env pour qu'aucun fils
 // (terminal central, dispatch.mjs, codex) n'en hérite. Seuls nos modules les
 // lisent (.env d'abord, puis cette copie privée).
@@ -69,6 +76,7 @@ import { createApiKeys } from './scripts/api-keys.mjs';
 import { createPermissionStore, mountPermissionRoutes } from './scripts/permission-store.mjs';
 // Pipelines, phase 1 (0.41.0) : chaque entrée est classée et journalisée, sans effet.
 import { createObserver, TerminalLineBuffer, ENTRY_KINDS } from './scripts/pipeline-observe.mjs';
+import { readEnforcement, ENGINE_PIPELINES, RUN_RE } from './scripts/pipeline-engine.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -375,6 +383,7 @@ function queueEntryView(e, i) {
     callback: e.callback || null, source: e.source || null,
     attachments: (e.attachmentPaths?.length || 0) + (e.videoPaths?.length || 0),
     newSession: !!e.newSession,
+    pipeline: e.pipeline || null, pipelineResume: e.pipelineResume || null, horsPipeline: e.horsPipeline || null,
   };
 }
 
@@ -792,9 +801,13 @@ function spawnDirectDispatch(name, prompt, attachmentPaths = [], videoPaths = []
   // Mode double model (0.44.0) : la demande garde ses deux models jusqu'au lancement.
   if (typeof opts.secondModel === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/@+~-]{0,159}$/.test(opts.secondModel)) {
     args.push('--second-model', opts.secondModel);
-    if (opts.secondProvider === 'claude' || opts.secondProvider === 'codex') args.push('--second-provider', opts.secondProvider);
+    if (['claude', 'codex', 'nvidia', 'openrouter'].includes(opts.secondProvider)) args.push('--second-provider', opts.secondProvider);
     if (opts.dualMode === 'judge') args.push('--dual-mode', 'judge');
   }
+  // Pipelines (0.48.0) : la demande garde son pipeline jusqu'au lancement.
+  if (opts.pipeline === 'discussion' || opts.pipeline === 'dev') args.push('--pipeline', opts.pipeline);
+  if (typeof opts.pipelineResume === 'string' && /^p-\d{8}T\d{6}-[a-z0-9]{4,8}$/.test(opts.pipelineResume)) args.push('--pipeline-resume', opts.pipelineResume);
+  if (typeof opts.horsPipeline === 'string' && opts.horsPipeline.trim()) args.push('--hors-pipeline', opts.horsPipeline.replace(/\s+/g, ' ').trim().slice(0, 300));
 
   const child = spawn(process.execPath, args, {
     cwd: __dirname,
@@ -877,7 +890,7 @@ function drainAttempt(name, reason) {
     return;
   }
   drainPending.delete(name);
-  const { id, prompt, attachmentPaths, videoPaths, callback, source, model, provider, slot, ticket, newSession, obsId, secondModel, secondProvider, dualMode } = q.shift();
+  const { id, prompt, attachmentPaths, videoPaths, callback, source, model, provider, slot, ticket, newSession, obsId, secondModel, secondProvider, dualMode, pipeline, pipelineResume, horsPipeline } = q.shift();
   if (q.length === 0) dispatchQueue.delete(name);
   persistQueue(name);
   drainLaunchedAt.set(name, Date.now());
@@ -886,7 +899,7 @@ function drainAttempt(name, reason) {
     ` attente-pid=${Date.now() - since}ms`;
   console.log(msg); debugLog(msg);
   spawnDirectDispatch(name, prompt, attachmentPaths, videoPaths,
-    { callback, source, model, provider, slot, ticket, newSession, obsId, secondModel, secondProvider, dualMode, noQueueIfBusy: true });
+    { callback, source, model, provider, slot, ticket, newSession, obsId, secondModel, secondProvider, dualMode, pipeline, pipelineResume, horsPipeline, noQueueIfBusy: true });
 }
 
 const DRAIN_WAIT_STEP_MS = 1000;
@@ -2760,6 +2773,29 @@ mountGatewayRoutes(app, express, {
 app.get('/api/pipeline-observe', (req, res) => {
   const n = Math.min(500, Math.max(1, Number(req.query.n) || 100));
   res.json({ ok: true, mode: 'observation', classifier: 'règles-v1', entryKinds: ENTRY_KINDS, ...pipelineObserver.recent(n) });
+});
+
+// Pipelines, phase 3 (0.48.0) : mise en service (lecture seule ici ; écriture
+// par scripts/pipeline-enforce.mjs) et exécutions récentes (logs/runs/).
+app.get('/api/pipeline-enforcement', (req, res) => {
+  res.json({ ok: true, inService: ENGINE_PIPELINES, ...readEnforcement(__dirname) });
+});
+app.get('/api/pipeline-runs', (req, res) => {
+  const want = typeof req.query.project === 'string' ? req.query.project : null;
+  const n = Math.min(100, Math.max(1, Number(req.query.n) || 20));
+  const dir = path.join(LOGS_DIR, 'runs');
+  let names = [];
+  try { names = fs.readdirSync(dir).filter(r => RUN_RE.test(r)).sort().reverse(); } catch { /* aucune exécution */ }
+  const runs = [];
+  for (const r of names) {
+    if (runs.length >= n) break;
+    let s; try { s = JSON.parse(fs.readFileSync(path.join(dir, r, 'run.json'), 'utf8')); } catch { continue; }
+    if (want && s.project !== want) continue;
+    runs.push({ run: s.run, project: s.project, pipeline: s.pipeline, mode: s.mode, kind: s.kind, status: s.status,
+      createdAt: s.createdAt, endedAt: s.endedAt || null, question: s.question || null,
+      steps: (s.steps || []).map(x => ({ id: x.id, key: x.key, title: x.title, slot: x.slot, model: x.model, served: x.served, source: x.source, status: x.status, why: x.why ? String(x.why).slice(0, 300) : null, durationMs: x.durationMs })) });
+  }
+  res.json({ ok: true, runs });
 });
 
 // Lacunes signalées (0.42.0) : liste, acceptation, rejet, signalement.
@@ -4868,6 +4904,9 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
       secondModel:    typeof req.body?.secondModel === 'string' ? req.body.secondModel : undefined,
       secondProvider: typeof req.body?.secondProvider === 'string' ? req.body.secondProvider : undefined,
       dualMode:       req.body?.dualMode === 'judge' ? 'judge' : undefined,
+      pipeline:       ['discussion', 'dev'].includes(req.body?.pipeline) ? req.body.pipeline : undefined,
+      pipelineResume: typeof req.body?.pipelineResume === 'string' ? req.body.pipelineResume : undefined,
+      horsPipeline:   typeof req.body?.horsPipeline === 'string' ? req.body.horsPipeline : undefined,
     };
     if (busy) {
       const len = queuePush(name, entry);

@@ -139,7 +139,8 @@ function launchHidden() {
   const r = spawnSync('cmd', ['/c', `start /B node server.js >> ${outFile} 2>&1`], {
     cwd: ROOT,
     stdio: 'ignore',
-    env: { ...process.env, ANTHROPIC_API_KEY: '' },
+    // Marqueurs du tour qui relance (pipelines, 0.48.0) : jamais hérités par le serveur.
+    env: { ...process.env, ANTHROPIC_API_KEY: '', ORCH_TURN_PROJECT: '', ORCH_TURN_STEP: '', ORCH_STEP_TOKEN: '' },
     windowsHide: true,
   });
   if (r.status !== 0) {

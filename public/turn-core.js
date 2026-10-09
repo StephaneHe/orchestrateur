@@ -194,6 +194,37 @@
         open(ev, ev);
         // Mode double model (0.44.0) : deux branches puis la relecture, un seul tour.
         if (ev.dual) cur.dual = { run: ev.dual.run, mode: ev.dual.mode, principal: ev.dual.principal, second: ev.dual.second, sameModel: !!ev.dual.sameModel, branches: [], review: null };
+        // Pipelines (0.48.0) : la frise des étapes d'une exécution, un seul tour.
+        if (ev.pipeline) cur.pipeline = { run: ev.pipeline.run, pipeline: ev.pipeline.pipeline, mode: ev.pipeline.mode, kind: ev.pipeline.kind || null,
+          resumed: !!ev.pipeline.resumed, planned: ev.pipeline.steps || [], steps: [], warnings: [], limit: null, loops: 0, status: "running" };
+        if (ev.pipelineBypass) cur.bypass = { reason: ev.pipelineBypass.reason || "", by: ev.pipelineBypass.by || "" };
+        return;
+      }
+      if (t === "system" && typeof ev.subtype === "string" && ev.subtype.startsWith("pipeline_")) {
+        const p = (cur && cur.pipeline) || (last() && last().pipeline);
+        if (!p) return;
+        const q = ev.pipeline || {};
+        if (ev.subtype === "pipeline_step_start") {
+          p.steps.push({ key: q.key, id: q.step, slot: q.slot, attempt: q.attempt || 1, model: ev.model || null, provider: ev.provider || null,
+            second: ev.second || null, source: ev.modelSource || null, status: "running", why: null, durationMs: null, served: null });
+        } else if (ev.subtype === "pipeline_step_done") {
+          let s = p.steps.find(x => x.key === q.key);
+          if (!s) { s = { key: q.key, id: q.step, slot: q.slot, attempt: q.attempt || 1 }; p.steps.push(s); }
+          Object.assign(s, { status: ev.status, why: ev.why || null, durationMs: ev.durationMs ?? null, served: ev.served || null,
+            model: ev.model || s.model || null, source: ev.modelSource || s.source || null, costUsd: ev.costUsd ?? null, test: ev.test || null });
+        } else if (ev.subtype === "pipeline_warning") {
+          p.warnings.push(ev.text || "");
+        } else if (ev.subtype === "pipeline_loop") {
+          p.loops++;
+        } else if (ev.subtype === "pipeline_summary") {
+          p.status = (q && q.status) || p.status;
+          p.totalMs = ev.totalMs ?? null;
+        }
+        return;
+      }
+      if (t === "notification" && ev.subtype === "pipeline_limit") {
+        const p = (cur && cur.pipeline) || (last() && last().pipeline);
+        if (p) p.limit = { limit: ev.limit, value: ev.value ?? null, text: ev.text || "", why: ev.why || null };
         return;
       }
       if (t === "system" && typeof ev.subtype === "string" && ev.subtype.startsWith("dual_")) {

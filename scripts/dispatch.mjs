@@ -222,6 +222,38 @@ const dualSynthesis  = takeFlagValue('--dual-synthesis');
 // jamais en rouge, même si son processus est arrêté. `ORCH_TEST_LABEL` pour
 // les scripts de test qui lancent dispatch.mjs.
 const testLabel      = (takeFlagValue('--test') || process.env.ORCH_TEST_LABEL || '').replace(/\s+/g, ' ').trim().slice(0, 120) || null;
+// ---------------------------------------------------------------------------
+// PIPELINES — phase 3 : le moteur (0.48.0), voir scripts/pipeline-engine.mjs
+// ---------------------------------------------------------------------------
+//   --pipeline discussion|dev    exécution d'un pipeline (une étape = un tour,
+//                                sur le model de SA case de la page Models)
+//   --pipeline-resume <run>      reprend une exécution en pause
+//   --hors-pipeline "<raison>"   sortie d'urgence (décision n° 1), TRACÉE
+//   --pipeline-step / --pipeline-session : posés par le moteur pour ses propres
+//   tours d'étape, avec un jeton signé (ORCH_STEP_TOKEN) — jamais à la main.
+// Sur un projet EN SERVICE (model-routing.json → enforcement), une demande sans
+// --pipeline est classée et part dans le bon pipeline ; un musicien ne peut pas
+// y lancer de tour ; une étape ne lance aucun tour.
+const pipelineArg       = takeFlagValue('--pipeline');
+const pipelineResumeArg = takeFlagValue('--pipeline-resume');
+const pipelineStepArg   = takeFlagValue('--pipeline-step');
+const pipelineSession   = takeFlagValue('--pipeline-session');
+const horsPipelineArg   = takeFlagValue('--hors-pipeline');
+const STEP_TOKEN = process.env.ORCH_STEP_TOKEN || null;
+const TURN_OF    = process.env.ORCH_TURN_PROJECT || null;   // ce dispatch est lancé DEPUIS un tour de ce projet
+const TURN_STEP  = process.env.ORCH_TURN_STEP || null;      // … qui est une étape de pipeline
+delete process.env.ORCH_STEP_TOKEN; delete process.env.ORCH_TURN_PROJECT; delete process.env.ORCH_TURN_STEP;
+let PIPE_STEP = null;   // { run, key } : ce processus est un tour d'étape du moteur
+if (pipelineStepArg) {
+  const m = /^(p-\d{8}T\d{6}-[a-z0-9]{4,8}):(\d{2}-[a-z0-9-]{1,40})$/.exec(pipelineStepArg);
+  if (!m) die(`--pipeline-step invalide : ${pipelineStepArg}`);
+  PIPE_STEP = { run: m[1], key: m[2] };
+}
+if (pipelineSession && !/^[a-z0-9-]{1,40}$/.test(pipelineSession)) die(`--pipeline-session invalide : ${pipelineSession}`);
+if (pipelineArg && !['discussion', 'dev'].includes(pipelineArg)) {
+  die(`--pipeline ${pipelineArg} : pipeline pas encore en service (phase 3 : discussion, dev). Les autres arrivent en phase 6.`);
+}
+if (horsPipelineArg != null && !String(horsPipelineArg).trim()) die('--hors-pipeline exige une raison');
 const DUAL_RUN_RE = /^d-\d{8}T\d{6}-[a-z0-9]{4,8}$/;
 if (secondProvider && !['claude', 'codex', 'nvidia', 'openrouter'].includes(secondProvider)) die(`--second-provider must be "claude", "codex", "nvidia" or "openrouter" (got "${secondProvider}")`);
 if (!['action', 'judge'].includes(dualMode)) die(`--dual-mode must be "action" or "judge" (got "${dualMode}")`);
@@ -289,9 +321,9 @@ const CHEF_SLOT   = Number(process.env.DISPATCH_SLOT || 0) || null;
 const CHEF_TICKET = process.env.DISPATCH_TICKET || null;
 // Les lancements internes du mode double ne passent jamais par la file : le
 // parent tient déjà la place du musicien.
-const queueIfBusy = (DUAL_BRANCH || dualSynthesis) ? false : noQueueIdx !== -1 ? false : (queueIdx !== -1 || CHEF_SLOT != null);
+const queueIfBusy = (DUAL_BRANCH || dualSynthesis || PIPE_STEP) ? false : noQueueIdx !== -1 ? false : (queueIdx !== -1 || CHEF_SLOT != null);
 // Une branche ne rend compte à personne : c'est la relecture qui rend compte.
-if (DUAL_BRANCH) callbackProject = null;
+if (DUAL_BRANCH || PIPE_STEP) callbackProject = null;
 
 let prompt = '';
 let imagePaths = [];   // populated when server passes attachment paths
@@ -314,11 +346,13 @@ if (argv[1] === '--prompt-stdin') {
   }
 } else if (argv.length >= 2) {
   prompt = argv.slice(1).join(' ');
+} else if (pipelineResumeArg) {
+  prompt = '';   // la demande est dans l'état de l'exécution reprise
 } else {
   die('missing prompt — pass as argv or use --prompt-stdin');
 }
 
-if (!prompt.trim() && !imagePaths.length && !videoPaths.length) die('empty prompt');
+if (!prompt.trim() && !imagePaths.length && !videoPaths.length && !pipelineResumeArg) die('empty prompt');
 
 // ---------- config ----------------------------------------------------------
 
@@ -381,6 +415,49 @@ if (modelOverride && provider === 'claude' && OPENAI_MODEL_RE.test(modelOverride
   die(`--model ${modelOverride} est un model OpenAI : ajoute --provider codex`);
 }
 
+// ---------- pipelines en service : porte d'entrée (phase 3, 0.48.0) ----------
+// Avant toute écriture. Les refus sont mécaniques (plan §3.3) : une consigne de
+// prompt ne suffit pas.
+const pipeEngine = await import('./pipeline-engine.mjs');
+const ENFORCEMENT = pipeEngine.readEnforcement(ROOT);
+const ENFORCED = pipeEngine.isEnforced(ENFORCEMENT, projectName);
+// 1. Une étape de pipeline ne lance aucun tour (le moteur est seul maître).
+if (TURN_STEP) {
+  die(`dispatch refusé : ce tour est une étape de pipeline (${TURN_STEP}) — une étape ne lance pas d'autre tour. ` +
+    `Si un autre travail est nécessaire, écris-le dans ton artefact : l'utilisateur ou le chef le lancera.`, 65);
+}
+// 2. Un musicien (pas le chef) ne lance pas de tour sur un projet en service.
+const TURN_OF_CHEF = TURN_OF === CONDUCTOR || new RegExp(`^${CONDUCTOR}-\\d+$`).test(TURN_OF || '') || CHEF_SLOT != null;
+if (TURN_OF && !TURN_OF_CHEF && ENFORCED && !PIPE_STEP) {
+  die(`dispatch refusé : « ${projectName} » est en service (pipelines obligatoires) et ce dispatch vient d'un tour du ` +
+    `musicien « ${TURN_OF} ». Seuls le chef, l'utilisateur et le moteur de pipelines lancent un tour sur ce projet.`, 65);
+}
+// 3. Lancements internes (étape, branche ou relecture du mode double) sur un
+//    projet en service : jeton d'étape signé obligatoire, model conforme.
+let STEP_GRANT = null;
+if (PIPE_STEP || (ENFORCED && (DUAL_BRANCH || dualSynthesis))) {
+  const v = pipeEngine.verifyStepToken(ROOT, STEP_TOKEN);
+  if (!v.ok) die(`tour d'étape refusé : ${v.why}`, 65);
+  const g = v.payload;
+  const allowed = [g.model || null, g.second?.model || null];
+  const okModel = DUAL_BRANCH ? allowed.includes(modelOverride || null) : (modelOverride || null) === (g.model || null);
+  if (g.project !== projectName) die(`tour d'étape refusé : jeton émis pour « ${g.project} »`, 65);
+  if (PIPE_STEP && (g.run !== PIPE_STEP.run || g.key !== PIPE_STEP.key)) die('tour d\'étape refusé : jeton émis pour une autre étape', 65);
+  if (!okModel) die(`tour d'étape refusé : model « ${modelOverride || 'défaut'} » ≠ model de la case (« ${g.model || 'défaut du projet'} »)`, 65);
+  STEP_GRANT = g;
+}
+// 4. Un projet en service ne reçoit pas de model choisi à la main : ce sont les
+//    cases de la page Models qui décident (sauf sortie d'urgence tracée).
+const AUTO_PIPELINE = ENFORCED && !PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && horsPipelineArg == null;
+if (AUTO_PIPELINE && (modelOverride || secondModel) && !pipelineResumeArg) {
+  die(`« ${projectName} » est en service (pipelines obligatoires) : les models viennent des cases de la page Models. ` +
+    `Retire --model/--second-model, ou utilise --hors-pipeline "<raison>" (tracé et visible).`, 64);
+}
+if ((pipelineArg || pipelineResumeArg) && (PIPE_STEP || DUAL_BRANCH || dualSynthesis)) die('--pipeline est incompatible avec un lancement interne');
+if ((pipelineArg || pipelineResumeArg) && (modelOverride || secondModel)) {
+  die('--pipeline : les models viennent des cases de la page Models — retire --model/--second-model', 64);
+}
+
 // ---------------------------------------------------------------------------
 // MODEL EXPLICITE = AUCUN FALLBACK (0.26.0, règle utilisateur)
 // ---------------------------------------------------------------------------
@@ -423,9 +500,14 @@ const NO_FAILOVER = fs.existsSync(path.join(LOGS, 'no-failover'));
 // session, ni son .pid. Tout va dans logs/dual/<run>/<role>.*, session neuve.
 const DUAL_DIR = DUAL_BRANCH ? path.join(LOGS, 'dual', DUAL_BRANCH.run) : null;
 if (DUAL_DIR) fs.mkdirSync(DUAL_DIR, { recursive: true });
-const logPath     = DUAL_DIR ? path.join(DUAL_DIR, `${DUAL_BRANCH.role}.jsonl`)   : path.join(LOGS, `${projectName}.jsonl`);
-const sessionPath = DUAL_DIR ? path.join(DUAL_DIR, `${DUAL_BRANCH.role}.session`) : path.join(LOGS, `${projectName}.session`);
-const pidPath     = DUAL_DIR ? path.join(DUAL_DIR, `${DUAL_BRANCH.role}.pid`)     : path.join(LOGS, `${projectName}.pid`);
+// Un tour d'ÉTAPE (pipelines, 0.48.0) non plus : son log, son .pid et sa session
+// (une par exécution et par groupe/model, plan §2.2) sont sous logs/runs/<run>/.
+// La relecture d'un mode double DANS une étape écrit aussi dans le log d'étape.
+const STEP_DIR = PIPE_STEP ? path.join(LOGS, 'runs', PIPE_STEP.run) : null;
+if (STEP_DIR) fs.mkdirSync(STEP_DIR, { recursive: true });
+const logPath     = DUAL_DIR ? path.join(DUAL_DIR, `${DUAL_BRANCH.role}.jsonl`)   : STEP_DIR ? path.join(STEP_DIR, `${PIPE_STEP.key}.jsonl`) : path.join(LOGS, `${projectName}.jsonl`);
+const sessionPath = DUAL_DIR ? path.join(DUAL_DIR, `${DUAL_BRANCH.role}.session`) : STEP_DIR ? path.join(STEP_DIR, `${pipelineSession || PIPE_STEP.key}.session`) : path.join(LOGS, `${projectName}.session`);
+const pidPath     = DUAL_DIR ? path.join(DUAL_DIR, `${DUAL_BRANCH.role}.pid`)     : STEP_DIR ? path.join(STEP_DIR, `${PIPE_STEP.key}.pid`) : path.join(LOGS, `${projectName}.pid`);
 
 let sessionId = null;
 if (!DUAL_BRANCH) { try { sessionId = fs.readFileSync(sessionPath, 'utf8').trim() || null; } catch {} }
@@ -877,6 +959,10 @@ function postQueueIfBusy() {
     if (secondModel)       payload.secondModel     = secondModel;
     if (secondProvider)    payload.secondProvider  = secondProvider;
     if (secondModel)       payload.dualMode        = dualMode;
+    // Pipelines (0.48.0) : la demande garde son pipeline en file d'attente.
+    if (pipelineArg)       payload.pipeline        = pipelineArg;
+    if (pipelineResumeArg) payload.pipelineResume  = pipelineResumeArg;
+    if (horsPipelineArg != null) payload.horsPipeline = horsPipelineArg;
     const body = Buffer.from(JSON.stringify(payload));
     const req = http.request({
       hostname: '127.0.0.1', port: 7777, path: '/api/dispatch', method: 'POST',
@@ -937,9 +1023,64 @@ if (queueIfBusy && projectName !== CONDUCTOR) {
   }
 }
 
+// ---------- pipelines (0.48.0) : délégation au moteur -------------------------
+// Ici, après la file (comme le mode double) : un musicien occupé a reçu la
+// demande en file, avec son pipeline, et ce processus est déjà sorti.
+let pipelineBypass = null;   // trace d'un tour qui ne passe PAS par un pipeline
+if (horsPipelineArg != null && !PIPE_STEP) {
+  pipelineBypass = { reason: String(horsPipelineArg).replace(/\s+/g, ' ').trim().slice(0, 300), by: 'hors-pipeline', enforced: ENFORCED };
+}
+if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResumeArg || AUTO_PIPELINE)) {
+  let pipe = pipelineArg, resumeRun = pipelineResumeArg, classification = null, modeNote = null;
+  if (!pipe && !resumeRun) {
+    // Réponse « continuer » à une exécution en pause : on la reprend.
+    const paused = latestPausedRun(projectName);
+    const reply = prompt.replace(/^\s*\[CHEF_ANSWER\]\s*/i, '').trim();
+    if (paused && /^(continue|continuer|reprends|reprendre|on continue|oui|go|vas-y)\b/i.test(reply)) resumeRun = paused;
+  }
+  if (!pipe && !resumeRun) {
+    const obs = await import('./pipeline-observe.mjs');
+    const c = obs.classify({ text: prompt });
+    classification = { pipeline: c.pipeline, mode: c.mode, confidence: c.confidence, classifier: obs.CLASSIFIER, unclassifiable: !!c.unclassifiable };
+    if (ENFORCEMENT.pipelines.includes(c.pipeline)) {
+      pipe = c.pipeline;
+      if (c.pipeline === 'dev' && c.mode === 'complet') modeNote = 'mode complet pas encore en service (phase 4) : exécuté en Développement léger';
+    } else {
+      pipelineBypass = { reason: `pipeline « ${c.pipeline} » pas encore en service (phase 3 : ${ENFORCEMENT.pipelines.join(', ')})`, by: 'hors-perimetre', classification, enforced: true };
+    }
+  }
+  if (pipe || resumeRun) {
+    const code = await pipeEngine.runPipeline({
+      root: ROOT, logsDir: LOGS, project, projectName,
+      prompt: imagePaths.length || videoPaths.length
+        ? `${prompt}\n\nPièces jointes (à lire avec l'outil Read) :\n${[...imagePaths, ...videoPaths].map(p => `- ${p}`).join('\n')}`
+        : prompt,
+      promptForLog: prompt, pipeline: pipe, resumeRun, classification, modeNote,
+      callbackProject, sourceProject, obsId, testLabel,
+      dispatchScript: fileURLToPath(import.meta.url),
+    });
+    process.exit(code);
+  }
+}
+
+/** Dernière exécution EN PAUSE de ce projet (logs/runs/<run>/run.json), ou null. */
+function latestPausedRun(name) {
+  try {
+    const dir = path.join(LOGS, 'runs');
+    const runs = fs.readdirSync(dir).filter(r => /^p-\d{8}T\d{6}-[a-z0-9]{4,8}$/.test(r)).sort().reverse();
+    for (const r of runs.slice(0, 50)) {
+      let s; try { s = JSON.parse(fs.readFileSync(path.join(dir, r, 'run.json'), 'utf8')); } catch { continue; }
+      if (s.project !== name) continue;
+      return s.status === 'paused' ? r : null;
+    }
+  } catch { /* aucun dossier */ }
+  return null;
+}
+
 // ---------- mode double model (0.44.0) : délégation à dual-run.mjs ------------
 // Ici, après la file : un musicien occupé a reçu la demande en file (avec ses
-// deux models) et ce processus est déjà sorti.
+// deux models) et ce processus est déjà sorti. Dans une étape de pipeline, le
+// mode double écrit dans le log de l'étape et sa relecture garde le jeton.
 if (secondModel && !DUAL_BRANCH && !dualSynthesis) {
   const { runDual } = await import('./dual-run.mjs');
   const code = await runDual({
@@ -949,6 +1090,12 @@ if (secondModel && !DUAL_BRANCH && !dualSynthesis) {
     second: { model: secondModel, provider: secondProvider || null },
     mode: dualMode, callbackProject, sourceProject, obsId,
     dispatchScript: fileURLToPath(import.meta.url),
+    ...(PIPE_STEP ? {
+      logFile: logPath, pidFile: pidPath, sessionFile: sessionPath,
+      synthesisArgs: ['--pipeline-step', `${PIPE_STEP.run}:${PIPE_STEP.key}`, ...(pipelineSession ? ['--pipeline-session', pipelineSession] : [])],
+      childEnvExtra: STEP_TOKEN ? { ORCH_STEP_TOKEN: STEP_TOKEN } : {},
+      stepPrompt: true,
+    } : {}),
   });
   process.exit(code);
 }
@@ -1064,6 +1211,12 @@ delete env.NVIDIA_API_KEY;
 delete env.OPENROUTER_API_KEY;
 // Un dispatch lancé PAR ce tour n'est pas un essai : le marquage ne se transmet pas.
 delete env.ORCH_TEST_LABEL;
+// Pipelines (0.48.0) : le tour sait de quel projet il est, et s'il est une
+// étape. Un dispatch.mjs lancé depuis ce tour est jugé là-dessus (refus).
+env.ORCH_TURN_PROJECT = projectName;
+if (PIPE_STEP || STEP_GRANT) env.ORCH_TURN_STEP = PIPE_STEP ? `${PIPE_STEP.run}:${PIPE_STEP.key}` : `${STEP_GRANT.run}:${STEP_GRANT.key}`;
+else delete env.ORCH_TURN_STEP;
+delete env.ORCH_STEP_TOKEN;
 
 // ---------- shared log setup ------------------------------------------------
 
@@ -1150,7 +1303,11 @@ if (CHEF_SLOT != null) {
 }
 // Mode double : une branche trace son rôle ; la relecture prolonge le tour que
 // le parent a ouvert (pas de second user_prompt, un seul tour au journal).
-if (DUAL_BRANCH) userPromptEvent.dual = { run: DUAL_BRANCH.run, role: DUAL_BRANCH.role, model, provider, modelSource: EXPLICIT_MODEL ? 'flag' : 'project' };
+if (DUAL_BRANCH) userPromptEvent.dual = { run: DUAL_BRANCH.run, role: DUAL_BRANCH.role, model, provider, modelSource: STEP_GRANT ? 'pipeline' : EXPLICIT_MODEL ? 'flag' : 'project' };
+// Traçabilité par étape (plan §3.1) : exécution, étape, model et sa source.
+if (PIPE_STEP) userPromptEvent.pipelineStep = { run: PIPE_STEP.run, key: PIPE_STEP.key, model, provider, modelSource: EXPLICIT_MODEL ? 'pipeline' : 'project-default' };
+// Tour hors pipeline : la raison est écrite, donc visible (décision n° 1).
+if (pipelineBypass) userPromptEvent.pipelineBypass = pipelineBypass;
 if (dualSynthesis) {
   logStream.write(JSON.stringify({
     type: 'system', subtype: 'dual_review_start', dual: { run: dualSynthesis, role: 'relecture' },
@@ -1159,6 +1316,10 @@ if (dualSynthesis) {
   }) + '\n');
 } else {
   logStream.write(JSON.stringify(userPromptEvent) + '\n');
+  if (pipelineBypass) {
+    logStream.write(JSON.stringify({ type: 'system', subtype: 'pipeline_bypass', ...pipelineBypass,
+      text: `hors pipeline : ${pipelineBypass.reason}`, timestamp: new Date().toISOString() }) + '\n');
+  }
 }
 
 /**

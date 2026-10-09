@@ -259,11 +259,18 @@ export function serverEnv(root, port) {
   delete env.NVIDIA_API_KEY;
   delete env.DISPATCH_ROOT_FOR_TESTS;
   delete env.DISPATCH_SLOT;
+  // Lancée depuis un tour (chef ou musicien), la recette hériterait de ses
+  // marqueurs (0.48.0) : l'instance et ses dispatches passeraient pour ce tour.
+  delete env.ORCH_TURN_PROJECT;
+  delete env.ORCH_TURN_STEP;
+  delete env.ORCH_STEP_TOKEN;
   Object.assign(env, {
     CLAUDE_BIN: path.join(root, 'tests', 'fake_claude', 'fake_claude.mjs'),
     CODEX_BIN: path.join(root, 'tests', 'fake_claude', 'fake_claude.mjs'),
     FAKE_CLAUDE_LATENCY_MS: '700',
     FAKE_CLAUDE_TOOL_USES: '2',
+    // Étapes de pipeline (0.48.0) : n'agit que sur un prompt « PIPELINE_STEP= ».
+    FAKE_CLAUDE_PIPELINE: '1',
     ORCH_PORT: String(port),
     // add-tool also marks the workspace trusted: never in the real ~/.claude.json.
     ORCH_CLAUDE_JSON: path.join(root, '.claude.json'),

@@ -305,6 +305,10 @@ function activityPreview(meaningful, lastAssistantText) {
     return meaningful.is_error ? (meaningful.subtype || 'échec du tour')
                                : (typeof meaningful.result === 'string' ? meaningful.result.replace(/\s+/g, ' ').trim().slice(0, 120) : 'terminé');
   }
+  // Exécution de pipeline ou mode double : l'étape en cours se dit dans le texte.
+  if (meaningful?.type === 'system' && /^(pipeline_|dual_)/.test(meaningful.subtype || '') && typeof meaningful.text === 'string') {
+    return meaningful.text.replace(/\s+/g, ' ').trim().slice(0, 120);
+  }
   if (lastAssistantText) return lastAssistantText.replace(/\s+/g, ' ').trim().slice(0, 120);
   return '';
 }

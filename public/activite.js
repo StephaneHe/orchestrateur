@@ -218,6 +218,30 @@
         ${d.interrupted ? `<div class="jt-warn">✕ exécution interrompue avant la relecture — travail des branches archivé</div>` : ""}
         <ul>${row("principal", byRole("principal") || (d.principal ? { model: d.principal.model } : null))}${row("second", byRole("second") || (d.second ? { model: d.second.model } : null))}${d.review ? row("relecture", d.review) : ""}</ul></div>`;
     }
+    // Pipelines (0.48.0) : la frise des étapes — model de la case, model servi,
+    // critère vérifié par le code (✓) ou refus motivé, avertissements, limite.
+    let pipe = "";
+    if (t.pipeline) {
+      const p = t.pipeline;
+      const PIPE_LABEL = { discussion: "Discussion", dev: "Développement léger" };
+      const ST = { ok: "✓", refused: "✕ refusé", failed: "✕ échec", model_unavailable: "⏸ model indisponible", running: "● en cours" };
+      const titleOf = (id) => (p.planned.find(x => x.id === id) || {}).title || id;
+      const rows = p.steps.map(s => `<li class="jt-step" data-step-status="${esc(s.status || "running")}" data-step="${esc(s.id)}">
+          <b>${esc(titleOf(s.id))}</b>${s.attempt > 1 ? ` <span class="jt-dim">essai ${esc(s.attempt)}</span>` : ""}
+          · ${esc(shortModel(s.served || s.model || "") || "défaut du projet")}${s.source === "project-default" ? ' <span class="jt-warn" title="aucune case affectée dans la page Models">⚠ défaut du projet</span>' : ""}
+          · ${esc(ST[s.status] || s.status || "")}${s.durationMs != null && fmtDur(s.durationMs) ? " · " + esc(fmtDur(s.durationMs)) : ""}
+          ${s.why ? `<div class="jt-dim jt-why">${esc(String(s.why).split("\n")[0].slice(0, 220))}</div>` : ""}</li>`).join("");
+      const todo = p.status === "running" || p.status === "paused"
+        ? p.planned.filter(x => !p.steps.some(s => s.id === x.id && s.status === "ok")).filter(x => !p.steps.some(s => s.id === x.id && s.status === "running"))
+          .map(x => `<li class="jt-step is-todo" data-step="${esc(x.id)}"><b>${esc(x.title)}</b> · ${esc(shortModel(x.model || "") || "défaut du projet")} · à venir</li>`).join("")
+        : "";
+      pipe = `<div class="jt-pipeline" data-run="${esc(p.run)}"><span class="jt-k">⇄ pipeline ${esc(PIPE_LABEL[p.pipeline] || p.pipeline)}</span>
+        <span class="jt-dim">${esc(p.run)}${p.resumed ? " · reprise" : ""}${p.loops ? ` · ${esc(p.loops)} retour(s) de revue` : ""}</span>
+        ${p.limit ? `<div class="jt-warn" data-limit="${esc(p.limit.limit)}">${esc(p.limit.text)}</div>` : ""}
+        <ol class="jt-steps">${rows}${todo}</ol></div>`;
+    } else if (t.bypass) {
+      pipe = `<div class="jt-pipeline is-bypass"><span class="jt-k">hors pipeline</span> <span class="jt-dim">${esc(t.bypass.reason)}</span></div>`;
+    }
     // Demandes d'autorisation du tour (0.45.0), avec leur issue.
     const PERM_TXT = { allow_once: "autorisé une fois", allow_always: "toujours autorisé", rule: "règle permanente", deny: "refusé", expired: "expiré sans réponse" };
     const perms = (t.permissions || []).length
@@ -238,7 +262,7 @@
           <span class="jt-outcome">${esc(word)}</span>
           <span class="jt-meta">${esc(meta)}</span>
         </header>
-        ${ask}${dual}${perms}${did}${q}
+        ${ask}${pipe}${dual}${perms}${did}${q}
         ${chips.length ? `<div class="jt-chips">${chips.join("")}</div>` : ""}
         ${after.length ? `<div class="jt-after">${after.join(" · ")}</div>` : ""}
         ${toggleBtn}

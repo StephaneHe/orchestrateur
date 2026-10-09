@@ -38,9 +38,14 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import http from 'node:http';
+import { spawn, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { REPO, REGRESS_DIR, extractCode, startSandbox, waitUp, serverEnv } from './_regression_sandbox.mjs';
+
+// Marqueurs du tour qui lance la recette (0.48.0) : jamais transmis aux suites
+// ni à l'instance de test, sinon leurs dispatches passeraient pour ce tour.
+for (const k of ['ORCH_TURN_PROJECT', 'ORCH_TURN_STEP', 'ORCH_STEP_TOKEN']) delete process.env[k];
 
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(n);
@@ -422,6 +427,121 @@ async function apiChecks(sb) {
     assert(r.code === 0 && /EXPIRÉE SANS RÉPONSE/.test(lastRes()), `expiration : ${lastRes().slice(-160)}`);
     assert(readLog('omega').some(e => e.subtype === 'permission_decision' && e.permission?.decision === 'expired'), 'expiration non journalisée');
     return '4 parcours : une fois, refus motivé, toujours puis sans demande, expiration';
+  });
+  // 0.48.0 — pipelines, phase 3 (exigence : « il faut faire en sorte que ces
+  // pipelines soient obligatoirement utilisés »). omega devient un petit dépôt
+  // git en service ; le faux claude joue les étapes (FAKE_CLAUDE_PIPELINE).
+  const omegaDir = path.join(sb.root, 'projects', 'omega');
+  const routingFile = path.join(sb.root, 'model-routing.json');
+  // Les notifications du moteur (pause, limite) vont à un écouteur local : un
+  // vrai réveil du chef de l'instance ajouterait des bulles au fil et décalerait
+  // les parcours navigateur qui le lisent. Le contenu reçu est vérifié.
+  const notices = [];
+  const noticeSrv = http.createServer((req, res) => {
+    let b = ''; req.on('data', c => { b += c; });
+    req.on('end', () => { try { notices.push({ path: req.url, ...JSON.parse(b) }); } catch { /* corps illisible */ } res.end('{}'); });
+  });
+  await new Promise(r => noticeSrv.listen(0, '127.0.0.1', r));
+  noticeSrv.unref();
+  const noticePort = noticeSrv.address().port;
+  const pipeDispatch = (args, extra = {}) => new Promise((resolve) => {
+    const env = { ...serverEnv(sb.root, sb.port), FAKE_CLAUDE_PIPELINE: '1', FAKE_CLAUDE_LATENCY_MS: '10', FAKE_CLAUDE_TOOL_USES: '0', ORCH_PERM_DISABLE: '1', ORCH_PORT: String(noticePort), ...extra };
+    const c = spawn(process.execPath, [path.join(sb.root, 'scripts', 'dispatch.mjs'), ...args], { cwd: sb.root, env, windowsHide: true });
+    let out = ''; c.stdout.on('data', d => { out += d; }); c.stderr.on('data', d => { out += d; });
+    c.on('exit', code => resolve({ code, out }));
+  });
+  const omegaRepo = () => {
+    const g = (...a) => spawnSync('git', ['-c', 'user.name=r', '-c', 'user.email=r@localhost', ...a], { cwd: omegaDir, encoding: 'utf8' });
+    if (fs.existsSync(path.join(omegaDir, '.git'))) return g;
+    fs.writeFileSync(path.join(omegaDir, 'package.json'), JSON.stringify({ name: 'omega', version: '1.0.0', type: 'module', scripts: { test: 'node --test' } }, null, 2) + '\n');
+    fs.mkdirSync(path.join(omegaDir, 'test'), { recursive: true });
+    fs.writeFileSync(path.join(omegaDir, 'test', 'base.test.mjs'), "import { test } from 'node:test';\ntest('base', () => {});\n");
+    fs.writeFileSync(path.join(omegaDir, 'CHANGELOG.md'), '# Changelog\n\n## [1.0.0] - 2026-10-01\n- début\n');
+    fs.mkdirSync(path.join(omegaDir, '.orchestrateur'), { recursive: true });
+    fs.writeFileSync(path.join(omegaDir, '.orchestrateur', 'pipeline.json'), JSON.stringify({ testCommand: 'node --test', testGlobs: ['test/**'], versionFiles: ['package.json'], changelog: 'CHANGELOG.md', requirements: 'docs/USER_REQUIREMENTS.md' }));
+    fs.mkdirSync(path.join(omegaDir, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(omegaDir, 'docs', 'USER_REQUIREMENTS.md'), '| date | demande | test | version |\n|---|---|---|---|\n');
+    g('init', '-q'); g('add', '-A'); g('commit', '-q', '-m', 'init');
+    return g;
+  };
+  const enforceOmega = (assignments = {}) => fs.writeFileSync(routingFile, JSON.stringify({ version: 2, assignments, history: [], enforcement: { projects: ['omega'], pipelines: ['discussion', 'dev'] } }));
+  const runsOf = async () => (await json('/api/pipeline-runs?project=omega')).runs || [];
+  await check(S, 'pipeline-run', 'Pipelines, phase 3 : une demande au projet en service passe par son pipeline (Discussion, Développement léger) — une étape = un tour, artefacts, critères vérifiés par le code, un seul tour côté musicien, frise dans le journal', async () => {
+    if ((await get('/api/pipeline-enforcement')).status === 404) NA('moteur absent de cet état du code');
+    const g = omegaRepo();
+    enforceOmega();
+    const enf = await json('/api/pipeline-enforcement');
+    assert(enf.projects.includes('omega') && enf.inService.includes('dev'), `mise en service : ${JSON.stringify(enf)}`);
+    const h0 = g('rev-parse', 'HEAD').stdout.trim();
+    // Par l'API (le serveur lance dispatch.mjs, qui classe et route).
+    let r = await post('/api/dispatch', { project: 'omega', prompt: 'Pourquoi la suite de tests passe-t-elle ?', queueIfBusy: true });
+    assert(r.status === 202, `dispatch : ${r.status}`);
+    let run = await until(async () => (await runsOf()).find(x => x.pipeline === 'discussion' && x.status !== 'running') || null, 90_000);
+    assert(run?.status === 'done' && run.steps.filter(s => s.status === 'ok').length === 3, `Discussion : ${JSON.stringify(run && { s: run.status, st: run.steps.map(x => `${x.id}:${x.status}:${x.why || ''}`) })}`);
+    r = await pipeDispatch(['omega', 'Ajoute une fonction double qui multiplie par deux']);
+    run = (await runsOf()).find(x => x.pipeline === 'dev');
+    assert(r.code === 0 && run?.status === 'done' && run.steps.map(s => s.id).join() === 'rouge,vert,revue,livrer', `Développement léger : ${r.code} ${JSON.stringify(run?.steps?.map(x => `${x.id}:${x.status}`))} ${r.out.slice(-300)}`);
+    assert(g('rev-list', '--count', `${h0}..HEAD`).stdout.trim() === '1', 'un seul commit attendu');
+    const turns = (await json('/api/project/omega/journal?n=5')).turns || [];
+    assert(turns[0]?.pipeline?.pipeline === 'dev' && turns[0].pipeline.steps.length === 4 && turns[1]?.pipeline?.pipeline === 'discussion', 'journal : frises absentes');
+    assert(readLog('omega').filter(e => e.type === 'user_prompt' && e.pipeline).length >= 2 && turns[0].pipeline.steps.every(s => s.source === 'project-default'), 'cases vides : défaut du projet attendu');
+    return `Discussion 3/3 ✓, Développement léger 4/4 ✓ (commit ${g('log', '-1', '--format=%h').stdout.trim()})`;
+  });
+  await check(S, 'pipeline-bypass', 'Pipelines : rien ne contourne — tour de musicien, étape, jeton forgé, --model à la main refusés ; --hors-pipeline tracé ; pipeline gardé en file d’attente', async () => {
+    if ((await get('/api/pipeline-enforcement')).status === 404) NA('moteur absent de cet état du code');
+    omegaRepo(); enforceOmega();
+    let r = await pipeDispatch(['omega', 'ajoute un bouton'], { ORCH_TURN_PROJECT: 'lambda' });
+    assert(r.code === 65, `depuis le tour d’un musicien : ${r.code}`);
+    r = await pipeDispatch(['lambda', 'ajoute un bouton'], { ORCH_TURN_PROJECT: 'omega', ORCH_TURN_STEP: 'p-20261009T120000-abcd:01-vert' });
+    assert(r.code === 65, `depuis une étape : ${r.code}`);
+    r = await pipeDispatch(['omega', 'x', '--pipeline-step', 'p-20261009T120000-abcd:01-vert'], { ORCH_STEP_TOKEN: 'v1.e30.' + 'a'.repeat(64) });
+    assert(r.code === 65 && /jeton/.test(r.out), `jeton forgé : ${r.code}`);
+    r = await pipeDispatch(['omega', 'ajoute un bouton', '--model', 'claude-opus-5-5']);
+    assert(r.code === 64, `--model à la main : ${r.code}`);
+    r = await pipeDispatch(['omega', 'corrige le bug du compteur', '--hors-pipeline', 'maintenance de la flotte']);
+    const up = readLog('omega').filter(e => e.type === 'user_prompt').pop();
+    assert(r.code === 0 && up?.pipelineBypass?.reason === 'maintenance de la flotte', `hors pipeline non tracé : ${JSON.stringify(up?.pipelineBypass)}`);
+    // La file garde le pipeline : omega occupé (pid vivant), entrée en file, puis retirée.
+    fs.writeFileSync(path.join(sb.root, 'logs', 'omega.pid'), String(process.pid));
+    r = await post('/api/dispatch', { project: 'omega', prompt: 'ajoute une fonction carre', queueIfBusy: true, pipeline: 'dev' });
+    const q = await json('/api/queue/omega');
+    const entry = (q.entries || []).find(e => e.head === 'ajoute une fonction carre');
+    fs.rmSync(path.join(sb.root, 'logs', 'omega.pid'), { force: true });
+    if (entry) await fetch(`${sb.url}/api/queue/omega/${entry.id}`, { method: 'DELETE', headers: H });
+    assert(r.status === 202 && entry?.pipeline === 'dev', `file : ${r.status} ${JSON.stringify(entry)}`);
+    return '4 contournements refusés, hors pipeline tracé, pipeline conservé en file';
+  });
+  await check(S, 'pipeline-unavailable', 'Pipelines : model de la case indisponible → pause (question), fallback_refused, aucun autre model, étape suivante non lancée', async () => {
+    if ((await get('/api/pipeline-enforcement')).status === 404) NA('moteur absent de cet état du code');
+    omegaRepo(); enforceOmega({ 'discussion.rechercher': { provider: 'anthropic', model: 'claude-indispo-1' } });
+    const r = await pipeDispatch(['omega', 'Pourquoi la suite de tests passe-t-elle ?'], { FAKE_CLAUDE_FAIL_MODEL: 'claude-indispo-1' });
+    const run = (await runsOf()).find(x => x.pipeline === 'discussion');
+    assert(r.code === 2 && run?.status === 'paused' && /indisponible/.test(run.question || ''), `pause attendue : ${r.code} ${JSON.stringify(run && { s: run.status, q: run.question })}`);
+    assert(!run.steps.some(s => s.id === 'repondre'), 'l’étape suivante a été lancée');
+    const row = await until(async () => (await json('/api/pupitre')).fleet.find(x => x.name === 'omega' && x.state === 'input') || null, 8000);
+    assert(row, 'omega devrait attendre une réponse (input)');
+    await post('/api/question/omega/resolve', { note: 'recette' });
+    return 'pause sur model indisponible, question posée';
+  });
+  await check(S, 'pipeline-limit-notice', 'Pipelines : limite atteinte (3 essais de 4b refusés) → notification/pipeline_limit dans le log, question dans le dashboard, chef prévenu', async () => {
+    if ((await get('/api/pipeline-enforcement')).status === 404) NA('moteur absent de cet état du code');
+    const g = omegaRepo(); enforceOmega();
+    // Repartir du commit initial : le parcours pipeline-run a déjà livré double().
+    g('reset', '-q', '--hard', g('rev-list', '--max-parents=0', 'HEAD').stdout.trim());
+    const nNotices = notices.length;
+    const r = await pipeDispatch(['omega', 'Ajoute une fonction triple'], { FAKE_PIPE_BAD: 'vert' });
+    const lim = readLog('omega').filter(e => e.subtype === 'pipeline_limit').pop();
+    assert(r.code === 2 && lim?.limit === 'green' && /Limite atteinte/.test(lim.text), `signal du log : ${r.code} ${JSON.stringify(lim)}`);
+    const row = await until(async () => (await json('/api/pupitre')).fleet.find(x => x.name === 'omega' && x.state === 'input') || null, 8000);
+    assert(row, 'question absente du dashboard');
+    const chef = notices.slice(nNotices).find(n => n.path === '/api/notify' && n.project === 'chef' && n.source === 'pipeline-limit');
+    assert(chef && /omega/.test(chef.text) && /Limite atteinte/.test(chef.text), `chef non prévenu (POST /api/notify, source pipeline-limit) : ${JSON.stringify(notices.slice(nNotices))}`);
+    await post('/api/question/omega/resolve', { note: 'recette' });
+    spawnSync('git', ['checkout', '-q', '--', '.'], { cwd: omegaDir });
+    spawnSync('git', ['clean', '-qfd', '-e', '.orchestrateur'], { cwd: omegaDir });
+    fs.rmSync(routingFile, { force: true });
+    noticeSrv.close();
+    return 'les 3 signaux partent : log, dashboard, chef';
   });
   await check(S, 'mark-read', 'Marquer lu (/api/mark-read) persiste le marqueur', async () => {
     const r = await post('/api/mark-read', { project: 'lambda' });

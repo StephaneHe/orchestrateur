@@ -139,6 +139,8 @@ async function run() {
     fs.writeFileSync(path.join(process.cwd(), rel), `écrit par ${askedModel || 'fake'}\n`);
   }
 
+  if (process.env.FAKE_CLAUDE_PIPELINE === '1' && /^PIPELINE_STEP=/m.test(userText)) pipelineStep(userText);
+
   // 2. Optional tool_use rounds
   for (let i = 0; i < TOOL_USES; i++) {
     const toolUseId = newId('toolu');
@@ -226,6 +228,70 @@ async function run() {
   // Flush + exit cleanly.
   await new Promise(r => process.stdout.write('', r));
   process.exit(0);
+}
+
+// Moteur de pipelines (0.48.0), inactif par défaut :
+//   FAKE_CLAUDE_PIPELINE=1      joue l'étape nommée par « PIPELINE_STEP= » sur un
+//                               petit projet Node (test/pipe.test.mjs, src/pipe.mjs) :
+//                               écrit l'artefact « ARTEFACT= », le test, le code,
+//                               puis version + CHANGELOG + exigence + commit (Livrer)
+//   FAKE_PIPE_BAD=<étape>[:n]   triche à cette étape (les n premières fois, défaut :
+//                               toujours) : Rouge touche le code, Vert le test,
+//                               Comprendre cite un chemin inexistant, Rechercher
+//                               modifie le projet, Livrer ne commite pas
+//   FAKE_PIPE_REVIEW=problemes[:n]  la revue relève un problème (n fois)
+function pipelineStep(text) {
+  const step = (/^PIPELINE_STEP=(\S+)/m.exec(text) || [])[1];
+  const artefact = (/^ARTEFACT=(.+)$/m.exec(text) || [])[1]?.trim();
+  const cwd = process.cwd();
+  const once = (spec, key) => {
+    const [name, n] = String(spec || '').split(':');
+    if (name !== key) return false;
+    if (!n) return true;
+    const f = path.join(path.dirname(artefact || cwd), `.fake-${key}.count`);
+    let c = 0; try { c = Number(fs.readFileSync(f, 'utf8')) || 0; } catch {}
+    fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, String(c + 1));
+    return c < Number(n);
+  };
+  const bad = once(process.env.FAKE_PIPE_BAD, step);
+  const w = (rel, s) => { const abs = path.isAbsolute(rel) ? rel : path.join(cwd, rel); fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, s); };
+  const g = (...a) => spawnSync('git', ['-c', 'user.name=fake', '-c', 'user.email=fake@localhost', ...a], { cwd, encoding: 'utf8' });
+  switch (step) {
+    case 'comprendre': w(artefact, `# Compréhension\n\nLa question porte sur le projet. Fichiers utiles : \`package.json\`${bad ? ', `inexistant/fichier.js`' : ''}.\n`); break;
+    case 'rechercher': w(artefact, '# Recherche\n\n- package.json : script de test « node --test ».\n'); if (bad) w('pollution.txt', 'modifié par la recherche\n'); break;
+    case 'repondre': w(artefact, '# Réponse\n\nRéponse simulée : le projet se teste avec `npm test`. Recommandation : rien à changer.\n'); break;
+    case 'rouge':
+      w('test/pipe.test.mjs', "import { test } from 'node:test';\nimport assert from 'node:assert';\ntest('pipe double', async () => {\n  const m = await import('../src/pipe.mjs');\n  assert.equal(m.double(2), 4);\n});\n");
+      if (bad) w('src/pipe.mjs', 'export const double = (x) => x * 2;\n');
+      w(artefact, '# Rouge\n\nTest « pipe double » dans test/pipe.test.mjs : échoue, src/pipe.mjs n’existe pas.\n');
+      break;
+    case 'vert':
+      // Correction demandée par la revue : renommer le paramètre.
+      w('src/pipe.mjs', /CORRIGER les problèmes/.test(text) ? 'export const double = (valeur) => valeur * 2;\n' : 'export const double = (x) => x * 2;\n');
+      if (bad) fs.appendFileSync(path.join(cwd, 'test/pipe.test.mjs'), '// affaibli\n');
+      w(artefact, '# Vert\n\nsrc/pipe.mjs : double(x) = 2x.\n');
+      break;
+    case 'revue': {
+      const prob = once(process.env.FAKE_PIPE_REVIEW, 'problemes');
+      w(artefact, JSON.stringify(prob ? { verdict: 'problèmes', items: ['nommer le paramètre de double'] } : { verdict: 'ok', items: [] }));
+      break;
+    }
+    case 'livrer': {
+      const pkgF = path.join(cwd, 'package.json');
+      const pkg = JSON.parse(fs.readFileSync(pkgF, 'utf8'));
+      const v = String(pkg.version || '1.0.0').split('.').map(Number); v[2]++;
+      pkg.version = v.join('.');
+      fs.writeFileSync(pkgF, JSON.stringify(pkg, null, 2) + '\n');
+      const cl = path.join(cwd, 'CHANGELOG.md');
+      const old = fs.existsSync(cl) ? fs.readFileSync(cl, 'utf8') : '# Changelog\n';
+      fs.writeFileSync(cl, old.replace(/^(# Changelog\s*\n)/, `$1\n## [${pkg.version}] - 2026-10-09\n### Added\n- double()\n`));
+      fs.mkdirSync(path.join(cwd, 'docs'), { recursive: true });
+      fs.appendFileSync(path.join(cwd, 'docs', 'USER_REQUIREMENTS.md'), `| 2026-10-09 | « double » | test/pipe.test.mjs | ${pkg.version} |\n`);
+      w(artefact, `# Livraison\n\nVersion ${pkg.version}.\n`);
+      if (!bad) { g('add', '-A'); g('commit', '-q', '-m', `feat: double (v${pkg.version})`); }
+      break;
+    }
+  }
 }
 
 /** Comme le CLI : lance le serveur MCP de --mcp-config, poignée de main, puis

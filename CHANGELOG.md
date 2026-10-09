@@ -11,6 +11,52 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.48.0] - 2026-10-09
+
+Pipelines obligatoires, phase 3 : le moteur. Demande utilisateur : « il faut
+faire en sorte que ces pipelines soient obligatoirement utilisés ».
+
+### Added
+- (server) Moteur de pipelines (`scripts/pipeline-engine.mjs`), appelé par
+  `dispatch.mjs` après la file d'attente. Une exécution = un pipeline appliqué
+  à une demande :
+  - une étape = un tour séparé, sur le model de SA case de la page Models
+    (variante, puis étape) ; principal + second : l'étape tourne en mode
+    double ; case vide : défaut du projet, avec un avertissement visible ;
+  - passation par fichiers dans `<projet>/.orchestrateur/runs/<run>/`
+    (jamais versionnés) ; logs d'étape dans `logs/runs/<run>/` ;
+  - critères de sortie vérifiés par le code : lecture seule respectée,
+    chemins cités existants, 4a ne touche que des tests et la suite échoue
+    sur le nouveau test, 4b ne modifie aucun test et la suite passe,
+    `revue.json` valide, Livrer = un seul commit, arbre propre, version,
+    CHANGELOG, exigence, suite verte ;
+  - un essai refusé est annulé puis relancé avec la raison ; limites (2 essais
+    par critère, 3 essais de 4b, 2 tours de revue, 90 min) → pause annoncée :
+    `notification/pipeline_limit`, question dans le dashboard, chef prévenu ;
+  - model de la case indisponible → pause, jamais de repli ;
+  - reprise d'une exécution en pause : « continuer » ou `--pipeline-resume <run>`.
+- (server) Pipelines en service : Discussion (Comprendre → Rechercher →
+  Répondre) et Développement léger (4a Rouge → 4b Vert → Revue → Livrer ;
+  Bugfix et mécanique), sur les projets listés dans `model-routing.json` →
+  `enforcement`. `scripts/pipeline-enforce.mjs on|off <projet>` (relu à chaud).
+  En service : `pipelineLab`.
+- (server) Jeton d'étape signé (HMAC du secret local) : un tour d'étape sans
+  jeton valide, ou avec un autre model que celui de la case, est refusé.
+- (server) Rien ne contourne, sur un projet en service : un musicien ne peut
+  plus y lancer de tour, une étape ne lance aucun tour, `--model` à la main est
+  refusé ; `--hors-pipeline "raison"` reste possible, tracé et visible.
+- (server) `GET /api/pipeline-enforcement`, `GET /api/pipeline-runs`. La file
+  d'attente garde le pipeline d'une demande.
+- (server) Journal du musicien : la frise des étapes d'une exécution (model de
+  la case, model servi, ✓ critère vérifié, ✕ refus motivé, ⚠ défaut du projet,
+  ⏸ limite), toujours UN tour.
+
+### Changed
+- (server) Le serveur et `restart-orchestrateur.mjs` retirent les marqueurs de
+  tour (`ORCH_TURN_PROJECT`, `ORCH_TURN_STEP`, `ORCH_STEP_TOKEN`) de leur
+  environnement. Le mode double accepte `--second-provider nvidia|openrouter`
+  depuis la file.
+
 ## [0.47.2] - 2026-10-09
 
 Remarque utilisateur : « Si il n'y a pas eu de probleme, ca n'aurait pas du

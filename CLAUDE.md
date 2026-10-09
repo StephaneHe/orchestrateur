@@ -988,6 +988,65 @@ suivante sont tenus dans le plan.
   - `_test_responses_shim.mjs` (bout en bout réel avec faux fournisseurs) ;
   - HTTP `harness-nvidia`.
 
+## Pipelines obligatoires — phase 3 : le moteur (0.48.0)
+
+Suite de la demande du 2026-10-09. Plan : `docs/PLAN-pipeline-enforcement.md`.
+
+- **Mise en service** : `model-routing.json` → `enforcement {projects,
+  pipelines}`, relu à chaque dispatch.
+  - Écriture par `node scripts/pipeline-enforce.mjs on|off <projet>` ;
+    `off --all` est le retour arrière.
+  - Lecture : `GET /api/pipeline-enforcement`.
+  - En service : **pipelineLab**. Pipelines en service : `discussion`, `dev`
+    (léger ; le mode complet arrive en phase 4 et tourne en léger d'ici là,
+    avec une note).
+- **Porte** : `dispatch.mjs`, avant toute écriture, sur un projet en service :
+  - une demande sans `--pipeline` est classée (`classify` de
+    pipeline-observe) ;
+  - un pipeline pas en service donne un tour ordinaire, avec la trace
+    `pipelineBypass` et `system/pipeline_bypass` ;
+  - `--model` / `--second-model` sont refusés (64) ;
+  - un dispatch lancé depuis le tour d'un musicien (`ORCH_TURN_PROJECT`, posé
+    dans l'env de chaque tour, et pas le chef) est refusé (65) ;
+  - depuis une étape (`ORCH_TURN_STEP`), tout dispatch est refusé (65) ;
+  - `--hors-pipeline "raison"` : tour ordinaire, tracé.
+
+  Limite connue : un musicien qui efface ces variables échappe au refus n° 2
+  (même niveau que `sameOriginOnly`). Les tours d'étape, eux, exigent un jeton.
+- **Moteur** : `scripts/pipeline-engine.mjs` (`runPipeline`), après la file.
+  - `logs/runs/<run>/run.json` (état ; reprise par `--pipeline-resume` ou par
+    « continuer » si l'exécution est en pause), plus un log par étape
+    `<nn>-<étape>.jsonl`.
+  - Artefacts : `<projet>/.orchestrateur/runs/<run>/`, exclus de git (ajout
+    à `.git/info/exclude`).
+  - Côté musicien, **un seul tour** : `user_prompt.pipeline` (étapes, cases,
+    models), `system/pipeline_*` (frise, `pipeline_progress` toutes les
+    30 s), puis UN result, ou une pause (texte synthétique + result
+    `NEEDS_USER_INPUT`).
+- **Étape** : `dispatch.mjs --pipeline-step <run>:<clé> --pipeline-session
+  <groupe>`, avec `ORCH_STEP_TOKEN`.
+  - Le jeton est signé par HMAC (`derivedToken(root, 'pipeline-step')`). Il
+    est vérifié (run, clé, projet, model, ou second pour une branche double)
+    puis retiré de l'env.
+  - Case avec un second : l'étape tourne via `runDual`, dans le log de
+    l'étape. Avant une action en mode double, un commit de point d'étape est
+    fait ; tout commit postérieur au départ est replié (`reset --soft`) avant
+    Livrer.
+- **Critères** : `checkCriteria`, voir la liste du CHANGELOG 0.48.0. Les
+  commandes viennent du `.orchestrateur/pipeline.json` versionné du projet.
+  - Un essai refusé est annulé (empreintes `git hash-object -w`).
+  - Limites : `LIMITS`, réglables en test par `ORCH_PIPE_*`.
+- **Fake claude** : `FAKE_CLAUDE_PIPELINE=1` joue chaque étape ;
+  `FAKE_PIPE_BAD=<étape>[:n]` triche, `FAKE_PIPE_REVIEW=problemes[:n]`.
+- Recettes :
+  - `_test_pipeline_engine.mjs` (62 contrôles, vrai dispatch) ;
+  - HTTP `pipeline-run`, `pipeline-bypass`, `pipeline-unavailable` et
+    `pipeline-limit-notice` (le fixture omega devient un dépôt git) ;
+  - navigateur `run-timeline`.
+- **Redémarrage nécessaire** pour les routes, le journal (`turn-core.js`) et
+  le nettoyage de l'env du serveur. Le moteur et la porte (`dispatch.mjs`)
+  sont actifs tout de suite.
+
 ## Rouge = vrai incident ; arrêts, essais et attentes neutres (0.47.2)
 
 Remarque utilisateur : « Si il n'y a pas eu de probleme, ca n'aurait pas du

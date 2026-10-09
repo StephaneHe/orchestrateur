@@ -194,8 +194,10 @@ export async function runDual(o) {
   const { root, logsDir, project, projectName, prompt, promptForLog, principal, mode, callbackProject, sourceProject, obsId, dispatchScript } = o;
   const second = { model: o.second.model, provider: o.second.provider || inferProvider(o.second.model) };
   const say = (m) => console.log(`[double] ${m}`);
-  const projectLog = path.join(logsDir, `${projectName}.jsonl`);
-  const pidPath = path.join(logsDir, `${projectName}.pid`);
+  // Dans une étape de pipeline (0.48.0), tout va dans le log de l'étape, et la
+  // relecture garde le jeton d'étape et ses drapeaux.
+  const projectLog = o.logFile || path.join(logsDir, `${projectName}.jsonl`);
+  const pidPath = o.pidFile || path.join(logsDir, `${projectName}.pid`);
   const writeEvent = (ev) => { try { fs.appendFileSync(projectLog, JSON.stringify({ ...ev, timestamp: new Date().toISOString() }) + '\n'); } catch {} };
 
   // ── Garde-fous, avant toute écriture ──────────────────────────────────────
@@ -214,7 +216,8 @@ export async function runDual(o) {
     console.error(`[double] refusé : ${project.path} n'est pas un dépôt git — l'isolation des deux branches passe par un worktree par model.`);
     return 64;
   }
-  const dirty = git(project.path, ['status', '--porcelain', '--untracked-files=no']).out;
+  // Jugement : rien n'est fusionné, l'état courant peut être modifié (étape Revue d'un pipeline).
+  const dirty = mode === 'action' ? git(project.path, ['status', '--porcelain', '--untracked-files=no']).out : '';
   if (dirty) {
     console.error(`[double] refusé : le dépôt a des modifications non commitées (${dirty.split('\n').length} fichier(s)). Les deux branches partent du dernier commit : commite ou range d'abord.`);
     return 65;
@@ -280,7 +283,7 @@ export async function runDual(o) {
 
   // ── 2. Les deux branches en parallèle ────────────────────────────────────
   const heartbeat = setInterval(() => writeEvent({ type: 'system', subtype: 'dual_progress', dual: { run }, text: 'branches en cours' }), 60_000);
-  const childEnv = { ...process.env, ORCH_OBS_ID: obsId || 'obs-dual-branch' };
+  const childEnv = { ...process.env, ORCH_OBS_ID: obsId || 'obs-dual-branch', ...(o.childEnvExtra || {}) };
   for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'DISPATCH_SLOT', 'DISPATCH_TICKET']) delete childEnv[k];
   const runChild = (args, input) => new Promise((resolve) => {
     const c = spawn(process.execPath, [dispatchScript, ...args], { cwd: root, env: childEnv, stdio: ['pipe', 'inherit', 'inherit'], windowsHide: true });
@@ -292,7 +295,7 @@ export async function runDual(o) {
   const codes = await Promise.all(branches.map(b => {
     const args = [projectName, '--prompt-stdin', '--model', b.model, '--provider', b.provider,
       '--dual-branch', `${run}:${b.role}`, '--dual-cwd', b.wt, '--no-queue-if-busy'];
-    const text = branchPrompt(prompt, b.role, run, mode);
+    const text = branchPrompt(prompt, b.role, run, mode) + (o.stepPrompt ? `\n\n[ÉTAPE DE PIPELINE EN MODE DOUBLE] N'écris PAS le fichier ARTEFACT= ci-dessus (l'autre branche le ferait aussi) : mets son contenu COMPLET dans ta réponse finale. La relecture écrira l'artefact.` : '');
     const input = (o.imagePaths?.length || o.videoPaths?.length)
       ? JSON.stringify({ prompt: text, attachmentPaths: o.imagePaths || [], videoPaths: o.videoPaths || [] }) : text;
     b.startedAt = Date.now();
@@ -384,7 +387,7 @@ export async function runDual(o) {
   try { testCommand = JSON.parse(fs.readFileSync(path.join(project.path, '.orchestrateur', 'pipeline.json'), 'utf8')).testCommand || null; } catch {}
   const synth = synthesisPrompt({ prompt, run, mode, dir, branches, failed, testCommand });
   fs.writeFileSync(path.join(dir, 'relecture.prompt.md'), synth);
-  const rArgs = [projectName, '--prompt-stdin', '--model', principal.model, '--provider', principal.provider, '--dual-synthesis', run, '--no-queue-if-busy'];
+  const rArgs = [projectName, '--prompt-stdin', '--model', principal.model, '--provider', principal.provider, '--dual-synthesis', run, '--no-queue-if-busy', ...(o.synthesisArgs || [])];
   if (callbackProject) rArgs.push('--callback', callbackProject);
   if (sourceProject) rArgs.push('--source', sourceProject);
   const rStart = Date.now();
@@ -392,7 +395,7 @@ export async function runDual(o) {
   // retranche le dernier coût connu de cette session pour un coût par étape.
   const linesBefore = (() => { try { return fs.readFileSync(projectLog, 'utf8').split('\n').filter(Boolean).length; } catch { return 0; } })();
   let sid = null;
-  try { sid = fs.readFileSync(path.join(logsDir, `${projectName}.session`), 'utf8').trim() || null; } catch {}
+  try { sid = fs.readFileSync(o.sessionFile || path.join(logsDir, `${projectName}.session`), 'utf8').trim() || null; } catch {}
   const prevCost = (() => {
     if (!sid) return 0;
     try {

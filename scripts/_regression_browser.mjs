@@ -1459,6 +1459,46 @@ export async function browserChecks(sb, t) {
       });
     }
 
+    // 0.48.0 — pipelines, phase 3 : la frise d'une exécution dans le journal.
+    await check(B, 'run-timeline', 'Pipeline : frise des étapes dans le journal (model de chaque case, ✓ critère vérifié, ✕ refus motivé, ⚠ défaut du projet, ⏸ limite), un seul tour', async () => {
+      const js = await (await fetch(`${sb.url}/activite.js`, { headers: H })).text();
+      if (!/jt-pipeline/.test(js)) NA('frise absente de cet état du code');
+      const run = 'p-20261009T120000-f1a2b3';
+      const steps = [
+        { id: 'rouge', title: '4a Rouge', slot: 'dev.rouge', model: 'claude-opus-5-5', provider: 'claude', source: 'pipeline' },
+        { id: 'vert', title: '4b Vert', slot: 'dev.vert', model: 'claude-sonnet-5-5', provider: 'claude', source: 'pipeline' },
+        { id: 'revue', title: '5 Revue', slot: 'dev.revue.code', model: null, provider: null, source: 'project-default' },
+      ];
+      const done = (k, id, model, status, extra = {}) => ({ type: 'system', subtype: 'pipeline_step_done', pipeline: { run, step: id, key: k }, model, served: model, modelSource: model ? 'pipeline' : 'project-default', status, durationMs: 42_000, ...extra });
+      appendLog('zeta', [
+        { type: 'user_prompt', text: 'Ajoute une fonction double', pipeline: { run, pipeline: 'dev', mode: 'leger', kind: 'simple', steps } },
+        { type: 'system', subtype: 'pipeline_warning', pipeline: { run, step: 'revue' }, text: '⚠ 5 Revue : aucune case affectée (dev.revue.code) — défaut du projet' },
+        done('01-rouge', 'rouge', 'claude-opus-5-5', 'ok'),
+        done('02-vert', 'vert', 'claude-sonnet-5-5', 'refused', { why: 'fichiers de test modifiés (interdit à cette étape) : test/pipe.test.mjs', pipeline: { run, step: 'vert', key: '02-vert', attempt: 1 } }),
+        done('03-vert', 'vert', 'claude-sonnet-5-5', 'ok', { pipeline: { run, step: 'vert', key: '03-vert', attempt: 2 } }),
+        { type: 'notification', subtype: 'pipeline_limit', pipeline: { run, step: 'revue' }, limit: 'review', value: 2, text: '⏸ Limite atteinte — zeta · Développement léger · 5 Revue : 2 tours de revue' },
+        { type: 'system', subtype: 'pipeline_summary', pipeline: { run, status: 'paused' }, totalMs: 300_000 },
+        { type: 'assistant', message: { model: '<synthetic>', content: [{ type: 'text', text: '⏸ Limite atteinte\n\nNEEDS_USER_INPUT: Que faire ?' }] } },
+        { type: 'result', subtype: 'success', is_error: false, num_turns: 3, duration_ms: 300_000, duration_api_ms: 200_000, result: '⏸ Limite atteinte\n\nNEEDS_USER_INPUT: Que faire ?' },
+      ]);
+      const rctx = await browser.newContext({ viewport: { width: 1600, height: 1000 }, locale: 'fr-FR' });
+      const rp = await rctx.newPage();
+      wire(rp);
+      try {
+        await rp.goto(`${sb.url}/?token=${sb.token}#/m/zeta`);
+        await rp.locator('.brand').waitFor();
+        const box = await until(async () => (await rp.locator(`#dive .jt-pipeline[data-run="${run}"]`).count()) ? true : null, 10_000);
+        assert(box, 'frise absente du journal');
+        const txt = await rp.textContent(`#dive .jt-pipeline[data-run="${run}"]`);
+        for (const want of ['Développement léger', 'opus-5-5', 'sonnet-5-5', 'fichiers de test modifiés', 'essai 2', 'Limite atteinte']) assert(txt.includes(want), `frise sans « ${want} » : ${txt.slice(0, 400)}`);
+        assert(await rp.locator(`#dive .jt-pipeline[data-run="${run}"] .jt-step[data-step-status="refused"]`).count() === 1, 'refus non marqué');
+        assert(/défaut du projet/.test(txt), 'avertissement « défaut du projet » absent');
+        assert(await rp.locator('#dive .jt-pipeline').count() === 1, 'l’exécution doit rester UN tour');
+        await shot(rp, 'pipeline-frise');
+      } finally { await rctx.close(); }
+      return 'frise rendue : 3 étapes, refus motivé, défaut du projet, limite';
+    });
+
     await check(B, 'js-errors', 'Aucune erreur JavaScript non interceptée pendant les parcours', async () => {
       assert(!pageErrors.length, pageErrors.slice(0, 3).join(' | '));
     });

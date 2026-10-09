@@ -129,7 +129,7 @@ console.log('\n── 7. Câblage : aucun point d’entrée n’échappe à l’
   t('/api/dispatch observe dashboard / android × chef / mention / musicien', /\$\{clientOf\(req\)\}:\$\{isChef \? \(mention \? 'mention' : 'chef'\) : 'musicien'\}/.test(srv));
   t('terminal interactif : les deux chemins d’écriture sont observés', (srv.match(/observeTyping\(/g) || []).length >= 2 && /centralPty\.write\(parsed\.data\);\s*observeTyping\(parsed\.data\)/.test(srv) && /centralPty\.write\(text\);\s*observeTyping\(text\)/.test(srv));
   t('spawnDirectDispatch : filet de sécurité (lancement sans origine observé)', /function spawnDirectDispatch[\s\S]{0,900}observeEntry\(\{ entry, project: name, text: prompt \}\)/.test(srv));
-  t('l’identifiant suit l’entrée jusqu’au tour (ORCH_OBS_ID) : file, pool, direct', (srv.match(/ORCH_OBS_ID/g) || []).length >= 3 && /obsId: t\.obsId/.test(srv) && /newSession, obsId,( secondModel, secondProvider, dualMode,)? noQueueIfBusy/.test(srv));
+  t('l’identifiant suit l’entrée jusqu’au tour (ORCH_OBS_ID) : file, pool, direct', (srv.match(/ORCH_OBS_ID/g) || []).length >= 3 && /obsId: t\.obsId/.test(srv) && /newSession, obsId,( secondModel, secondProvider, dualMode,)?( pipeline, pipelineResume, horsPipeline,)? noQueueIfBusy/.test(srv));
   t('dispatch.mjs : observe hors serveur et retire ORCH_OBS_ID de l’environnement du tour', /entry: 'dispatch-cli'/.test(dsp) && /delete process\.env\.ORCH_OBS_ID/.test(dsp));
   t('dispatch.mjs : l’observation ne bloque jamais (import dynamique + try/catch)', /try \{\s*const obs = await import\('\.\/pipeline-observe\.mjs'\)/.test(dsp));
 }
