@@ -11,6 +11,64 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.54.0] - 2026-10-09
+
+Pipelines obligatoires, phase 6, lot B : le tour du chef devient lui-même un
+pipeline (Routage). Demande utilisateur : « Routage complet (le tour du chef
+devient lui-même un pipeline) ».
+
+### Added
+- (server) **Pipeline Routage** (catalogue, `S.routage`), mis en service par
+  `pipeline-enforce.mjs on --chef` (**désactivé par défaut** ; `off --all` le
+  coupe aussi).
+  - Mode **demande** (message de l'utilisateur, question d'un musicien) :
+    Lire → Classifier (`reponse | taches | question`) → Décomposer (tâches
+    JSON) → Affecter → Dispatcher → Rapporter.
+  - Mode **callback** (réveil apportant des résultats) : Lire → Callback →
+    Rapporter.
+  - Chaque étape tourne sur sa case `routage.*` de la page Models.
+  - **Affecter** et **Dispatcher** sont exécutés **par le code**, sans tour
+    de model :
+    - les models viennent de la page Models ;
+    - chaque tâche part par `dispatch.mjs --callback chef --queue-if-busy`,
+      avec `--pipeline` seulement si le projet est en service. Un projet hors
+      service reçoit un tour ordinaire, comme aujourd'hui : ce n'est pas une
+      phase 7 déguisée.
+  - Tâches validées par le code :
+    - projet de la liste blanche, jamais le chef ;
+    - pipeline connu ;
+    - demande autonome ;
+    - 6 tâches au plus.
+  - Demande ambiguë ⇒ `question` obligatoire, et le résultat finit par
+    `NEEDS_USER_INPUT` (règle : ne jamais deviner).
+  - Question d'un musicien ⇒ le rapport commence par `[ANSWER]`, pour le
+    relais.
+  - Réveil en rapport seul ⇒ le Dispatcher refuse.
+  - Ticket et slot du pool tracés.
+  - Le rapport apparaît comme réponse du chef dans son fil.
+  - Contexte : la conversation récente est extraite du log du chef par le code
+    (`conversation.md`).
+- (server) Moteur :
+  - étapes `kind: 'code'` ;
+  - étapes conditionnelles (`skipIf`, sautées et dites) ;
+  - modes d'un pipeline du catalogue ;
+  - critère `jsonEnum` ;
+  - empreinte d'un dossier **hors git** (le chef), avec restauration d'un
+    essai refusé ;
+  - `assistantFinal`.
+- (server) `--model` sur un tour du chef en Routage : refusé (64).
+  `--hors-pipeline` reste la sortie tracée.
+
+### Fixed
+- (server) Les tours d'étape héritaient de `DISPATCH_REPORT_ONLY` (réveil en
+  rapport seul) et étaient refusés : la variable est retirée de leur
+  environnement, car une étape ne dispatche jamais.
+
+### Tests
+- `scripts/_test_pipeline_routage.mjs` (25 contrôles, dossier du chef hors git
+  comme en production), parcours HTTP `pipeline-routage` (pool → Routage → fil
+  → ticket clos).
+
 ## [0.53.0] - 2026-10-09
 
 Pipelines obligatoires, phase 6, lot A : sept autres pipelines, et le

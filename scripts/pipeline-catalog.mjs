@@ -185,6 +185,46 @@ const S = {
   },
 };
 
+// ── Routage (lot B, 0.54.0) : le tour du chef devient lui-même un pipeline ───
+// mode « demande » : un message de l'utilisateur (ou une question d'un musicien) ;
+// mode « callback » : un réveil qui apporte des résultats de musiciens.
+// Le chef n'a pas de dépôt git : ses étapes sont jugées sur une empreinte du
+// dossier (lecture seule) ; « affecter » et « dispatcher » sont exécutés par le
+// code (les models viennent de la page Models, les lancements de dispatch.mjs).
+S.routage = {
+  needs: { git: false },
+  final: 'rapporter',
+  assistantFinal: true,
+  modes: {
+    demande: ['lire', 'classifier', 'decomposer', 'affecter', 'dispatcher', 'rapporter'],
+    callback: ['lire', 'callback', 'rapporter'],
+  },
+  steps: [
+    { id: 'lire', title: '1 Lire la demande', chain: ['routage.lire'], group: 'routage', artefact: 'lecture.md', kind: 'judge', prerun: 'conversation',
+      role: 'LIRE la demande (demande.md) dans le contexte de la conversation récente (conversation.md, fournie par l’orchestrateur) : ce qui est réellement demandé, à quoi elle fait référence, les projets concernés.',
+      checks: { sections: ['Demande', 'Contexte'] } },
+    { id: 'classifier', title: '2 Classifier', chain: ['routage.classifier'], group: 'routage', artefact: 'classement.json', kind: 'judge',
+      role: 'CLASSIFIER : « reponse » si tu peux répondre toi-même sans travail dans un projet ; « taches » si un ou plusieurs projets doivent travailler ; « question » si la demande est ambiguë (projet non nommé alors que plusieurs attendent, choix qui revient à l’utilisateur) — ne devine jamais.',
+      checks: { json: { nature: 'string', raison: 'string' }, jsonEnum: { nature: ['reponse', 'taches', 'question'] } },
+      jsonExample: '{"nature": "reponse|taches|question", "raison": "une phrase", "question": "la question à poser si nature = question"}' },
+    { id: 'decomposer', title: '3 Décomposer en tâches', chain: ['routage.decomposer'], group: 'routage', artefact: 'taches.json', kind: 'judge',
+      skipIf: { artefact: 'classement.json', field: 'nature', unless: 'taches' },
+      role: 'DÉCOMPOSER en tâches : une par projet, chacune avec le pipeline qui convient et une demande autonome (le musicien ne voit pas la conversation). Un préfixe choisi par l’utilisateur (/dev, /complet…) s’impose.',
+      checks: { json: { taches: 'array' }, tasks: true },
+      jsonExample: '{"taches": [{"projet": "nom exact du projet", "pipeline": "dev|discussion|incident|recherche|audit|maintenance|nouveau|donnees|redaction", "mode": "leger|complet", "demande": "la demande complète pour ce projet"}]}' },
+    { id: 'affecter', title: '4 Affecter (page Models)', chain: ['routage.affecter'], group: 'routage', artefact: 'affectation.md', kind: 'code', handler: 'affecter',
+      skipIf: { artefact: 'classement.json', field: 'nature', unless: 'taches' } },
+    { id: 'dispatcher', title: '5 Dispatcher', chain: ['routage.dispatcher'], group: 'routage', artefact: 'dispatch.json', kind: 'code', handler: 'dispatcher',
+      skipIf: { artefact: 'classement.json', field: 'nature', unless: 'taches' } },
+    { id: 'callback', title: '2 Callback', chain: ['routage.callback'], group: 'routage', artefact: 'callback.md', kind: 'judge',
+      role: 'CALLBACK : des musiciens ont rendu leurs résultats (dans demande.md). Pour chacun : ce qui a été fait, vérifié ou non, ce qui reste ; puis la suite à proposer à l’utilisateur. Ne relance aucun travail toi-même.',
+      checks: { sections: ['Résultats', 'Suite'] } },
+    { id: 'rapporter', title: '6 Rapporter', chain: ['routage.rapporter'], group: 'routage', artefact: 'rapport.md', kind: 'judge',
+      role: 'RAPPORTER à l’utilisateur, à partir des artefacts de cette exécution : la réponse directe, ou ce qui a été lancé (projet, pipeline, models) et ce qu’il en attend, ou la synthèse des résultats. En nommant toujours le projet concerné. Clair et bref.',
+      checks: {} },
+  ],
+};
+
 export const CATALOG_PIPELINES = Object.keys(S);
 export function catalogOf(pipeline) { return S[pipeline] || null; }
 export function catalogSteps(pipeline) { return (S[pipeline]?.steps || []).map(s => ({ ...s, judge: s.kind === 'judge' })); }

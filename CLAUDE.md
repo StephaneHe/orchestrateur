@@ -1132,6 +1132,34 @@ Suite de la demande du 2026-10-09. Plan : `docs/PLAN-pipeline-enforcement.md`.
   (ou une liste qui contient `discussion`).
 - Recettes : `_test_pipeline_catalog.mjs`, HTTP `pipeline-catalog`.
 
+## Pipelines obligatoires — phase 6, lot B : Routage, le tour du chef (0.54.0)
+
+- `S.routage` dans `pipeline-catalog.mjs`, avec deux modes : `demande`
+  (`lire, classifier, decomposer, affecter, dispatcher, rapporter`) et
+  `callback` (`lire, callback, rapporter`). Pas de git : `needs.git:false`,
+  donc empreinte `walkSnapshot` et restauration à partir du contenu gardé.
+- **Branchement** (`dispatch.mjs`, `CHEF_ROUTED`) : un tour du chef ou d'un
+  slot, avec `enforcement.chef === true`, sans `--hors-pipeline`, part dans
+  `runPipeline({pipeline:'routage', mode, ticket, slot})`.
+  - Le mode est `callback` si la source est `wake` ou si le texte commence
+    par `[CALLBACK_WAKE`.
+  - `--model` est refusé (64).
+- **Étapes de code** (`CODE_STEPS` du moteur) :
+  - `affecter` relève les models des cases et écrit `affectation.md` ;
+  - `dispatcher` lance un `dispatch.mjs` détaché par tâche (`--callback`,
+    `--source chef`, `--queue-if-busy`, `--pipeline` seulement si le projet
+    est en service) et écrit `dispatch.json`. Il refuse sous
+    `DISPATCH_REPORT_ONLY`.
+- `validateTasks` : liste blanche, jamais le chef, pas de Routage délégué,
+  6 tâches au plus.
+- `conversationExcerpt` : la fin du log du chef.
+- `skipIf` : saute une étape d'après le JSON d'une étape précédente.
+- `jsonEnum`. Pour une `question`, le texte de la question est obligatoire.
+- **Mise en service** : `node scripts/pipeline-enforce.mjs on --chef`
+  (désactivé par défaut ; décision de l'utilisateur, comme la phase 7).
+- Fake claude : `FAKE_PIPE_JSON='{"<étape>":{…}}'` et `ATTENDU_ENUM`.
+- Recettes : `_test_pipeline_routage.mjs`, HTTP `pipeline-routage`.
+
 ## Langue de discussion (0.51.0)
 
 Demande utilisateur : « La langue de la discussion doit pouvoir etre fixee et

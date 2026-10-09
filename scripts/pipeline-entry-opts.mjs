@@ -12,7 +12,7 @@ const RUN_RE = /^p-\d{8}T\d{6}-[a-z0-9]{4,8}$/;
 export function pipelineOptsFrom(body) {
   const b = body || {};
   return {
-    pipeline:       ENGINE_PIPELINES.includes(b.pipeline) ? b.pipeline : undefined,
+    pipeline:       ENGINE_PIPELINES.includes(b.pipeline) && b.pipeline !== 'routage' ? b.pipeline : undefined,
     pipelineMode:   ['leger', 'complet'].includes(b.pipelineMode) ? b.pipelineMode : undefined,
     pipelineResume: typeof b.pipelineResume === 'string' && RUN_RE.test(b.pipelineResume) ? b.pipelineResume : undefined,
     horsPipeline:   typeof b.horsPipeline === 'string' && b.horsPipeline.trim() ? b.horsPipeline.replace(/\s+/g, ' ').trim().slice(0, 300) : undefined,

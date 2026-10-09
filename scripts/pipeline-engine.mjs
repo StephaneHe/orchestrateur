@@ -88,14 +88,14 @@ export function readEnforcement(root) {
   const projects = Array.isArray(e.projects) ? e.projects.filter(p => typeof p === 'string') : [];
   const pipelines = (Array.isArray(e.pipelines) ? e.pipelines : ENGINE_PIPELINES).filter(p => ENGINE_PIPELINES.includes(p));
   // terminal (0.52.0) : le terminal interactif /ws/pty passe par le routeur.
-  return { projects, pipelines, terminal: e.terminal === true, since: e.since || null, by: e.by || null };
+  return { projects, pipelines, terminal: e.terminal === true, chef: e.chef === true, since: e.since || null, by: e.by || null };
 }
 export function isEnforced(enf, project) {
   return enf.projects.includes(project) || enf.projects.includes('*');
 }
 
 /** Écriture atomique de la mise en service (CLI pipeline-enforce.mjs, route serveur). */
-export function writeEnforcement(root, { projects, pipelines, terminal, by }) {
+export function writeEnforcement(root, { projects, pipelines, terminal, chef, by }) {
   const file = path.join(root, 'model-routing.json');
   let j = {};
   try { j = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* neuf */ }
@@ -106,8 +106,9 @@ export function writeEnforcement(root, { projects, pipelines, terminal, by }) {
   const at = new Date().toISOString();
   const before = j.enforcement || null;
   const term = typeof terminal === 'boolean' ? terminal : before?.terminal === true;
-  j.enforcement = { projects: [...new Set(projects)], pipelines: pipelines.filter(p => ENGINE_PIPELINES.includes(p)), ...(term ? { terminal: true } : {}), since: at, by };
-  const fmt = (e) => `${(e.projects || []).join(',') || '—'} / ${(e.pipelines || []).join(',')}${e.terminal ? ' / terminal' : ''}`;
+  const chf = typeof chef === 'boolean' ? chef : before?.chef === true;
+  j.enforcement = { projects: [...new Set(projects)], pipelines: pipelines.filter(p => ENGINE_PIPELINES.includes(p)), ...(term ? { terminal: true } : {}), ...(chf ? { chef: true } : {}), since: at, by };
+  const fmt = (e) => `${(e.projects || []).join(',') || '—'} / ${(e.pipelines || []).join(',')}${e.terminal ? ' / terminal' : ''}${e.chef ? ' / chef' : ''}`;
   j.history.push({ at, task: 'enforcement', from: before ? fmt(before) : null, to: fmt(j.enforcement), by });
   if (j.history.length > 500) j.history = j.history.slice(-500);
   j.updatedAt = at;
@@ -196,7 +197,13 @@ export function planSteps(pipeline, { mode = 'leger', kind = 'simple' } = {}) {
     if (mode === 'complet') return ['comprendre', 'concevoir', 'liste-tests', '@loop', 'revue', 'livrer'].map(id => D[id]);
     return [...(kind !== 'mecanique' ? [D.rouge] : []), D.vert, D.revue, D.livrer];
   }
-  if (catalogOf(pipeline)) return catalogSteps(pipeline);
+  const cat = catalogOf(pipeline);
+  if (cat?.modes) {
+    const ids = cat.modes[mode] || Object.values(cat.modes)[0];
+    const all = catalogSteps(pipeline);
+    return ids.map(id => all.find(s => s.id === id));
+  }
+  if (cat) return catalogSteps(pipeline);
   throw new Error(`pipeline « ${pipeline} » pas encore en service`);
 }
 
@@ -271,6 +278,7 @@ const RUNS_PREFIX = '.orchestrateur/runs/';
 
 /** Empreinte de chaque fichier suivi ou non ignoré (hors artefacts d'exécution). */
 export function snapshot(cwd) {
+  if (git(cwd, ['rev-parse', '--is-inside-work-tree']).out !== 'true') return walkSnapshot(cwd);
   const files = git(cwd, ['ls-files', '-c', '-o', '--exclude-standard']).out.split('\n').filter(f => f && !f.startsWith(RUNS_PREFIX));
   const uniq = [...new Set(files)];
   const map = new Map();
@@ -502,6 +510,7 @@ function catalogStepPrompt(L, ctx, step, art, T) {
   if (c.sections?.length) machine.push(`ATTENDU_SECTIONS=${c.sections.join(' | ')}`);
   if (c.minSources) machine.push(`ATTENDU_SOURCES=${c.minSources}`);
   if (c.json) machine.push(`ATTENDU_JSON=${Object.keys(c.json).join(',')}`);
+  if (c.jsonEnum) machine.push(`ATTENDU_ENUM=${Object.entries(c.jsonEnum).map(([k, v]) => `${k}:${v.join('|')}`).join(';')}`);
   if (step.jsonExample) machine.push(`JSON_EXEMPLE=${step.jsonExample}`);
   if (c.nothing) machine.push(`MARQUEUR_RIEN=${c.nothing}`);
   if (c.requireFiles?.length) machine.push(`FICHIERS_REQUIS=${c.requireFiles.join(', ')}`);
@@ -525,6 +534,9 @@ function catalogStepPrompt(L, ctx, step, art, T) {
   if (c.minSources) L.push(`Au moins ${c.minSources} source(s) distincte(s), chacune avec son URL (https://…).`);
   if (c.citedPaths) L.push('Cite les fichiers du projet entre accents graves (`chemin/relatif`) : chaque chemin cité doit exister.');
   if (step.jsonExample) L.push(`Format exact : ${step.jsonExample}`);
+  if (step.id === 'rapporter' && /^\s*\[NEEDS_CHEF_INPUT_FROM:/.test(ctx.request || '')) {
+    L.push('Cette demande est la QUESTION D’UN MUSICIEN (relais automatique) : le rapport doit commencer par « [ANSWER] » suivi de ta décision, ou par « NEEDS_USER_INPUT: » si la décision revient à l’utilisateur — l’orchestrateur relaie selon ce préfixe.');
+  }
 }
 
 const fold = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
@@ -542,6 +554,99 @@ export function countSources(text, { files = false } = {}) {
 function parseJsonArtefact(art) {
   try { return JSON.parse(String(art).trim().replace(/^```(?:json)?\s*|\s*```$/g, '')); } catch { return null; }
 }
+
+// ---------------------------------------------------------------------------
+// Routage (lot B, 0.54.0) : contexte, tâches, étapes exécutées par le code
+// ---------------------------------------------------------------------------
+const MAX_TASKS = 6;
+function readConfig(root) { return readJson(path.join(root, 'config.json')) || { projects: [] }; }
+function conductorOf(root) { return readConfig(root).conductor || 'chef'; }
+
+/** Tâches du Routage : projet de la liste blanche (jamais le chef), pipeline connu, demande autonome. */
+export function validateTasks(root, tasks) {
+  if (!Array.isArray(tasks) || !tasks.length) return 'aucune tâche';
+  if (tasks.length > MAX_TASKS) return `${tasks.length} tâches (au plus ${MAX_TASKS} par message : découper)`;
+  const cfg = readConfig(root);
+  const conductor = cfg.conductor || 'chef';
+  const names = new Set((cfg.projects || []).map(p => p.name));
+  for (const [i, t] of tasks.entries()) {
+    const n = `tâche ${i + 1}`;
+    if (!t || typeof t !== 'object') return `${n} illisible`;
+    if (!names.has(t.projet)) return `${n} : projet inconnu « ${t.projet} »`;
+    if (t.projet === conductor || new RegExp(`^${conductor}-\\d+$`).test(t.projet)) return `${n} : le chef ne se délègue pas de tâche`;
+    if (!ENGINE_PIPELINES.includes(t.pipeline) || t.pipeline === 'routage') return `${n} : pipeline inconnu « ${t.pipeline} »`;
+    if (t.mode != null && !['leger', 'complet'].includes(t.mode)) return `${n} : mode « ${t.mode} » (leger ou complet)`;
+    if (typeof t.demande !== 'string' || t.demande.trim().length < 8) return `${n} : demande absente ou trop courte`;
+  }
+  return null;
+}
+
+/** Les derniers échanges du fil (demandes, réponses du chef, résultats), pour l'étape Lire. */
+export function conversationExcerpt(logFile, { max = 30, maxChars = 30_000 } = {}) {
+  let lines = [];
+  try {
+    const st = fs.statSync(logFile);
+    const fd = fs.openSync(logFile, 'r');
+    const len = Math.min(st.size, 4 * 1024 * 1024);
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, st.size - len);
+    fs.closeSync(fd);
+    lines = buf.toString('utf8').split('\n');
+  } catch { return '# Conversation récente\n\n(aucune)\n'; }
+  const out = [];
+  for (const l of lines) {
+    let e; try { e = JSON.parse(l); } catch { continue; }
+    if (e.type === 'user_prompt' && typeof e.text === 'string' && !e.pipeline?.answer) {
+      out.push(`**${e.source === 'wake' ? 'réveil' : 'utilisateur'}** : ${e.text.slice(0, 2000)}`);
+    } else if (e.type === 'assistant') {
+      for (const b of e.message?.content || []) { if (b?.type === 'text' && b.text?.trim()) out.push(`**chef** : ${b.text.trim().slice(0, 2000)}`); }
+    } else if (e.type === 'notification' && e.subtype === 'musician_done' && e.text) {
+      out.push(`**résultat** ${e.text.slice(0, 600)}`);
+    }
+  }
+  let txt = out.slice(-max).join('\n\n');
+  if (txt.length > maxChars) txt = txt.slice(-maxChars);
+  return `# Conversation récente (extraite du log par l'orchestrateur)\n\n${txt || '(aucune)'}\n`;
+}
+
+const CODE_STEPS = {
+  /** Les models viennent de la page Models : le code les relève, tâche par tâche. */
+  async affecter({ root, ctx, state, artDir }) {
+    const j = parseJsonArtefact(readArtefact(ctx, 'taches.json') || '') || {};
+    const why = validateTasks(root, j.taches);
+    if (why) return { ok: false, why };
+    const enf = readEnforcement(root);
+    const assignments = readAssignments(root);
+    const rows = [];
+    state.tasks = j.taches.map((t) => {
+      const served = isEnforced(enf, t.projet) && enf.pipelines.includes(t.pipeline);
+      const steps = served ? planSteps(t.pipeline, { mode: t.mode || 'leger' }).filter(s => s.chain?.length && s.kind !== 'code').map(s => ({ id: s.id, ...resolveCase(assignments, s.chain) })) : [];
+      rows.push(`| ${t.projet} | ${served ? `${pipelineLabel(t.pipeline, t.mode)}` : `${t.pipeline} — projet hors service : tour ordinaire`} | ${steps.map(s => `${s.id}: ${s.model || 'défaut du projet'}`).join(', ') || '—'} |`);
+      return { ...t, served };
+    });
+    fs.writeFileSync(path.join(artDir, 'affectation.md'), `# Affectation (page Models)\n\n| projet | pipeline | models par étape |\n|---|---|---|\n${rows.join('\n')}\n`);
+    return { ok: true };
+  },
+  /** Chaque tâche part par dispatch.mjs (file si le musicien est occupé), avec retour au chef. */
+  async dispatcher({ root, state, artDir, dispatchScript }) {
+    if (process.env.DISPATCH_REPORT_ONLY === '1') return { ok: false, why: 'réveil en rapport seul : aucun dispatch permis (chaîne de réveils au maximum)' };
+    const conductor = conductorOf(root);
+    const done = [];
+    for (const t of state.tasks || []) {
+      const args = [dispatchScript, t.projet, '--prompt-stdin', '--callback', conductor, '--source', conductor, '--queue-if-busy'];
+      if (t.served) { args.push('--pipeline', t.pipeline); if (t.pipeline === 'dev' && t.mode) args.push('--mode', t.mode); }
+      const env = { ...process.env };
+      for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'ORCH_TURN_PROJECT', 'ORCH_TURN_STEP', 'ORCH_STEP_TOKEN', 'ORCH_OBS_ID']) delete env[k];
+      const c = spawn(process.execPath, args, { cwd: root, env, detached: true, stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
+      c.stdin.end(t.demande);
+      c.unref();
+      done.push({ projet: t.projet, pipeline: t.served ? t.pipeline : null, mode: t.mode || null, pid: c.pid || null });
+    }
+    fs.writeFileSync(path.join(artDir, 'dispatch.json'), JSON.stringify({ dispatched: done }, null, 2));
+    const lost = done.filter(d => !d.pid);
+    return lost.length ? { ok: false, why: `lancement impossible pour : ${lost.map(d => d.projet).join(', ')}` } : { ok: true };
+  },
+};
 
 /** Critères génériques d'une étape du catalogue. */
 function checkCatalogCriteria(ctx, step, before, after) {
@@ -605,6 +710,14 @@ function checkCatalogCriteria(ctx, step, before, after) {
     for (const [k, type] of Object.entries(c.json)) {
       if (type === 'array' && !Array.isArray(json[k])) return fail(`${step.artefact} : champ « ${k} » (liste) absent`);
       if (type === 'string' && typeof json[k] !== 'string') return fail(`${step.artefact} : champ « ${k} » (texte) absent`);
+    }
+    for (const [k, allowed] of Object.entries(c.jsonEnum || {})) {
+      if (!allowed.includes(json[k])) return fail(`${step.artefact} : « ${k} » doit valoir ${allowed.map(a => `« ${a} »`).join(' ou ')} (reçu « ${json[k]} »)`);
+    }
+    if (json.nature === 'question' && !String(json.question || '').trim()) return fail(`${step.artefact} : « question » choisie, mais aucune question à poser`);
+    if (c.tasks) {
+      const why = validateTasks(ctx.root, json.taches);
+      if (why) return fail(`${step.artefact} : ${why}`);
     }
   }
   return { ok: true, changed, json };
@@ -775,17 +888,19 @@ export async function runPipeline(o) {
     if (!state || state.project !== projectName) return refuse(64, `exécution ${o.resumeRun} introuvable pour ${projectName}`);
     if (state.status !== 'paused') return refuse(65, `exécution ${o.resumeRun} : statut « ${state.status} », seule une exécution en pause se reprend`);
   }
-  if (git(cwd, ['rev-parse', '--is-inside-work-tree']).out !== 'true') {
-    return refuse(64, `${cwd} n'est pas un dépôt git (les critères de sortie s'appuient sur git).`);
-  }
   const cfg = readJson(path.join(cwd, '.orchestrateur', 'pipeline.json')) || {};
   const pipeline = state?.pipeline || o.pipeline;
   if (!ENGINE_PIPELINES.includes(pipeline)) return refuse(64, `« ${pipeline} » n'est pas en service (${ENGINE_PIPELINES.join(', ')}).`);
   const needs = pipeline === 'dev' ? { tests: true, clean: true } : catalogOf(pipeline)?.needs || {};
+  const isGit = git(cwd, ['rev-parse', '--is-inside-work-tree']).out === 'true';
+  // Le Routage (dossier du chef, hors git) se juge sur une empreinte du dossier.
+  if (!isGit && needs.git !== false) {
+    return refuse(64, `${cwd} n'est pas un dépôt git (les critères de sortie s'appuient sur git).`);
+  }
   if (needs.tests && !cfg.testCommand) {
     return refuse(64, `${pipelineLabel(pipeline, 'leger').replace(/ léger$/, '')} exige .orchestrateur/pipeline.json avec testCommand dans ${cwd} (critères de sortie vérifiés par le code).`);
   }
-  const base = state?.base || git(cwd, ['rev-parse', 'HEAD']).out;
+  const base = state?.base || (isGit ? git(cwd, ['rev-parse', 'HEAD']).out : 'hors-git');
   if (!base) return refuse(65, 'dépôt sans commit.');
   if (!state && needs.clean) {
     const dirty = git(cwd, ['status', '--porcelain']).out.split('\n').filter(l => l && !l.slice(3).startsWith(RUNS_PREFIX));
@@ -793,7 +908,7 @@ export async function runPipeline(o) {
   }
 
   // Artefacts jamais versionnés, même si le projet ne les ignore pas.
-  try {
+  if (isGit) try {
     const gitDir = git(cwd, ['rev-parse', '--git-dir']).out;
     const excl = path.join(path.isAbsolute(gitDir) ? gitDir : path.join(cwd, gitDir), 'info', 'exclude');
     const cur = fs.existsSync(excl) ? fs.readFileSync(excl, 'utf8') : '';
@@ -822,7 +937,8 @@ export async function runPipeline(o) {
   const artDir = path.join(cwd, '.orchestrateur', 'runs', run);
   fs.mkdirSync(runDir, { recursive: true });
   fs.mkdirSync(artDir, { recursive: true });
-  const mode = state?.mode || (pipeline === 'dev' && o.mode === 'complet' ? 'complet' : 'leger');
+  const modes = catalogOf(pipeline)?.modes;
+  const mode = state?.mode || (pipeline === 'dev' && o.mode === 'complet' ? 'complet' : modes ? (modes[o.mode] ? o.mode : Object.keys(modes)[0]) : 'leger');
   const kind = state?.kind || (pipeline === 'dev' ? devKind(prompt) : pipeline === 'incident' ? 'bugfix' : null);
   const assignments = readAssignments(root);
   if (!state) {
@@ -878,12 +994,13 @@ export async function runPipeline(o) {
   const catalog = catalogOf(pipeline);
   // Frise annoncée : la boucle TDD se lit 4a → 4b → 4c, répétée par item.
   const planned = state.plan.flatMap(id => (id === '@loop' ? ['rouge', 'vert', 'refactor'].map(x => ({ id: x, loop: true })) : id === '@check' ? [] : [{ id }]))
-    .map(p => ({ ...p, title: stepDefs[p.id].title, slot: resolveCase(assignments, stepDefs[p.id].chain) }));
+    .map(p => ({ ...p, title: stepDefs[p.id].title, slot: stepDefs[p.id].kind === 'code' ? { slot: stepDefs[p.id].chain[0], model: null, provider: null, second: null, source: 'code' } : resolveCase(assignments, stepDefs[p.id].chain) }));
   writeEvent({
     type: 'user_prompt', text: o.promptForLog ?? prompt,
     pipeline: { run, pipeline, mode: state.mode, kind, resumed: resumed || undefined, steps: planned.map(p => ({ id: p.id, title: p.title, loop: p.loop || undefined, slot: p.slot.slot, model: p.slot.model, provider: p.slot.provider, second: p.slot.second, source: p.slot.source })) },
     ...(sourceProject ? { source: sourceProject } : {}),
     ...(callbackProject ? { callback: callbackProject } : {}),
+    ...(o.ticket ? { ticket: o.ticket } : {}), ...(o.slot != null ? { slot: o.slot } : {}),
     ...(o.testLabel ? { test: { label: o.testLabel } } : {}),
   });
   writeEvent({ type: 'system', subtype: 'pipeline_start', pipeline: { run, pipeline, mode: state.mode, kind, base },
@@ -910,11 +1027,12 @@ export async function runPipeline(o) {
   progress.unref?.();
 
   const childEnv = { ...process.env };
-  for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'DISPATCH_SLOT', 'DISPATCH_TICKET', 'ORCH_TURN_PROJECT', 'ORCH_TURN_STEP', 'ORCH_TEST_LABEL']) delete childEnv[k];
+  // DISPATCH_REPORT_ONLY : un tour d'étape ne dispatche jamais (règle 1 de la porte) ; hérité, il le ferait refuser.
+  for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'DISPATCH_SLOT', 'DISPATCH_TICKET', 'DISPATCH_REPORT_ONLY', 'ORCH_TURN_PROJECT', 'ORCH_TURN_STEP', 'ORCH_TEST_LABEL']) delete childEnv[k];
   if (obsId) childEnv.ORCH_OBS_ID = obsId;
   const testEnv = { ...childEnv };
   delete testEnv.ORCH_OBS_ID;
-  const ctx = { run, pipeline, kind, mode: state.mode, cwd, cfg, artDir, base, testEnv, reviewItems: null, testPrint: null, limits,
+  const ctx = { root, request: state.request || prompt, run, pipeline, kind, mode: state.mode, cwd, cfg, artDir, base, testEnv, reviewItems: null, testPrint: null, limits,
     item: state.item || null, escalated: !!state.escalated, coveredItems: state.coveredItems || [], deliveryFixes: state.deliveryFixes || [], suiteRedAtStart: !!state.suiteRedAtStart };
   // Durée ACTIVE : le temps passé en pause à attendre l'utilisateur ne compte
   // pas dans la limite de 90 min (une reprise repart du temps déjà consommé).
@@ -958,7 +1076,9 @@ export async function runPipeline(o) {
       }
     }
     const text = paused ? `${result}\n\nNEEDS_USER_INPUT: ${question}` : result;
-    if (paused) writeEvent({ type: 'assistant', message: { model: '<synthetic>', content: [{ type: 'text', text }] } });
+    // Routage : la réponse du chef doit apparaître dans son fil comme un message
+    // (le fil lit les messages assistant), même sans reformulation de langue.
+    if (paused || (catalogOf(pipeline)?.assistantFinal && !resultLang)) writeEvent({ type: 'assistant', message: { model: '<synthetic>', content: [{ type: 'text', text }] } });
     // Ni « fantôme » (0 tour / 0 ms d'API) ni « synthétique » : le chef doit
     // recevoir ce résultat et son réveil, comme pour un tour ordinaire.
     writeEvent({ type: 'result', subtype: isError ? 'error_pipeline' : 'success', is_error: isError,
@@ -1231,6 +1351,32 @@ export async function runPipeline(o) {
       saveState();
       continue;
     }
+    // Étape conditionnelle (Routage) : sautée selon la décision d'une étape
+    // précédente, lue dans son artefact — en le disant.
+    if (step.skipIf) {
+      const j = parseJsonArtefact(readArtefact(ctx, step.skipIf.artefact) || '') || {};
+      if (j[step.skipIf.field] !== step.skipIf.unless) {
+        const why = `${step.skipIf.field} = « ${j[step.skipIf.field] ?? '—'} » (étape utile seulement pour « ${step.skipIf.unless} »)`;
+        const key = `${String(state.steps.length + 1).padStart(2, '0')}-${id}`;
+        state.steps.push({ id, key, title: step.title, status: 'skipped', why, attempt: 1, durationMs: 0 });
+        writeEvent({ type: 'system', subtype: 'pipeline_step_done', pipeline: { run, step: id, key, attempt: 1 }, status: 'skipped', why, durationMs: 0, text: `étape ${step.title} : sautée — ${why}` });
+        state.index++; saveState(); continue;
+      }
+    }
+    // Contexte du chef : la conversation récente, extraite de son log par le code.
+    if (step.prerun === 'conversation') fs.writeFileSync(path.join(artDir, 'conversation.md'), conversationExcerpt(projectLog));
+    // Étapes exécutées par le CODE (Routage : affecter, dispatcher) — aucun tour de model.
+    if (step.kind === 'code') {
+      const key = `${String(state.steps.length + 1).padStart(2, '0')}-${id}`;
+      const t0 = Date.now();
+      let out;
+      try { out = await CODE_STEPS[step.handler]({ root, logsDir, ctx, state, artDir, projectName, dispatchScript }); }
+      catch (e) { out = { ok: false, why: e.message }; }
+      const rec = { id, key, title: step.title, slot: null, model: null, source: 'code', status: out.ok ? 'ok' : 'refused', why: out.ok ? null : out.why, attempt: 1, durationMs: Date.now() - t0 };
+      record({ rec });
+      if (!out.ok) return finish({ code: 1, isError: true, result: `✕ ${projectName} — étape « ${step.title} » : ${out.why}` });
+      state.index++; saveState(); continue;
+    }
     // Scanners lancés par l'orchestrateur lui-même : le model interprète une
     // sortie réelle, il ne peut pas inventer un scan.
     if (step.prerun === 'scans') {
@@ -1366,6 +1512,13 @@ export async function runPipeline(o) {
     }
     // Recherche : lecture seule, la synthèse EST la réponse.
     if (pipeline === 'recherche') return body || '(synthèse vide)';
+    // Routage : le rapport EST la réponse du chef ; une demande ambiguë finit
+    // par la question à l'utilisateur (règle : ne jamais deviner).
+    if (pipeline === 'routage') {
+      const cls = parseJsonArtefact(readArtefact(ctx, 'classement.json') || '') || {};
+      const q = cls.nature === 'question' && String(cls.question || '').trim();
+      return `${body || '(rapport vide)'}${q && !/NEEDS_USER_INPUT:/.test(body) ? `\n\nNEEDS_USER_INPUT: ${q.replace(/\s+/g, ' ')}` : ''}`;
+    }
     const head = git(cwd, ['rev-parse', 'HEAD']).out;
     const delivered = head && head !== base ? git(cwd, ['log', '-1', '--format=%h %s']).out : null;
     const skipped = state.steps.filter(s => s.status === 'skipped');
@@ -1466,7 +1619,34 @@ function restoreFiles(cwd, before, after, resetTo) {
     const abs = path.join(cwd, f);
     if (!before.has(f)) { try { fs.rmSync(abs, { force: true }); } catch {} continue; }
     const h = before.get(f);
+    // Dossier hors git (chef) : le contenu d'avant a été gardé par l'empreinte.
+    const kept = WALK_CONTENT.get(before)?.get(f);
+    if (kept) { fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, kept); continue; }
     const r = spawnSync('git', ['-C', cwd, 'cat-file', 'blob', h], { windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
     if (r.status === 0) { fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, r.stdout); }
   }
+}
+
+// Empreinte d'un dossier HORS git (le chef, 0.54.0) : sha1 de chaque fichier,
+// contenu gardé (≤ 1 Mio) pour pouvoir annuler un essai refusé.
+const WALK_CONTENT = new WeakMap();
+function walkSnapshot(cwd) {
+  const map = new Map(), content = new Map();
+  let n = 0;
+  const walk = (dir, rel) => {
+    let ents = []; try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      if (n > 5000) return;
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) { if (['.git', 'node_modules', '.venv', '__pycache__'].includes(e.name) || r === '.orchestrateur/runs') continue; walk(path.join(dir, e.name), r); continue; }
+      if (!e.isFile()) continue;
+      n++;
+      let buf; try { buf = fs.readFileSync(path.join(dir, e.name)); } catch { continue; }
+      map.set(r, crypto.createHash('sha1').update(buf).digest('hex'));
+      if (buf.length <= 1024 * 1024) content.set(r, buf);
+    }
+  };
+  walk(cwd, '');
+  WALK_CONTENT.set(map, content);
+  return map;
 }

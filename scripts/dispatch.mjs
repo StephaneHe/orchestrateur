@@ -425,6 +425,15 @@ if (pipelineArg && !pipeEngine.ENGINE_PIPELINES.includes(pipelineArg)) {
 }
 const ENFORCEMENT = pipeEngine.readEnforcement(ROOT);
 const ENFORCED = pipeEngine.isEnforced(ENFORCEMENT, projectName);
+// Routage (0.54.0) : le tour du chef devient une exécution du pipeline Routage
+// quand `enforcement.chef` est en service. Aucun musicien ne le lance.
+const CHEF_TARGET = projectName === CONDUCTOR || new RegExp(`^${CONDUCTOR}-\\d+$`).test(projectName);
+if (pipelineArg === 'routage' && !CHEF_TARGET) die(`--pipeline routage : réservé au tour du chef (« ${CONDUCTOR} »)`, 64);
+const CHEF_ROUTED = CHEF_TARGET && ENFORCEMENT.chef && !PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && horsPipelineArg == null;
+if (CHEF_ROUTED && (modelOverride || secondModel)) {
+  die(`le tour du chef est en service (pipeline Routage) : les models viennent des cases routage.* de la page Models. ` +
+    `Retire --model/--second-model, ou utilise --hors-pipeline "<raison>" (tracé et visible).`, 64);
+}
 // 1. Une étape de pipeline ne lance aucun tour (le moteur est seul maître).
 if (TURN_STEP) {
   die(`dispatch refusé : ce tour est une étape de pipeline (${TURN_STEP}) — une étape ne lance pas d'autre tour. ` +
@@ -1033,7 +1042,21 @@ if (queueIfBusy && projectName !== CONDUCTOR) {
 // demande en file, avec son pipeline, et ce processus est déjà sorti.
 let pipelineBypass = null;   // trace d'un tour qui ne passe PAS par un pipeline
 if (horsPipelineArg != null && !PIPE_STEP) {
-  pipelineBypass = { reason: String(horsPipelineArg).replace(/\s+/g, ' ').trim().slice(0, 300), by: 'hors-pipeline', enforced: ENFORCED };
+  pipelineBypass = { reason: String(horsPipelineArg).replace(/\s+/g, ' ').trim().slice(0, 300), by: 'hors-pipeline', enforced: ENFORCED || (CHEF_TARGET && ENFORCEMENT.chef) };
+}
+if (CHEF_ROUTED) {
+  // Demande (message, question d'un musicien) ou réveil apportant des résultats.
+  const mode = (sourceProject === 'wake' || /^\s*\[CALLBACK_WAKE/.test(prompt)) ? 'callback' : 'demande';
+  process.exit(await pipeEngine.runPipeline({
+    root: ROOT, logsDir: LOGS, project, projectName,
+    prompt: imagePaths.length || videoPaths.length
+      ? `${prompt}\n\nPièces jointes (à lire avec l'outil Read) :\n${[...imagePaths, ...videoPaths].map(p => `- ${p}`).join('\n')}`
+      : prompt,
+    promptForLog: prompt, pipeline: 'routage', mode, classification: null,
+    callbackProject: null, sourceProject, obsId, testLabel,
+    ticket: CHEF_TICKET || null, slot: CHEF_SLOT,
+    dispatchScript: fileURLToPath(import.meta.url),
+  }));
 }
 if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResumeArg || AUTO_PIPELINE)) {
   let pipe = pipelineArg, resumeRun = pipelineResumeArg, classification = null, mode = pipelineModeArg;

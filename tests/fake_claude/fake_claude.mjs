@@ -415,7 +415,10 @@ function catalogStep(text, step, artefact, bad, w, once) {
   const urls = Array.from({ length: nSources }, (_, i) => `- Source ${i + 1} : https://example.org/source-${i + 1}`).join('\n');
   if (jsonKeys.length) {
     const j = {};
-    for (const k of jsonKeys) j[k] = k === 'final' ? 'Texte final relu : tout est clair.' : [];
+    const enums = Object.fromEntries(line('ATTENDU_ENUM').split(';').filter(Boolean).map(p => { const [k, v] = p.split(':'); return [k, v.split('|')]; }));
+    for (const k of jsonKeys) j[k] = enums[k] ? enums[k][0] : k === 'final' ? 'Texte final relu : tout est clair.' : k === 'raison' ? 'raison simulée' : [];
+    // FAKE_PIPE_JSON='{"<step>": {…}}' : réponse imposée pour une étape (Routage).
+    try { Object.assign(j, JSON.parse(process.env.FAKE_PIPE_JSON || '{}')[step] || {}); } catch { /* ignoré */ }
     if (jsonKeys.includes('remaining') && Number(process.env.FAKE_PIPE_REMAINING || 0) > 0) {
       const f = path.join(path.dirname(artefact), '.fake-remaining.count');
       let c = 0; try { c = Number(fs.readFileSync(f, 'utf8')) || 0; } catch {}

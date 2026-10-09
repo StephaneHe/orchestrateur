@@ -667,6 +667,34 @@ async function apiChecks(sb) {
     fs.rmSync(routingFile, { force: true });
     return `Recherche 5/5 par l’API (classée automatiquement), Maintenance livrée (commit ${g('log', '-1', '--format=%h').stdout.trim()}), frises au journal`;
   });
+  // 0.54.0 — phase 6, lot B : le tour du chef est lui-même un pipeline (Routage).
+  await check(S, 'pipeline-routage', 'Pipelines, phase 6 (lot B) : avec « chef » en service, un message au chef passe par le pool et devient une exécution Routage (Lire → Classifier → … → Rapporter, étapes sur leurs cases) ; la réponse arrive dans le fil du chef ; interrupteur coupé = tour ordinaire', async () => {
+    if (!fs.existsSync(path.join(sb.root, 'scripts', 'pipeline-catalog.mjs')) || !/routage/.test(fs.readFileSync(path.join(sb.root, 'scripts', 'pipeline-catalog.mjs'), 'utf8'))) NA('Routage absent de cet état du code');
+    const { ENGINE_PIPELINES } = await import(pathToFileURL(path.join(sb.root, 'scripts', 'pipeline-engine.mjs')).href);
+    // Cases vides : la doublure de claude n'annonce pas le model demandé (un model
+    // affecté serait refusé, « aucun repli ») ; le model de case est couvert par la suite.
+    fs.writeFileSync(routingFile, JSON.stringify({ version: 2, history: [], assignments: {}, enforcement: { projects: ['omega'], pipelines: ENGINE_PIPELINES, chef: true } }));
+    try {
+      const chefRuns = async () => (await json('/api/pipeline-runs?project=chef')).runs || [];
+      const before = new Set((await chefRuns()).map(x => x.run));
+      const r = await post('/api/dispatch', { project: 'chef', prompt: 'Pourquoi le projet omega a-t-il un seul commit ? (recette Routage)' });
+      assert(r.status === 202, `dispatch chef : ${r.status}`);
+      const run = await until(async () => (await chefRuns()).find(x => !before.has(x.run) && x.status !== 'running') || null, 150_000, 500);
+      assert(run?.pipeline === 'routage' && run.status === 'done', `Routage : ${JSON.stringify(run && { s: run.status, st: run.steps.map(x => `${x.id}:${x.status}:${x.why || ''}`) })}`);
+      const ids = run.steps.map(s => `${s.id}:${s.status}`).join(' ');
+      assert(/lire:ok classifier:ok decomposer:skipped affecter:skipped dispatcher:skipped rapporter:ok/.test(ids), `étapes : ${ids}`);
+      const chat = await json('/api/conductor-chat');
+      const last = chat.filter(m => m.role === 'conductor').pop();
+      assert(last && /Rapport simulé/.test(last.text), `réponse du chef absente du fil : ${JSON.stringify(last)}`);
+      const pool = (await json('/api/pupitre')).pool;
+      assert(!pool.queue.length && pool.slots.every(s => !s.ticket), `ticket du pool non clos : ${JSON.stringify(pool)}`);
+      return `message → pool → Routage ${run.run} (${ids}) → réponse dans le fil, ticket clos`;
+    } finally {
+      fs.rmSync(routingFile, { force: true });
+      // Le chef ne doit jamais rester en question pour les parcours suivants.
+      try { await post('/api/question/chef/resolve', { note: 'recette Routage' }); } catch { /* rien à acquitter */ }
+    }
+  });
   // 0.49.0 — phase 4 : Développement COMPLET, TDD canonique un test à la fois.
   const omegaFresh = () => { const g = omegaRepo(); g('reset', '-q', '--hard', g('rev-list', '--max-parents=0', 'HEAD').stdout.trim()); g('clean', '-qfd', '-e', '.orchestrateur'); return g; };
   await check(S, 'pipeline-tdd', 'Pipelines, phase 4 : Développement complet — Comprendre, Concevoir, Liste de tests, puis UN test à la fois (4a échoue réellement, 4b la rend verte, 4c sautée si inutile), items cochés par le moteur, un commit ; montée léger → complet annoncée ; frise du journal', async () => {

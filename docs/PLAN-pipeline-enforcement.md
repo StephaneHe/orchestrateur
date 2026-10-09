@@ -559,6 +559,31 @@ Chaque phase suit le protocole 0.29.0 : tag `pre-pipeline-enforce-pN-v<X.Y.Z>`, 
 - **Retour arrière** : `node scripts/pipeline-enforce.mjs pipelines
   discussion,dev`, ou le tag `pre-pipeline-enforce-p6a-v0.52.0`.
 
+### État livré de la phase 6, lot B (0.54.0, 2026-10-09)
+
+- **Livré** : le pipeline Routage. Le tour du chef devient une exécution :
+  - mode demande : Lire → Classifier → Décomposer → Affecter → Dispatcher →
+    Rapporter ;
+  - mode réveil : Lire → Callback → Rapporter.
+
+  Affecter et Dispatcher sont exécutés par le code. Les étapes Superviser et
+  Callback correspondent au mécanisme existant : pump, réveils, et étape
+  Callback au réveil.
+- **Pas mis en service** (`enforcement.chef`, désactivé) : l'activer change
+  chaque échange de l'utilisateur avec le chef. C'est donc une décision de
+  l'utilisateur, au même titre que la phase 7. Constat : les cases
+  `routage.*` de la page Models valent toutes `claude-haiku-5-5` aujourd'hui,
+  alors que le chef tourne sur `claude-opus-5-5` : à revoir avant
+  d'activer.
+- **Choix faits** :
+  1. Le contexte de la conversation est fourni par le code
+     (`conversation.md`, fin du log du chef). Chaque étape a sa propre
+     session.
+  2. Un projet hors service reçoit un tour ordinaire, jamais un pipeline
+     imposé : la mise en service de tous les projets reste la phase 7.
+- **Retour arrière** : `node scripts/pipeline-enforce.mjs off --chef`, ou le
+  tag `pre-pipeline-enforce-p6b-v0.53.0`.
+
 **Retour arrière** : à chaque phase, le tag, plus le drapeau `enforcement` vidé. Sans redéploiement, le comportement redevient celui d'avant (un tour, un model).
 
 ---
