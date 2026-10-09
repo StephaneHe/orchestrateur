@@ -280,6 +280,31 @@ async function apiChecks(sb) {
     const c = await json('/api/config');
     assert(c.projects.find(p => p.name === 'mu').currentState === 'idle', 'mu non repassé idle');
   });
+  // 0.60.0 — erreurs de lancement : contrôle de l'attente et journaux de test du model.
+  await check(S, 'model-backoff', 'Attente après erreurs de lancement : POST /api/pipeline-runs/:run/backoff (retry, test ; 404, 400, origine étrangère 403) et GET /api/model-tests/:name', async () => {
+    const probe = await post('/api/pipeline-runs/p-20261009T000000-aaaaaa/backoff', { action: 'retry' });
+    if (probe.status === 404 && !/introuvable/.test(await probe.text())) NA('route absente de cet état du code');
+    const run = 'p-20261009T120000-abcdef';
+    const dir = path.join(sb.root, 'logs', 'runs', run);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'run.json'), JSON.stringify({ run, project: 'omega', status: 'running', backoff: { tier: 1, model: 'claude-opus-5-5', slot: 'dev.rouge' } }));
+    const a = await post(`/api/pipeline-runs/${run}/backoff`, { action: 'retry' });
+    assert(a.status === 200, `retry : ${a.status}`);
+    const ctl = JSON.parse(fs.readFileSync(path.join(dir, 'backoff-control.json'), 'utf8'));
+    assert(ctl.action === 'retry' && ctl.by === 'dashboard', `fichier de contrôle : ${JSON.stringify(ctl)}`);
+    assert((await post(`/api/pipeline-runs/${run}/backoff`, { action: 'test' })).status === 200, 'test refusé');
+    assert((await post(`/api/pipeline-runs/${run}/backoff`, { action: 'reboot' })).status === 400, 'action inconnue acceptée');
+    const foreign = await fetch(`${sb.url}/api/pipeline-runs/${run}/backoff`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json', Origin: 'http://evil.example' }, body: JSON.stringify({ action: 'retry' }) });
+    assert(foreign.status === 403, `origine étrangère : ${foreign.status}`);
+    const runs = await json('/api/pipeline-runs?project=omega&n=50');
+    assert(runs.runs.find(x => x.run === run)?.backoff?.slot === 'dev.rouge', '/api/pipeline-runs n’expose pas l’attente');
+    assert((await get('/api/model-tests/..%2Fconfig.json')).status === 400, 'nom de journal non filtré');
+    assert((await get('/api/model-tests/20261009T000000Z-claude-opus-5-5.log')).status === 404, 'journal absent ≠ 404');
+    fs.mkdirSync(path.join(sb.root, 'logs', 'model-tests'), { recursive: true });
+    fs.writeFileSync(path.join(sb.root, 'logs', 'model-tests', '20261009T000001Z-claude-opus-5-5.log'), '# Test du model\nverdict : OK\n');
+    const lg = await get('/api/model-tests/20261009T000001Z-claude-opus-5-5.log');
+    assert(lg.status === 200 && /verdict : OK/.test(await lg.text()), 'journal de test non servi');
+  });
   // 0.59.0 — « Protection puis redémarrage » : boucle locale + Tailscale, LAN refusé.
   await check(S, 'network-guard', 'Garde réseau du vrai server.js : boucle locale et Tailscale servis, IP LAN de la machine refusée (403)', async () => {
     const src = fs.readFileSync(path.join(sb.root, 'server.js'), 'utf8');

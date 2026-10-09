@@ -40,6 +40,8 @@ import { languageFor, languageGate, localize, workingLanguage } from './language
 import { CATALOG_PIPELINES, catalogOf, catalogSteps } from './pipeline-catalog.mjs';
 import { readPending, addPending, releaseReady, launchTask, detectReprise, logOffset, taskKey, RUN_ID_RE } from './routage-pending.mjs';
 export { readPending };
+import { backoffConfig, isLaunchFailure, tierAfter, delayFor, waitBackoff, runDirOf } from './model-backoff.mjs';
+import { runModelTest } from './model-test.mjs';
 import { PIPELINES } from './model-pipelines.mjs';
 import { checkMediaFiles, listedFiles, wordErrorRate } from './media-check.mjs';
 
@@ -1473,6 +1475,51 @@ export async function runPipeline(o) {
     return finish({ code: 2, paused: true, limit: 'model_unavailable', question, result: body, notice });
   };
 
+  // ── Erreurs de lancement : attentes progressives (0.60.0, model-backoff.mjs) ──
+  const BO = backoffConfig(process.env);
+  const modelTestFor = async (info, label) => {
+    writeEvent({ type: 'system', subtype: 'pipeline_model_test', pipeline: { run, slot: info.slot }, model: info.model, status: 'running',
+      text: `🔬 test du model ${info.model || '(défaut)'} en cours…` });
+    const t = await runModelTest({ root, provider: info.provider, model: info.model, label });
+    const rel = path.relative(root, t.logFile).split(path.sep).join('/');
+    writeEvent({ type: 'system', subtype: 'pipeline_model_test', pipeline: { run, slot: info.slot }, model: info.model, status: t.ok ? 'ok' : 'failed',
+      ok: t.ok, why: t.why, served: t.served, ms: t.ms, logFile: rel, logName: t.logName,
+      text: `🔬 test du model ${info.model} : ${t.ok ? 'il répond' : `échec — ${t.why}`} (journal : ${rel})` });
+    return { ...t, rel };
+  };
+  const backoffWait = async (step, info, rec, tier, failures) => {
+    const ms = delayFor(tier, BO);
+    const until = new Date(Date.now() + ms).toISOString();
+    state.backoff = { step: step.id, slot: info.slot, model: info.model, provider: info.provider, tier, maxTiers: BO.maxTiers, waitMs: ms, until, failures, stderrLog: rec.stderrLog || null };
+    saveState();
+    const text = `⏳ ${info.model || 'le model'} ne démarre pas (${failures} erreurs de lancement de suite, étape « ${plainStep(step.id)} ») : `
+      + `nouvel essai dans ${Math.round(ms / 1000)} s, puis un second (palier ${tier}/${BO.maxTiers}). Pendant l’attente : tester le model, `
+      + `changer de model (case « ${info.slot} » de la page Models), ou réessayer tout de suite.`;
+    writeEvent({ type: 'system', subtype: 'pipeline_backoff', pipeline: { run, step: step.id, slot: info.slot }, model: info.model, provider: info.provider,
+      tier, maxTiers: BO.maxTiers, waitMs: ms, until, failures, why: rec.why, stderrLog: rec.stderrLog || null, text });
+    await postNotify(root, 'chef', `[PIPELINE — ${projectName} — ${run}] ${text}\nCommandes : node scripts/model-backoff.mjs ${run} test (tester, avec journal) · node scripts/model-backoff.mjs ${run} retry (réessayer maintenant) · page Models, case « ${info.slot} » (changer de model, puis retry).`, 'pipeline-backoff');
+    const w = await waitBackoff({ ms, runDir, onTest: () => modelTestFor(info, `${projectName} ${run} étape ${step.id} (attente palier ${tier})`) });
+    state.backoff = null;
+    saveState();
+    writeEvent({ type: 'system', subtype: 'pipeline_backoff_end', pipeline: { run, step: step.id, slot: info.slot }, reason: w.reason, waitedMs: w.waitedMs,
+      text: w.reason === 'retry' ? '↻ nouvel essai forcé, sans attendre la fin du délai' : `↻ fin de l’attente (${Math.round(w.waitedMs / 1000)} s) : nouvel essai` });
+  };
+  const pauseForLaunch = async (step, info, rec, failures) => {
+    const C = commonChoices(step);
+    const notice = `⏸ ${info.model || 'le model'} ne démarre pas — ${projectName} : ${failures} erreurs de lancement de suite (étape « ${plainStep(step.id)} »)`;
+    writeEvent({ type: 'notification', subtype: 'pipeline_limit', pipeline: { run, step: step.id }, limit: 'launch', value: failures, why: String(rec.why || '').slice(0, 2000), stderrLog: rec.stderrLog || null, text: notice });
+    const waited = Array.from({ length: BO.maxTiers }, (_, i) => delayFor(i + 1, BO)).reduce((a, b) => a + b, 0);
+    const body = pauseText({
+      what: `le model ${info.model}, choisi pour l’étape « ${plainStep(step.id)} » (case « ${info.slot} »), n’a rien produit ${failures} fois de suite, malgré ${BO.maxTiers} attentes de plus en plus longues (${Math.round(waited / 1000)} s au total). Dernière erreur : ${plainWhy(rec.why)}. Je ne change jamais de model sans vous (votre règle).`,
+      options: [['continuer', `je recommence : ${BO.perTier} essais, puis les mêmes attentes progressives.`],
+        ['tester le model', `je lance un court test de ${info.model} et je vous donne son journal complet (commande, code de sortie, messages d’erreur) ; l’exécution reste en pause.`],
+        C.model, C.abandonner],
+      recommend: ['tester le model', 'le journal du test dira si le model est indisponible (attendre ou en changer) ou si le problème vient d’ailleurs.'],
+    });
+    const question = `${projectName} en pause — répondez « continuer », « tester le model », « changer le model » ou « abandonner » (je recommande « tester le model ») : ${info.model} ne démarre pas.`;
+    return finish({ code: 2, paused: true, limit: 'launch', question, result: body, notice });
+  };
+
   // ── Une étape : un tour, sur le model de sa case, jeton signé ────────────
   const runStep = async (step, attempt, extra) => {
     const info = resolveCase(readAssignments(root), step.chain);
@@ -1499,10 +1546,15 @@ export async function runPipeline(o) {
       state.checkpoints = (state.checkpoints || 0) + 1; saveState();
     }
     const t0 = Date.now();
+    // The step's stderr is kept (0.60.0): a turn that dies before writing
+    // anything (launch failure) leaves its only explanation there.
+    const stderrFile = path.join(runDir, `${key}.stderr.log`);
     const code = await new Promise((resolve) => {
-      const c = spawn(process.execPath, [dispatchScript, ...args], { cwd: root, env: { ...childEnv, ORCH_STEP_TOKEN: token }, stdio: ['pipe', 'inherit', 'inherit'], windowsHide: true });
-      c.on('error', () => resolve(127));
-      c.on('exit', (cc) => resolve(cc ?? 1));
+      const c = spawn(process.execPath, [dispatchScript, ...args], { cwd: root, env: { ...childEnv, ORCH_STEP_TOKEN: token }, stdio: ['pipe', 'inherit', 'pipe'], windowsHide: true });
+      const errOut = fs.createWriteStream(stderrFile);
+      c.stderr.on('data', (d) => { errOut.write(d); try { process.stderr.write(d); } catch {} });
+      c.on('error', () => { errOut.end(); resolve(127); });
+      c.on('close', (cc) => { errOut.end(() => resolve(cc ?? 1)); });
       c.stdin.end(text);
     });
     const log = readBranchLog(path.join(runDir, `${key}.jsonl`));
@@ -1513,6 +1565,19 @@ export async function runPipeline(o) {
     totals.apiMs += Number(log.result?.duration_api_ms) || Number(log.result?.duration_ms) || 0;
     if (rec.costUsd) totals.costUsd += rec.costUsd;
     current = null;
+    // Launch failure (0.60.0): the model never worked (died at start, CLI dead
+    // before serving, transient API error) — back-off on the same case, checked
+    // BEFORE "model unavailable", which keeps the session limits and the models
+    // that cannot run (see model-backoff.mjs).
+    if (isLaunchFailure({ code, log })) {
+      let errTail = '';
+      try { errTail = fs.readFileSync(stderrFile, 'utf8').trim().split('\n').filter(Boolean).slice(-3).join(' | ').slice(-400); } catch {}
+      if (!errTail) errTail = String(log.refused?.reason || log.result?.result || '').replace(/\s+/g, ' ').slice(-400);
+      rec.status = 'launch_failed';
+      rec.why = `lancement impossible (code ${code}) : le model n'a rien produit${errTail ? ` — ${errTail}` : ''}`;
+      rec.stderrLog = `logs/runs/${run}/${key}.stderr.log`;
+      return { rec, info, before, after, launchFailed: true };
+    }
     // Model indisponible : la règle « aucun fallback » a refusé, ou rien n'a tourné.
     if (log.refused || log.result?.subtype === 'error_model_unavailable') {
       rec.status = 'model_unavailable'; rec.why = String(log.refused?.reason || log.result?.result || 'model indisponible');
@@ -1698,6 +1763,7 @@ export async function runPipeline(o) {
     // retry budget — once per step, so the loop stays bounded (0.57.2).
     let graceLeft = 1;
     let attempt = 0, last = null, retryWhy = null;
+    let launchFails = 0;   // consecutive launch failures of this step (0.60.0)
     for (;;) {
       attempt++;
       if (step.id !== 'revue') { try { fs.unlinkSync(path.join(artDir, step.artefact)); } catch {} }
@@ -1710,6 +1776,18 @@ export async function runPipeline(o) {
       finally { for (const f of hidden) { try { fs.renameSync(path.join(runDir, `hidden-${f}`), path.join(artDir, f)); } catch {} } }
       record(r);
       if (r.unavailable) return pauseForModel(step, r.info, r.rec.why);
+      // Launch failure (0.60.0): not a try of the step — back-off on the SAME
+      // case, then pause with the user's choices once the tiers are spent.
+      if (r.launchFailed) {
+        if (r.before && r.after) restoreFiles(cwd, r.before, r.after, step.judge ? null : (delivering ? base : null));
+        attempt--;
+        launchFails++;
+        const tier = tierAfter(launchFails, BO);
+        if (tier > BO.maxTiers) return pauseForLaunch(step, r.info, r.rec, launchFails);
+        if (tier) await backoffWait(step, r.info, r.rec, tier, launchFails);
+        continue;
+      }
+      launchFails = 0;
       last = r;
       if (r.rec.status === 'ok') break;
       // Un essai refusé n'est pas gardé : retour à l'état d'avant l'essai.
@@ -1893,7 +1971,18 @@ export async function answerPausedRun({ logsDir, project, projectName, run, answ
     ...(sourceProject ? { source: sourceProject } : {}), ...(callbackProject ? { callback: callbackProject } : {}), ...(testLabel ? { test: { label: testLabel } } : {}) });
   const save = () => { state.updatedAt = new Date().toISOString(); fs.writeFileSync(`${f}.tmp`, JSON.stringify(state, null, 2)); fs.renameSync(`${f}.tmp`, f); };
   let text, paused = false;
-  if (answer === 'changer le model') {
+  if (answer === 'tester le model') {
+    // 0.60.0: a short trial of the step's model, with its full log; still paused.
+    const last = [...(state.steps || [])].reverse().find(s => s.slot && s.model) || {};
+    const root = path.dirname(logsDir);
+    const t = await runModelTest({ root, provider: last.provider, model: last.model, label: `${projectName} ${run} (réponse « tester le model »)` });
+    const rel = path.relative(root, t.logFile).split(path.sep).join('/');
+    writeEvent({ type: 'system', subtype: 'pipeline_model_test', pipeline: { run, slot: last.slot }, model: last.model, status: t.ok ? 'ok' : 'failed',
+      ok: t.ok, why: t.why, served: t.served, ms: t.ms, logFile: rel, logName: t.logName, text: `🔬 test du model ${last.model} : ${t.ok ? 'il répond' : `échec — ${t.why}`} (journal : ${rel})` });
+    text = `🔬 Test de ${last.model || 'le model'} (case « ${last.slot || '?'} ») : ${t.ok ? `**il répond** (${Math.round(t.ms / 1000)} s). L’indisponibilité était passagère.` : `**échec** — ${t.why}.`}\n\nJournal complet (commande, code de sortie, messages d’erreur) : \`${rel}\`.\n\n`
+      + `NEEDS_USER_INPUT: ${projectName} attend toujours — répondez « continuer »${t.ok ? ' (je recommande : le model répond)' : ''}, « changer le model » (case « ${last.slot || '?'} » de la page Models, puis « continuer ») ou « abandonner ».`;
+    paused = true;
+  } else if (answer === 'changer le model') {
     const last = [...(state.steps || [])].reverse().find(s => s.slot) || {};
     text = `D’accord. Ouvrez la page Models et choisissez un autre model pour l’étape « ${plainStep(last.id)} »${last.slot ? ` (case « ${last.slot} »${last.model ? `, actuellement ${last.model}` : ''})` : ''}. Le changement est pris en compte tout de suite, sans redémarrage.\n\nNEEDS_USER_INPUT: ${projectName} attend toujours : une fois le model changé dans la page Models, répondez « continuer » pour reprendre là où je me suis arrêté.`;
     paused = true;

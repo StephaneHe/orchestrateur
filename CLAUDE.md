@@ -1288,6 +1288,36 @@ ne se passe. Il faut corriger la situation ».
     de page.
 - Recettes : `_test_routage_pending.mjs`, HTTP `routage-pending`.
 
+## Erreurs de lancement : attentes progressives (0.60.0)
+
+Demande utilisateur : « Apres deux erreurs, il faut un timeout avant de
+recommencer deux fois […] On augmente le timeout de 10s a chaque fois. Et on
+donne a l'utilisateur le choix : tester le model, changer de model, forcer un
+nouvel essai ».
+
+- **Détection** (`isLaunchFailure`, `scripts/model-backoff.mjs`) : le model n'a
+  jamais travaillé. C'est le cas d'un tour mort sans rien écrire, d'un CLI mort
+  sans avoir servi (« sans result »), ou d'une erreur passagère d'API (5xx,
+  529, overloaded, délai, réseau) avant tout travail.
+  - **Hors back-off** : un model inconnu, une limite de session, un model qui a
+    démarré puis échoué, un refus sur critère.
+- **Règle** :
+  - ces erreurs ne comptent pas dans la limite d'essais ;
+  - toutes les 2 erreurs, l'exécution attend palier × 10 s, puis fait 2 essais
+    avec le même model (relu dans la page Models) ;
+  - après 6 paliers, pause `launch`.
+  - Réglage en test : `ORCH_BACKOFF_STEP_MS`, `ORCH_BACKOFF_MAX_TIERS`.
+- **Choix** : `logs/runs/<run>/backoff-control.json`.
+  - CLI : `node scripts/model-backoff.mjs <run> status|retry|test`.
+  - Après redémarrage : route `POST /api/pipeline-runs/:run/backoff` et
+    boutons de la frise.
+- **Test du model** : `scripts/model-test.mjs`, qui réutilise `oneShotClaude` et
+  `chatCompletion`. Journal dans `logs/model-tests/`, lisible par
+  `GET /api/model-tests/:name`.
+- Le stderr de chaque étape est gardé : `logs/runs/<run>/<clé>.stderr.log`.
+- Faux claude : `FAKE_CLAUDE_LAUNCH_FAIL_FILE` (et `_ALL`, `FAKE_CLAUDE_LAUNCH_LOG`).
+- Recettes : `_test_model_backoff.mjs`, HTTP `model-backoff`.
+
 ## Langue de discussion (0.51.0)
 
 Demande utilisateur : « La langue de la discussion doit pouvoir etre fixee et

@@ -1101,7 +1101,8 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
     const answer = !paused ? null
       : /^(abandonner|abandonne|abandon|annuler|annule|arr[eê]te)\b/i.test(reply) ? 'abandonner'
       : /^simplifi/i.test(reply) ? 'simplifier'
-      : /^changer?\s+(de\s+|le\s+)?mod[eè]le?/i.test(reply) ? 'changer le model' : null;
+      : /^changer?\s+(de\s+|le\s+)?mod[eè]le?/i.test(reply) ? 'changer le model'
+      : /^tester?(\s+(le|du|un)\s+mod[eè]le?)?\b/i.test(reply) ? 'tester le model' : null;
     if (answer) {
       process.exit(await pipeEngine.answerPausedRun({ logsDir: LOGS, project, projectName, run: paused, answer, promptForLog: prompt, sourceProject, callbackProject, testLabel }));
     }

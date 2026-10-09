@@ -234,11 +234,21 @@
           if (!s) { s = { key: q.key, id: q.step, slot: q.slot, attempt: q.attempt || 1, item: q.item || null }; p.steps.push(s); }
           Object.assign(s, { status: ev.status, why: ev.why || null, durationMs: ev.durationMs ?? null, served: ev.served || null,
             model: ev.model || s.model || null, source: ev.modelSource || s.source || null, costUsd: ev.costUsd ?? null, test: ev.test || null, covered: !!ev.covered });
+        } else if (ev.subtype === "pipeline_backoff") {
+          // 0.60.0 : attente après des erreurs de lancement, avec les choix offerts.
+          p.backoff = { tier: ev.tier ?? null, maxTiers: ev.maxTiers ?? null, waitMs: ev.waitMs ?? null, until: ev.until || null,
+            failures: ev.failures ?? null, model: ev.model || null, slot: q.slot || null, text: ev.text || "", stderrLog: ev.stderrLog || null };
+        } else if (ev.subtype === "pipeline_backoff_end") {
+          p.backoff = null;
+        } else if (ev.subtype === "pipeline_model_test") {
+          p.modelTest = { status: ev.status || null, ok: ev.ok ?? null, why: ev.why || null, model: ev.model || null,
+            logName: ev.logName || null, logFile: ev.logFile || null, text: ev.text || "" };
         } else if (ev.subtype === "pipeline_warning") {
           p.warnings.push(ev.text || "");
         } else if (ev.subtype === "pipeline_loop") {
           p.loops++;
         } else if (ev.subtype === "pipeline_summary") {
+          p.backoff = null;
           p.status = (q && q.status) || p.status;
           p.totalMs = ev.totalMs ?? null;
         }

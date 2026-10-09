@@ -11,6 +11,96 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.60.0] - 2026-10-09
+
+Demande de l'utilisateur : « il faut une reaction aux Erreurs 1 (quand le model
+est temporairement indisponible) […] Apres deux erreurs, il faut un timeout
+avant de recommencer deux fois […] On augmente le timeout de 10s a chaque
+fois. Et on donne a l'utilisateur le choix : lancer un test sur le model,
+changer de model, forcer un nouvel essai ».
+
+**Cause réelle de l'incident à l'origine de la demande** : les deux « erreurs
+1 » de l'étape « décomposer » de p-20261009T193025-d2f51b, à 19:31 UTC, ne
+venaient pas du model. `dispatch.mjs` était alors dans un état intermédiaire du
+chantier 0.58.0 : l'appel `stampResultLine()` était branché avant que la
+fonction existe. Un tour d'étape, qui n'a pas de portier de langue, plantait
+dès la première ligne du CLI (`ReferenceError`), avec le code 1 et sans aucune
+sortie. Le cas est reproduit dans une copie, et corrigé depuis `d0ed9eb`. La
+même case avait réussi avant et après.
+
+### Added
+- (server) **Attentes progressives sur les erreurs de lancement d'une étape**
+  (`scripts/model-backoff.mjs`, moteur).
+  - **Erreur de lancement** : le model n'a jamais travaillé (`isLaunchFailure`).
+    Trois cas :
+    - le tour meurt sans rien écrire ;
+    - le CLI meurt sans avoir servi, refusé « sans result », hors limite de
+      session et hors substitution ;
+    - un result en erreur passagère d'API (5xx, 529, overloaded, délai,
+      réseau) avant tout travail.
+  - **Restent une pause immédiate**, comme avant : un model inconnu ou retiré,
+    un model qui a démarré puis échoué, une limite de session.
+  - **Le refus sur critère** reste compté comme avant.
+  - **Règle** : les erreurs de lancement ne comptent pas dans la limite de
+    2 essais. Toutes les 2 erreurs consécutives, l'exécution attend palier ×
+    10 s : **10 s, 20 s, 30 s…** Elle réessaie ensuite 2 fois **le même
+    model**, relu dans la page Models à chaque essai : il ne change que si
+    l'utilisateur change la case.
+  - **Plafond** : 6 paliers (dernière attente 60 s, 3 min 30 au total). Ensuite,
+    pause `launch`, avec les choix « continuer », « tester le model »
+    (recommandé), « changer le model » (la case est nommée) et « abandonner ».
+  - Événements : `pipeline_backoff` (palier, délai, échéance, case),
+    `pipeline_backoff_end` et `pipeline_model_test`. `run.json.backoff` décrit
+    l'attente en cours. Le chef reçoit
+    `[PIPELINE — <projet> — <run>] ⏳ …` avec les commandes.
+- (server) **Les 3 choix pendant l'attente** :
+  - **tester le model** : `scripts/model-test.mjs`. Il réutilise les appels
+    existants : `oneShotClaude` (celui de « Tester la langue », avec
+    l'isolation exacte d'une étape) et `chatCompletion` pour OpenRouter et
+    NVIDIA. Il écrit `logs/model-tests/<horodatage>-<model>.log` : commande,
+    code de sortie, durée, model servi, verdict, stderr et stdout complets ;
+  - **changer de model** : la case concernée est indiquée (page Models) ;
+  - **réessayer tout de suite**.
+
+  Le canal est un fichier de contrôle de l'exécution (`backoff-control.json`) :
+  - pour le chef, sans redémarrage : `node scripts/model-backoff.mjs <run>
+    status|retry|test` ;
+  - pour le tableau de bord, **après redémarrage** :
+    `POST /api/pipeline-runs/:run/backoff {action: retry|test}` (même origine),
+    `GET /api/model-tests/:name` (le journal), et dans la frise un bloc
+    d'attente avec « 🔬 Tester le model », « ⇄ Changer de model (case …) » et
+    « ↻ Réessayer maintenant ».
+
+  Sans choix, l'attente continue toute seule.
+- (server) Réponse « tester le model » à une pause : le test est lancé, son
+  journal est rapporté, et l'exécution reste en pause.
+- (server) Le stderr de chaque tour d'étape est gardé
+  (`logs/runs/<run>/<clé>.stderr.log`) : c'est la seule trace d'un tour mort au
+  lancement.
+
+### Changed
+- `oneShotClaude` (`language.mjs`) renvoie aussi sa trace brute (`raw` : commande,
+  code, durée, stdout, stderr) et le model servi. Ajout seulement : aucun
+  appelant n'est changé.
+
+### Tests
+- `scripts/_test_model_backoff.mjs` (43 contrôles, vrai dispatch, faux claude
+  `FAKE_CLAUDE_LAUNCH_FAIL_FILE`) :
+  - la détection ;
+  - les paliers de +10 s et le plafond ;
+  - 2 erreurs → attente → 2 erreurs → attente plus longue, délais mesurés ;
+  - le même model ;
+  - les essais non comptés ;
+  - « tester », « réessayer » et « changer de model » pendant l'attente ;
+  - la pause au plafond, puis « tester le model » et « continuer » ;
+  - la frise et les boutons.
+- Parcours HTTP `model-backoff`.
+- **Non vérifié** : un tour codex, NVIDIA ou OpenRouter écrit un `init` avant
+  d'appeler l'API, et sa panne reste traitée en « model indisponible » (pause
+  immédiate, comme avant).
+- **App Android inchangée** : elle affiche le message du chef et l'état ; les
+  boutons sont dans le tableau de bord.
+
 ## [0.59.0] - 2026-10-09
 
 Décision de l'utilisateur : « Protection puis redémarrage ». Une tâche du chef

@@ -230,7 +230,7 @@
       const PIPE_LABEL = { discussion: "Discussion", dev: p.mode === "complet" ? "Développement complet" : "Développement léger",
         incident: "Incident", recherche: "Recherche", audit: "Audit sécurité", maintenance: "Maintenance", nouveau: "Nouveau projet",
         donnees: "Données", redaction: "Rédaction", routage: "Routage (chef)", images: "Images", video: "Vidéo", audio: "Audio" };
-      const ST = { ok: "✓", refused: "✕ refusé", failed: "✕ échec", model_unavailable: "⏸ model indisponible", running: "● en cours", skipped: "↷ sautée" };
+      const ST = { ok: "✓", refused: "✕ refusé", failed: "✕ échec", model_unavailable: "⏸ model indisponible", launch_failed: "⚡ n’a pas démarré", running: "● en cours", skipped: "↷ sautée" };
       const titleOf = (id) => (p.planned.find(x => x.id === id) || {}).title || id;
       const rows = p.steps.map(s => `<li class="jt-step" data-step-status="${esc(s.status || "running")}" data-step="${esc(s.id)}">
           <b>${esc(titleOf(s.id))}</b>${s.item ? ` <span class="jt-item" title="${esc(s.itemText || "")}">item ${esc(s.item)}</span>` : ""}${s.attempt > 1 ? ` <span class="jt-dim">essai ${esc(s.attempt)}</span>` : ""}
@@ -246,6 +246,14 @@
         ${p.escalated ? `<div class="jt-escalate">${esc(p.escalated)}</div>` : ""}
         ${p.extended ? `<div class="jt-dim">${esc(p.extended)}</div>` : ""}
         ${p.limit ? `<div class="jt-warn" data-limit="${esc(p.limit.limit)}">${esc(p.limit.text)}</div>` : ""}
+        ${p.backoff && p.status === "running" ? `<div class="jt-backoff" data-run="${esc(p.run)}" data-tier="${esc(p.backoff.tier)}">
+          <div>${esc(p.backoff.text)}</div>
+          <div class="jt-backoff-actions">
+            <button type="button" class="jt-backoff-btn" data-backoff-action="test" data-run="${esc(p.run)}">🔬 Tester le model</button>
+            <a class="jt-backoff-btn" href="#/models" data-backoff-action="model" title="Choisissez un autre model dans cette case, puis « Réessayer maintenant »">⇄ Changer de model (case ${esc(p.backoff.slot || "?")})</a>
+            <button type="button" class="jt-backoff-btn" data-backoff-action="retry" data-run="${esc(p.run)}">↻ Réessayer maintenant</button>
+          </div></div>` : ""}
+        ${p.modelTest ? `<div class="jt-model-test" data-test-status="${esc(p.modelTest.status || "")}">${esc(p.modelTest.text)}${p.modelTest.logName ? ` <a href="/api/model-tests/${encodeURIComponent(p.modelTest.logName)}" target="_blank" rel="noopener">voir le journal</a>` : ""}</div>` : ""}
         <ol class="jt-steps">${rows}${todo}</ol></div>`;
     } else if (t.bypass) {
       pipe = `<div class="jt-pipeline is-bypass"><span class="jt-k">hors pipeline</span> <span class="jt-dim">${esc(t.bypass.reason)}</span></div>`;
@@ -308,8 +316,28 @@
     }
   }
 
+  // 0.60.0 — choix pendant l'attente après des erreurs de lancement : tester le
+  // model ou forcer un essai (POST /api/pipeline-runs/:run/backoff). « Changer de
+  // model » est un simple lien vers la page Models.
+  async function backoffAction(btn) {
+    const action = btn.dataset.backoffAction, run = btn.dataset.run;
+    if (!run || !["test", "retry"].includes(action)) return;
+    btn.disabled = true;
+    const label = btn.textContent;
+    try {
+      const r = await fetch(`/api/pipeline-runs/${encodeURIComponent(run)}/backoff`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
+      const j = await r.json().catch(() => ({}));
+      btn.textContent = r.ok ? `${label} — demandé` : `${label} — ${j.error || `HTTP ${r.status}`}`;
+    } catch (e) { btn.textContent = `${label} — ${e.message}`; btn.disabled = false; }
+  }
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest && e.target.closest("button[data-backoff-action]");
+    if (b) { e.preventDefault(); backoffAction(b); }
+  });
+
   global.Activite = {
-    applyUi, journalOn, cardsOn, open, load, onLiveEvent, paint, toggle,
+    applyUi, journalOn, cardsOn, open, load, onLiveEvent, paint, toggle, backoffAction,
     get name() { return st.name; },
   };
 })(window);

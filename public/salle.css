@@ -717,6 +717,16 @@ div.jt-did { padding-left: 0; }
 .jt-pipeline .jt-why { font-family: var(--font-mono); font-size: 0.6875rem; }
 .jt-pipeline .jt-warn { color: var(--st-input); font-weight: 600; }
 .jt-pipeline .jt-dim { color: var(--fg-2); }
+/* 0.60.0 — attente après des erreurs de lancement, et ses trois choix. */
+.jt-pipeline .jt-backoff { margin: 6px 0; padding: 6px 8px; border: 1px dashed var(--st-input); color: var(--fg-1); }
+.jt-pipeline .jt-backoff-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.jt-pipeline .jt-backoff-btn {
+  font: inherit; font-size: 0.75rem; color: var(--fg-1); background: transparent; cursor: pointer;
+  border: 1px solid var(--card-border); border-radius: 4px; padding: 3px 8px; text-decoration: none; min-height: 32px;
+}
+.jt-pipeline .jt-backoff-btn:disabled { opacity: 0.6; cursor: default; }
+.jt-pipeline .jt-model-test { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--fg-2); }
+.jt-pipeline .jt-model-test[data-test-status="failed"] { color: var(--st-input); }
 .jt-chip {
   font-family: var(--font-mono); font-size: 0.625rem; color: var(--fg-1);
   border: 1px solid var(--card-border); border-radius: 10px; padding: 1px 7px;

@@ -68,6 +68,8 @@ import { scanProject as scanFleetMember, isPhantomResult, isQuestionResolved, is
 import { createDownloadsRegistry, VERSION_NAME_RE } from './scripts/downloads-registry.mjs';
 import { trustWorkspace } from './scripts/workspace-trust.mjs';
 import { createNetworkGuard } from './scripts/network-guard.mjs';
+import { requestControl as requestBackoffControl } from './scripts/model-backoff.mjs';
+import { isModelTestLog } from './scripts/model-test.mjs';
 import { readPending, dependencyResult, releaseReady, staleEntries, markNotified, idOf as pendingIdOf } from './scripts/routage-pending.mjs';
 // Vue « Models par tâche » (0.39.0) : catalogue + model-routing.json.
 import { createModelRouting, incompatibility } from './scripts/model-routing.mjs';
@@ -2903,10 +2905,27 @@ app.get('/api/pipeline-runs', (req, res) => {
     let s; try { s = JSON.parse(fs.readFileSync(path.join(dir, r, 'run.json'), 'utf8')); } catch { continue; }
     if (want && s.project !== want) continue;
     runs.push({ run: s.run, project: s.project, pipeline: s.pipeline, mode: s.mode, kind: s.kind, status: s.status,
-      createdAt: s.createdAt, endedAt: s.endedAt || null, question: s.question || null,
+      createdAt: s.createdAt, endedAt: s.endedAt || null, question: s.question || null, backoff: s.backoff || null,
       steps: (s.steps || []).map(x => ({ id: x.id, key: x.key, title: x.title, slot: x.slot, model: x.model, served: x.served, source: x.source, status: x.status, why: x.why ? String(x.why).slice(0, 300) : null, durationMs: x.durationMs })) });
   }
   res.json({ ok: true, runs });
+});
+
+// Attente après des erreurs de lancement (0.60.0, scripts/model-backoff.mjs) :
+// « test » lance le test du model pendant l'attente, « retry » force un essai.
+// Changer de model = la page Models (case indiquée), puis « retry ».
+app.post('/api/pipeline-runs/:run/backoff', sameOriginOnly, express.json({ limit: '2kb' }), (req, res) => {
+  const r = requestBackoffControl(LOGS_DIR, String(req.params.run || ''), String(req.body?.action || ''), 'dashboard');
+  if (!r.ok) return res.status(/introuvable/.test(r.why) ? 404 : 400).json({ error: r.why });
+  res.json({ ok: true, run: req.params.run, action: req.body.action });
+});
+// Journal d'un test de model (logs/model-tests/<nom>.log), en texte brut.
+app.get('/api/model-tests/:name', (req, res) => {
+  const name = String(req.params.name || '');
+  if (!isModelTestLog(name)) return res.status(400).json({ error: 'nom de journal invalide' });
+  const f = path.join(LOGS_DIR, 'model-tests', name);
+  if (!fs.existsSync(f)) return res.status(404).json({ error: 'journal introuvable' });
+  res.type('text/plain; charset=utf-8').send(fs.readFileSync(f, 'utf8'));
 });
 
 // Lacunes signalées (0.42.0) : liste, acceptation, rejet, signalement.

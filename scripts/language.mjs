@@ -259,20 +259,24 @@ export function oneShotClaude(prompt, { model = REFORMULATE_MODEL, timeoutMs = 9
     try { c = spawn(isJs ? process.execPath : bin, isJs ? [bin, ...args] : args, { cwd: os.tmpdir(), env: childEnv, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }); }
     catch (e) { resolve({ ok: false, why: `lancement impossible : ${e.message}` }); return; }
     let out = '', err = '';
-    const t = setTimeout(() => { try { c.kill(); } catch {} resolve({ ok: false, why: 'délai dépassé' }); }, timeoutMs);
+    const t0 = Date.now();
+    // Raw trace (0.60.0, additive): what the model test writes to its log file.
+    const raw = (code) => ({ raw: { bin, args, code, ms: Date.now() - t0, stdout: out, stderr: err } });
+    const t = setTimeout(() => { try { c.kill(); } catch {} resolve({ ok: false, why: 'délai dépassé', ...raw(null) }); }, timeoutMs);
     c.stdout.on('data', d => { out += d; });
     c.stderr.on('data', d => { err += d; });
-    c.on('error', e => { clearTimeout(t); resolve({ ok: false, why: e.message }); });
+    c.on('error', e => { clearTimeout(t); resolve({ ok: false, why: e.message, ...raw(null) }); });
     c.on('close', (code) => {
       clearTimeout(t);
-      let text = '', isErr = false;
+      let text = '', isErr = false, served = null;
       for (const line of out.split(/\r?\n/)) {
         let ev; try { ev = JSON.parse(line); } catch { continue; }
+        if (ev.type === 'system' && ev.subtype === 'init' && ev.model) served = ev.model;
         if (ev.type === 'result') { text = typeof ev.result === 'string' ? ev.result : text; isErr = !!ev.is_error; }
       }
       if (!text && !out.trim().startsWith('{')) text = out.trim();
-      if (code !== 0 || isErr || !text.trim()) resolve({ ok: false, why: (isErr ? text : err || `code ${code}`).replace(/\s+/g, ' ').slice(0, 300) });
-      else resolve({ ok: true, text: text.trim() });
+      if (code !== 0 || isErr || !text.trim()) resolve({ ok: false, why: (isErr ? text : err || `code ${code}`).replace(/\s+/g, ' ').slice(0, 300), served, ...raw(code) });
+      else resolve({ ok: true, text: text.trim(), served, ...raw(code) });
     });
   });
 }

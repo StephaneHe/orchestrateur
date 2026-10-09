@@ -147,6 +147,22 @@ async function run() {
     : isClassify ? classifyReply()
     : (process.env.FAKE_CLAUDE_REPLY || null);
 
+  // FAKE_CLAUDE_LAUNCH_FAIL_FILE=<f> (0.60.0): while <f> holds n > 0, decrement it
+  // and die like a temporarily unavailable model — exit 1, NOTHING on stdout,
+  // one line on stderr. Pipeline step prompts only, unless
+  // FAKE_CLAUDE_LAUNCH_FAIL_ALL=1 (then the model test fails too).
+  if (process.env.FAKE_CLAUDE_LAUNCH_FAIL_FILE && (/^PIPELINE_STEP=/m.test(userText) || process.env.FAKE_CLAUDE_LAUNCH_FAIL_ALL === '1')) {
+    const f = process.env.FAKE_CLAUDE_LAUNCH_FAIL_FILE;
+    let left = 0; try { left = Number(fs.readFileSync(f, 'utf8')) || 0; } catch {}
+    if (left > 0) {
+      fs.writeFileSync(f, String(left - 1));
+      if (process.env.FAKE_CLAUDE_LAUNCH_LOG) fs.appendFileSync(process.env.FAKE_CLAUDE_LAUNCH_LOG, JSON.stringify({ at: Date.now(), model: askedModel, failed: true }) + '\n');
+      process.stderr.write(`API Error: 529 overloaded_error — ${askedModel} temporarily unavailable (simulated)\n`);
+      process.exit(1);
+    }
+    if (process.env.FAKE_CLAUDE_LAUNCH_LOG) fs.appendFileSync(process.env.FAKE_CLAUDE_LAUNCH_LOG, JSON.stringify({ at: Date.now(), model: askedModel, failed: false }) + '\n');
+  }
+
   // 1. system/init
   emit({
     type: 'system', subtype: 'init',
