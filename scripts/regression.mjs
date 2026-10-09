@@ -717,6 +717,24 @@ async function apiChecks(sb) {
       return `Images 4/4 (classée automatiquement), ${path.relative(omegaDir, png)} vérifié, livré (commit ${g('log', '-1', '--format=%h').stdout.trim()})`;
     } finally { fs.rmSync(routingFile, { force: true }); }
   });
+  // 0.56.0 — phase 7 : relevé de la mise en service générale (« une semaine sans contournement »).
+  await check(S, 'pipeline-health', 'Pipelines, phase 7 : relevé de la mise en service — exécutions, tours hors pipeline, tours ordinaires, refus (moteur et porte), pauses, jours complets sans contournement', async () => {
+    if (!fs.existsSync(path.join(sb.root, 'scripts', 'pipeline-health.mjs'))) NA('relevé absent de cet état du code');
+    const since = new Date(Date.now() - 3 * 86400_000).toISOString();
+    fs.writeFileSync(routingFile, JSON.stringify({ version: 2, assignments: {}, history: [], enforcement: { projects: ['omega'], pipelines: ['discussion', 'dev'], generalSince: since } }));
+    try {
+      const at = new Date().toISOString();
+      fs.appendFileSync(path.join(sb.root, 'logs', 'omega.jsonl'), [
+        { type: 'user_prompt', text: 'recette relevé', pipeline: { run: 'p-20261009T000000-abcd' }, timestamp: at },
+        { type: 'notification', subtype: 'pipeline_limit', timestamp: at },
+        { type: 'user_prompt', text: 'recette relevé hors', pipelineBypass: { reason: 'recette' }, timestamp: at },
+      ].map(e => JSON.stringify(e)).join('\n') + '\n');
+      const h = await json('/api/pipeline-health?refresh=1');
+      assert(h.since === since && h.totals.runs >= 1 && h.totals.pauses >= 1 && h.totals.hors >= 1 && Array.isArray(h.days) && h.criterion.days === 7, `relevé : ${JSON.stringify(h.totals)}`);
+      assert(h.perProject.some(p => p.name === 'omega'), 'omega absent du relevé par projet');
+      return `relevé : ${JSON.stringify(h.totals)}, ${h.streakDays} jour(s) sans contournement`;
+    } finally { fs.rmSync(routingFile, { force: true }); }
+  });
   // 0.49.0 — phase 4 : Développement COMPLET, TDD canonique un test à la fois.
   const omegaFresh = () => { const g = omegaRepo(); g('reset', '-q', '--hard', g('rev-list', '--max-parents=0', 'HEAD').stdout.trim()); g('clean', '-qfd', '-e', '.orchestrateur'); return g; };
   await check(S, 'pipeline-tdd', 'Pipelines, phase 4 : Développement complet — Comprendre, Concevoir, Liste de tests, puis UN test à la fois (4a échoue réellement, 4b la rend verte, 4c sautée si inutile), items cochés par le moteur, un commit ; montée léger → complet annoncée ; frise du journal', async () => {

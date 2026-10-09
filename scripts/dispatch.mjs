@@ -140,6 +140,12 @@ const ROOT = process.env.DISPATCH_ROOT_FOR_TESTS
   : path.resolve(__dirname, '..');
 
 function die(msg, code = 64) { console.error(`[dispatch] ${msg}`); process.exit(code); }
+// Refus de la porte des pipelines (0.56.0) : journalisés pour le relevé de la mise
+// en service (logs/pipeline-gate.ndjson), puis même sortie que die().
+function gateDie(msg, code, kind) {
+  try { fs.appendFileSync(path.join(ROOT, 'logs', 'pipeline-gate.ndjson'), JSON.stringify({ at: new Date().toISOString(), project: argv[0] || null, kind, code, why: String(msg).slice(0, 300) }) + '\n'); } catch { /* jamais bloquant */ }
+  die(msg, code);
+}
 
 // ---------- argv ------------------------------------------------------------
 
@@ -428,43 +434,43 @@ const ENFORCED = pipeEngine.isEnforced(ENFORCEMENT, projectName);
 // Routage (0.54.0) : le tour du chef devient une exécution du pipeline Routage
 // quand `enforcement.chef` est en service. Aucun musicien ne le lance.
 const CHEF_TARGET = projectName === CONDUCTOR || new RegExp(`^${CONDUCTOR}-\\d+$`).test(projectName);
-if (pipelineArg === 'routage' && !CHEF_TARGET) die(`--pipeline routage : réservé au tour du chef (« ${CONDUCTOR} »)`, 64);
+if (pipelineArg === 'routage' && !CHEF_TARGET) gateDie(`--pipeline routage : réservé au tour du chef (« ${CONDUCTOR} »)`, 64, 'routage-musicien');
 const CHEF_ROUTED = CHEF_TARGET && ENFORCEMENT.chef && !PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && horsPipelineArg == null;
 if (CHEF_ROUTED && (modelOverride || secondModel)) {
-  die(`le tour du chef est en service (pipeline Routage) : les models viennent des cases routage.* de la page Models. ` +
-    `Retire --model/--second-model, ou utilise --hors-pipeline "<raison>" (tracé et visible).`, 64);
+  gateDie(`le tour du chef est en service (pipeline Routage) : les models viennent des cases routage.* de la page Models. ` +
+    `Retire --model/--second-model, ou utilise --hors-pipeline "<raison>" (tracé et visible).`, 64, 'model-chef');
 }
 // 1. Une étape de pipeline ne lance aucun tour (le moteur est seul maître).
 if (TURN_STEP) {
-  die(`dispatch refusé : ce tour est une étape de pipeline (${TURN_STEP}) — une étape ne lance pas d'autre tour. ` +
-    `Si un autre travail est nécessaire, écris-le dans ton artefact : l'utilisateur ou le chef le lancera.`, 65);
+  gateDie(`dispatch refusé : ce tour est une étape de pipeline (${TURN_STEP}) — une étape ne lance pas d'autre tour. ` +
+    `Si un autre travail est nécessaire, écris-le dans ton artefact : l'utilisateur ou le chef le lancera.`, 65, 'depuis-etape');
 }
 // 2. Un musicien (pas le chef) ne lance pas de tour sur un projet en service.
 const TURN_OF_CHEF = TURN_OF === CONDUCTOR || new RegExp(`^${CONDUCTOR}-\\d+$`).test(TURN_OF || '') || CHEF_SLOT != null;
 if (TURN_OF && !TURN_OF_CHEF && ENFORCED && !PIPE_STEP) {
-  die(`dispatch refusé : « ${projectName} » est en service (pipelines obligatoires) et ce dispatch vient d'un tour du ` +
-    `musicien « ${TURN_OF} ». Seuls le chef, l'utilisateur et le moteur de pipelines lancent un tour sur ce projet.`, 65);
+  gateDie(`dispatch refusé : « ${projectName} » est en service (pipelines obligatoires) et ce dispatch vient d'un tour du ` +
+    `musicien « ${TURN_OF} ». Seuls le chef, l'utilisateur et le moteur de pipelines lancent un tour sur ce projet.`, 65, 'depuis-musicien');
 }
 // 3. Lancements internes (étape, branche ou relecture du mode double) sur un
 //    projet en service : jeton d'étape signé obligatoire, model conforme.
 let STEP_GRANT = null;
 if (PIPE_STEP || (ENFORCED && (DUAL_BRANCH || dualSynthesis))) {
   const v = pipeEngine.verifyStepToken(ROOT, STEP_TOKEN);
-  if (!v.ok) die(`tour d'étape refusé : ${v.why}`, 65);
+  if (!v.ok) gateDie(`tour d'étape refusé : ${v.why}`, 65, 'jeton');
   const g = v.payload;
   const allowed = [g.model || null, g.second?.model || null];
   const okModel = DUAL_BRANCH ? allowed.includes(modelOverride || null) : (modelOverride || null) === (g.model || null);
-  if (g.project !== projectName) die(`tour d'étape refusé : jeton émis pour « ${g.project} »`, 65);
-  if (PIPE_STEP && (g.run !== PIPE_STEP.run || g.key !== PIPE_STEP.key)) die('tour d\'étape refusé : jeton émis pour une autre étape', 65);
-  if (!okModel) die(`tour d'étape refusé : model « ${modelOverride || 'défaut'} » ≠ model de la case (« ${g.model || 'défaut du projet'} »)`, 65);
+  if (g.project !== projectName) gateDie(`tour d'étape refusé : jeton émis pour « ${g.project} »`, 65, 'jeton');
+  if (PIPE_STEP && (g.run !== PIPE_STEP.run || g.key !== PIPE_STEP.key)) gateDie('tour d\'étape refusé : jeton émis pour une autre étape', 65, 'jeton');
+  if (!okModel) gateDie(`tour d'étape refusé : model « ${modelOverride || 'défaut'} » ≠ model de la case (« ${g.model || 'défaut du projet'} »)`, 65, 'jeton');
   STEP_GRANT = g;
 }
 // 4. Un projet en service ne reçoit pas de model choisi à la main : ce sont les
 //    cases de la page Models qui décident (sauf sortie d'urgence tracée).
 const AUTO_PIPELINE = ENFORCED && !PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && horsPipelineArg == null;
 if (AUTO_PIPELINE && (modelOverride || secondModel) && !pipelineResumeArg) {
-  die(`« ${projectName} » est en service (pipelines obligatoires) : les models viennent des cases de la page Models. ` +
-    `Retire --model/--second-model, ou utilise --hors-pipeline "<raison>" (tracé et visible).`, 64);
+  gateDie(`« ${projectName} » est en service (pipelines obligatoires) : les models viennent des cases de la page Models. ` +
+    `Retire --model/--second-model, ou utilise --hors-pipeline "<raison>" (tracé et visible).`, 64, 'model-projet');
 }
 if ((pipelineArg || pipelineResumeArg) && (PIPE_STEP || DUAL_BRANCH || dualSynthesis)) die('--pipeline est incompatible avec un lancement interne');
 if ((pipelineArg || pipelineResumeArg) && (modelOverride || secondModel)) {

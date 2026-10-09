@@ -11,6 +11,70 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.56.0] - 2026-10-09
+
+Pipelines obligatoires, phase 7 : mise en service générale. Décisions de
+l'utilisateur : « passes décomposer et rapporter en opus 5.5. passes tout en
+pipeline puis passe à la suite ».
+
+### Changed
+- (config) Cases `routage.decomposer` et `routage.rapporter` passées sur
+  `claude-opus-5-5`, par l'API, avec leur entrée dans l'historique. Aucune
+  autre case n'a été touchée.
+- (fleet) **20 projets en service** sur 33. Le chef est en Routage, le
+  terminal est routé. Le détail par projet (en service, exclu avec sa raison,
+  commande de test) est dans `docs/PLAN-pipeline-enforcement.md`, « État livré
+  de la phase 7 ».
+- (server) Les fichiers locaux du CLI (`.claude/`) ne bloquent plus aucun
+  pipeline et ne sont jamais livrés (`isLocalOnly` du moteur).
+  - Ils sont ignorés par le contrôle d'arbre propre, les empreintes et la
+    détection « rien à livrer ».
+  - Une livraison qui commiterait un fichier `.claude/` est refusée.
+
+### Added
+- (server) `scripts/pipeline-onboard.mjs --plan <plan> [--dry-run]
+  [--apply]` met les projets en service.
+  - **Éligibilité** : dépôt git à la racine du projet, commande de test
+    réelle vérifiée verte, arbre propre, aucun tour en cours.
+  - **`.claude/`** : non suivi ⇒ `.git/info/exclude` ; réglages suivis ⇒
+    `git update-index --skip-worktree`. Les deux sont purement locaux.
+  - **`.orchestrateur/pipeline.json`** : commité seul, dans un commit dédié
+    et documenté, sans push. Pour une branche qui a divergé de son distant,
+    il est gardé en local (`.git/info/exclude`) : l'historique n'est pas
+    touché.
+  - Rapport dans `logs/pipeline-onboarding.json`.
+  - `--apply` écrit `enforcement.projects` et `enforcement.generalSince`.
+- (server) **Relevé de la mise en service** (`scripts/pipeline-health.mjs`,
+  `GET /api/pipeline-health`, panneau « 📈 Mise en service » de la page
+  Models).
+  - Il compte, depuis `generalSince` : exécutions, tours hors pipeline, tours
+    ordinaires sur un projet en service, refus du moteur, refus de la porte,
+    pauses.
+  - Il calcule les jours complets sans contournement, et le critère des
+    7 jours.
+- (server) Les refus de la porte (tour lancé par un musicien, depuis une
+  étape, `--model` à la main, jeton d'étape invalide, Routage demandé par un
+  musicien) sont journalisés dans `logs/pipeline-gate.ndjson` (`gateDie`).
+
+### Fixed
+- (ui) La note de la page Models disait que les choix n'étaient pas encore
+  utilisés. Ils le sont par les pipelines des projets en service.
+- (server) Critère « chemins cités » trop strict, constaté sur les trois
+  premières exécutions réelles : un fichier
+  cité pour dire qu'il est **absent** (« ni `pyproject.toml` ni
+  `setup.py` ») faisait refuser l'étape Comprendre, au prix d'un tour de plus.
+  - Une négation sur la même ligne (ni, pas de, aucun, sans, absent,
+    inexistant, manquant, missing…) rend désormais la citation acceptable.
+  - Le texte entre accents graves est retiré avant de chercher la négation :
+    un chemin inventé qui contient lui-même « inexistant » reste refusé.
+
+### Tests
+- `scripts/_test_pipeline_onboard.mjs` (19 contrôles) : `.claude/` suivi et
+  non suivi, commit dédié, inéligibles, branche divergée sans réécriture,
+  mise en service en bloc puis retour arrière par projet et en bloc,
+  compteurs du relevé, jours sans contournement.
+- Parcours HTTP `pipeline-health` et navigateur `health-view`.
+
 ## [0.55.0] - 2026-10-09
 
 Pipelines obligatoires, phase 6, lot C : Images, Vidéo, Audio. Fin de la

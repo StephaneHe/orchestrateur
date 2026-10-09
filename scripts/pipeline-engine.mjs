@@ -89,14 +89,14 @@ export function readEnforcement(root) {
   const projects = Array.isArray(e.projects) ? e.projects.filter(p => typeof p === 'string') : [];
   const pipelines = (Array.isArray(e.pipelines) ? e.pipelines : ENGINE_PIPELINES).filter(p => ENGINE_PIPELINES.includes(p));
   // terminal (0.52.0) : le terminal interactif /ws/pty passe par le routeur.
-  return { projects, pipelines, terminal: e.terminal === true, chef: e.chef === true, since: e.since || null, by: e.by || null };
+  return { projects, pipelines, terminal: e.terminal === true, chef: e.chef === true, since: e.since || null, generalSince: e.generalSince || null, by: e.by || null };
 }
 export function isEnforced(enf, project) {
   return enf.projects.includes(project) || enf.projects.includes('*');
 }
 
 /** Écriture atomique de la mise en service (CLI pipeline-enforce.mjs, route serveur). */
-export function writeEnforcement(root, { projects, pipelines, terminal, chef, by }) {
+export function writeEnforcement(root, { projects, pipelines, terminal, chef, generalSince, by }) {
   const file = path.join(root, 'model-routing.json');
   let j = {};
   try { j = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* neuf */ }
@@ -108,7 +108,8 @@ export function writeEnforcement(root, { projects, pipelines, terminal, chef, by
   const before = j.enforcement || null;
   const term = typeof terminal === 'boolean' ? terminal : before?.terminal === true;
   const chf = typeof chef === 'boolean' ? chef : before?.chef === true;
-  j.enforcement = { projects: [...new Set(projects)], pipelines: pipelines.filter(p => ENGINE_PIPELINES.includes(p)), ...(term ? { terminal: true } : {}), ...(chf ? { chef: true } : {}), since: at, by };
+  const gen = generalSince || before?.generalSince || null;
+  j.enforcement = { projects: [...new Set(projects)], pipelines: pipelines.filter(p => ENGINE_PIPELINES.includes(p)), ...(term ? { terminal: true } : {}), ...(chf ? { chef: true } : {}), ...(gen ? { generalSince: gen } : {}), since: at, by };
   const fmt = (e) => `${(e.projects || []).join(',') || '—'} / ${(e.pipelines || []).join(',')}${e.terminal ? ' / terminal' : ''}${e.chef ? ' / chef' : ''}`;
   j.history.push({ at, task: 'enforcement', from: before ? fmt(before) : null, to: fmt(j.enforcement), by });
   if (j.history.length > 500) j.history = j.history.slice(-500);
@@ -286,11 +287,17 @@ function git(cwd, args, opts = {}) {
   return { ok: r.status === 0, out: (r.stdout || '').replace(/\s+$/, ''), err: (r.stderr || '').trim() };
 }
 const RUNS_PREFIX = '.orchestrateur/runs/';
+// Fichiers locaux à la machine, jamais livrés (phase 7, 0.56.0) : les artefacts
+// d'exécution et la configuration locale du CLI (.claude/ : réglages, confiance).
+export function isLocalOnly(f) {
+  const p = String(f).replace(/^"|"$/g, '').split('\\').join('/');
+  return p.startsWith(RUNS_PREFIX) || p === '.claude' || p === '.claude/' || p.startsWith('.claude/');
+}
 
 /** Empreinte de chaque fichier suivi ou non ignoré (hors artefacts d'exécution). */
 export function snapshot(cwd) {
   if (git(cwd, ['rev-parse', '--is-inside-work-tree']).out !== 'true') return walkSnapshot(cwd);
-  const files = git(cwd, ['ls-files', '-c', '-o', '--exclude-standard']).out.split('\n').filter(f => f && !f.startsWith(RUNS_PREFIX));
+  const files = git(cwd, ['ls-files', '-c', '-o', '--exclude-standard']).out.split('\n').filter(f => f && !isLocalOnly(f));
   const uniq = [...new Set(files)];
   const map = new Map();
   const present = uniq.filter(f => fs.existsSync(path.join(cwd, f)));
@@ -367,7 +374,15 @@ export function missingCitedPaths(text, cwd) {
     const looksPath = /^[\w.\-@]+([\\/][\w.\-@ ]+)+$/.test(p) || /^[\w.\-]+\.(m?js|cjs|ts|tsx|jsx|json|md|kt|kts|py|java|css|html|ya?ml|toml|txt|ps1|sh|gradle)$/i.test(p) || /^[A-Za-z]:[\\/]/.test(p);
     if (!looksPath || /^https?:/i.test(p) || /[*?]/.test(p)) continue;
     const abs = path.isAbsolute(p) ? p : path.join(cwd, p);
-    if (!fs.existsSync(abs)) out.push(p);
+    if (fs.existsSync(abs)) continue;
+    // A file cited to say it is ABSENT (« ni `pyproject.toml` ni `setup.py` »,
+    // « pas de `docs/X.md` ») is a correct observation, not an invented path
+    // (seen on the first real runs of phase 7). Judged on its own line.
+    const start = String(text).lastIndexOf('\n', m.index) + 1;
+    const end = String(text).indexOf('\n', m.index);
+    const line = STRIP(String(text).slice(start, end < 0 ? undefined : end).replace(/`[^`\n]*`/g, ' '));
+    if (/(\bni\b|\bpas d|\baucun|\bsans\b|absent|n.existe pas|inexistant|manqu|\bmissing\b|\bno\b|\bnot\b|does not exist|n.y a pas|a creer|a ajouter)/.test(line)) continue;
+    out.push(p);
   }
   return [...new Set(out)];
 }
@@ -685,8 +700,10 @@ function checkCatalogCriteria(ctx, step, before, after) {
   if (step.kind === 'deliver') {
     const head = git(cwd, ['rev-parse', 'HEAD']).out;
     if (!head || head === ctx.base) return fail('aucun commit créé');
-    const dirty = git(cwd, ['status', '--porcelain']).out.split('\n').filter(l => l && !l.slice(3).startsWith(RUNS_PREFIX));
+    const dirty = git(cwd, ['status', '--porcelain']).out.split('\n').filter(l => l && !isLocalOnly(l.slice(3)));
     if (dirty.length) return fail(`arbre non propre après le commit : ${dirty.slice(0, 6).join(' ; ')}`);
+    const leaked = git(cwd, ['diff', '--name-only', `${ctx.base}..HEAD`]).out.split(/\r?\n/).filter(f => f && isLocalOnly(f));
+    if (leaked.length) return fail(`fichiers locaux commités (jamais livrés) : ${leaked.slice(0, 6).join(', ')}`);
     return { ok: true, changed, commit: head };
   }
   if (!artOk) return fail(`artefact ${step.artefact} absent ou vide`);
@@ -863,7 +880,7 @@ function checkCriteria(ctx, step, before, after) {
   if (step.id === 'livrer') {
     const head = git(cwd, ['rev-parse', 'HEAD']).out;
     if (!head || head === ctx.base) return { ok: false, why: 'aucun commit créé', changed };
-    const dirty = git(cwd, ['status', '--porcelain']).out.split('\n').filter(l => l && !l.slice(3).startsWith(RUNS_PREFIX));
+    const dirty = git(cwd, ['status', '--porcelain']).out.split('\n').filter(l => l && !isLocalOnly(l.slice(3)));
     if (dirty.length) return { ok: false, why: `arbre non propre après le commit : ${dirty.slice(0, 6).join(' ; ')}`, changed };
     const diffNames = git(cwd, ['diff', '--name-only', `${ctx.base}..HEAD`]).out.split('\n').filter(Boolean);
     let version = null;
@@ -883,6 +900,8 @@ function checkCriteria(ctx, step, before, after) {
         if (!txt.includes(`## [${version}]`)) return { ok: false, why: `${cl} : pas d’entrée « ## [${version}] »`, changed };
       }
     }
+    const leaked = diffNames.filter(f => isLocalOnly(f));
+    if (leaked.length) return { ok: false, why: `fichiers locaux commités (jamais livrés) : ${leaked.slice(0, 6).join(', ')}`, changed };
     if (cfg.requirements && !diffNames.includes(cfg.requirements)) return { ok: false, why: `${cfg.requirements} : pas de ligne pour cette demande`, changed };
     const t = runCommand(cwd, cfg.testCommand, ctx.testEnv);
     if (!t.ok) return { ok: false, why: `la suite échoue après la livraison (${cfg.testCommand}) :\n${t.out.slice(-1500)}`, changed, test: t };
@@ -950,7 +969,7 @@ export async function runPipeline(o) {
   const base = state?.base || (isGit ? git(cwd, ['rev-parse', 'HEAD']).out : 'hors-git');
   if (!base) return refuse(65, 'dépôt sans commit.');
   if (!state && needs.clean) {
-    const dirty = git(cwd, ['status', '--porcelain']).out.split('\n').filter(l => l && !l.slice(3).startsWith(RUNS_PREFIX));
+    const dirty = git(cwd, ['status', '--porcelain']).out.split('\n').filter(l => l && !isLocalOnly(l.slice(3)));
     if (dirty.length) return refuse(65, `modifications non commitées (${dirty.length} fichier(s)) — l'étape Livrer doit produire UN commit propre. Commite ou range d'abord.`);
   }
 
@@ -1398,7 +1417,7 @@ export async function runPipeline(o) {
     }
     // Livraison « seulement s'il y a quelque chose » (audit, maintenance…) : rien
     // n'a changé dans le projet → étape sautée, en le disant.
-    if (delivering && step.ifChanged && !git(cwd, ['status', '--porcelain']).out.split('\n').some(l => l && !l.slice(3).startsWith(RUNS_PREFIX))) {
+    if (delivering && step.ifChanged && !git(cwd, ['status', '--porcelain']).out.split('\n').some(l => l && !isLocalOnly(l.slice(3)))) {
       const why = 'aucune modification du projet : rien à livrer';
       const key = `${String(state.steps.length + 1).padStart(2, '0')}-${id}`;
       state.steps.push({ id, key, title: step.title, status: 'skipped', why, attempt: 1, durationMs: 0 });
@@ -1443,7 +1462,7 @@ export async function runPipeline(o) {
     ctx.headAtStep = git(cwd, ['rev-parse', 'HEAD']).out;
     if (step.id === 'revue') {
       const tracked = git(cwd, ['diff', base]).out;
-      const untracked = git(cwd, ['ls-files', '-o', '--exclude-standard']).out.split('\n').filter(f => f && !f.startsWith(RUNS_PREFIX));
+      const untracked = git(cwd, ['ls-files', '-o', '--exclude-standard']).out.split('\n').filter(f => f && !isLocalOnly(f));
       const extraTxt = untracked.map(f => { let s = ''; try { s = fs.readFileSync(path.join(cwd, f), 'utf8'); } catch {} return `--- /dev/null\n+++ b/${f}\n${s.split('\n').map(l => `+${l}`).join('\n')}`; }).join('\n');
       fs.writeFileSync(path.join(artDir, 'diff.patch'), `${tracked}\n${extraTxt}\n`);
       try { fs.unlinkSync(path.join(artDir, 'revue.json')); } catch {}
@@ -1630,7 +1649,7 @@ export async function answerPausedRun({ logsDir, project, projectName, run, answ
     text = `D’accord. Ouvrez la page Models et choisissez un autre model pour l’étape « ${plainStep(last.id)} »${last.slot ? ` (case « ${last.slot} »${last.model ? `, actuellement ${last.model}` : ''})` : ''}. Le changement est pris en compte tout de suite, sans redémarrage.\n\nNEEDS_USER_INPUT: ${projectName} attend toujours : une fois le model changé dans la page Models, répondez « continuer » pour reprendre là où je me suis arrêté.`;
     paused = true;
   } else {
-    const changed = git(project.path, ['status', '--porcelain']).out.split('\n').filter(l => l && !l.slice(3).startsWith(RUNS_PREFIX)).map(l => l.slice(3));
+    const changed = git(project.path, ['status', '--porcelain']).out.split('\n').filter(l => l && !isLocalOnly(l.slice(3))).map(l => l.slice(3));
     state.status = 'abandoned'; state.abandonedBy = answer; state.endedAt = new Date().toISOString();
     save();
     writeEvent({ type: 'system', subtype: 'pipeline_summary', pipeline: { run, pipeline: state.pipeline, mode: state.mode, status: 'abandoned' },
@@ -1655,7 +1674,7 @@ const CODE_RE = /\.(m?js|cjs|ts|tsx|jsx|kt|kts|java|py|go|rs|cs|swift|c|cc|cpp|h
 /** Périmètre d'un changement léger, hors tests et artefacts (plan §4 : plus de
  *  3 fichiers, plus de 150 lignes ou un NOUVEAU fichier de code ⇒ complet). */
 export function lightScope(cwd, base, cfg) {
-  const isRun = (f) => f.startsWith(RUNS_PREFIX) || f.startsWith('.orchestrateur/');
+  const isRun = (f) => isLocalOnly(f) || f.startsWith('.orchestrateur/');
   let files = 0, lines = 0, newCode = 0;
   for (const l of git(cwd, ['diff', '--numstat', base]).out.split('\n').filter(Boolean)) {
     const [a, b, f] = l.split('\t');

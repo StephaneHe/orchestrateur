@@ -1622,6 +1622,23 @@ export async function browserChecks(sb, t) {
         fs.rmSync(path.join(sb.root, 'model-routing.json'), { force: true });
         return 'nemotron : en → en+fr ; Claude : toutes langues';
       });
+      // 0.56.0 — phase 7 : relevé de la mise en service visible dans le dashboard (page Models).
+      await check(B, 'health-view', 'Page Models : « 📈 Mise en service » — relevé par jour et par projet, jours sans contournement, critère des 7 jours', async () => {
+        await lp.goto(`${sb.url}/?token=${sb.token}#/models`);
+        await lp.locator('.mr-back').waitFor();
+        if (!(await lp.locator('.mr-health-btn').count())) NA('relevé absent de cet état du code');
+        fs.writeFileSync(path.join(sb.root, 'model-routing.json'), JSON.stringify({ version: 2, assignments: {}, history: [], enforcement: { projects: ['omega'], pipelines: ['discussion', 'dev'], generalSince: new Date(Date.now() - 2 * 86400_000).toISOString() } }));
+        try {
+          await lp.click('.mr-health-btn');
+          assert(await until(async () => (await lp.locator('.mr-health [data-health-streak]').count()) === 1, 8000), 'résumé du relevé absent');
+          assert(await lp.getAttribute('.mr-health-btn', 'aria-expanded') === 'true', 'aria-expanded');
+          assert(await lp.locator('.mr-health .mr-health-days').count() === 1 && await lp.locator('.mr-health .mr-health-projects').count() === 1, 'tableaux par jour / par projet absents');
+          assert(/critère/.test(await lp.textContent('.mr-health [data-health-summary]')), 'critère non affiché');
+          await shot(lp, 'mise-en-service');
+          await lp.click('.mr-health-btn');
+          return `relevé affiché : ${(await lp.textContent('.mr-health [data-health-summary]')).replace(/\s+/g, ' ').trim().slice(0, 120)}`;
+        } finally { fs.rmSync(path.join(sb.root, 'model-routing.json'), { force: true }); }
+      });
       // 0.52.0 — pipelines, phase 5 : le composer choisit le pipeline (demande du 2026-10-09).
       await check(B, 'composer-pipeline', 'Composer : sélecteur de pipeline (auto, Discussion, Dév. léger, Dév. complet) — le choix part avec la demande, puis revient à « auto » ; utilisable sur mobile', async () => {
         if (!(await lp.goto(`${sb.url}/?token=${sb.token}`).then(() => lp.locator('#composer-pipeline').count()))) NA('sélecteur absent de cet état du code');

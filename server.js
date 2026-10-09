@@ -79,6 +79,7 @@ import { createObserver, TerminalLineBuffer, ENTRY_KINDS, classify as classifyEn
 import { readEnforcement, isEnforced, ENGINE_PIPELINES, RUN_RE } from './scripts/pipeline-engine.mjs';
 import { TerminalRouter, discussionArgs, encodeFrame, targetOf, HOLD_TIMEOUT_MS } from './scripts/terminal-route.mjs';
 import { pipelineOptsFrom, pipelineArgs, withPipelinePrefix } from './scripts/pipeline-entry-opts.mjs';
+import { computeHealth } from './scripts/pipeline-health.mjs';
 import * as Lang from './scripts/language.mjs';
 import os from 'node:os';
 import path from 'node:path';
@@ -2842,6 +2843,14 @@ app.get('/api/pipeline-observe', (req, res) => {
 
 // Pipelines, phase 3 (0.48.0) : mise en service (lecture seule ici ; écriture
 // par scripts/pipeline-enforce.mjs) et exécutions récentes (logs/runs/).
+// Phase 7 (0.56.0) : relevé de la mise en service générale (critère « une semaine
+// sans contournement ») — tours hors pipeline, refus, pauses. Cache de 30 s.
+let healthCache = null;
+app.get('/api/pipeline-health', (req, res) => {
+  if (!healthCache || Date.now() - healthCache.at > 30_000 || req.query.refresh) healthCache = { at: Date.now(), data: computeHealth(__dirname) };
+  res.json(healthCache.data);
+});
+
 app.get('/api/pipeline-enforcement', (req, res) => {
   res.json({ ok: true, inService: ENGINE_PIPELINES, ...readEnforcement(__dirname) });
 });

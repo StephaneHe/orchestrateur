@@ -21,7 +21,8 @@
 > livré »). **Phase 3 (moteur) livrée en 0.48.0** (§5, « État livré de la phase 3 »).
 > **Phase 4 (Développement complet) livrée en 0.49.0** (§5, « État livré de la phase 4 »).
 > **Phase 5 (toutes les entrées branchées) livrée en 0.52.0** (§5, « État livré de la phase 5 »).
-> **Phase 6 (autres pipelines) livrée en trois lots : 0.53.0, 0.54.0, 0.55.0** (§5). Prochaine : phase 7 (tous les projets en service), soumise à la validation de l’utilisateur.
+> **Phase 6 (autres pipelines) livrée en trois lots : 0.53.0, 0.54.0, 0.55.0** (§5).
+> **Phase 7 (mise en service générale) livrée en 0.56.0** (§5) : 20 projets, le chef en Routage, le terminal routé ; le critère « une semaine sans contournement » est suivi par le relevé.
 
 ---
 
@@ -605,6 +606,88 @@ Chaque phase suit le protocole 0.29.0 : tag `pre-pipeline-enforce-pN-v<X.Y.Z>`, 
 - **Retour arrière** : `node scripts/pipeline-enforce.mjs pipelines
   discussion,dev,…` (sans images, video, audio), ou le tag
   `pre-pipeline-enforce-p6c-v0.54.0`.
+
+### État livré de la phase 7 (0.56.0, 2026-10-09) — mise en service générale
+
+Décisions de l'utilisateur : « passes décomposer et rapporter en opus 5.5.
+passes tout en pipeline puis passe à la suite ».
+
+- Cases `routage.decomposer` et `routage.rapporter` passées sur
+  `claude-opus-5-5`.
+- **Chef en Routage** (`on --chef`) et **terminal routé** (`on --terminal`).
+- **Éligibilité d'un projet** :
+  - dépôt git à sa racine ;
+  - commande de test **réellement exécutée et verte** le 2026-10-09 ;
+  - arbre propre ;
+  - aucun tour en cours.
+
+  Un projet sans suite de tests est exclu : son Développement, vérifié par
+  le code, serait refusé à chaque demande. Une suite rouge l'exclut aussi :
+  l'exécution se mettrait en pause dès la condition de départ.
+- **`.claude/`** : les fichiers locaux du CLI ne bloquent rien et ne sont
+  jamais livrés (`isLocalOnly`) :
+  - non suivi ⇒ `.git/info/exclude` ;
+  - réglages suivis ⇒ `skip-worktree`.
+
+  Aucun fichier `.claude/` n'est commité, et rien n'est réécrit.
+- **`pipeline.json`** : un commit dédié par projet, sans push. Pour une
+  branche divergée de son distant (un projet, +21/−89), il reste **local**
+  (`.git/info/exclude`), et l'historique n'est pas touché.
+- Particularités (noms des projets privés omis : dépôt public) :
+  - **Android** : JDK 17 fixé dans la commande, car le Java par défaut du
+    poste est en version 11.
+  - **`.gradlew.bat`** : `cmd` ne cherche pas dans le dossier courant
+    quand `NoDefaultCurrentDirectoryInExePath` est posé.
+  - **Un projet Android** : tests de son module `app` seulement (un module
+    de benchmark ne compile pas), avec un `local.properties` local créé.
+  - **Un projet Node** : un test d'intégration a dépassé son délai au premier
+    passage.
+- **Bilan** : sur 33 projets, **20 en service**, dont le pilote
+  `pipelineLab`.
+  - Par technologie : 8 Python (pytest), 7 Android (Gradle), 4 Node, 1 .NET.
+  - Le chef est en Routage.
+  - **13 exclus** :
+    - l'orchestrateur lui-même : sa non-régression prend environ 15 min,
+      incompatible avec un test à la fois, et une exécution y modifierait le
+      serveur qui la pilote ;
+    - 3 projets à la suite rouge, pour des raisons d'environnement :
+      dépendances absentes, module natif compilé pour une autre version de
+      Node, jest non installé ;
+    - 10 projets sans suite de tests.
+
+  Le tableau nominatif (projet, état, commande ou raison) est local et non
+  versionné : `logs/pipeline-onboarding.md` et
+  `logs/pipeline-onboarding.json`.
+- **Ajouter un projet plus tard** (suite réparée ou ajoutée) :
+  1. mettre à jour `.tmp/onboard-plan.json` (`testCommand`,
+     `verified: true`) ;
+  2. lancer `node scripts/pipeline-onboard.mjs --plan <plan> --apply`.
+
+  Le script n'intègre que les projets éligibles, et ne touche jamais à un
+  projet déjà en service ni à un projet occupé.
+- **Vérification réelle** : une question en lecture seule envoyée par l'API
+  à trois projets réels (Python, Node, Android).
+  - Chacune a donné une exécution Discussion : Comprendre (opus-5-5) →
+    Rechercher (sonnet-5-5) → Répondre (opus-5-5), sans aucune
+    modification.
+  - Elles ont révélé un critère trop strict (fichier cité comme absent),
+    corrigé en 0.56.0.
+- **Relevé** (critère « une semaine sans contournement ») :
+  `GET /api/pipeline-health`, panneau « 📈 Mise en service » de la page
+  Models. Il est suivi à partir de `enforcement.generalSince`.
+- **Retour arrière** (testé par `_test_pipeline_onboard.mjs`, section 4) :
+  - **un projet** : `node scripts/pipeline-enforce.mjs off <projet>`. Le
+    projet repart en tours ordinaires dès le dispatch suivant, sans
+    redémarrage. Garder son `pipeline.json` est sans effet ; on peut aussi
+    le retirer par `git -C I:\Dev\<projet> revert <sha>` (le SHA est dans
+    `logs/pipeline-onboarding.json`). `skip-worktree` s'annule par
+    `git update-index --no-skip-worktree .claude/settings.json`.
+  - **le chef seul** : `off --chef`. **Le terminal seul** :
+    `off --terminal`.
+  - **en bloc** : `node scripts/pipeline-enforce.mjs off --all`, qui coupe
+    les projets, le chef et le terminal. La configuration d'avant est dans
+    `.tmp/model-routing.before-p7.json`. Pour le code, le tag est
+    `pre-pipeline-enforce-p7-v0.55.0`.
 
 **Retour arrière** : à chaque phase, le tag, plus le drapeau `enforcement` vidé. Sans redéploiement, le comportement redevient celui d'avant (un tour, un model).
 

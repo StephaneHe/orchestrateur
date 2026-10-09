@@ -1186,6 +1186,38 @@ Suite de la demande du 2026-10-09. Plan : `docs/PLAN-pipeline-enforcement.md`.
   en-tête MP4) ; `FAKE_PIPE_TRANSCRIPT`.
 - Recettes : `_test_pipeline_media.mjs`, HTTP `pipeline-media`.
 
+## Pipelines obligatoires — phase 7 : mise en service générale (0.56.0)
+
+- **En service** : 20 projets sur 33, le chef en Routage, le terminal routé.
+  Le tableau nominatif est local : `logs/pipeline-onboarding.md` et `.json`.
+  Le dépôt est public : n'y écrire **aucun nom de projet privé**.
+- **Intégrer un projet** : `scripts/pipeline-onboard.mjs --plan <plan.json>
+  [--dry-run] [--apply]`.
+  - Le plan contient les commandes de test **vérifiées vertes**.
+  - Éligibilité : git à la racine, suite verte, arbre propre, pas de tour en
+    cours.
+  - `.claude/` : non suivi ⇒ `.git/info/exclude` ; réglages suivis ⇒
+    `skip-worktree`.
+  - `pipeline.json` : un commit dédié, sans push ; il reste local pour une
+    branche divergée.
+- **`isLocalOnly`** (moteur) : `.claude/` et les artefacts d'exécution ne
+  comptent ni pour l'arbre propre, ni pour les empreintes, ni pour « rien à
+  livrer ». Une livraison qui les commiterait est refusée.
+- **Relevé** : `scripts/pipeline-health.mjs` (`computeHealth`),
+  `GET /api/pipeline-health` (cache de 30 s, `?refresh=1`), panneau
+  « 📈 Mise en service » de la page Models.
+  - Il compte, depuis `enforcement.generalSince` : exécutions, hors
+    pipeline, tours ordinaires, refus du moteur, refus de la porte
+    (`logs/pipeline-gate.ndjson`, écrit par `gateDie` de `dispatch.mjs`),
+    pauses.
+  - Il calcule les jours complets sans contournement, avec un critère de
+    7 jours.
+- **Retour arrière** : `pipeline-enforce.mjs off <projet>`, `off --chef`,
+  `off --terminal`, `off --all`. Détail dans le plan, « État livré de la
+  phase 7 ».
+- Recettes : `_test_pipeline_onboard.mjs`, HTTP `pipeline-health`,
+  navigateur `health-view`.
+
 ## Langue de discussion (0.51.0)
 
 Demande utilisateur : « La langue de la discussion doit pouvoir etre fixee et

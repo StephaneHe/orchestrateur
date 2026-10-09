@@ -46,6 +46,8 @@
     refreshing: false,
     showHistory: false,
     showObs: false,            // panneau « Observation » (phase 1 des pipelines)
+    showHealth: false,         // relevé de la mise en service générale (phase 7)
+    health: null, healthError: null,
     obs: null,
     obsError: null,
     showKeys: false,           // panneau « Clés API » (0.43.0) — aucune valeur côté client
@@ -387,6 +389,37 @@
         <thead><tr><th>Heure</th><th>Entrée</th><th>Projet</th><th>Pipeline · mode</th><th>Confiance</th><th>Demande</th></tr></thead>
         <tbody>${rows}</tbody></table></div>` : ""}
       <button type="button" class="mr-obs-reload">↻ Actualiser</button>`;
+  }
+
+  // --- Mise en service générale (phase 7) : le critère « une semaine sans contournement » ---
+  function healthHtml() {
+    if (st.healthError) return `<p class="mr-error" role="alert">${esc(st.healthError)}</p>`;
+    const h = st.health;
+    if (!h) return '<p class="mr-empty">Chargement du relevé…</p>';
+    if (!h.since) return '<p class="mr-empty">Aucune mise en service générale pour l’instant.</p>';
+    const t = h.totals || {};
+    const bypass = (t.hors || 0) + (t.ordinaires || 0);
+    const cell = (v, warn) => `<td class="${warn && v ? "mr-warn" : ""}">${v || 0}</td>`;
+    const row = (label, x) => `<tr><th scope="row">${esc(label)}</th>${cell(x.runs)}${cell(x.hors, true)}${cell(x.ordinaires, true)}${cell(x.refus)}${cell(x.porte)}${cell(x.pauses)}</tr>`;
+    const head = '<thead><tr><th></th><th>Exécutions</th><th>Hors pipeline</th><th>Tours ordinaires</th><th>Refus moteur</th><th>Refus porte</th><th>Pauses</th></tr></thead>';
+    return `<p class="mr-obs-intro" data-health-summary>Depuis le <time datetime="${esc(h.since)}">${esc(fmtTime(h.since))}</time> :
+        <b>${h.projects}</b> projet(s) en service${h.chef ? ", tour du chef en Routage" : ""}${h.terminal ? ", terminal routé" : ""}.
+        <b data-health-streak>${h.streakDays}</b> jour(s) complet(s) sans contournement sur ${h.criterion.days} —
+        ${h.criterion.met ? '<span class="mr-obs-tag">✓ critère atteint</span>' : '<span class="mr-obs-tag">critère en cours</span>'}
+        ${bypass ? `<span class="mr-obs-tag mr-warn">${bypass} contournement(s) relevé(s)</span>` : ""}</p>
+      <div class="mr-obs-scroll"><table class="mr-obs-table mr-health-days" aria-label="Relevé par jour">${head}
+        <tbody>${(h.days || []).map(d => row(d.date, d)).join("") || '<tr><td colspan="7" class="mr-empty">Aucun tour depuis la mise en service.</td></tr>'}${row("Total", t)}</tbody></table></div>
+      <div class="mr-obs-scroll"><table class="mr-obs-table mr-health-projects" aria-label="Relevé par projet">${head.replace("<th></th>", "<th>Projet</th>")}
+        <tbody>${(h.perProject || []).map(p => row(p.name, p)).join("")}</tbody></table></div>
+      <button type="button" class="mr-health-reload">↻ Actualiser</button>`;
+  }
+
+  async function loadHealth() {
+    try { st.health = await getJson("/api/pipeline-health?refresh=1"); st.healthError = null; }
+    catch (e) { st.healthError = e.status === 404 ? "Le relevé exige le serveur ≥ 0.56.0 : il doit être redémarré." : `Chargement impossible : ${e.message}`; }
+    const box = root()?.querySelector(".mr-health");
+    if (box) box.innerHTML = '<h2 class="mr-h2">Mise en service générale</h2>' + healthHtml();
+    patch();
   }
 
   async function loadObs() {
@@ -903,6 +936,9 @@
       <section class="mr-gaps" ${st.showGaps ? "" : "hidden"} aria-label="Lacunes proposées">
         <h2 class="mr-h2">Lacunes proposées</h2>${gapsHtml()}
       </section>
+      <section class="mr-health" ${st.showHealth ? "" : "hidden"} aria-label="Mise en service générale">
+        <h2 class="mr-h2">Mise en service générale</h2>${healthHtml()}
+      </section>
       <section class="mr-obs" ${st.showObs ? "" : "hidden"} aria-label="Classifications récentes des entrées">
         <h2 class="mr-h2">Classifications récentes</h2>${obsHtml()}
       </section>
@@ -958,6 +994,10 @@
     }
     const obsBox = $(".mr-obs", el);
     if (obsBox) obsBox.hidden = !st.showObs;
+    const hb2 = $(".mr-health-btn", el);
+    if (hb2) hb2.setAttribute("aria-expanded", st.showHealth ? "true" : "false");
+    const healthBox = $(".mr-health", el);
+    if (healthBox) healthBox.hidden = !st.showHealth;
     syncGapBadges();
     const rb = $(".mr-refresh", el);
     rb.disabled = st.refreshing;
@@ -1188,6 +1228,8 @@
       if (e.target.closest(".mr-back")) { back(); return; }
       if (e.target.closest(".mr-refresh")) { refreshLists(); return; }
       if (e.target.closest(".mr-hist-btn")) { st.showHistory = !st.showHistory; patch(); return; }
+      if (e.target.closest(".mr-health-btn")) { st.showHealth = !st.showHealth; patch(); if (st.showHealth) loadHealth(); return; }
+      if (e.target.closest(".mr-health-reload")) { loadHealth(); return; }
       if (e.target.closest(".mr-obs-btn")) { st.showObs = !st.showObs; patch(); if (st.showObs) loadObs(); return; }
       if (e.target.closest(".mr-obs-reload")) { loadObs(); return; }
       const ra = e.target.closest("[data-reco-apply]");

@@ -30,6 +30,9 @@ section('1. Briques : sections, sources, catalogue complet');
 ok(E.missingSections('# T\n## Symptômes\nx\n### Preuves récoltées\ny', ['Symptomes', 'Preuves']).length === 0, 'sections trouvées sans accents ni casse');
 ok(E.missingSections('## Impact\n', ['Impact', 'Gravité']).join() === 'Gravité', 'section manquante repérée');
 ok(E.countSources('- https://a.org/x\n- https://a.org/x.\n- http://b.net/y') === 2, 'sources : URL distinctes');
+// 0.56.0 — vu sur les premières exécutions réelles : citer un fichier pour dire qu'il est absent n'est pas une invention.
+ok(JSON.stringify(E.missingCitedPaths('le dépôt ne contient ni `pyproject.toml` ni `setup.py`.\nvoir `src/invente.py`.\nIl n’y a pas de `docs/USER_REQUIREMENTS.md`.\nFichiers utiles : `inexistant/fichier.js`', ROOT)) === '["src/invente.py","inexistant/fichier.js"]',
+  'chemin cité comme ABSENT : accepté ; chemin inventé : toujours refusé (même s’il contient « inexistant »)');
 for (const p of ['incident', 'recherche', 'audit', 'maintenance', 'nouveau', 'donnees', 'redaction']) {
   const steps = E.planSteps(p);
   ok(E.ENGINE_PIPELINES.includes(p) && steps.length >= 3 && steps.every(s => s.artefact && s.chain.length && (s.checks || s.crit || s.kind === 'deliver')), `${p} : ${steps.map(s => s.id).join(' → ')} (critères déclarés à chaque étape)`);
