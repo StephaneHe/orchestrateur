@@ -258,6 +258,9 @@ if (pipelineStepArg) {
   const m = /^(p-\d{8}T\d{6}-[a-z0-9]{4,8}):(\d{2}-[a-z0-9-]{1,40})$/.exec(pipelineStepArg);
   if (!m) die(`--pipeline-step invalide : ${pipelineStepArg}`);
   PIPE_STEP = { run: m[1], key: m[2] };
+  // Test-only (0.61.1): an argument refusal through the same die() as the real
+  // ones, so the engine's "refused before calling the model" path is testable.
+  if (process.env.ORCH_FAKE_STEP_REFUSAL === '1') die(`--pipeline-step refusé (simulation de test) : ${pipelineStepArg}`);
 }
 if (pipelineSession && !/^[a-z0-9-]{1,40}$/.test(pipelineSession)) die(`--pipeline-session invalide : ${pipelineSession}`);
 if (pipelineArg && !/^[a-z][a-z0-9-]{1,30}$/.test(pipelineArg)) die(`--pipeline invalide : ${pipelineArg}`);

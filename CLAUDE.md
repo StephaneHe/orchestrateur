@@ -1315,6 +1315,15 @@ nouvel essai ».
   `chatCompletion`. Journal dans `logs/model-tests/`, lisible par
   `GET /api/model-tests/:name`.
 - Le stderr de chaque étape est gardé : `logs/runs/<run>/<clé>.stderr.log`.
+- **Refus de lancement par `dispatch.mjs`** (0.61.1, `dispatchRefusal`) :
+  - signature : sortie non nulle, une ligne `[dispatch] <raison>` sur stderr,
+    log d'étape vide ;
+  - l'étape est classée `launch_refused`, avec une pause immédiate qui nomme
+    la cause ;
+  - le message ne contient jamais « le model n'a rien produit » ni « tester /
+    changer le model ».
+  - Ce contrôle passe avant `isLaunchFailure`.
+  - Test : `ORCH_FAKE_STEP_REFUSAL=1`, `_test_launch_refused.mjs`.
 - Faux claude : `FAKE_CLAUDE_LAUNCH_FAIL_FILE` (et `_ALL`, `FAKE_CLAUDE_LAUNCH_LOG`).
 - Recettes : `_test_model_backoff.mjs`, HTTP `model-backoff`.
 

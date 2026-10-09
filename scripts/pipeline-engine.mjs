@@ -40,7 +40,7 @@ import { languageFor, languageGate, localize, workingLanguage } from './language
 import { CATALOG_PIPELINES, catalogOf, catalogSteps } from './pipeline-catalog.mjs';
 import { readPending, addPending, releaseReady, launchTask, detectReprise, logOffset, taskKey, RUN_ID_RE } from './routage-pending.mjs';
 export { readPending };
-import { backoffConfig, isLaunchFailure, tierAfter, delayFor, waitBackoff, runDirOf } from './model-backoff.mjs';
+import { backoffConfig, isLaunchFailure, dispatchRefusal, tierAfter, delayFor, waitBackoff, runDirOf } from './model-backoff.mjs';
 import { runModelTest } from './model-test.mjs';
 import { PIPELINES } from './model-pipelines.mjs';
 import { checkMediaFiles, listedFiles, wordErrorRate } from './media-check.mjs';
@@ -1572,6 +1572,24 @@ export async function runPipeline(o) {
     return finish({ code: 2, paused: true, limit: 'launch', question, result: body, notice });
   };
 
+  // Refus de lancement par dispatch.mjs (0.61.1) : la cause est nommée, et rien
+  // n'est reproché au model — ni « le model n'a rien produit », ni « tester le
+  // model », ni « changer le model ».
+  const pauseForLaunchRefused = async (step, info, rec) => {
+    const C = commonChoices(step);
+    const notice = `⏸ Lancement refusé par l’orchestrateur — ${projectName} : l’étape « ${plainStep(step.id)} » n’a pas pu démarrer (dispatch.mjs a refusé de la lancer, le model n’a pas été appelé)`;
+    writeEvent({ type: 'notification', subtype: 'pipeline_limit', pipeline: { run, step: step.id }, limit: 'launch_refused', value: 1,
+      why: String(rec.refusal || rec.why || '').slice(0, 2000), stderrLog: rec.stderrLog || null, text: notice });
+    const body = pauseText({
+      what: `le lancement de l’étape « ${plainStep(step.id)} » a été refusé par dispatch.mjs avant d’appeler le model : ${plainWhy(rec.refusal || rec.why)}. `
+        + `${info.model || 'Le model'} n’a donc pas été sollicité : il n’y a rien à lui reprocher, et le tester ou en changer n’y changerait rien. C’est l’orchestrateur qu’il faut corriger (journal : ${rec.stderrLog || '—'}).`,
+      options: [['continuer', 'je relance l’étape, là où elle s’est arrêtée ; utile une fois l’orchestrateur corrigé, sinon le même refus se reproduira.'], C.abandonner],
+      recommend: ['continuer', 'après correction de l’orchestrateur (le chef peut la demander à orchestrateur) : rien n’est perdu, l’étape reprendra telle quelle.'],
+    });
+    const question = `${projectName} en pause — répondez « continuer » (après correction de l’orchestrateur) ou « abandonner » : le lancement de l’étape « ${plainStep(step.id)} » a été refusé par dispatch.mjs avant d’appeler le model (${plainWhy(rec.refusal || rec.why).slice(0, 120)}).`;
+    return finish({ code: 2, paused: true, limit: 'launch_refused', question, result: body, notice });
+  };
+
   // ── Une étape : un tour, sur le model de sa case, jeton signé ────────────
   const runStep = async (step, attempt, extra) => {
     const info = resolveCase(readAssignments(root), step.chain);
@@ -1621,6 +1639,20 @@ export async function runPipeline(o) {
     // before serving, transient API error) — back-off on the same case, checked
     // BEFORE "model unavailable", which keeps the session limits and the models
     // that cannot run (see model-backoff.mjs).
+    // Refused by dispatch.mjs before any call to the model (0.61.1): an
+    // orchestrator problem, named as such — checked before the launch failures.
+    {
+      let stderrText = '';
+      try { stderrText = fs.readFileSync(stderrFile, 'utf8'); } catch {}
+      const refusal = dispatchRefusal({ code, log, stderr: stderrText });
+      if (refusal) {
+        rec.status = 'launch_refused';
+        rec.why = `le lancement a été refusé par dispatch.mjs avant d'appeler le model (code ${code}) : ${refusal}`;
+        rec.refusal = refusal;
+        rec.stderrLog = `logs/runs/${run}/${key}.stderr.log`;
+        return { rec, info, before, after, launchRefused: true };
+      }
+    }
     if (isLaunchFailure({ code, log })) {
       let errTail = '';
       try { errTail = fs.readFileSync(stderrFile, 'utf8').trim().split('\n').filter(Boolean).slice(-3).join(' | ').slice(-400); } catch {}
@@ -1828,6 +1860,9 @@ export async function runPipeline(o) {
       finally { for (const f of hidden) { try { fs.renameSync(path.join(runDir, `hidden-${f}`), path.join(artDir, f)); } catch {} } }
       record(r);
       if (r.unavailable) return pauseForModel(step, r.info, r.rec.why);
+      // Refused by dispatch.mjs (0.61.1): deterministic, the model was never
+      // called — pause at once with the cause named, no back-off.
+      if (r.launchRefused) return pauseForLaunchRefused(step, r.info, r.rec);
       // Launch failure (0.60.0): not a try of the step — back-off on the SAME
       // case, then pause with the user's choices once the tiers are spent.
       if (r.launchFailed) {

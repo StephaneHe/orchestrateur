@@ -69,6 +69,21 @@ export function isLaunchFailure({ code, log }) {
   return !!res.is_error && !res.model_unavailable && (Number(res.num_turns) || 0) <= 1 && TRANSIENT_RE.test(String(res.result || res.subtype || ''));
 }
 
+/**
+ * The orchestrator itself refused to start the step (0.61.1): dispatch.mjs
+ * exited through die() — non-zero code, a "[dispatch] <reason>" line on stderr,
+ * and NOTHING written to the step log (it stops while reading its arguments,
+ * before any call to the model). Not a model problem: no back-off, no "test the
+ * model". Returns the reason, or null.
+ * User report (2026-10-10): « Tu dis que le model n'a rien produit, mais tu
+ * n'expliques pas pourquoi il faut etre plus clair sur les causes ».
+ */
+export function dispatchRefusal({ code, log, stderr }) {
+  if (code === 0 || (log?.events || 0) > 0) return null;
+  const reasons = [...String(stderr || '').matchAll(/^\[dispatch\]\s*(.+?)\s*$/gm)].map(m => m[1]);
+  return reasons.length ? reasons[reasons.length - 1].slice(0, 400) : null;
+}
+
 /** Tier reached after `failures` consecutive launch failures (0 = keep trying). */
 export function tierAfter(failures, cfg = BACKOFF) {
   return failures > 0 && failures % cfg.perTier === 0 ? failures / cfg.perTier : 0;

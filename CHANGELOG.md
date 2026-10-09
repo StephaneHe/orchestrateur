@@ -11,6 +11,45 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.61.1] - 2026-10-10
+
+Signalement de l'utilisateur : « Tu dis que le model n'a rien produit, mais tu
+n'expliques pas pourquoi il faut etre plus clair sur les causes ». Une pause
+disait « claude-sonnet-5-5 n'a rien produit 14 fois de suite » et recommandait
+« tester le model ». En réalité, `dispatch.mjs` avait refusé de lancer l'étape
+(`--pipeline-step invalide : …:113-vert`, code 64) avant tout appel au model.
+
+### Fixed
+- (server) **Refus de lancement par `dispatch.mjs` : la cause est nommée**
+  (`dispatchRefusal`, `scripts/model-backoff.mjs`). Signature : sortie non
+  nulle, une ligne `[dispatch] <raison>` sur stderr, et aucun événement dans
+  le log d'étape (`dispatch.mjs` s'arrête à la lecture de ses arguments).
+  - L'étape est classée `launch_refused`, avec le motif « le lancement a été
+    refusé par dispatch.mjs avant d'appeler le model (code N) : <raison> ».
+  - Ce contrôle passe **avant** celui des erreurs de lancement (0.60.0).
+  - **Pause immédiate** `launch_refused`, sans attentes progressives, puisque
+    le refus est déterministe.
+  - Le message dit que le model n'a pas été sollicité et que c'est
+    l'orchestrateur qu'il faut corriger. Il donne le journal stderr de
+    l'étape et ne propose que « continuer », après correction, ou
+    « abandonner ».
+  - **Jamais** « le model n'a rien produit », « tester le model » ni
+    « changer le model ».
+  - Frise du tableau de bord : « ⛔ lancement refusé par l'orchestrateur ».
+- **Non traité ici**, comme demandé : la cause du refus `113-vert`
+  (validation à 2 chiffres de `--pipeline-step`, `dispatch.mjs:258`) et le
+  classement des limites d'usage.
+- `dispatch.mjs` : simulation de refus pour les tests seulement
+  (`ORCH_FAKE_STEP_REFUSAL=1`), qui passe par le même `die()` que les vrais
+  refus.
+
+### Tests
+- `scripts/_test_launch_refused.mjs` (12 contrôles) :
+  - la règle, sur le vrai message de l'erreur `113-vert` ;
+  - un refus de bout en bout avec le vrai `dispatch.mjs` : une seule
+    tentative, cause nommée, pause immédiate, model jamais lancé, aucun
+    « rien produit » ni « tester / changer le model ».
+
 ## [0.61.0] - 2026-10-10
 
 Décision de l'utilisateur : « c+d », pour imposer des tâches atomiques dans le
