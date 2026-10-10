@@ -698,6 +698,87 @@ export function validateUnitTasks(root, tasks) {
   return validateTasks(root, probe);
 }
 
+/**
+ * Chef's own actions (0.70.0, ROUTAGE-PROBLEMES n° 7 and 9): what the chef
+ * does ITSELF never becomes a musician task. Allowlist only; each action maps
+ * to one orchestrator script, run by the code with an argv array (never a
+ * shell string). The restart runs AFTER the chef's turn has ended, outside
+ * the server's process tree (it kills that tree).
+ */
+export const CHEF_ACTIONS = {
+  'restart-orchestrateur': { script: 'restart-orchestrateur.mjs', project: false, deferred: true },
+  'kill-stalled': { script: 'kill-stalled.mjs', project: true, needs: 'raison' },
+  'resolve-question': { script: 'resolve-question.mjs', project: true },
+  'copy-build': { script: 'copy-build.mjs', project: true },
+};
+const MAX_CHEF_ACTIONS = 4;
+
+/** null when the chef actions are valid, else the reason (in French, for the retry). */
+export function validateChefActions(root, actions) {
+  if (actions == null) return null;
+  if (!Array.isArray(actions)) return '« actions » doit être une liste';
+  if (actions.length > MAX_CHEF_ACTIONS) return `${actions.length} actions (au plus ${MAX_CHEF_ACTIONS})`;
+  const cfg = readConfig(root);
+  const conductor = cfg.conductor || 'chef';
+  const names = new Set((cfg.projects || []).map(p => p.name));
+  for (const [i, a] of actions.entries()) {
+    const n = `action ${i + 1}`;
+    const def = a && typeof a === 'object' ? CHEF_ACTIONS[a.action] : null;
+    if (!def) return `${n} : « ${a?.action ?? a} » n’est pas une action du chef autorisée (liste blanche : ${Object.keys(CHEF_ACTIONS).join(', ')})`;
+    if (def.project) {
+      if (!names.has(a.projet)) return `${n} (${a.action}) : projet inconnu « ${a.projet} »`;
+      if (a.projet === conductor || new RegExp(`^${conductor}-\\d+$`).test(a.projet)) return `${n} (${a.action}) : le chef ne s’applique pas cette action à lui-même`;
+    } else if (a.projet != null) return `${n} (${a.action}) : pas de projet pour cette action`;
+    if (def.needs && !(typeof a[def.needs] === 'string' && a[def.needs].trim().length >= 4)) return `${n} (${a.action}) : « ${def.needs} » obligatoire`;
+    if (def.deferred && (i !== actions.length - 1 || actions.filter(x => x?.action === a.action).length > 1)) return `${n} (${a.action}) : une seule fois, et en dernier`;
+  }
+  return null;
+}
+
+/** argv (after the script path) of one validated chef action. */
+export function chefActionArgs(a) {
+  if (a.action === 'kill-stalled') return [a.projet, '--by', 'chef', '--reason', String(a.raison).replace(/\s+/g, ' ').trim().slice(0, 300)];
+  if (a.action === 'resolve-question') return [a.projet, ...(typeof a.note === 'string' && a.note.trim() ? ['--note', a.note.replace(/\s+/g, ' ').trim().slice(0, 500)] : [])];
+  if (a.action === 'copy-build') return [a.projet];
+  return [];
+}
+
+/**
+ * Runs the chef actions. ORCH_CHEF_ACTION_RUNNER (tests) replaces every
+ * script by `node <runner> <action> …args`; a test root without it never runs
+ * a real script (a test must never restart the production server).
+ */
+function runChefActions({ actions, scriptsDir, logsDir, waitPid, env = process.env }) {
+  const out = [];
+  for (const a of actions) {
+    const def = CHEF_ACTIONS[a.action];
+    const args = chefActionArgs(a);
+    const rec = { action: a.action, ...(a.projet ? { projet: a.projet } : {}), ...(def.deferred ? { deferred: true } : {}) };
+    const childEnv = { ...env };
+    for (const k of ['ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'ORCH_TURN_PROJECT', 'ORCH_TURN_STEP', 'ORCH_STEP_TOKEN', 'ORCH_OBS_ID']) delete childEnv[k];
+    if (env.ORCH_CHEF_ACTION_RUNNER) {
+      const r = spawnSync(process.execPath, [env.ORCH_CHEF_ACTION_RUNNER, a.action, ...args], { env: childEnv, encoding: 'utf8', timeout: 120_000, windowsHide: true });
+      out.push({ ...rec, status: r.status === 0 ? (def.deferred ? 'scheduled' : 'done') : 'failed', code: r.status, out: `${r.stdout || ''}${r.stderr || ''}`.trim().slice(-600) });
+      continue;
+    }
+    if (env.DISPATCH_ROOT_FOR_TESTS) { out.push({ ...rec, status: 'refused', why: 'racine de test sans ORCH_CHEF_ACTION_RUNNER : aucune action réelle' }); continue; }
+    if (def.deferred) {
+      // Win32_Process Create: the waiter's parent is WMI, not this turn — the
+      // restart kills the server tree, which this turn belongs to.
+      const q = (s) => `"${String(s).replace(/"/g, '')}"`;
+      const cmd = [q(process.execPath), q(path.join(scriptsDir, 'chef-action-deferred.mjs')), '--wait-pid', String(waitPid), '--script', def.script, '--log', q(path.join(logsDir, 'chef-actions.log'))].join(' ');
+      const ps = `Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine='${cmd.replace(/'/g, "''")}'} | Select-Object -ExpandProperty ReturnValue`;
+      const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { env: childEnv, encoding: 'utf8', timeout: 60_000, windowsHide: true });
+      const ok = r.status === 0 && String(r.stdout).trim() === '0';
+      out.push({ ...rec, status: ok ? 'scheduled' : 'failed', code: r.status, out: `${r.stdout || ''}${r.stderr || ''}`.trim().slice(-600) });
+      continue;
+    }
+    const r = spawnSync(process.execPath, [path.join(scriptsDir, def.script), ...args], { env: childEnv, encoding: 'utf8', timeout: 120_000, windowsHide: true });
+    out.push({ ...rec, status: r.status === 0 ? 'done' : 'failed', code: r.status, out: `${r.stdout || ''}${r.stderr || ''}`.trim().slice(-600) });
+  }
+  return out;
+}
+
 /** Les derniers échanges du fil (demandes, réponses du chef, résultats), pour l'étape Lire. */
 export function conversationExcerpt(logFile, { max = 30, maxChars = 30_000 } = {}) {
   let lines = [];
@@ -811,7 +892,7 @@ const CODE_STEPS = {
     return { ok: true };
   },
   /** Chaque tâche part par dispatch.mjs (file si le musicien est occupé), avec retour au chef. */
-  async dispatcher({ root, logsDir, state, artDir, dispatchScript, run }) {
+  async dispatcher({ root, logsDir, ctx, state, artDir, dispatchScript, run, writeEvent }) {
     if (process.env.DISPATCH_REPORT_ONLY === '1') return { ok: false, why: 'réveil en rapport seul : aucun dispatch permis (chaîne de réveils au maximum)' };
     const done = [], waiting = [];
     // A task citing a paused run of its project resumes it (0.58.0), even if the
@@ -842,11 +923,25 @@ const CODE_STEPS = {
       queued = res.added;
       duplicates = res.duplicates;
     }
+    // The chef's own actions (0.70.0): run by the code, never sent to a musician.
+    const tj = parseJsonArtefact(readArtefact(ctx, 'taches.json') || '') || {};
+    let actions = [];
+    if (Array.isArray(tj.actions) && tj.actions.length) {
+      const why = validateChefActions(root, tj.actions);
+      if (why) return { ok: false, why };
+      actions = runChefActions({ actions: tj.actions, scriptsDir: path.dirname(dispatchScript), logsDir, waitPid: process.pid });
+      for (const a of actions) {
+        writeEvent?.({ type: 'system', subtype: 'chef_action', pipeline: { run }, action: a.action, projet: a.projet || null, status: a.status,
+          text: `⚙ action du chef ${a.action}${a.projet ? ` (${a.projet})` : ''} : ${{ done: 'faite', scheduled: 'programmée après la fin de ce tour', failed: `échec (code ${a.code})`, refused: `refusée — ${a.why}` }[a.status] || a.status}` });
+      }
+    }
     // « waiting » = what is REALLY queued (it was computed before addPending, so
     // a task dropped as a duplicate still showed as waiting); duplicates apart.
     fs.writeFileSync(path.join(artDir, 'dispatch.json'), JSON.stringify({ dispatched: done,
       waiting: waiting.filter(w => queued.some(q => q.n === w.n)).map(w => ({ n: w.n, projet: w.projet, apres: w.apres, after: w.after, ...(w.reprise ? { reprise: w.reprise } : {}) })),
-      ...(duplicates.length ? { duplicates } : {}) }, null, 2));
+      ...(duplicates.length ? { duplicates } : {}),
+      ...(actions.length ? { actions } : {}),
+      ...(tj.aucun_dispatch && !done.length && !waiting.length ? { aucun_dispatch: String(tj.aucun_dispatch).slice(0, 500) } : {}) }, null, 2));
     // A duplicate is never dropped silently (user rule): the chef is told at once.
     if (duplicates.length) {
       await postNotify(root, conductorOf(root), `[ROUTAGE ${run}] ${duplicates.length} tâche(s) écartée(s) comme doublon d’une tâche déjà en attente — rien n’est perdu, voici lesquelles et pourquoi :\n${duplicatesText(duplicates)}`, 'routage-duplicate');
@@ -1079,9 +1174,17 @@ function checkCatalogCriteria(ctx, step, before, after) {
     }
     // A message that cannot be split with certainty ends as a question to the
     // user (never guess): no task and a question is a valid answer.
-    if (c.unitTasks && !(Array.isArray(json.taches) && !json.taches.length && String(json.question || '').trim())) {
-      const why = validateUnitTasks(ctx.root, json.taches);
-      if (why) return fail(`${step.artefact} : ${why}`);
+    // 0.70.0: no task is also valid when the chef acts itself (« actions ») or
+    // says why nothing needs dispatching (« aucun_dispatch ») — never a defect.
+    if (c.unitTasks) {
+      const whyActions = validateChefActions(ctx.root, json.actions);
+      if (whyActions) return fail(`${step.artefact} : ${whyActions}`);
+      const empty = Array.isArray(json.taches) && !json.taches.length;
+      const justified = String(json.question || '').trim() || (Array.isArray(json.actions) && json.actions.length) || String(json.aucun_dispatch || '').trim().length >= 8;
+      if (!(empty && justified)) {
+        const why = validateUnitTasks(ctx.root, json.taches);
+        if (why) return fail(`${step.artefact} : ${why === 'aucune tâche' ? 'aucune tâche, et ni « aucun_dispatch » (la raison), ni « actions » du chef, ni « question »' : why}`);
+      }
     }
   }
   return { ok: true, changed, json, ...(c.media ? { media: ctx.lastCheck?.media || null, wer: ctx.lastCheck?.wer ?? null } : {}) };
@@ -2536,7 +2639,12 @@ export async function runPipeline(o) {
         ...(Array.isArray(cls.questions) ? cls.questions : []),
       ].filter(Boolean).map(q => String(q).replace(/\s+/g, ' ').trim());
       const q = qs.length > 1 ? qs.map((x, i) => `(${i + 1}) ${x}`).join(' ') : qs[0];
-      return `${body || '(rapport vide)'}${q && !/NEEDS_USER_INPUT:/.test(body) ? `\n\nNEEDS_USER_INPUT: ${q}` : ''}`;
+      // The chef's own actions are stated by the code, whatever the report says.
+      const disp = parseJsonArtefact(readArtefact(ctx, 'dispatch.json') || '') || {};
+      const acts = Array.isArray(disp.actions) && disp.actions.length
+        ? `\n\n**Actions du chef (exécutées par l’orchestrateur)** :\n${disp.actions.map(a => `- ${a.action}${a.projet ? ` ${a.projet}` : ''} : ${{ done: 'faite', scheduled: 'programmée après la fin de ce tour', failed: `échec (code ${a.code})`, refused: `refusée — ${a.why}` }[a.status] || a.status}`).join('\n')}`
+        : '';
+      return `${body || '(rapport vide)'}${acts}${q && !/NEEDS_USER_INPUT:/.test(body) ? `\n\nNEEDS_USER_INPUT: ${q}` : ''}`;
     }
     const head = git(cwd, ['rev-parse', 'HEAD']).out;
     const delivered = head && head !== base ? git(cwd, ['log', '-1', '--format=%h %s']).out : null;

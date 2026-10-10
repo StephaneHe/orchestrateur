@@ -1403,6 +1403,31 @@ les taches ainsi trouvees une par une ».
 - Recettes : `_test_routage_split.mjs` (permanente, exigence utilisateur) et
   `_test_pipeline_routage.mjs` (section 9 réécrite).
 
+## Routage : actions du chef et décomposition vide justifiée (0.70.0)
+
+Suivi `docs/ROUTAGE-PROBLEMES.md`, n° 7 et 9 (« on commence par s'attaquer a
+ca »).
+
+- **Nature `action`** à l'étape Comprendre : une action directe du chef, seule
+  ou avec des tâches. Découper, Classer, Affecter et Dispatcher tournent.
+- **`taches.json`** peut porter :
+  - `actions` : `[{action, projet?, raison?, note?}]`, liste blanche
+    `CHEF_ACTIONS` (`restart-orchestrateur`, `kill-stalled`,
+    `resolve-question`, `copy-build`), validées par `validateChefActions` ;
+  - `aucun_dispatch` : la raison d'une liste vide.
+
+  Une liste vide sans `aucun_dispatch`, `actions` ni `question` est refusée.
+- **Exécution par le code** (Dispatcher, `runChefActions`) : jamais un
+  dispatch, argv construit (`chefActionArgs`). `restart-orchestrateur` est
+  lancé par `Win32_Process Create` → `scripts/chef-action-deferred.mjs
+  --wait-pid <tour du chef>` : hors de l'arbre du serveur, après la fin du
+  tour, journal `logs/chef-actions.log`. Trace : `system/chef_action`,
+  `dispatch.json.actions` et une ligne du rapport écrite par le code.
+- **Tests** : `ORCH_CHEF_ACTION_RUNNER=<script>` remplace chaque script. Sous
+  `DISPATCH_ROOT_FOR_TESTS`, sans cette doublure, l'action est `refused` : un
+  test ne redémarre jamais la prod.
+- Recette : `_test_chef_actions.mjs`.
+
 ## Tâches du Routage en attente : jamais bloquées (0.58.0)
 
 Signalement utilisateur : « A nouveau, orchestrateur est termine, et plus rien

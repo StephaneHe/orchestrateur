@@ -30,9 +30,9 @@ Les fichiers de code cités sont des **pistes**, pas un diagnostic établi.
 | 4 | Classement « flou » entre deux pipelines | ouvert (en partie traité par `4b82450`) | `pipeline-classify.mjs` (`classifyEntry`), porte de `dispatch.mjs` |
 | 5 | 9 % de lacunes ; pas de pipeline « navigation web / achats » | ouvert (décision de l'utilisateur) | `pipeline-catalog.mjs`, `model-pipelines.mjs` |
 | 6 | Pas de pipeline devops / versionnage git | ouvert (décision de l'utilisateur) | `pipeline-catalog.mjs`, `model-pipelines.mjs` |
-| 7 | Action directe du chef non exprimable | ouvert | `pipeline-catalog.mjs` (`S.routage`), `pipeline-engine.mjs` (`CODE_STEPS`) |
+| 7 | Action directe du chef non exprimable | corrigé en dev, non promu en prod (0.70.0) | `pipeline-catalog.mjs` (`S.routage`), `pipeline-engine.mjs` (`CODE_STEPS`) |
 | 8 | Tâche « action directe, ne pas dispatcher » dispatchée quand même | ouvert | `pipeline-engine.mjs` (`dispatcher`), `routage-pending.mjs` (`launchTask`) |
-| 9 | Défaut « `taches.json` : aucune tâche » bloquant | ouvert | `pipeline-engine.mjs` (`validateUnitTasks`, `validateTasks`, `checkCatalogCriteria`, `reportDefects`) |
+| 9 | Défaut « `taches.json` : aucune tâche » bloquant | corrigé en dev, non promu en prod (0.70.0) | `pipeline-engine.mjs` (`validateUnitTasks`, `validateTasks`, `checkCatalogCriteria`, `reportDefects`) |
 | 10 | Tâche « hors pipeline » autorisée non dispatchée | ouvert | `routage-pending.mjs` (`launchTask`), `pipeline-engine.mjs` (`classer`, `emitRoutingGap`), `pipeline-catalog.mjs` |
 | 11 | Préfixe contraire à l'intention (« /discussion Corrige… ») | ouvert | `pipeline-observe.mjs` (`explicitChoice`), `pipeline-classify.mjs` |
 | 12 | Tâche en file partie sans sa condition | ouvert | `server.js` (file et drain), `routage-pending.mjs`, `scripts/queue.mjs` |
@@ -147,8 +147,15 @@ une tâche, et l'étape Dispatcher n'exécute que des dispatches.
 - « ACTION DE SUPERVISION DU CHEF : arrêter le tour en double » a été classée
   en lacune **deux fois** (`p-20261010T190323`, `p-20261010T190920`). Il a
   fallu un troisième message pour que l'arrêt se fasse (`p-20261010T191255`).
-- **Statut : ouvert.** Ni le Routage d'avant, ni celui de `4b82450` n'ont de
-  nature « action du chef ».
+- **Statut : corrigé en dev, non promu en prod (0.70.0).** L'étape
+  Comprendre a la nature « action ». L'étape Découper rend des « actions » du
+  chef, limitées à une liste blanche (`restart-orchestrateur`, `kill-stalled`,
+  `resolve-question`, `copy-build`), que le Dispatcher exécute par le code
+  (argv construit) sans jamais les confier à un musicien. Le redémarrage est
+  lancé hors de l'arbre du serveur et attend la fin du tour du chef
+  (`scripts/chef-action-deferred.mjs`). Toute autre action est refusée, et
+  une tâche pour le chef ou un slot `chef-N` reste refusée. Test permanent :
+  `scripts/_test_chef_actions.mjs`.
 - Code : `pipeline-catalog.mjs` (`S.routage`, natures de l'étape
   Comprendre), `pipeline-engine.mjs` (`CODE_STEPS` : il faudrait une étape
   qui exécute, ou au moins déclare, une action du chef hors dispatch).
@@ -171,10 +178,12 @@ livraison tant qu'il n'est pas corrigé ou accepté »). Trois exécutions :
 `p-20261010T090927-06522f`, `p-20261010T193119-6e8112`,
 `p-20261010T193435-08c2d3`.
 
-- **Statut : ouvert.** Avec `4b82450`, `taches: []` n'est accepté que si une
-  `question` l'accompagne. Il faut aussi accepter « rien à dispatcher »
-  (action du chef, n° 7), et ne pas traiter ce cas comme un défaut qui
-  bloque une livraison : le chef ne livre rien.
+- **Statut : corrigé en dev, non promu en prod (0.70.0).** `taches: []` est
+  accepté, sans défaut, avec une raison (`aucun_dispatch`), des `actions` du
+  chef ou une `question`. Sans aucun des trois, la liste vide reste refusée,
+  et le message dit quoi ajouter. Exécutions concernées depuis le rapport :
+  `p-20261010T200454-616091`, `p-20261010T200830-8b2b1c`. Test permanent :
+  `scripts/_test_chef_actions.mjs`.
 - Code : `pipeline-engine.mjs` (`validateUnitTasks`, `validateTasks`,
   `checkCatalogCriteria` critère `unitTasks`, `reportDefects`).
 

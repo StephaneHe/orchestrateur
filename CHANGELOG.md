@@ -11,7 +11,30 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.70.0] - 2026-10-10
+
+Demande de l'utilisateur : « on commence par s'attaquer a ca » (suivi
+`docs/ROUTAGE-PROBLEMES.md`, groupe B, n° 7 et 9).
+
 ### Added
+- (server) **Actions du chef dans le Routage.** L'étape Découper peut rendre
+  des `actions` du chef, limitées à une liste blanche (`CHEF_ACTIONS` de
+  `pipeline-engine.mjs`) :
+  - `restart-orchestrateur` : au plus une fois, toujours en dernier ;
+  - `kill-stalled` (`projet`, `raison`), lancé avec `--by chef --reason` ;
+  - `resolve-question` (`projet`, `note` facultative) ;
+  - `copy-build` (`projet`).
+
+  Le Dispatcher les exécute **par le code**, avec un argv construit, et ne
+  les confie jamais à un musicien. Le redémarrage est lancé hors de l'arbre de
+  processus du serveur (`Win32_Process Create`) par le nouveau
+  `scripts/chef-action-deferred.mjs`, qui attend la fin du tour du chef. Chaque
+  action est tracée : `system/chef_action` dans le fil du chef, `actions` dans
+  `dispatch.json`, et une ligne écrite par le code dans le rapport. Une action
+  hors liste blanche, un projet inconnu, le chef lui-même ou un `kill-stalled`
+  sans motif sont refusés.
+- (server) Nature `action` à l'étape Comprendre (action directe du chef, seule
+  ou avec des tâches).
 - (docs) `docs/ROUTAGE-PROBLEMES.md` : suivi des 17 problèmes du pipeline
   Routage (chef) relevés les 9 et 10 octobre (inventaire du chef
   `p-20261010T194702-b47305`). Chaque problème a ses preuves, son statut et le
@@ -19,6 +42,20 @@ server/dashboard and the Android companion app. Entries are prefixed
   (groupe B d'abord). Décision de l'utilisateur : « Document
   I:\Dev\Chef\docs\ROUTAGE-PROBLEMES.md : vas, et on commence par s'attaquer
   a ca ». Documents seulement, aucun code.
+- (server) `scripts/_test_chef_actions.mjs` (doublure
+  `ORCH_CHEF_ACTION_RUNNER` ; une racine de test sans doublure n'exécute
+  jamais un vrai script).
+
+### Fixed
+- (server) **« `taches.json` : aucune tâche » ne bloque plus le chef.** Une
+  décomposition vide est acceptée, sans défaut, avec une raison
+  (`aucun_dispatch`), des `actions` du chef ou une `question`. Sans aucun des
+  trois, elle reste refusée, et le message dit quoi ajouter. Une tâche pour le
+  chef ou un slot `chef-N` reste refusée.
+
+### Changed
+- (docs) Statuts des n° 7 et 9 de `docs/ROUTAGE-PROBLEMES.md` : corrigés en
+  dev, non promus en prod.
 
 ## [0.69.0] - 2026-10-10
 
