@@ -11,6 +11,53 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.64.1] - 2026-10-10
+
+Incident : les étapes de pipeline numérotées à 3 chiffres sont refusées par
+`dispatch.mjs`.
+
+### Fixed
+- (server) **Clés d'étape à 3 chiffres ou plus acceptées.** Le moteur nomme
+  ses étapes `String(nombre d'étapes + 1).padStart(2, '0')`, donc `100-vert`
+  dès la 100ᵉ étape. Deux validateurs n'acceptaient qu'exactement 2
+  chiffres. Ils acceptent maintenant de 2 à 6 chiffres :
+  - `--pipeline-step` dans `scripts/dispatch.mjs` ;
+  - `STEP_KEY_RE` dans `scripts/pipeline-engine.mjs`.
+
+  Une clé à 1 chiffre reste refusée. Aucune autre validation ni aucun tri ne
+  lit le numéro d'une clé d'étape : seuls les dossiers d'exécution sont
+  triés.
+- Actif tout de suite, sans redémarrage (`dispatch.mjs` et le moteur sont
+  relus à chaque tour). Une exécution en pause sur une étape au-delà de la
+  99ᵉ repart avec « continuer » : la prochaine étape porte la clé suivante,
+  par exemple `114-vert`.
+
+### Post-mortem
+- **Impact.** Une exécution « Développement complet » d'un projet de la
+  flotte est en pause depuis le 2026-10-09 à 22:41 UTC. Ses étapes 100-vert à
+  113-vert ont toutes été refusées en code 64 avant tout appel au model.
+- **Cause.** La validation à 2 chiffres date de la 0.48.0. Aucun test ne
+  dépassait 99 étapes : une exécution longue (29 items, plusieurs tours de
+  revue et de nouveaux essais) l'a atteinte pour la première fois.
+- **Ce qui a aggravé.** Jusqu'à la 0.61.1, ce refus était compté comme une
+  erreur de lancement du model : 14 essais avec attentes progressives, puis
+  une pause qui disait « le model n'a rien produit ». Depuis la 0.61.1, il est
+  nommé tel quel et met l'exécution en pause tout de suite.
+- **Correction et protection.** Les deux validateurs sont corrigés.
+  `_test_step_key_3digits.mjs` couvre :
+  - la règle ;
+  - le vrai `dispatch.mjs` avec `100-vert` et `113-vert` ;
+  - une exécution en pause avec 113 étapes, qui repart avec « continuer »
+    (étape `114-vert`) jusqu'à Livrer.
+
+  Le test échoue sur la 0.64.0 (6 contrôles) et passe sur la 0.64.1.
+- **À retenir.** Un identifiant produit par un compteur ne doit pas être
+  validé avec une largeur fixe. Les validateurs de clés s'alignent sur le
+  producteur (`padStart(2)`, donc « au moins 2 chiffres »).
+
+### Tests
+- `scripts/_test_step_key_3digits.mjs` (9 contrôles, vrai `dispatch.mjs`).
+
 ## [0.64.0] - 2026-10-10
 
 Décision de l'utilisateur, « c+d », partie c : « Livraison par item : chaque

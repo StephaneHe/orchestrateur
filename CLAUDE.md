@@ -1041,6 +1041,10 @@ Suite de la demande du 2026-10-09. Plan : `docs/PLAN-pipeline-enforcement.md`.
     `NEEDS_USER_INPUT`).
 - **Étape** : `dispatch.mjs --pipeline-step <run>:<clé> --pipeline-session
   <groupe>`, avec `ORCH_STEP_TOKEN`.
+  - La clé vaut `<n>-<étape>`, avec n = `padStart(2)` du nombre d'étapes :
+    3 chiffres dès la 100ᵉ. Les validateurs (`dispatch.mjs`, `STEP_KEY_RE`)
+    acceptent de 2 à 6 chiffres depuis la 0.64.1. Recette :
+    `_test_step_key_3digits.mjs`.
   - Le jeton est signé par HMAC (`derivedToken(root, 'pipeline-step')`). Il
     est vérifié (run, clé, projet, model, ou second pour une branche double)
     puis retiré de l'env.

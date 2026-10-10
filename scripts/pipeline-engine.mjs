@@ -49,7 +49,8 @@ import { groupOf, groupCases, groupReady, insertAttachedCases, worktreeTree, tre
 import { foldTo, commitWork, itemCommitMessage, setAsideWork, reapplyWork, head as headOf } from './item-delivery.mjs';
 
 export const RUN_RE = /^p-\d{8}T\d{6}-[a-z0-9]{4,8}$/;
-export const STEP_KEY_RE = /^\d{2}-[a-z0-9-]{1,40}$/;
+// Keys are padStart(2) of the step count: 3 digits from the 100th step (0.64.1).
+export const STEP_KEY_RE = /^\d{2,6}-[a-z0-9-]{1,40}$/;
 export const SESSION_GROUP_RE = /^[a-z0-9-]{1,40}$/;
 
 // Limites (décision n° 5, plan §2.5). ORCH_PIPE_* pour les tests.

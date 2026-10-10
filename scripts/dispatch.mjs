@@ -255,7 +255,8 @@ const TURN_STEP  = process.env.ORCH_TURN_STEP || null;      // … qui est une �
 delete process.env.ORCH_STEP_TOKEN; delete process.env.ORCH_TURN_PROJECT; delete process.env.ORCH_TURN_STEP;
 let PIPE_STEP = null;   // { run, key } : ce processus est un tour d'étape du moteur
 if (pipelineStepArg) {
-  const m = /^(p-\d{8}T\d{6}-[a-z0-9]{4,8}):(\d{2}-[a-z0-9-]{1,40})$/.exec(pipelineStepArg);
+  // 2 digits or more (0.64.1): the engine numbers its 100th step "100-…".
+  const m = /^(p-\d{8}T\d{6}-[a-z0-9]{4,8}):(\d{2,6}-[a-z0-9-]{1,40})$/.exec(pipelineStepArg);
   if (!m) die(`--pipeline-step invalide : ${pipelineStepArg}`);
   PIPE_STEP = { run: m[1], key: m[2] };
   // Test-only (0.61.1): an argument refusal through the same die() as the real
