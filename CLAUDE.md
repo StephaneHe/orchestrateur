@@ -1476,8 +1476,24 @@ probleme pour le model utilise ».
 
   Chaque tour de réponse écrit un message assistant : l'état du musicien se
   lit sur le dernier texte du tour.
-- **Revue en complet** : chaque problème devient un item `(revue) …`, puis
-  retour à `@loop`, au plus 2 tours. En léger : retour à 4b, comme en 0.48.0.
+- **Revue en complet : par item** (0.63.0, décision « c+d », partie c ;
+  `scripts/item-review.mjs`). Le plan complet n'a plus de Revue globale.
+  - `@check` insère `revue` dès que le groupe de l'item n'a plus de case
+    ouverte (`groupReady`), avec `state.reviewGroup`.
+  - `diff.patch` = `treeDiff(arbre au début du groupe, arbre actuel)`. Les
+    arbres sont pris par `worktreeTree`, avec un index privé
+    `logs/runs/<run>/item-review.idx`. Repli sur le diff complet, signalé
+    dans la consigne.
+  - Un défaut devient la case `(revue item N)`, insérée après le groupe N
+    (`insertAttachedCases`). Les autres items ne sont pas relus de nouveau.
+  - Tours comptés par item : `itemReviewRounds`, `itemReviewBudgets` pour
+    « continuer ».
+  - Montée en complet : le travail léger est le groupe 0, relu au premier
+    `@loop` (`pendingGroupReview`).
+  - Une exécution en pause sans `itemReview` garde l'ancienne Revue globale.
+  - En léger : retour à 4b, comme en 0.48.0.
+  - Recette : `_test_item_review.mjs`. La livraison par item (un commit par
+    item) est la tâche suivante.
 - **Montée léger → complet** : après 4b en léger, `lightScope` mesure le
   changement (plus de 3 fichiers, plus de 150 lignes, ou un nouveau fichier de
   code, hors tests). Au-delà :

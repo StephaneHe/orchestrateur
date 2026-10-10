@@ -800,7 +800,11 @@ async function apiChecks(sb) {
     let r = await pipeDispatch(['omega', 'Ajoute les multiplications par deux et par trois', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '2' });
     let evs = readLog('omega').slice(n0);
     const seq = evs.filter(e => e.subtype === 'pipeline_step_done').map(e => `${e.pipeline.step}${e.status === 'ok' ? '' : ':' + e.status}`).join(',');
-    assert(r.code === 0 && seq === 'comprendre,concevoir,liste-tests,rouge,vert,refactor:skipped,rouge,vert,refactor:skipped,revue,livrer', `enchaînement : ${seq} (code ${r.code}) ${r.out.slice(-300)}`);
+    // 0.63.0 (« c+d », part c): one Review per item, right after its loop.
+    const wantSeq = fs.existsSync(path.join(sb.root, 'scripts', 'item-review.mjs'))
+      ? 'comprendre,concevoir,liste-tests,rouge,vert,refactor:skipped,revue,rouge,vert,refactor:skipped,revue,livrer'
+      : 'comprendre,concevoir,liste-tests,rouge,vert,refactor:skipped,rouge,vert,refactor:skipped,revue,livrer';
+    assert(r.code === 0 && seq === wantSeq, `enchaînement : ${seq} (code ${r.code}) ${r.out.slice(-300)}`);
     const rouges = evs.filter(e => e.subtype === 'pipeline_step_done' && e.pipeline.step === 'rouge');
     assert(rouges.every(e => e.test?.ok === false && e.pipeline.item), '4a doit échouer réellement, item par item');
     assert(evs.filter(e => e.subtype === 'pipeline_item_done').length === 2, 'items non cochés un par un');

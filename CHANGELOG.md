@@ -11,6 +11,62 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.63.0] - 2026-10-10
+
+Décision de l'utilisateur, « c+d », partie c : « Livraison par item : chaque
+item est relu et livré séparément, dans son propre commit. Un défaut ne bloque
+que son item ». Cette version fait la **tâche 3, la Revue seulement**. La
+livraison reste un commit unique : c'est la tâche suivante.
+
+### Changed
+- (server) **Développement complet : une Revue par item** (`scripts/item-review.mjs`,
+  moteur).
+  - La Revue d'un item a lieu juste après sa boucle 4a → 4b → 4c. Il n'y a plus
+    de Revue de toute l'exécution : le plan complet devient Comprendre →
+    Concevoir → Liste de tests → boucle (4a → 4b → 4c → Revue de l'item) →
+    Livrer.
+  - **Diff de l'item seulement** : un arbre git du dossier de travail est pris
+    au début de l'item, puis au moment de la Revue. Il passe par un index
+    privé sous `logs/runs/<run>/`, sans jamais toucher l'index du projet.
+    `diff.patch` contient `git diff <début> <maintenant>`, hors artefacts et
+    `.claude/`. La consigne porte `REVUE_ITEM=<n>` et dit de ne juger que cet
+    item. Si le diff ne peut pas être isolé, le diff complet est donné et la
+    consigne le dit.
+  - **Défaut = case rattachée à cet item** : `- [ ] (revue item N) (tests: K) …`
+    est insérée juste après la dernière case de l'item. Elle est donc traitée
+    avant les items suivants, et ne décale jamais un item déjà commencé.
+    L'item et ses cases rattachées forment un groupe, relu de nouveau une fois
+    toutes ses cases cochées, sur le diff du groupe.
+  - **Les autres items ne sont jamais relus de nouveau** à cause d'un défaut
+    d'un autre item.
+  - **Tours de revue comptés par item** (`itemReviewRounds`, limite
+    `reviewRounds` = 2). Au-delà, la pause `review` nomme l'item. Un
+    « continuer » accorde un tour de plus à cet item seulement
+    (`itemReviewBudgets`).
+  - Montée léger → complet : la Revue prévue après la boucle est retirée. Le
+    travail léger est relu seul d'abord (groupe 0, diff depuis le départ),
+    puis chaque item.
+  - Frise : la Revue fait partie de la boucle de chaque item. Chaque Revue
+    porte le numéro de l'item relu (« 5 Revue de l'item N »). Nouvel événement
+    `pipeline_item_reviewed` quand il n'y a rien à corriger.
+  - Une exécution mise en pause par un moteur antérieur garde sa Revue de
+    toute l'exécution (pas de drapeau `itemReview`).
+
+### Tests
+- `scripts/_test_item_review.mjs` (29 contrôles, vrai `dispatch.mjs`) :
+  - la Revue de chaque item ne voit que son diff ;
+  - un défaut de l'item 2 ne relance la Revue ni de l'item 1 ni des suivants ;
+  - la case rattachée est placée juste après l'item ;
+  - compteur par item : un défaut sur deux items avec 1 tour permis, sans
+    pause ; pause qui nomme l'item, puis « continuer » pour lui seul ;
+  - montée léger → complet.
+- Faux claude : `FAKE_PIPE_REVIEW_ITEM=<k>[:n]` et `FAKE_PIPE_REVIEW_LOG`.
+- `_test_pipeline_gates.mjs`, `_test_tests_per_item.mjs` et le parcours HTTP
+  `pipeline-tdd` suivent le nouvel enchaînement (une Revue après chaque item)
+  et la forme `(revue item N)`. Les contrôles gardent leur intention. Le
+  parcours HTTP accepte encore l'ancien enchaînement pour un état du code
+  antérieur.
+
 ## [0.62.0] - 2026-10-10
 
 Décision de l'utilisateur, « c+d », partie d, étape 2 : « le code vérifie

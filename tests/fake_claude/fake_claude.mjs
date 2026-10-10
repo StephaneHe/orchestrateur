@@ -304,6 +304,8 @@ async function run() {
 //   FAKE_CLAUDE_REPLY=<texte>    réponse finale imposée (ex. un paragraphe en anglais)
 //   FAKE_CLAUDE_TRANSLATION=<t>  réponse d'une demande « [REFORMULATION] » (défaut : un texte français)
 //   FAKE_PIPE_REVIEW=doc|hors|mixte[:n]  revue : constat de doc (items / hors_tdd / les deux sortes)
+//   FAKE_PIPE_REVIEW_ITEM=<k>[:n][,…]  revue de l'item k (« REVUE_ITEM=k ») : un défaut (n fois)
+//   FAKE_PIPE_REVIEW_LOG=<f>     chaque revue ajoute {item, diff} à ce fichier (JSON par ligne)
 /** Numéro de l'item de la liste de tests (« ITEM=<n>: … »), ou 0 en léger. */
 function item(text) { return Number((/^ITEM=(\d+):/m.exec(text) || [])[1] || 0); }
 
@@ -407,6 +409,20 @@ function pipelineStep(text) {
       break;
     }
     case 'revue': {
+      // Per-item Review (0.63.0): FAKE_PIPE_REVIEW_LOG=<f> records each review
+      // (item reviewed + the diff it was given); FAKE_PIPE_REVIEW_ITEM=<k>[:n][,…]
+      // reports one defect when reviewing item k (the n first times).
+      const rItem = (/^REVUE_ITEM=(\d+)$/m.exec(text) || [])[1];
+      if (process.env.FAKE_PIPE_REVIEW_LOG) {
+        let diff = ''; try { diff = fs.readFileSync(path.join(path.dirname(artefact), 'diff.patch'), 'utf8'); } catch {}
+        fs.appendFileSync(process.env.FAKE_PIPE_REVIEW_LOG, JSON.stringify({ item: rItem == null ? null : Number(rItem), diff }) + '\n');
+      }
+      const perItem = String(process.env.FAKE_PIPE_REVIEW_ITEM || '').split(',').filter(Boolean).map(s => s.split(':'));
+      const hit = rItem != null && perItem.find(([k]) => k === rItem);
+      if (hit && once(`item${rItem}${hit[1] ? `:${hit[1]}` : ''}`, `item${rItem}`)) {
+        w(artefact, JSON.stringify({ verdict: 'problèmes', items: [`(tests: 1) défaut relevé sur l’item ${rItem}`] }));
+        break;
+      }
       const spec = process.env.FAKE_PIPE_REVIEW;
       // « doc » : constat non testable, à l'ancienne (dans items) ; « hors » :
       // le même, rangé par la revue dans hors_tdd ; « mixte » : un de chaque.

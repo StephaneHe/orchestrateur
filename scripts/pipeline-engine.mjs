@@ -45,6 +45,7 @@ import { runModelTest } from './model-test.mjs';
 import { PIPELINES } from './model-pipelines.mjs';
 import { checkMediaFiles, listedFiles, wordErrorRate } from './media-check.mjs';
 import { countTests, addedTests, itemTestsVerdict } from './item-tests.mjs';
+import { groupOf, groupCases, groupReady, insertAttachedCases, worktreeTree, treeDiff } from './item-review.mjs';
 
 export const RUN_RE = /^p-\d{8}T\d{6}-[a-z0-9]{4,8}$/;
 export const STEP_KEY_RE = /^\d{2}-[a-z0-9-]{1,40}$/;
@@ -212,7 +213,9 @@ export function planSteps(pipeline, { mode = 'leger', kind = 'simple' } = {}) {
     const D = devCatalog({ mode, kind });
     // Complet (0.49.0) : le TDD canonique — liste de tests, puis UN test à la
     // fois (4a → 4b → 4c) tant que la liste n'est pas vide (« @loop »).
-    if (mode === 'complet') return ['comprendre', 'concevoir', 'liste-tests', '@loop', 'revue', 'livrer'].map(id => D[id]);
+    // Per-item Review (« c+d », part c): each item is reviewed right after its
+    // loop, inside « @loop » — there is no whole-run Review any more.
+    if (mode === 'complet') return ['comprendre', 'concevoir', 'liste-tests', '@loop', 'livrer'].map(id => D[id]);
     return [...(kind !== 'mecanique' ? [D.rouge] : []), D.vert, D.revue, D.livrer];
   }
   const cat = catalogOf(pipeline);
@@ -530,19 +533,34 @@ function stepPrompt(ctx, step, extra) {
       L.push(`Après ton tour, l'orchestrateur lance ${T} : elle doit PASSER.`);
       L.push(`Écris ${art('vert.md')} : ce que tu as changé et pourquoi. Ne commite pas (l'étape Livrer le fera).`);
       break;
-    case 'revue':
-      L.push('Ton rôle : REVUE du changement en cours (défauts, sécurité, cohérence, tests suffisants). Le diff complet est dans le fichier :');
-      L.push(`  ${art('diff.patch')}`);
-      if (ctx.coveredItems?.length) L.push(`Items acceptés comme DÉJÀ COUVERTS (leur test passait d'emblée, sans nouveau code) : ${ctx.coveredItems.map(coveredLabel).join(' ; ')}. Vérifie que chacun de ces tests est FIDÈLE à son item et qu'il échouerait si le comportement disparaissait ; un test vide de sens est un « problème ».`);
+    case 'revue': {
+      const scope = ctx.reviewScope;
+      if (scope) {
+        L.push(`REVUE_ITEM=${scope.group}`);
+        L.push(scope.group === 0
+          ? 'Ton rôle : REVUE du travail fait AVANT la montée en Développement complet (le premier test et son code), et de lui seul (défauts, sécurité, cohérence, tests suffisants).'
+          : `Ton rôle : REVUE de l’item ${scope.group} de la liste de tests, et de lui seul : « ${scope.text} » (défauts, sécurité, cohérence, tests suffisants).`);
+        L.push(scope.fallback
+          ? `⚠ Le diff propre à cet item n’a pas pu être isolé : le fichier contient tout le changement de l’exécution ; ne juge que ce qui concerne cet item. Fichier :`
+          : 'Le diff de CET item seulement (ses étapes 4a, 4b, 4c et les corrections qui lui sont rattachées) est dans le fichier :');
+        L.push(`  ${art('diff.patch')}`);
+        L.push('Les autres items sont relus séparément, chacun juste après sa boucle : ne relève rien sur eux.');
+      } else {
+        L.push('Ton rôle : REVUE du changement en cours (défauts, sécurité, cohérence, tests suffisants). Le diff complet est dans le fichier :');
+        L.push(`  ${art('diff.patch')}`);
+      }
+      const covered = scope ? (ctx.coveredItems || []).filter(c => scope.cases.includes(c.n)) : ctx.coveredItems;
+      if (covered?.length) L.push(`Items acceptés comme DÉJÀ COUVERTS (leur test passait d'emblée, sans nouveau code) : ${covered.map(coveredLabel).join(' ; ')}. Vérifie que chacun de ces tests est FIDÈLE à son item et qu'il échouerait si le comportement disparaissait ; un test vide de sens est un « problème ».`);
       L.push('Ne relève PAS l’absence de numéro de version incrémenté, d’entrée CHANGELOG ni de ligne dans le registre des exigences : l’étape Livrer, qui suit, les ajoute, et l’orchestrateur les vérifie.');
       L.push(`Écris ${art('revue.json')}, et UNIQUEMENT ce JSON : {"verdict": "ok" | "problèmes", "items": ["défaut de comportement 1", …], "hors_tdd": ["correction de doc ou de commentaire 1", …]}.`);
       L.push('« items » : uniquement des défauts de COMPORTEMENT, qu’un test peut prouver (ils repartent dans la boucle de tests). « hors_tdd » : ce qui ne se teste pas (documentation, README, commentaires…) — ce sera fait à la livraison. « problèmes » seulement pour un défaut réel, à corriger maintenant.');
       if (ctx.mode === 'complet') {
         const cap = ctx.limits?.testsPerItem || LIMITS.testsPerItem;
-        L.push(`Chaque entrée de « items » devient une case de tests.md : commence-la par « (tests: N) », N = nombre de tests prévus pour la prouver, de 1 à ${cap} (ex. « (tests: 1) [P2] … »). Un défaut qui en demande plus doit être découpé en plusieurs entrées.`);
+        L.push(`Chaque entrée de « items » devient une case de tests.md${scope ? ', rattachée à cet item seulement' : ''} : commence-la par « (tests: N) », N = nombre de tests prévus pour la prouver, de 1 à ${cap} (ex. « (tests: 1) [P2] … »). Un défaut qui en demande plus doit être découpé en plusieurs entrées.`);
       }
       L.push('Ne modifie AUCUN fichier du projet.');
       break;
+    }
     case 'livrer': {
       L.push('Ton rôle : LIVRER et DOCUMENTER (règles de la flotte), dans cet ordre :');
       if (ctx.coveredItems?.length) L.push(`Comportement(s) DÉJÀ assuré(s) par le code existant, sans nouveau code de production (le test ajouté sert de documentation) : ${ctx.coveredItems.map(coveredLabel).join(' ; ')}. Mentionne-le dans l'entrée CHANGELOG et dans ${art('livraison.md')}.`);
@@ -1288,6 +1306,8 @@ export async function runPipeline(o) {
       run, project: projectName, pipeline, mode, kind, base, status: 'running',
       createdAt: new Date().toISOString(), request: prompt.slice(0, 20_000),
       plan: planSteps(pipeline, { mode, kind }).map(s => s.id), index: 0, reviewRounds: 0, steps: [],
+      // Runs paused by an older engine keep their whole-run Review (no flag).
+      ...(pipeline === 'dev' && mode === 'complet' ? { itemReview: true } : {}),
       ...(classification ? { classification } : {}), ...(o.modeNote ? { modeNote: o.modeNote } : {}),
       callback: callbackProject || null, source: sourceProject || null,
     };
@@ -1323,8 +1343,15 @@ export async function runPipeline(o) {
     let open = 0; try { open = parseItems(fs.readFileSync(path.join(artDir, 'tests.md'), 'utf8')).filter(i => !i.done).length; } catch {}
     if (L === 'items') state.budgets.items = (state.itemsDone || 0) + Math.max(limits.items, open);
     if (L === 'duration') state.budgets.duration = (Number(state.activeMs) || 0) + limits.runMs;
-    if (L === 'review') state.budgets.review = (state.reviewRounds || 0) + limits.reviewRounds;
-    extended = { limit: L, to: state.budgets[L] };
+    if (L === 'review' && state.reviewGroup != null) {
+      // Per-item Review: the extra allocation goes to the item that paused.
+      const g = state.reviewGroup;
+      state.itemReviewBudgets = { ...(state.itemReviewBudgets || {}), [g]: (state.itemReviewRounds?.[g] || 0) + limits.reviewRounds };
+      extended = { limit: L, to: state.itemReviewBudgets[g], item: g };
+    } else {
+      if (L === 'review') state.budgets.review = (state.reviewRounds || 0) + limits.reviewRounds;
+      extended = { limit: L, to: state.budgets[L] };
+    }
   }
   state.status = 'running';
   state.pid = process.pid;
@@ -1342,8 +1369,9 @@ export async function runPipeline(o) {
     const v = Object.entries(s.variants).find(([, re]) => re.test(t))?.[0];
     if (v) stepDefs[sid] = { ...s, variant: v, chain: [`${pipeline}.${s.id}.${v}`, ...s.chain], mediaKind: s.mediaByVariant?.[v] || s.checks?.media?.kind };
   }
-  // Frise annoncée : la boucle TDD se lit 4a → 4b → 4c, répétée par item.
-  const planned = state.plan.flatMap(id => (id === '@loop' ? ['rouge', 'vert', 'refactor'].map(x => ({ id: x, loop: true })) : id === '@check' ? [] : [{ id }]))
+  // Frise annoncée : la boucle TDD se lit 4a → 4b → 4c (→ 5 Revue de l'item), répétée par item.
+  const loopIds = ['rouge', 'vert', 'refactor', ...(state.itemReview ? ['revue'] : [])];
+  const planned = state.plan.flatMap(id => (id === '@loop' ? loopIds.map(x => ({ id: x, loop: true })) : id === '@check' ? [] : [{ id }]))
     .map(p => ({ ...p, title: stepDefs[p.id].title, slot: stepDefs[p.id].kind === 'code' ? { slot: stepDefs[p.id].chain[0], model: null, provider: null, second: null, source: 'code' } : resolveCase(assignments, stepDefs[p.id].chain) }));
   writeEvent({
     type: 'user_prompt', text: o.promptForLog ?? prompt,
@@ -1357,7 +1385,7 @@ export async function runPipeline(o) {
     text: `${resumed ? 'reprise de l’exécution' : 'exécution'} ${run} : pipeline ${pipelineLabel(pipeline, state.mode)} — ${state.plan.filter(id => id !== '@check').map(id => stepDefs[id].title).join(' → ')}`,
     ...(o.modeNote ? { note: o.modeNote } : {}) });
   if (extended) {
-    const what = { items: `${extended.to} items au total`, duration: `${fmtDur(extended.to)} de temps actif`, review: `${extended.to} tours de revue` }[extended.limit];
+    const what = { items: `${extended.to} items au total`, duration: `${fmtDur(extended.to)} de temps actif`, review: `${extended.to} tours de revue${extended.item != null ? ` pour l’item ${extended.item}` : ''}` }[extended.limit];
     writeEvent({ type: 'system', subtype: 'pipeline_limit_extended', pipeline: { run }, limit: extended.limit, to: extended.to,
       text: `↻ « continuer » après la limite « ${extended.limit} » : une allocation de plus accordée pour cette exécution (${what})` });
   }
@@ -1383,7 +1411,7 @@ export async function runPipeline(o) {
   const testEnv = { ...childEnv };
   delete testEnv.ORCH_OBS_ID;
   const ctx = { root, request: state.request || prompt, run, pipeline, kind, mode: state.mode, cwd, cfg, artDir, base, testEnv, reviewItems: null, testPrint: null, limits,
-    item: state.item || null, itemTestBase: state.itemTestBase || null, escalated: !!state.escalated, coveredItems: state.coveredItems || [], deliveryFixes: state.deliveryFixes || [], suiteRedAtStart: !!state.suiteRedAtStart, lastMedia: state.lastMedia || null };
+    item: state.item || null, itemTestBase: state.itemTestBase || null, reviewScope: null, escalated: !!state.escalated, coveredItems: state.coveredItems || [], deliveryFixes: state.deliveryFixes || [], suiteRedAtStart: !!state.suiteRedAtStart, lastMedia: state.lastMedia || null };
   // Durée ACTIVE : le temps passé en pause à attendre l'utilisateur ne compte
   // pas dans la limite de 90 min (une reprise repart du temps déjà consommé).
   const sessionStart = Date.now();
@@ -1770,12 +1798,27 @@ export async function runPipeline(o) {
     // ── Boucle TDD (0.49.0) : UN item de tests.md à la fois, 4a → 4b → 4c,
     //    tant que la liste n'est pas vide. Le moteur coche l'item, pas le model.
     if (id === '@loop') {
+      // Escalated run: the light work done before the list (group 0) is
+      // reviewed first, on its own diff, before any item starts.
+      if (state.pendingGroupReview != null) {
+        state.reviewGroup = state.pendingGroupReview;
+        state.pendingGroupReview = null;
+        state.plan.splice(state.index, 0, 'revue');
+        saveState();
+        continue;
+      }
       const next = readItems().find(i => !i.done);
       if (!next) { state.plan.splice(state.index, 1); state.item = ctx.item = null; saveState(); continue; }
       if ((state.itemsDone || 0) >= (state.budgets?.items || limits.items)) {
         return pauseForLimit({ limit: 'items', value: limits.items, step: stepDefs['@loop'], why: `la liste n'est pas vide après ${limits.items} items (suivant : « ${next.text} ») — découper la demande` });
       }
       state.item = ctx.item = next;
+      // Per-item Review: the tree at the start of the item's group is the
+      // origin of the diff its Review will read (null → whole-run fallback).
+      const g = groupOf(next);
+      if (state.itemReview && g === next.n && !(String(g) in (state.groupTrees || {}))) {
+        state.groupTrees = { ...(state.groupTrees || {}), [g]: worktreeTree(cwd, path.join(runDir, 'item-review.idx')) };
+      }
       // Point de départ du compte des tests de cet item (vérifié en 4a et en le cochant).
       state.itemTestBase = ctx.itemTestBase = countTests(cwd, [...testsNow().keys()]);
       state.plan.splice(state.index, 0, 'rouge', 'vert', 'refactor', '@check');
@@ -1797,13 +1840,27 @@ export async function runPipeline(o) {
       state.itemsDone = (state.itemsDone || 0) + 1;
       writeEvent({ type: 'system', subtype: 'pipeline_item_done', pipeline: { run, item: state.item.n }, tests,
         text: `✓ item ${state.item.n} coché : ${state.item.text}${tests.declared != null ? ` (${tests.written}/${tests.declared} test(s))` : tests.unchecked ? ` — ${tests.unchecked}` : ''}` });
-      state.plan.splice(state.index, 1);
+      // Per-item Review once the item's group has no open case left (an item
+      // and the cases its Review attached to it are reviewed together).
+      const g = groupOf(state.item);
+      const reviewNow = !!state.itemReview && groupReady(readItems(), g);
+      state.plan.splice(state.index, 1, ...(reviewNow ? ['revue'] : []));
+      if (reviewNow) state.reviewGroup = g;
       state.item = ctx.item = null;
       state.itemTestBase = ctx.itemTestBase = null;
       saveState();
       continue;
     }
-    const step = stepDefs[id];
+    let step = stepDefs[id];
+    if (id === 'revue' && state.reviewGroup != null) {
+      const g = state.reviewGroup;
+      const its = readItems();
+      const root = its.find(i => i.n === g);
+      ctx.reviewScope = { group: g, text: root?.text || '', cases: groupCases(its, g).map(i => i.n), fallback: false };
+      step = { ...step, title: g === 0 ? '5 Revue (travail d’avant la montée en complet)' : `5 Revue de l’item ${g}` };
+      // Events and records of this Review carry the item it reviews.
+      state.item = ctx.item = { n: g, text: g === 0 ? 'travail d’avant la montée en complet' : root?.text || '' };
+    } else ctx.reviewScope = null;
     // 4c sautée quand 4b a très peu changé (plan §2.3) : dit, jamais en silence.
     if (id === 'refactor' && (state.lastGreenLines ?? 0) < limits.refactorMinLines) {
       const why = `4b n'a changé que ${state.lastGreenLines ?? 0} ligne(s) (seuil ${limits.refactorMinLines})`;
@@ -1871,10 +1928,23 @@ export async function runPipeline(o) {
     }
     ctx.headAtStep = git(cwd, ['rev-parse', 'HEAD']).out;
     if (step.id === 'revue') {
-      const tracked = git(cwd, ['diff', base]).out;
-      const untracked = git(cwd, ['ls-files', '-o', '--exclude-standard']).out.split('\n').filter(f => f && !isLocalOnly(f));
-      const extraTxt = untracked.map(f => { let s = ''; try { s = fs.readFileSync(path.join(cwd, f), 'utf8'); } catch {} return `--- /dev/null\n+++ b/${f}\n${s.split('\n').map(l => `+${l}`).join('\n')}`; }).join('\n');
-      fs.writeFileSync(path.join(artDir, 'diff.patch'), `${tracked}\n${extraTxt}\n`);
+      // Per-item Review: only the diff of this item's group, from the tree
+      // taken when the group started (group 0 = the light work: from base).
+      let itemDiff = null;
+      if (ctx.reviewScope) {
+        const g = ctx.reviewScope.group;
+        const from = g === 0 ? git(cwd, ['rev-parse', `${base}^{tree}`]).out : state.groupTrees?.[g];
+        const now = from ? worktreeTree(cwd, path.join(runDir, 'item-review.idx')) : null;
+        itemDiff = from && now ? treeDiff(cwd, from, now) : null;
+        if (itemDiff == null) ctx.reviewScope.fallback = true;
+      }
+      if (itemDiff != null) fs.writeFileSync(path.join(artDir, 'diff.patch'), `${itemDiff}\n`);
+      else {
+        const tracked = git(cwd, ['diff', base]).out;
+        const untracked = git(cwd, ['ls-files', '-o', '--exclude-standard']).out.split('\n').filter(f => f && !isLocalOnly(f));
+        const extraTxt = untracked.map(f => { let s = ''; try { s = fs.readFileSync(path.join(cwd, f), 'utf8'); } catch {} return `--- /dev/null\n+++ b/${f}\n${s.split('\n').map(l => `+${l}`).join('\n')}`; }).join('\n');
+        fs.writeFileSync(path.join(artDir, 'diff.patch'), `${tracked}\n${extraTxt}\n`);
+      }
       try { fs.unlinkSync(path.join(artDir, 'revue.json')); } catch {}
     }
     let maxAttempts = step.id === 'vert' ? limits.greenAttempts : limits.criteriaAttempts;
@@ -1986,8 +2056,14 @@ export async function runPipeline(o) {
           state.escalated = ctx.escalated = true;
           stepDefs = devCatalog({ mode: 'complet', kind });
           state.plan.splice(state.index + 1, 0, 'liste-tests', '@loop');
+          // Per-item Review from here on: the light Review planned after the
+          // loop goes, the light work is reviewed on its own (group 0) first.
+          const lightReview = state.plan.indexOf('revue', state.index + 3);
+          if (lightReview >= 0) state.plan.splice(lightReview, 1);
+          state.itemReview = true;
+          state.pendingGroupReview = 0;
           writeEvent({ type: 'system', subtype: 'pipeline_escalate', pipeline: { run, from: 'leger', to: 'complet' }, scope,
-            text: `⇧ périmètre dépassé (${scope.why}) : l'exécution monte en Développement complet — liste de tests, puis un test à la fois` });
+            text: `⇧ périmètre dépassé (${scope.why}) : l'exécution monte en Développement complet — liste de tests, puis un test à la fois, chaque item relu juste après sa boucle` });
         }
       }
     }
@@ -1997,7 +2073,29 @@ export async function runPipeline(o) {
       writeEvent({ type: 'system', subtype: 'pipeline_delivery_fixes', pipeline: { run }, fixes: last.crit.review.delivery,
         text: `revue : ${last.crit.review.delivery.length} correction(s) de documentation ou de livraison, mise(s) de côté pour l'étape Livrer (hors boucle de tests)` });
     }
-    if (step.id === 'revue' && last.crit?.review?.verdict === 'problemes' && last.crit.review.items.length) {
+    if (step.id === 'revue' && ctx.reviewScope) {
+      // Per-item Review (« c+d », part c): a defect becomes a case attached to
+      // THIS item, the rounds are counted for THIS item, the others go on.
+      const g = ctx.reviewScope.group;
+      const label = g === 0 ? 'le travail d’avant la montée en complet' : `l’item ${g}`;
+      const defects = last.crit?.review?.verdict === 'problemes' ? last.crit.review.items : [];
+      const rounds = state.itemReviewRounds?.[g] || 0;
+      const budget = state.itemReviewBudgets?.[g] || limits.reviewRounds;
+      if (defects.length) {
+        if (rounds >= budget) {
+          return pauseForLimit({ limit: 'review', value: rounds, step, why: `la revue de ${label}${g ? ` (« ${ctx.reviewScope.text} »)` : ''} relève encore : ${defects.slice(0, 5).join(' ; ')}` });
+        }
+        state.itemReviewRounds = { ...(state.itemReviewRounds || {}), [g]: rounds + 1 };
+        fs.writeFileSync(path.join(artDir, 'tests.md'), insertAttachedCases(readArtefact(ctx, 'tests.md') || '', g, defects));
+        writeEvent({ type: 'system', subtype: 'pipeline_loop', pipeline: { run, from: 'revue', to: 'tdd', item: g, round: rounds + 1 },
+          text: `revue de ${label} : ${defects.length} problème(s) → case(s) rattachée(s) à cet item seulement (tour de revue ${rounds + 1}/${budget} de cet item)` });
+      } else {
+        writeEvent({ type: 'system', subtype: 'pipeline_item_reviewed', pipeline: { run, item: g }, text: `✓ revue de ${label} : rien à corriger` });
+      }
+      state.reviewGroup = null;
+      state.item = ctx.item = null;
+      ctx.reviewScope = null;
+    } else if (step.id === 'revue' && last.crit?.review?.verdict === 'problemes' && last.crit.review.items.length) {
       if (state.reviewRounds >= (state.budgets?.review || limits.reviewRounds)) {
         return pauseForLimit({ limit: 'review', value: state.reviewRounds, step, why: `la revue relève encore : ${last.crit.review.items.slice(0, 5).join(' ; ')}` });
       }

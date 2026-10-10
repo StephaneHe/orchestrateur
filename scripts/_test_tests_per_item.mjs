@@ -133,10 +133,11 @@ reset();
 r = await go([REQ, '--mode', 'complet'], { FAKE_PIPE_ITEMS: '1', FAKE_PIPE_REVIEW: 'problemes:2', FAKE_PIPE_REVIEW_DECL: 'none:1' });
 const rv = stepsOf(r, 'revue');
 const md = E.parseItems(testsMd(r.run));
-const revueItems = md.filter(i => /^\(revue\)/.test(i.text));
+// Since 0.63.0 the case is attached to the item reviewed: « (revue item 1) ».
+const revueItems = md.filter(i => /^\(revue item 1\)/.test(i.text));
 ok(rv[0]?.status === 'refused' && /revue\.json : chaque entrée doit annoncer son nombre de tests prévus/.test(rv[0].why) && /entrée\(s\) n° 1/.test(rv[0].why),
   'revue avec un défaut sans « (tests: N) » : refusée avec le même message');
-ok(r.code === 0 && revueItems.length === 1 && revueItems[0].declared === 1 && /^\(revue\) \(tests: 1\)/.test(revueItems[0].text),
+ok(r.code === 0 && revueItems.length === 1 && revueItems[0].declared === 1 && /^\(revue item 1\) \(tests: 1\)/.test(revueItems[0].text),
   `défaut déclaré : ajouté à tests.md comme « ${revueItems[0]?.text} », puis traité et livré`);
 
 reset();

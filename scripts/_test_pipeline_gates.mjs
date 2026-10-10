@@ -36,7 +36,7 @@ const it = E.parseItems(md);
 ok(it.length === 3 && it[0].text === 'a vide renvoie 0' && it[1].done && it[2].n === 3, 'parseItems : cases cochées ou non, dans l’ordre');
 ok(E.parseItems(E.checkItem(md, 3)).every(i => i.n !== 3 || i.done) && E.parseItems(E.checkItem(md, 3))[0].done === false, 'checkItem coche l’item n et lui seul');
 const plan = E.planSteps('dev', { mode: 'complet' }).map(s => s.id);
-ok(plan.join() === 'comprendre,concevoir,liste-tests,@loop,revue,livrer', `plan complet : ${plan.join(' → ')}`);
+ok(plan.join() === 'comprendre,concevoir,liste-tests,@loop,livrer', `plan complet : ${plan.join(' → ')}`);
 const cat = E.devCatalog({ mode: 'complet' });
 ok(cat.vert.chain[0] === 'dev.vert.complexe' && cat.refactor.chain[0] === 'dev.refactor' && cat['liste-tests'].judge && cat.concevoir.chain[0] === 'dev.concevoir.plan', 'cases : 4b complexe, 4c, liste de tests (jugement), concevoir/plan');
 
@@ -93,10 +93,10 @@ const go = async (args, env) => { const n0 = logOf().length, k0 = notices.length
 const seq = (done) => done.map(d => `${d.pipeline.step}${d.status === 'ok' ? '' : `:${d.status}`}`).join(',');
 
 // ---------------------------------------------------------------------------
-section('2. Complet : Comprendre → Concevoir → Liste → (4a → 4b → 4c) par item → Revue → Livrer');
+section('2. Complet : Comprendre → Concevoir → Liste → (4a → 4b → 4c → Revue de l’item) par item → Livrer');
 let r = await go(['Ajoute les fonctions de multiplication par deux et par trois', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '2' });
 ok(r.code === 0, `exécution terminée (code ${r.code})`, r.out.slice(-1200));
-ok(seq(r.done) === 'comprendre,concevoir,liste-tests,rouge,vert,refactor:skipped,rouge,vert,refactor:skipped,revue,livrer', `enchaînement : ${seq(r.done)}`);
+ok(seq(r.done) === 'comprendre,concevoir,liste-tests,rouge,vert,refactor:skipped,revue,rouge,vert,refactor:skipped,revue,livrer', `enchaînement : ${seq(r.done)}`);
 const up = r.evs.find(e => e.type === 'user_prompt');
 ok(up?.pipeline?.mode === 'complet' && up.pipeline.steps.some(s => s.loop && s.id === 'refactor'), 'user_prompt : mode complet, frise annoncée avec la boucle 4a/4b/4c');
 const rouges = r.done.filter(d => d.pipeline.step === 'rouge'), verts = r.done.filter(d => d.pipeline.step === 'vert');
@@ -135,7 +135,7 @@ r = await go(['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEM
 const loop = r.evs.find(e => e.subtype === 'pipeline_loop');
 ok(r.code === 0 && loop?.pipeline?.to === 'tdd', `revue → retour à la boucle TDD (${loop?.text})`);
 ok(seq(r.done).endsWith('revue,rouge,vert,refactor:skipped,revue,livrer'), `l’item de revue a son propre 4a/4b : ${seq(r.done)}`);
-ok(E.parseItems(fs.readFileSync(path.join(P, '.orchestrateur', 'runs', r.run, 'tests.md'), 'utf8')).some(i => /^\(revue\)/.test(i.text) && i.done), 'tests.md : l’item « (revue) … » ajouté puis coché');
+ok(E.parseItems(fs.readFileSync(path.join(P, '.orchestrateur', 'runs', r.run, 'tests.md'), 'utf8')).some(i => /^\(revue item 1\)/.test(i.text) && i.done), 'tests.md : la case « (revue item 1) … » ajoutée (rattachée à l’item relu) puis cochée');
 reset();
 
 // ---------------------------------------------------------------------------
@@ -143,7 +143,7 @@ section('5. Montée léger → complet (garde-fou du plan §4), annoncée');
 r = await go(['Ajoute une fonction double', '--mode', 'leger'], { FAKE_PIPE_BIG: '1', FAKE_PIPE_ITEMS: '1' });
 const esc = r.evs.find(e => e.subtype === 'pipeline_escalate');
 ok(r.code === 0 && esc && /nouveau\(x\) fichier\(s\) de code|fichiers/.test(esc.text), `périmètre dépassé → montée en complet : « ${esc?.text?.slice(0, 110)} »`);
-ok(seq(r.done) === 'rouge,vert,liste-tests,rouge,vert,refactor:skipped,revue,livrer', `puis liste de tests et un test à la fois : ${seq(r.done)}`);
+ok(seq(r.done) === 'rouge,vert,liste-tests,revue,rouge,vert,refactor:skipped,revue,livrer', `puis liste de tests (le travail léger relu seul d’abord), et un test à la fois relu juste après : ${seq(r.done)}`);
 const res5 = r.evs.find(e => e.type === 'result')?.result || '';
 ok(/Monté de léger en complet/.test(res5) && runState(r.run).mode === 'complet' && runState(r.run).escalated, 'dit dans le résultat ; run.json : mode complet, escalated');
 reset();
@@ -181,13 +181,13 @@ ok(r.code === 64, '--mode inconnu refusé (64)');
 // ---------------------------------------------------------------------------
 section('8. Décision Q10 (« A ») : item DÉJÀ COUVERT — accepté seulement s’il est déclaré, tests seuls, suite verte');
 r = await go(['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '2', FAKE_PIPE_COVERED: '2' });
-ok(r.code === 0 && seq(r.done) === 'comprendre,concevoir,liste-tests,rouge,vert,refactor:skipped,rouge,vert:skipped,refactor:skipped,revue,livrer', `item 2 couvert : sans 4b ni 4c (${seq(r.done)})`, r.out.slice(-600));
+ok(r.code === 0 && seq(r.done) === 'comprendre,concevoir,liste-tests,rouge,vert,refactor:skipped,revue,rouge,vert:skipped,refactor:skipped,revue,livrer', `item 2 couvert : sans 4b ni 4c (${seq(r.done)})`, r.out.slice(-600));
 const cov = r.done.filter(d => d.pipeline.step === 'rouge')[1];
 ok(cov?.covered === true && cov.test?.ok === true && cov.status === 'ok', '4a de l’item 2 : acceptée « déjà couvert », suite verte vérifiée par l’orchestrateur');
 ok(r.done.filter(d => d.status === 'skipped' && d.pipeline.item === 2).every(d => /DEJA_COUVERT/.test(d.why)) && r.evs.some(e => e.subtype === 'pipeline_item_covered'), 'tracé : 4b/4c sautées avec le motif, événement pipeline_item_covered');
 ok(fs.existsSync(path.join(P, 'test', 'pipe-2.test.mjs')) && !g('status', '--porcelain').stdout.trim() && E.parseItems(fs.readFileSync(path.join(P, '.orchestrateur', 'runs', r.run, 'tests.md'), 'utf8')).every(i => i.done), 'le test reste (documentation, commité) et l’item est coché');
-const rv = fs.readFileSync(path.join(T, 'logs', 'runs', r.run, r.done.find(d => d.pipeline.step === 'revue').pipeline.key + '.jsonl'), 'utf8');
-ok(/DÉJÀ COUVERTS/.test(rv) && /multiplier par 3/.test(rv), 'la Revue reçoit la liste des items déjà couverts, à juger');
+const rvs = r.done.filter(d => d.pipeline.step === 'revue').map(d => fs.readFileSync(path.join(T, 'logs', 'runs', r.run, d.pipeline.key + '.jsonl'), 'utf8'));
+ok(/DÉJÀ COUVERTS/.test(rvs[1] || '') && /multiplier par 3/.test(rvs[1] || '') && !/DÉJÀ COUVERTS/.test(rvs[0] || ''), 'la Revue de l’item déjà couvert reçoit la liste des items déjà couverts, à juger (pas la Revue d’un autre item)');
 ok(runState(r.run).coveredItems?.length === 1, 'run.json : coveredItems');
 reset();
 r = await go(['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '1', FAKE_PIPE_COVERED: '1', FAKE_PIPE_NOCLAIM: '1' });
@@ -248,7 +248,7 @@ ok(r.code === 0 && !r.evs.some(e => e.subtype === 'pipeline_loop') && r.evs.some
 reset();
 r = await go(['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '1', FAKE_PIPE_REVIEW: 'mixte:1' });
 const tm = E.parseItems(fs.readFileSync(path.join(P, '.orchestrateur', 'runs', r.run, 'tests.md'), 'utf8'));
-ok(r.code === 0 && tm.filter(i => /^\(revue\)/.test(i.text)).length === 1 && !tm.some(i => /CHANGELOG/.test(i.text)) && runState(r.run).deliveryFixes?.some(f => /CHANGELOG/.test(f)), 'revue mixte : le défaut de comportement devient un test, le constat CHANGELOG va à Livrer');
+ok(r.code === 0 && tm.filter(i => /^\(revue item 1\)/.test(i.text)).length === 1 && !tm.some(i => /CHANGELOG/.test(i.text)) && runState(r.run).deliveryFixes?.some(f => /CHANGELOG/.test(f)), 'revue mixte : le défaut de comportement devient un test, le constat CHANGELOG va à Livrer');
 reset();
 r = await go(['Ajoute une fonction double', '--mode', 'leger'], { FAKE_PIPE_REVIEW: 'doc:1' });
 ok(r.code === 0 && seq(r.done) === 'rouge,vert,revue,livrer', `léger : pas de retour à « écrire le code » pour un constat de doc (${seq(r.done)})`);
