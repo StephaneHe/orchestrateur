@@ -245,6 +245,7 @@
         <span class="jt-dim">${esc(p.run)}${p.resumed ? " · reprise" : ""}${p.items ? ` · ${esc(p.items)} item(s) cochés` : ""}${p.covered ? ` dont ${esc(p.covered)} déjà couvert(s)` : ""}${p.loops ? ` · ${esc(p.loops)} retour(s) de revue` : ""}</span>
         ${p.escalated ? `<div class="jt-escalate">${esc(p.escalated)}</div>` : ""}
         ${p.extended ? `<div class="jt-dim">${esc(p.extended)}</div>` : ""}
+        ${p.defects?.length ? `<div class="jt-defects" data-defects="${esc(p.defects.length)}">⚑ ${esc(p.defects.length)} défaut(s) signalé(s), livraison bloquée jusqu’à correction ou acceptation — dernier : ${esc(p.defects[p.defects.length - 1])}</div>` : ""}
         ${p.limit ? `<div class="jt-warn" data-limit="${esc(p.limit.limit)}">${esc(p.limit.text)}</div>` : ""}
         ${p.backoff && p.status === "running" ? `<div class="jt-backoff" data-run="${esc(p.run)}" data-tier="${esc(p.backoff.tier)}">
           <div>${esc(p.backoff.text)}</div>

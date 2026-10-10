@@ -11,6 +11,68 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.65.0] - 2026-10-10
+
+Règle de l'utilisateur : « tout problème détecté doit bloquer une livraison et
+être rapporté immédiatement ». Elle répond non à la question « ne bloquer la
+livraison que pour les défauts graves (P1) ? ».
+
+### Changed
+- (server) **Tout défaut bloque la livraison**, quelle que soit sa gravité :
+  P1, P2, P3, constat sur la doc, le registre ou le CHANGELOG, critère non
+  rempli, test rouge, scan. Ni un commit d'item ni le commit final ne partent
+  tant qu'un défaut n'est pas corrigé ou explicitement accepté. Exceptions
+  supprimées :
+  1. **Constats de relecture non testables remis à Livrer sans bloquer**
+     (`hors_tdd`, `isDeliveryFix`, 0.50.1). Ils sont maintenant corrigés par
+     une étape de correction (`vert`), puis l'item est relu avant sa
+     livraison. En léger, la relecture renvoie à « écrire le code ». Ils ne
+     deviennent toujours pas des tests et ne consomment pas la limite de
+     tests.
+  2. **Verdict ramené à « ok »** quand la relecture ne listait que des
+     constats de doc. Une Revue « problèmes » sans aucun défaut listé est
+     désormais refusée.
+  3. **Seuil de gravité de l'audit** : seules les failles hautes ou moyennes
+     étaient corrigées et re-vérifiées. Toutes le sont, y compris les basses.
+  4. **Rédaction** : « RIEN_A_METTRE_EN_FORME » permettait d'ignorer les
+     corrections listées par la relecture. C'est refusé tant qu'elles
+     existent (critère `applies`), sauf pour un texte qui ne vit que dans
+     l'artefact.
+- (server) **Rapport immédiat** (`reportDefects`). Dès qu'un défaut est
+  détecté, l'événement `system/pipeline_defect` est écrit dans le log du
+  musicien (projet, exécution, étape, item, gravité, description). Une
+  notification part au chef (`source: pipeline-defect`, visible dans son fil
+  sur le tableau de bord et l'app, notification de bureau). C'est fait avant
+  que le moteur continue. Sources :
+  - Revue ;
+  - essai d'étape refusé ;
+  - failles de l'audit ;
+  - points restants d'une boucle de vérification ;
+  - scanner en erreur ;
+  - suite rouge en précondition.
+- (server) **« accepter »** : nouvelle réponse aux pauses de revue (`review`
+  et `items_blocked` pour un item mis de côté en revue). L'utilisateur
+  accepte les défauts restants : l'item ou l'exécution est livré,
+  l'acceptation est tracée (`pipeline_defect_accepted`), et Livrer reçoit les
+  défauts acceptés pour les noter dans le CHANGELOG (problèmes connus).
+- Frise du volet : « ⚑ N défaut(s) signalé(s), livraison bloquée… »
+  (`turn-core.js`, `activite.js`). Le journal servi demande un redémarrage
+  du serveur.
+
+### Tests
+- `scripts/_test_defect_blocks.mjs` (19 contrôles, vrai `dispatch.mjs`) :
+  - défaut P2 et constat de doc d'un item : signalés au chef au moment de la
+    détection, item livré seulement après correction et nouvelle Revue ;
+  - essai refusé signalé avant le nouvel essai ;
+  - défaut jamais corrigé : item jamais livré, puis « accepter » ;
+  - léger ;
+  - audit sans seuil ;
+  - correction de relecture non sautable.
+- `_test_pipeline_gates.mjs` (section 11) et le parcours HTTP
+  `pipeline-pause-clear` décrivaient l'exception 0.50.1 que la règle
+  supprime. Ils vérifient maintenant que le constat est signalé et corrigé
+  avant la livraison, sans pause, et qu'il ne devient jamais un test.
+
 ## [0.64.1] - 2026-10-10
 
 Incident : les étapes de pipeline numérotées à 3 chiffres sont refusées par

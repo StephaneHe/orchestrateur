@@ -306,6 +306,8 @@ async function run() {
 //   FAKE_PIPE_REVIEW=doc|hors|mixte[:n]  revue : constat de doc (items / hors_tdd / les deux sortes)
 //   FAKE_PIPE_REVIEW_ITEM=<k>[:n][,…]  revue de l'item k (« REVUE_ITEM=k ») : un défaut (n fois)
 //   FAKE_PIPE_REVIEW_LOG=<f>     chaque revue ajoute {item, diff} à ce fichier (JSON par ligne)
+//   FAKE_PIPE_REVIEW_SEVERITY=P2 le défaut de FAKE_PIPE_REVIEW_ITEM porte cette gravité
+//   FAKE_PIPE_REVIEW_DOC_ITEM=<k>[:n][,…]  revue de l'item k : un constat de doc (hors_tdd), n fois
 /** Numéro de l'item de la liste de tests (« ITEM=<n>: … »), ou 0 en léger. */
 function item(text) { return Number((/^ITEM=(\d+):/m.exec(text) || [])[1] || 0); }
 
@@ -420,7 +422,15 @@ function pipelineStep(text) {
       const perItem = String(process.env.FAKE_PIPE_REVIEW_ITEM || '').split(',').filter(Boolean).map(s => s.split(':'));
       const hit = rItem != null && perItem.find(([k]) => k === rItem);
       if (hit && once(`item${rItem}${hit[1] ? `:${hit[1]}` : ''}`, `item${rItem}`)) {
-        w(artefact, JSON.stringify({ verdict: 'problèmes', items: [`(tests: 1) défaut relevé sur l’item ${rItem}`] }));
+        // 0.65.0: FAKE_PIPE_REVIEW_SEVERITY=P2 tags the defect with its severity.
+        const sev = process.env.FAKE_PIPE_REVIEW_SEVERITY ? `[${process.env.FAKE_PIPE_REVIEW_SEVERITY}] ` : '';
+        w(artefact, JSON.stringify({ verdict: 'problèmes', items: [`(tests: 1) ${sev}défaut relevé sur l’item ${rItem}`] }));
+        break;
+      }
+      // 0.65.0: FAKE_PIPE_REVIEW_DOC_ITEM=<k>[:n][,…] — a non-testable (doc) finding on item k.
+      const docHit = rItem != null && String(process.env.FAKE_PIPE_REVIEW_DOC_ITEM || '').split(',').filter(Boolean).map(s => s.split(':')).find(([k]) => k === rItem);
+      if (docHit && once(`doc${rItem}${docHit[1] ? `:${docHit[1]}` : ''}`, `doc${rItem}`)) {
+        w(artefact, JSON.stringify({ verdict: 'problèmes', items: [], hors_tdd: [`README : documenter le comportement de l’item ${rItem}`] }));
         break;
       }
       const spec = process.env.FAKE_PIPE_REVIEW;

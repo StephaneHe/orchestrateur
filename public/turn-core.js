@@ -247,6 +247,10 @@
           p.warnings.push(ev.text || "");
         } else if (ev.subtype === "pipeline_loop") {
           p.loops++;
+        } else if (ev.subtype === "pipeline_defect") {
+          // 0.65.0: every detected defect is reported at once and blocks delivery.
+          p.defects = p.defects || [];
+          for (const d of ev.defects || []) p.defects.push(`[${d.severity || "?"}] ${String(d.description || "").slice(0, 200)}`);
         } else if (ev.subtype === "pipeline_summary") {
           p.backoff = null;
           p.status = (q && q.status) || p.status;

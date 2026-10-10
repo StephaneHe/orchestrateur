@@ -878,8 +878,12 @@ async function apiChecks(sb) {
     let n0 = readLog('omega').length;
     let r = await pipeDispatch(['omega', 'Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '2', ORCH_PIPE_ITEMS: '2', FAKE_PIPE_REVIEW: 'doc:1' });
     let evs = readLog('omega').slice(n0);
-    if (!evs.some(e => e.subtype === 'pipeline_delivery_fixes')) NA('cet état du code ne trie pas les constats de revue');
+    // 0.65.0 (« tout problème détecté doit bloquer une livraison »): the finding is
+    // reported and corrected before delivery — still no pause, never a new test.
+    const blocks = evs.some(e => e.subtype === 'pipeline_defect');
+    if (!blocks && !evs.some(e => e.subtype === 'pipeline_delivery_fixes')) NA('cet état du code ne trie pas les constats de revue');
     assert(r.code === 0 && !evs.some(e => e.subtype === 'pipeline_limit'), `constat de registre : pause inattendue (code ${r.code})`);
+    if (blocks) assert(evs.some(e => e.subtype === 'pipeline_loop' && e.pipeline?.to === 'vert'), 'constat de registre signalé mais pas corrigé avant la livraison');
     omegaFresh();
     n0 = readLog('omega').length;
     r = await pipeDispatch(['omega', 'Ajoute beaucoup de choses', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '4', ORCH_PIPE_ITEMS: '3' });
@@ -893,7 +897,7 @@ async function apiChecks(sb) {
     assert(r.code === 0 && st, '« abandonner » : la question devrait disparaître');
     omegaFresh();
     fs.rmSync(routingFile, { force: true });
-    return 'constat de doc → Livrer ; pause claire ; abandon effectif';
+    return 'constat de doc signalé et corrigé avant livraison (0.65.0) ; pause claire ; abandon effectif';
   });
   // 0.51.0 — « La langue de la discussion doit pouvoir etre fixee et tu dois t'y tenir ».
   await check(S, 'language-settings', 'Langue de discussion : réglage global + exception par projet (fichier dédié, pas config.json), table « models × langues fiables », essai de langue, origine étrangère refusée', async () => {

@@ -237,27 +237,31 @@ ok(r.code === 0 && r.run === run10b && r.evs.some(e => e.subtype === 'pipeline_l
 reset();
 
 // ---------------------------------------------------------------------------
-section('11. Retour utilisateur : un constat de revue NON testable (doc, registre, CHANGELOG, version) va à Livrer, pas dans la boucle de tests');
+section('11. Constat de revue NON testable (doc, registre, CHANGELOG) : jamais un test, mais il BLOQUE la livraison jusqu’à sa correction (règle du 2026-10-10)');
+// 0.50.1 sent such findings to Livrer without blocking; the user rule of 2026-10-10
+// « tout problème détecté doit bloquer une livraison et être rapporté immédiatement »
+// removed that exception: the finding is corrected (step « vert » in correction mode),
+// the item is reviewed again, and only then delivered. What stays from 0.50.1: it
+// never becomes a test and never consumes the test limit.
 ok(E.isDeliveryFix('docs/USER_REQUIREMENTS.md : la demande est absente du registre') && E.isDeliveryFix('CHANGELOG : décrire la fonction') && E.isDeliveryFix('version non incrémentée') && !E.isDeliveryFix('nommer le paramètre de double') && !E.isDeliveryFix('charCount(null) doit renvoyer 0'), 'tri : doc / registre / CHANGELOG / version d’un côté, comportements de l’autre');
-// Le cas exact signalé : liste pleine (2/2), puis un constat de registre en revue.
+// Le cas signalé en 0.50.1 : liste pleine (2/2), puis un constat de registre en revue.
 r = await go(['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '2', ORCH_PIPE_ITEMS: '2', FAKE_PIPE_REVIEW: 'doc:1' });
-ok(r.code === 0 && !r.evs.some(e => e.subtype === 'pipeline_limit') && !r.evs.some(e => e.subtype === 'pipeline_loop'), `liste pleine + constat de registre : AUCUNE pause, aucun tour de boucle (code ${r.code})`, r.out.slice(-400));
-ok(seq(r.done).endsWith('rouge,vert,refactor:skipped,revue,livrer') && runState(r.run).itemsDone === 2, `la limite de tests n’est pas consommée (${seq(r.done)})`);
-const dfx = r.evs.find(e => e.subtype === 'pipeline_delivery_fixes');
-const livLog = fs.readFileSync(path.join(T, 'logs', 'runs', r.run, r.done.find(d => d.pipeline.step === 'livrer').pipeline.key + '.jsonl'), 'utf8');
-ok(dfx && /USER_REQUIREMENTS/.test(livLog) && /D'OFFICE la ligne de la demande/.test(livLog), 'le constat est transmis à Livrer, qui ajoute d’office la ligne d’exigence');
+const order11 = r.evs.filter(e => (e.subtype === 'pipeline_step_done' && ['revue', 'vert'].includes(e.pipeline.step)) || e.subtype === 'pipeline_item_delivered' || e.subtype === 'pipeline_defect').map(e => e.subtype === 'pipeline_item_delivered' ? `livré${e.pipeline.item}` : e.subtype === 'pipeline_defect' ? 'défaut' : e.pipeline.step).join(',');
+ok(r.code === 0 && !r.evs.some(e => e.subtype === 'pipeline_limit') && /^vert,revue,défaut,vert,revue,livré1,/.test(order11), `liste pleine + constat de registre : signalé, corrigé et relu AVANT la livraison de l’item, sans pause (${order11})`, r.out.slice(-400));
+ok(runState(r.run).itemsDone === 2 && !E.parseItems(fs.readFileSync(path.join(P, '.orchestrateur', 'runs', r.run, 'tests.md'), 'utf8')).some(i => /registre|USER_REQUIREMENTS/.test(i.text)), 'jamais un test : ni case dans tests.md, ni limite de tests consommée');
+const livLog = fs.readFileSync(path.join(T, 'logs', 'runs', r.run, r.done.filter(d => d.pipeline.step === 'livrer').pop().pipeline.key + '.jsonl'), 'utf8');
+ok(!r.evs.some(e => e.subtype === 'pipeline_delivery_fixes') && /D'OFFICE la ligne de la demande/.test(livLog), 'plus rien n’est remis à Livrer pour plus tard ; Livrer ajoute toujours d’office la ligne d’exigence');
 reset();
 r = await go(['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '1', FAKE_PIPE_REVIEW: 'hors:1' });
-ok(r.code === 0 && !r.evs.some(e => e.subtype === 'pipeline_loop') && r.evs.some(e => e.subtype === 'pipeline_delivery_fixes'), 'revue au nouveau format (hors_tdd) : même traitement');
+ok(r.code === 0 && r.evs.some(e => e.subtype === 'pipeline_loop' && e.pipeline.to === 'vert') && !r.evs.some(e => e.subtype === 'pipeline_delivery_fixes'), 'revue au nouveau format (hors_tdd) : même traitement — correction avant livraison');
 reset();
 r = await go(['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '1', FAKE_PIPE_REVIEW: 'mixte:1' });
 const tm = E.parseItems(fs.readFileSync(path.join(P, '.orchestrateur', 'runs', r.run, 'tests.md'), 'utf8'));
-ok(r.code === 0 && tm.filter(i => /^\(revue item 1\)/.test(i.text)).length === 1 && !tm.some(i => /CHANGELOG/.test(i.text)) && runState(r.run).deliveryFixes?.some(f => /CHANGELOG/.test(f)), 'revue mixte : le défaut de comportement devient un test, le constat CHANGELOG va à Livrer');
+ok(r.code === 0 && tm.filter(i => /^\(revue item 1\)/.test(i.text)).length === 1 && !tm.some(i => /CHANGELOG/.test(i.text)) && !(runState(r.run).deliveryFixes || []).length, 'revue mixte : le défaut de comportement devient un test, le constat CHANGELOG est corrigé avant la livraison (plus remis à Livrer)');
 reset();
 r = await go(['Ajoute une fonction double', '--mode', 'leger'], { FAKE_PIPE_REVIEW: 'doc:1' });
-ok(r.code === 0 && seq(r.done) === 'rouge,vert,revue,livrer', `léger : pas de retour à « écrire le code » pour un constat de doc (${seq(r.done)})`);
+ok(r.code === 0 && seq(r.done) === 'rouge,vert,revue,vert,revue,livrer', `léger : un constat de doc renvoie à la correction, puis à la relecture, avant Livrer (${seq(r.done)})`);
 reset();
-
 // ---------------------------------------------------------------------------
 section('12. Retour utilisateur : message de pause compréhensible, et chaque choix fait vraiment quelque chose');
 r = await go(['Ajoute beaucoup de choses', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '4', ORCH_PIPE_ITEMS: '3' });

@@ -1458,11 +1458,45 @@ probleme pour le model utilise ».
   `items` (comportements) et `hors_tdd`. Pour l'ancien format, le tri se fait
   par `isDeliveryFix` (doc, README, registre, CHANGELOG, version,
   commentaires).
-  - Les constats hors TDD vont dans `state.deliveryFixes`, sont transmis au
-    prompt de Livrer, et un événement `pipeline_delivery_fixes` est écrit.
-  - Ils ne deviennent jamais un test et ne consomment ni la limite de tests
-    ni un tour de revue.
+  - **Depuis 0.65.0, ils bloquent la livraison** (voir ci-dessous) : ils ne
+    vont plus à Livrer. Une étape `vert` de correction (`reviewItems`,
+    `state.fixGroup`) les corrige, puis l'item est relu de nouveau.
+    `state.deliveryFixes` ne sert plus qu'aux exécutions en pause d'un ancien
+    moteur.
+  - Ils ne deviennent jamais un test et ne consomment pas la limite de tests.
+    Ils comptent pour un tour de revue.
   - Livrer ajoute **d'office** la ligne du registre des exigences.
+- **Tout défaut détecté bloque la livraison et est rapporté aussitôt** (0.65.0,
+  règle utilisateur du 2026-10-10 : « tout problème détecté doit bloquer une
+  livraison et être rapporté immédiatement ») :
+  - **Aucun seuil de gravité** : P1, P2, P3, constat de doc, de registre ou de
+    CHANGELOG, critère non rempli, test rouge, scan. L'audit corrige et
+    re-vérifie toutes les failles, y compris basses. En Rédaction, une
+    correction listée par la relecture ne peut pas être sautée par
+    `RIEN_A_METTRE_EN_FORME` (critère `applies`).
+  - **Rapport** (`reportDefects`) : événement `system/pipeline_defect`
+    (projet, exécution, étape, item, gravité, description) dans le log du
+    musicien, et `/api/notify` au chef (`source: 'pipeline-defect'`). C'est
+    attendu (`await`) au moment même de la détection :
+    - Revue ;
+    - essai refusé ;
+    - failles de l'audit ;
+    - points restants d'une boucle ;
+    - scanner en erreur ;
+    - suite rouge en précondition.
+  - Livraison : un commit d'item seulement après une Revue sans aucun défaut.
+    En léger, le constat de doc renvoie à `vert` puis `revue`. Une Revue
+    « problèmes » sans rien de listé est refusée.
+  - **« accepter »** (`dispatch.mjs`, `o.acceptDefects`) : seule autre façon
+    de livrer.
+    - Pause `review` ou `items_blocked` (items mis de côté pour la revue) :
+      `state.acceptReview`.
+    - La Revue suivante de cet item (ou de l'exécution) est remplacée par
+      `pipeline_defect_accepted`. Les défauts vont dans
+      `state.acceptedDefects`, que Livrer reçoit pour le CHANGELOG
+      (problèmes connus).
+  - Frise : `turn-core.js` (`p.defects`) et `activite.js` (`.jt-defects`).
+  - Recette : `_test_defect_blocks.mjs`.
 - **Messages de pause** (0.50.1) : `pauseForLimit` et `pauseForModel`
   construisent un texte clair (`pauseText`, `progressText`, `plainStep`) :
   - ce qui s'est passé ;

@@ -1095,12 +1095,15 @@ if (CHEF_ROUTED) {
   }));
 }
 if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResumeArg || AUTO_PIPELINE)) {
-  let pipe = pipelineArg, resumeRun = pipelineResumeArg, classification = null, mode = pipelineModeArg;
+  let pipe = pipelineArg, resumeRun = pipelineResumeArg, classification = null, mode = pipelineModeArg, acceptDefects = false;
   if (!pipe && !resumeRun) {
     // Réponse « continuer » à une exécution en pause : on la reprend.
     const paused = latestPausedRun(projectName);
     const reply = prompt.replace(/^\s*\[CHEF_ANSWER\]\s*/i, '').trim();
     if (paused && /^(continue|continuer|reprends|reprendre|on continue|oui|go|vas-y)\b/i.test(reply)) resumeRun = paused;
+    // 0.65.0: « accepter » — the user explicitly accepts the remaining review
+    // defects; the run resumes and delivers, the defects are recorded.
+    if (paused && /^accept/i.test(reply)) { resumeRun = paused; acceptDefects = true; }
     // Les autres choix proposés par la pause font vraiment quelque chose.
     const answer = !paused ? null
       : /^(abandonner|abandonne|abandon|annuler|annule|arr[eê]te)\b/i.test(reply) ? 'abandonner'
@@ -1154,7 +1157,7 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
         ? `\n\n[Note de l'orchestrateur : cette demande relève du pipeline « ${classification.notInService} », pas encore en service sur ce projet. ` +
           'Elle est traitée en Discussion : ne modifie rien ; si elle demande une action, termine ta réponse en disant à l’utilisateur de la relancer avec /dev.]'
         : ''),
-      promptForLog: prompt, pipeline: pipe, resumeRun, classification, mode,
+      promptForLog: prompt, pipeline: pipe, resumeRun, classification, mode, acceptDefects,
       ...(pipeNotes.length ? { modeNote: pipeNotes.join(' ; ') } : {}),
       callbackProject, sourceProject, obsId, testLabel,
       dispatchScript: fileURLToPath(import.meta.url),
