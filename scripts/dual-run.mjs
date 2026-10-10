@@ -198,7 +198,8 @@ export async function runDual(o) {
   // relecture garde le jeton d'étape et ses drapeaux.
   const projectLog = o.logFile || path.join(logsDir, `${projectName}.jsonl`);
   const pidPath = o.pidFile || path.join(logsDir, `${projectName}.pid`);
-  const writeEvent = (ev) => { try { fs.appendFileSync(projectLog, JSON.stringify({ ...ev, timestamp: new Date().toISOString() }) + '\n'); } catch {} };
+  // Same turn id as the dispatch running us (0.67.0): one turn in the journal.
+  const writeEvent = (ev) => { try { fs.appendFileSync(projectLog, JSON.stringify({ ...(process.env.ORCH_TURN_ID ? { orch_turn: process.env.ORCH_TURN_ID } : {}), ...ev, timestamp: new Date().toISOString() }) + '\n'); } catch {} };
 
   // ── Garde-fous, avant toute écriture ──────────────────────────────────────
   for (const [role, b] of [['principal', principal], ['second', second]]) {

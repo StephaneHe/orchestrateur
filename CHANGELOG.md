@@ -11,6 +11,84 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.67.0] - 2026-10-10
+
+Demande de l'utilisateur : « Je vois dans le journal d'activite qu'une des
+dernieres de l'orchestrateur affiche : Demande non visible dans le log (tour
+lancé sans demande écrite) / Je veux qu'il y ai toutes les logs ».
+
+**Constat** : chaque chemin de lancement écrivait déjà sa demande (`user_prompt`
+de `dispatch.mjs` ou du moteur de pipeline). Les entrées « Demande non visible »
+venaient de la **lecture** : le journal ne savait pas à quel tour rattacher une
+ligne. Sur toute la flotte, 506 tours sans demande. Causes, par ordre
+d'importance :
+1. **Deux tours du même musicien en même temps.** Cas récent d'orchestrateur,
+   le 2026-10-10 à 07:34Z :
+   - le drain de la file (`--no-queue-if-busy`) et deux dispatches lancés à la
+     même seconde contournaient la vérification « occupé » ;
+   - cette vérification lisait le `.pid` du CLI, écrit seulement plusieurs
+     minutes plus tard, après la classification ;
+   - leurs lignes s'entremêlaient dans le même log, et le `result` de l'un
+     clôturait le tour de l'autre ;
+   - les deux reprenaient aussi la même session ;
+   - certaines lignes JSON étaient coupées en deux.
+2. **Fin d'un tour écrite après son `result`** : bascule de fournisseur,
+   `result` d'erreur de `dispatch.mjs` (model indisponible, limite, arrêt),
+   reprise du CLI après une tâche d'arrière-plan.
+3. **Exécution de pipeline lancée par le chef** : demande sourcée sans
+   `init`, restée « en attente » dans le journal.
+4. **stderr du CLI écrit brut dans le JSONL** (259 lignes dans la flotte),
+   invisible et parfois collé à la ligne JSON suivante. Celui de codex n'était
+   pas journalisé du tout.
+
+Le serveur en service n'est pas en cause pour l'entrée signalée : elle vient de
+la concurrence des tours. En revanche, le journal servi par le dashboard est
+calculé par le `turn-core.js` chargé au démarrage du serveur. Les corrections
+de lecture n'y apparaîtront qu'après son redémarrage.
+
+### Fixed
+- (server) **Chaque ligne d'un tour porte son identifiant** (`orch_turn`).
+  Il est posé par `dispatch.mjs` sur tout ce qu'il écrit : flux du CLI, de
+  codex, `musicianLog`, événements du moteur de pipeline et du mode double.
+  La relecture du mode double hérite de l'identifiant de son parent. Le
+  journal (`turn-core.js`) rattache chaque ligne à son tour, même
+  entremêlée ou écrite après le `result`.
+- (server) **Journal, anciens logs (sans identifiant)** :
+  - la demande sourcée d'une exécution de pipeline ouvre son tour ;
+  - un `result`, un message ou un `init` orphelins (après bascule de
+    fournisseur, notification de tâche ou erreur tardive) prolongent le tour
+    précédent au lieu d'en ouvrir un sans demande ;
+  - sur la flotte, on passe de 506 tours sans demande à 46. Les 46 restants
+    sont des tours anciens (avant le 5 octobre), lancés sans demande écrite
+    par d'anciennes versions : rien ne permet de la retrouver.
+- (server) **Le stderr du CLI et de codex devient des événements
+  `system/stderr`** (ligne par ligne, avec `origin`). Ils sont lisibles et ne
+  collent plus jamais à une ligne JSON.
+- (server) **Un musicien, un tour : verrou de tour** (`logs/<p>.turnlock`).
+  - Création exclusive, avant toute écriture ; libéré à la sortie ; repris si
+    son propriétaire est mort.
+  - Un dispatch qui le trouve tenu attend la fin du tour en cours, ou se met
+    en file s'il le demande. Le drain de la file compris, jamais deux tours
+    en parallèle.
+  - Le chef en est exempté : son pool fait tourner plusieurs tours exprès.
+  - Réglages de test : `ORCH_TURN_LOCK_WAIT_MS`, `ORCH_TURN_LOCK_POLL_MS`.
+- La mise en file depuis `dispatch.mjs` passe par `ORCH_PORT` (jamais 7777 en
+  test).
+- Libellé du journal pour un tour très ancien : « absente de la partie du log
+  lue (tour ancien…) ».
+
+### Tests
+- `scripts/_test_turn_logs.mjs` (25 contrôles) :
+  - journal : tours entremêlés, suite après le `result`, pipeline lancé par
+    le chef, anciens logs ;
+  - vrai `dispatch.mjs` sur chaque chemin de lancement (direct, session
+    neuve, drain, `[CHEF_ANSWER]`, `[CALLBACK_WAKE]`, codex, stderr,
+    exécution de pipeline, « continuer », réponse à une pause) : demande
+    écrite, toutes les lignes marquées du même tour, aucune ligne illisible ;
+  - verrou : un second lancement attend la fin du premier, sans
+    entremêlement, et un verrou mort est repris.
+- Faux claude : `FAKE_CLAUDE_STDERR` (stderr sans retour à la ligne).
+
 ## [0.66.0] - 2026-10-10
 
 Demande de l'utilisateur : « Ce n'est pas une recherche de mot qui pourra faire

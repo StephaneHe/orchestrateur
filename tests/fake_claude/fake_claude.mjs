@@ -190,6 +190,9 @@ async function run() {
     model: servedModel,
   });
   await sleep(LATENCY);
+  // 0.67.0: FAKE_CLAUDE_STDERR=<text> — a stderr line WITHOUT its newline, as the
+  // real CLI does (« No conversation found… »): it must never glue to a JSON line.
+  if (process.env.FAKE_CLAUDE_STDERR) { process.stderr.write(process.env.FAKE_CLAUDE_STDERR); await sleep(LATENCY); }
 
   if (process.env.FAKE_CLAUDE_FAIL_MODEL && askedModel === process.env.FAKE_CLAUDE_FAIL_MODEL) {
     emit({ type: 'system', subtype: 'error', session_id: sessionId, error: `FAKE_CLAUDE_FAIL_MODEL ${askedModel}` });

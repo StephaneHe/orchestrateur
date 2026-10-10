@@ -247,6 +247,32 @@ sans `latest.apk` s'affiche « APK pas encore publié » au lieu d'un bouton mor
 
 ---
 
+## Toutes les logs : identifiant de tour, stderr, un tour à la fois (0.67.0)
+
+Demande utilisateur : « Je veux qu'il y ai toutes les logs » (entrées « Demande
+non visible » du journal d'activité).
+
+- **`orch_turn`** : `dispatch.mjs` (`TURN_ID`, `tagTurnLines`, `musicianLog`)
+  pose le même identifiant sur chaque ligne d'un tour. Le moteur de pipeline et
+  `dual-run.mjs` le lisent dans `process.env.ORCH_TURN_ID`. La relecture du
+  mode double hérite de celui du parent. Tout autre dispatch, y compris lancé
+  depuis l'outil Bash d'un tour, a le sien.
+- **Journal** (`turn-core.js`, `createJournal`) : il route chaque ligne vers
+  son tour (`byId`). Pour les anciens logs : `adopt()` (demande sourcée en
+  attente, sinon suite du tour précédent), et continuation après
+  `failover` / `task_notification`. Le serveur charge ce fichier au démarrage :
+  redémarrage nécessaire.
+- **stderr** : `stderrSink` le transforme en `system/stderr {origin, text}`,
+  pour claude comme pour codex. Plus jamais d'octets bruts dans le JSONL.
+- **Verrou de tour** `logs/<p>.turnlock` (création exclusive, libéré à la
+  sortie, repris si le PID est mort) :
+  - un seul tour par musicien, le chef excepté (pool) ;
+  - un dispatch qui le trouve tenu attend, ou se met en file avec
+    `--queue-if-busy` ;
+  - `ORCH_TURN_LOCK_WAIT_MS` (4 h par défaut, puis départ avec un
+    avertissement) et `ORCH_TURN_LOCK_POLL_MS`.
+- Recette : `_test_turn_logs.mjs`.
+
 ## Fin de tour, file par musicien, results fantômes (0.24.1)
 
 - **Un tour `claude -p` s'arrête à son `result`, et ses tâches d'arrière-plan

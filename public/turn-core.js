@@ -171,9 +171,24 @@
     let cur = null;           // tour ouvert
     let pendingPrompt = null; // user_prompt sourcé en attente de son init
     let lastText = "";
+    // 0.66.0 — « Je veux qu'il y ait toutes les logs »: dispatch.mjs stamps every
+    // line of a turn with `orch_turn`. Two turns of the same musician writing
+    // into the same log at once (or a turn's tail written after its result)
+    // are then attributed to the right turn instead of a prompt-less one.
+    const byId = new Map();
+    let lastSys = "";         // last system subtype (failover continuation, old logs)
+
+    function switchTo(t) {
+      if (t === cur) return;
+      if (cur) cur._last = lastText;
+      cur = t;
+      lastText = (t && t._last) || "";
+    }
 
     function open(ev, promptEv) {
+      if (cur) cur._last = lastText;
       cur = {
+        turnId: ev.orch_turn || (promptEv && promptEv.orch_turn) || null,
         id: (promptEv && promptEv.timestamp) || ev.timestamp || null,
         start: (promptEv && promptEv.timestamp) || ev.timestamp || null,
         prompt: promptEv ? summarizePrompt(promptEv.text) : "",
@@ -190,9 +205,22 @@
         test: promptEv ? testInfo(promptEv) : null,
       };
       turns.push(cur);
-      if (turns.length > max) turns.splice(0, turns.length - max);
+      if (cur.turnId) byId.set(cur.turnId, cur);
+      if (turns.length > max) {
+        for (const old of turns.splice(0, turns.length - max)) if (old.turnId) byId.delete(old.turnId);
+      }
       lastText = "";
       pendingPrompt = null;
+    }
+
+    // A turn-less event (old logs, before `orch_turn`) with no turn open: the
+    // pending sourced prompt starts it (a pipeline run launched by the chef
+    // writes no init), otherwise it is the tail of the previous turn.
+    function adopt(ev) {
+      if (pendingPrompt) { open(ev, pendingPrompt); return; }
+      const l = last();
+      if (l) { switchTo(l); return; }
+      open(ev, null);
     }
 
     function last() { return turns.length ? turns[turns.length - 1] : null; }
@@ -200,8 +228,23 @@
     function push(ev) {
       if (!ev || typeof ev !== "object" || ev.type === "stream_event") return;
       const t = ev.type;
+      // Route by turn id: the event belongs to that turn, whatever was written in between.
+      let routed = false;
+      if (ev.orch_turn && byId.has(ev.orch_turn) && !(t === "user_prompt" && !ev.dual && byId.get(ev.orch_turn).prompt)) {
+        switchTo(byId.get(ev.orch_turn));
+        routed = true;
+      }
+      const prevSys = lastSys;
+      if (t === "system" && typeof ev.subtype === "string") lastSys = ev.subtype;
       if (t === "user_prompt") {
-        if (ev.source && !ev.dual) { pendingPrompt = ev; return; }
+        if (routed) {
+          // The turn's own prompt arriving after its first events: fill it in.
+          if (!cur.prompt && ev.text) { cur.prompt = summarizePrompt(ev.text); cur.promptFull = capped(cleanPrompt(ev.text)); cur.source = ev.source || cur.source; }
+          return;
+        }
+        // A sourced prompt written by a dispatch (it carries its turn id) IS the
+        // turn start; one written by the server (notification relay) waits for its init.
+        if (ev.source && !ev.dual && !ev.orch_turn) { pendingPrompt = ev; return; }
         if (cur && cur.outcome === "running") { cur.outcome = "interrupted"; cur.end = ev.timestamp || null; }
         open(ev, ev);
         // Mode double model (0.44.0) : deux branches puis la relecture, un seul tour.
@@ -299,7 +342,11 @@
       if (t === "system" && ev.subtype === "init") {
         // Un second init dans un tour ouvert (bascule de provider) reste le même
         // tour, sauf si une nouvelle demande sourcée l'a précédé.
-        if (!cur || cur.outcome !== "running" || (cur.hasInit && pendingPrompt)) {
+        if (routed) { /* the turn's own init (failover leg, resumed provider) */ }
+        else if ((!cur || cur.outcome !== "running") && !pendingPrompt && !ev.orch_turn && /^(failover|failover-note|limited-no-failover|fallback_refused|task_notification|task_updated|background_tasks_changed)$/.test(prevSys) && last()) {
+          // Old logs: the failover leg of the turn that just hit its limit.
+          switchTo(last());
+        } else if (!cur || cur.outcome !== "running" || (cur.hasInit && pendingPrompt)) {
           if (cur && cur.outcome === "running") { cur.outcome = "interrupted"; }
           open(ev, pendingPrompt);
         }
@@ -326,7 +373,7 @@
         return;
       }
       if (t === "assistant") {
-        if (!cur) open(ev, null);
+        if (!cur) { if (ev.orch_turn) open(ev, pendingPrompt); else adopt(ev); }
         if (ev.lang && ev.lang.reformulated) cur.lang = { detected: ev.lang.detected, target: ev.lang.target, reason: ev.lang.reason, by: ev.lang.by || null, original: typeof ev.lang.original === "string" ? capped(ev.lang.original) : null };
         const m = ev.message || {};
         if (m.model && m.model !== "<synthetic>") cur.model = m.model;
@@ -357,8 +404,12 @@
         // Un result qui suit un arrêt du chef dans le même tour (ancien
         // « model indisponible » de dispatch.mjs) ne change rien.
         const l = last();
-        if ((!cur || cur.outcome !== "running") && l && l.outcome === "stopped") return;
-        if (!cur || cur.outcome !== "running") open(ev, null);
+        if (!routed && (!cur || cur.outcome !== "running") && l && l.outcome === "stopped") return;
+        if (routed && cur.outcome === "stopped") return;
+        // A result with no turn open: its own turn (by id), the pending sourced
+        // prompt, or the tail of the previous turn (a result written by
+        // dispatch.mjs after the CLI's own, old logs) — never a prompt-less turn.
+        if (!cur) { if (ev.orch_turn) open(ev, pendingPrompt); else adopt(ev); }
         const text = typeof ev.result === "string" ? ev.result : "";
         const needs = /^NEEDS_USER_INPUT:\s*(.*)$/m.exec(lastText || text);
         const asksChef = /NEEDS_CHEF_INPUT:/i.test(lastText) || /NEEDS_CHEF_INPUT:/i.test(text);

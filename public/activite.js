@@ -196,7 +196,7 @@
       .filter(Boolean).join(" · ");
     const ask = t.prompt
       ? `<div class="jt-ask"><span class="jt-k">Demande</span> ${esc(t.prompt)}</div>`
-      : `<div class="jt-ask is-unknown"><span class="jt-k">Demande</span> non visible dans le log (tour lancé sans demande écrite)</div>`;
+      : `<div class="jt-ask is-unknown"><span class="jt-k">Demande</span> absente de la partie du log lue (tour ancien, antérieur à la journalisation complète de la 0.67.0)</div>`;
     let did = "";
     if (t.outcome === "running") {
       did = `<div class="jt-did">en cours · ${t.tools} appel${t.tools > 1 ? "s" : ""} d'outil</div>`;

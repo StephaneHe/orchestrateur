@@ -559,6 +559,42 @@ const logPath     = DUAL_DIR ? path.join(DUAL_DIR, `${DUAL_BRANCH.role}.jsonl`) 
 const sessionPath = DUAL_DIR ? path.join(DUAL_DIR, `${DUAL_BRANCH.role}.session`) : STEP_DIR ? path.join(STEP_DIR, `${pipelineSession || PIPE_STEP.key}.session`) : path.join(LOGS, `${projectName}.session`);
 const pidPath     = DUAL_DIR ? path.join(DUAL_DIR, `${DUAL_BRANCH.role}.pid`)     : STEP_DIR ? path.join(STEP_DIR, `${PIPE_STEP.key}.pid`) : path.join(LOGS, `${projectName}.pid`);
 
+// Turn id (0.67.0). The dual-mode review prolongs the turn its parent opened
+// (same musician log, no request of its own): it inherits the parent's id.
+// Any other dispatch — including one launched from a turn's Bash tool, which
+// inherits the variable — is a turn of its own.
+const TURN_ID = dualSynthesis && /^t-[\w-]{6,64}$/.test(process.env.ORCH_TURN_ID || '')
+  ? process.env.ORCH_TURN_ID
+  : `t-${new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15)}-${crypto.randomBytes(4).toString('hex')}`;
+process.env.ORCH_TURN_ID = TURN_ID;
+/** Adds `orch_turn` to each JSON line written (cheap string insertion, no re-parse). */
+function tagLine(l) {
+  if (!/^\s*\{/.test(l) || l.includes('"orch_turn"')) return l;
+  return l.replace(/^(\s*)\{\s*\}?/, (m, sp) => (m.replace(/\s/g, '') === '{}' ? `${sp}{"orch_turn":"${TURN_ID}"}` : `${sp}{"orch_turn":"${TURN_ID}",`));
+}
+/**
+ * The CLI's stderr used to be written raw into the JSONL: invisible to every
+ * reader, and a chunk without its newline glued the next JSON line to it (the
+ * whole event lost). Each stderr line becomes a `system/stderr` event (0.67.0).
+ */
+function stderrSink(stream, origin) {
+  let tail = '';
+  const emit = (line) => { if (line.trim()) stream.write(JSON.stringify({ type: 'system', subtype: 'stderr', origin, text: line.slice(0, 4000), timestamp: new Date().toISOString() }) + '\n'); };
+  return {
+    push(chunk) {
+      const lines = (tail + chunk.toString('utf8')).split(/\r?\n/);
+      tail = lines.pop() ?? '';
+      for (const l of lines) emit(l);
+    },
+    flush() { if (tail) { emit(tail); tail = ''; } },
+  };
+}
+function tagTurnLines(stream) {
+  const write = stream.write.bind(stream);
+  stream.write = (chunk, ...rest) => write(typeof chunk === 'string' ? chunk.split('\n').map(tagLine).join('\n') : chunk, ...rest);
+  return stream;
+}
+
 let sessionId = null;
 if (!DUAL_BRANCH) { try { sessionId = fs.readFileSync(sessionPath, 'utf8').trim() || null; } catch {} }
 
@@ -1016,7 +1052,7 @@ function postQueueIfBusy() {
     if (pipelineModeArg)   payload.pipelineMode    = pipelineModeArg;
     const body = Buffer.from(JSON.stringify(payload));
     const req = http.request({
-      hostname: '127.0.0.1', port: 7777, path: '/api/dispatch', method: 'POST',
+      hostname: '127.0.0.1', port: Number(process.env.ORCH_PORT) || 7777, path: '/api/dispatch', method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Orchestrator-Token': token,
@@ -1073,8 +1109,58 @@ if (queueIfBusy && projectName !== CONDUCTOR) {
       console.log(`[dispatch] ${projectName} s'est libéré — lancé par le serveur (pid=${r.pid})`);
       process.exit(0);
     }
-    console.error(`[dispatch] ATTENTION : ${projectName} a un tour en cours (pid=${busyPid}) et le serveur est injoignable — dispatch direct malgré tout`);
+    console.error(`[dispatch] ATTENTION : ${projectName} a un tour en cours (pid=${busyPid}) et le serveur est injoignable — on attend la fin de ce tour (verrou de tour)`);
   }
+}
+
+// ---------- verrou de tour (0.67.0) -------------------------------------------
+// Two turns of the same musician ran at once (queue drain with
+// --no-queue-if-busy, two dispatches in the same second, a check made on the
+// CLI's .pid written only minutes later): their lines interleaved in one log —
+// the « Demande non visible » entries, JSON lines broken in two — and both
+// resumed the same session. One musician, one turn: an exclusive lock file,
+// taken before anything is written, released at exit, taken over when its
+// owner is dead. A dispatch finding it held waits (or queues, as asked).
+// The conductor is exempt: its pool runs several turns on purpose.
+const TURN_LOCK = (!DUAL_BRANCH && !dualSynthesis && !PIPE_STEP && projectName !== CONDUCTOR) ? path.join(LOGS, `${projectName}.turnlock`) : null;
+function pidIsAlive(pid) { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }
+function turnLockHolder() {
+  try { const j = JSON.parse(fs.readFileSync(TURN_LOCK, 'utf8')); return Number.isFinite(j.pid) && j.pid !== process.pid && pidIsAlive(j.pid) ? j : null; }
+  catch { return null; }
+}
+function tryTurnLock() {
+  for (let i = 0; i < 3; i++) {
+    try {
+      const fd = fs.openSync(TURN_LOCK, 'wx');
+      fs.writeSync(fd, JSON.stringify({ pid: process.pid, turn: TURN_ID, at: new Date().toISOString() }));
+      fs.closeSync(fd);
+      return true;
+    } catch (e) {
+      if (e.code !== 'EEXIST') return true;   // a lock that cannot be written never blocks a turn
+      if (turnLockHolder()) return false;
+      try { fs.unlinkSync(TURN_LOCK); } catch {}   // owner dead (killed, crashed): take over
+    }
+  }
+  return false;
+}
+if (TURN_LOCK) {
+  const WAIT_MAX = Number(process.env.ORCH_TURN_LOCK_WAIT_MS) || 4 * 3600_000;
+  const POLL = Number(process.env.ORCH_TURN_LOCK_POLL_MS) || 1000;
+  let got = tryTurnLock();
+  if (!got && queueIfBusy) {
+    const r = await postQueueIfBusy();
+    if (r?.queued) { console.log(`[dispatch] ${projectName} a un tour en cours — mis en file derrière lui (position ${r.position ?? r.queueLength})`); process.exit(0); }
+  }
+  if (!got) {
+    const holder = turnLockHolder();
+    console.error(`[dispatch] ${projectName} : un autre tour est en cours (pid=${holder?.pid ?? '?'}, tour ${holder?.turn ?? '?'}) — attente de sa fin avant de commencer`);
+    const t0 = Date.now();
+    while (!(got = tryTurnLock()) && Date.now() - t0 < WAIT_MAX) await new Promise(r => setTimeout(r, POLL));
+    if (!got) console.error(`[dispatch] ${projectName} : verrou toujours tenu après ${Math.round(WAIT_MAX / 60000)} min — le tour démarre quand même`);
+  }
+  process.on('exit', () => {
+    try { if (JSON.parse(fs.readFileSync(TURN_LOCK, 'utf8')).pid === process.pid) fs.unlinkSync(TURN_LOCK); } catch {}
+  });
 }
 
 // ---------- pipelines (0.48.0) : délégation au moteur -------------------------
@@ -1127,7 +1213,7 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
   const PENDING_CLS = path.join(LOGS, `${projectName}.a-classer.json`);
   const readPendingCls = () => { try { const a = JSON.parse(fs.readFileSync(PENDING_CLS, 'utf8')); return Array.isArray(a) ? a : []; } catch { return []; } };
   const writePendingCls = (a) => { if (a.length) fs.writeFileSync(PENDING_CLS, JSON.stringify(a, null, 2)); else { try { fs.rmSync(PENDING_CLS, { force: true }); } catch {} } };
-  const musicianLog = (ev) => { try { fs.appendFileSync(path.join(LOGS, `${projectName}.jsonl`), JSON.stringify({ ...ev, timestamp: new Date().toISOString() }) + '\n'); } catch {} };
+  const musicianLog = (ev) => { try { fs.appendFileSync(path.join(LOGS, `${projectName}.jsonl`), JSON.stringify({ orch_turn: TURN_ID, ...ev, timestamp: new Date().toISOString() }) + '\n'); } catch {} };
   const endTurn = (text, { paused = false } = {}) => {
     musicianLog({ type: 'assistant', message: { model: '<synthetic>', content: [{ type: 'text', text }] } });
     musicianLog({ type: 'result', subtype: paused ? 'success' : 'success', is_error: false, num_turns: 1, duration_ms: 1, duration_api_ms: 1, stop_reason: 'end_turn',
@@ -1395,7 +1481,11 @@ delete env.ORCH_STEP_TOKEN;
 
 // ---------- shared log setup ------------------------------------------------
 
-const logStream = fs.createWriteStream(logPath, { flags: 'a' });
+// « Je veux qu'il y ait toutes les logs » (0.67.0): every line this turn writes
+// carries the same `orch_turn`, so the activity journal attributes it to THIS
+// turn even when another writer's lines land in between, or when the turn's
+// tail is written after its result (failover leg, background task, own error).
+const logStream = tagTurnLines(fs.createWriteStream(logPath, { flags: 'a' }));
 logStream.write(`\n`); // ensure boundary from previous turn
 
 /**
@@ -2076,11 +2166,14 @@ function runCodex(isFailover = false) {
 
   function debugCodex(msg) { console.error(`[dispatch/codex] ${msg}`); }
 
+  // codex's stderr (progress chatter, API errors) is journaled as JSON events
+  // (0.67.0): visible, and never mixed raw into the event stream.
+  const codexStderr = stderrSink(logStream, 'codex');
   codexChild.stderr.on('data', (chunk) => {
-    // codex uses stderr for progress chatter; keep it off the JSONL log so we
-    // never corrupt the event stream with non-JSON lines.
+    codexStderr.push(chunk);
     process.stderr.write(chunk);
   });
+  codexChild.stderr.on('end', () => codexStderr.flush());
 
   codexChild.on('error', (err) => {
     // Terminal for this turn. On the failover leg this is the second and
@@ -2470,8 +2563,10 @@ function runClaude() {
     logStream.write(JSON.stringify(ev) + '\n');
   }
 
+  const claudeStderr = stderrSink(logStream, 'claude');
+  child.stderr.on('end', () => claudeStderr.flush());
   child.stderr.on('data', (chunk) => {
-    logStream.write(chunk);
+    claudeStderr.push(chunk);
     process.stderr.write(chunk);
     // A bare CLI failure (limit hit before any stream-json event) shows up
     // only here. Keep a bounded tail — stderr can be large on a crash loop.
