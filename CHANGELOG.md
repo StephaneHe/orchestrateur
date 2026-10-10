@@ -11,6 +11,15 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+### Added
+- (docs) `docs/ROUTAGE-PROBLEMES.md` : suivi des 17 problèmes du pipeline
+  Routage (chef) relevés les 9 et 10 octobre (inventaire du chef
+  `p-20261010T194702-b47305`). Chaque problème a ses preuves, son statut et le
+  code probablement concerné, et le document fixe l'ordre de traitement
+  (groupe B d'abord). Décision de l'utilisateur : « Document
+  I:\Dev\Chef\docs\ROUTAGE-PROBLEMES.md : vas, et on commence par s'attaquer
+  a ca ». Documents seulement, aucun code.
+
 ## [0.69.0] - 2026-10-10
 
 Demande de l'utilisateur : « Je maintiens que le routeur ne doit pas classer
