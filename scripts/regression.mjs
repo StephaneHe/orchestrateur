@@ -29,6 +29,8 @@
 //   node scripts/regression.mjs --shots <dossier>    enregistre les captures
 //   node scripts/regression.mjs --restart-check      rejoue restart-orchestrateur.mjs sur l'instance
 //   node scripts/regression.mjs --keep               garde l'instance (débogage)
+//   node scripts/regression.mjs --port <n>           port fixe de l'instance (jamais 7777, refusé s'il est occupé) :
+//                                                    instance de dev durable, ex. --keep --no-suites --no-browser --port 7778
 //   node scripts/regression.mjs --out <fichier.json> rapport JSON (défaut .regress/report-<label>.json)
 //   node scripts/regression.mjs --compare avant.json apres.json [--md sortie.md]
 //
@@ -1375,7 +1377,7 @@ async function main() {
   console.log('\n── 2. Instance de test (autre port, fixtures, faux claude)');
   let sb = null;
   try {
-    sb = await startSandbox(source, safeLabel);
+    sb = await startSandbox(source, safeLabel, { port: opt('--port') || null });
     console.log(`   instance : ${sb.url}  (${sb.root})`);
     record('http', 'boot', 'Démarrage de server.js sur une instance isolée', 'OK', `port ${sb.port}`);
   } catch (e) {

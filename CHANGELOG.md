@@ -11,6 +11,49 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.68.0] - 2026-10-10
+
+Accord de l'utilisateur : « je te donne mon accord pour creer
+orchestrateur-dev, vas-y quand c'est safe ». Objectif : « l'orchestrateur
+actuel sera sur une version donnée du code alors que le nouveau musicien sera
+sur une version au moins égale ou plus récente […] le code actuel (en prod sur
+le musicien Orchestrateur) fera des bons quand ce sera utile ».
+
+### Added
+- (server) **Instance de dev séparée de la prod** : musicien
+  `orchestrateur-dev` (`devOf: orchestrateur`, port 7778), clone indépendant
+  `I:\Dev\orchestrateur-dev` sur la branche `dev`, parti de `v0.67.1`. La
+  remote vers la prod est en lecture seule. Ses journaux restent dans son
+  dossier. La prod reste figée sur son tag et n'avance que par bonds.
+  Procédure de bond et de retour arrière : `docs/DEV-PROD.md`.
+- (server) `scripts/dev-split.mjs` (`checkDevSplit`, CLI `check`) vérifie la
+  séparation :
+  - dossiers distincts ;
+  - un dépôt git propre (jamais un worktree de la prod) ;
+  - la branche `dev`, qui contient le tag de la prod ;
+  - aucune remote qui pousse dans la prod ;
+  - un port propre (jamais 7777 ni le port d'un autre projet) ;
+  - des journaux hors de la prod ;
+  - les entrées du fleet ;
+  - des jetons distincts.
+- (server) `regression.mjs --port <n>` : instance de test sur un port fixe,
+  par exemple l'instance de dev durable
+  (`--keep --no-suites --no-browser --port 7778`). Un port 7777 ou occupé est
+  refusé (`checkFixedPort`).
+- Recette : `scripts/_test_dev_split.mjs`, sur fixtures et sur l'installation
+  réelle.
+
+### Changed
+- `_test_user_requirements.mjs` : l'instance de dev de l'orchestrateur
+  (`devOf: orchestrateur`) n'est pas un projet privé. Son nom peut donc
+  figurer dans le registre.
+
+### Notes
+- Le serveur en service (0.55.0) n'a pas été redémarré, à la demande de
+  l'utilisateur. `dispatch.mjs` connaît déjà le nouveau musicien. Le
+  dashboard, `/api/dispatch`, la file et le réveil du chef ne le verront
+  qu'après le prochain redémarrage.
+
 ## [0.67.1] - 2026-10-10
 
 Demande de l'utilisateur : « La clé de dédoublonnage ne garde que les 120

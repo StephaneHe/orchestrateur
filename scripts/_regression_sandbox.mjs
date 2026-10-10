@@ -297,11 +297,26 @@ export async function waitUp(port, timeoutMs = 45_000) {
  * Construit et démarre une instance. Renvoie { root, port, token, url, stop,
  * restartWith(scriptRel) }. `label` nomme le dossier sous .regress/.
  */
-export async function startSandbox(source, label) {
+/** A fixed port for the sandbox (0.68.0: the dev instance's own port). Never
+ *  the production port, and only if nothing listens on it. */
+export async function checkFixedPort(port) {
+  const p = Number(port);
+  if (!Number.isInteger(p) || p < 1024 || p > 65535) throw new Error(`port invalide : ${port}`);
+  if (p === 7777) throw new Error('7777 est le port de la production : jamais pour une instance de test');
+  await new Promise((resolve, reject) => {
+    const s = net.createServer();
+    s.unref();
+    s.on('error', () => reject(new Error(`le port ${p} est déjà occupé`)));
+    s.listen(p, '0.0.0.0', () => s.close(resolve));
+  });
+  return p;
+}
+
+export async function startSandbox(source, label, { port: fixedPort = null } = {}) {
   const root = path.join(REGRESS_DIR, `${label}-${Date.now().toString(36)}`);
   fs.mkdirSync(root, { recursive: true });
   extractCode(source, root);
-  const port = await freePort();
+  const port = fixedPort ? await checkFixedPort(fixedPort) : await freePort();
   patchForPort(root, port);
 
   // Un vrai processus vivant tient le PID du musicien « eps » (tour en vol).

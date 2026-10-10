@@ -247,6 +247,35 @@ sans `latest.apk` s'affiche « APK pas encore publié » au lieu d'un bouton mor
 
 ---
 
+## Prod et dev : `orchestrateur-dev` (0.68.0)
+
+Décision utilisateur (2026-10-10) : la prod reste figée sur une version, le
+développement continue sur un autre musicien, et la prod « fera des bons quand
+ce sera utile ». Procédure complète : `docs/DEV-PROD.md`.
+
+- **Prod** : musicien `orchestrateur`, `I:\orchestrateur`, port 7777, figée
+  sur un tag (`v0.67.1` au départ).
+- **Dev** : musicien `orchestrateur-dev` (`devOf: orchestrateur`, `port:
+  7778` dans config.json), `I:\Dev\orchestrateur-dev`, branche `dev`.
+  - C'est un **clone indépendant**, jamais un worktree : un worktree
+    partagerait le `.git` de la prod.
+  - Remote `prod` en lecture seule (push URL `NO_PUSH_TO_PROD_REPO`).
+  - Fichiers locaux : `.orchestrateur-instance.json` (rôle, port, journaux,
+    tag de base), `CLAUDE.local.md` (règles du musicien dev), son propre
+    `.token`.
+  - Pas de serveur à elle. Une instance vivante ne passe que par le bac à
+    sable : `node scripts/regression.mjs --keep --no-suites --no-browser
+    --port 7778`. `--port` refuse 7777 et un port occupé.
+- **Bond** (décidé par l'utilisateur, jamais par le musicien dev) : tag
+  `vX.Y.Z` vérifié dans la dev, puis, dans la prod sans tour en cours,
+  `git tag -a prod-before-vX.Y.Z`, `git merge --ff-only vX.Y.Z`, régression,
+  redémarrage par le chef. **Retour arrière** : `git reset --hard
+  prod-before-vX.Y.Z`, redémarrage, régression.
+- Contrôle : `node scripts/dev-split.mjs check`. Recette :
+  `_test_dev_split.mjs`.
+- Supprimer la dev : retirer l'entrée de config.json, `forgetWorkspace()`,
+  supprimer le dossier. La prod n'est pas touchée.
+
 ## Toutes les logs : identifiant de tour, stderr, un tour à la fois (0.67.0)
 
 Demande utilisateur : « Je veux qu'il y ai toutes les logs » (entrées « Demande
@@ -497,9 +526,10 @@ arrière ».
       node I:\orchestrateur\scripts\restart-orchestrateur.mjs
       node I:\orchestrateur\scripts\regression.mjs
 
-- Dette : `server.js` importe `ssh-server.js` et `src/*.mjs`, **non
-  versionnés**. Un checkout propre ailleurs ne démarrerait pas ; ici, ils
-  restent en place.
+- `ssh-server.js`, `src/*.mjs` et `templates/` sont désormais versionnés
+  (constaté le 2026-10-10 en clonant la dev) : un checkout propre a tout le
+  code. Un clone a seulement besoin de `npm install`, d'un `config.json` et
+  d'un `.token`.
 
 ## Projet prêt à tourner dès sa création (0.30.0)
 

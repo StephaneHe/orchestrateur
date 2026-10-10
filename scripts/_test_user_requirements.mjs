@@ -140,7 +140,10 @@ ok(rows.every(r => /\| 0\.\d+\.\d+ \|$/.test(r)), 'version de livraison renseign
 // Dépôt public : aucun nom de projet privé (lu dans le config.json local, s'il existe).
 const cfgPath = path.join(ROOT, 'config.json');
 if (fs.existsSync(cfgPath)) {
-  const names = JSON.parse(fs.readFileSync(cfgPath, 'utf8')).projects.map(p => p.name).filter(n => !['chef', 'orchestrateur'].includes(n));
+  // The orchestrator's own dev instance (`devOf: orchestrateur`, 0.68.0) is
+  // this public repository too, not a private project.
+  const names = JSON.parse(fs.readFileSync(cfgPath, 'utf8')).projects
+    .filter(p => !['chef', 'orchestrateur'].includes(p.name) && p.devOf !== 'orchestrateur').map(p => p.name);
   const leaked = names.filter(n => new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(reg));
   ok(leaked.length === 0, `aucun nom de projet privé dans le registre${leaked.length ? ' — ' + leaked.join(', ') : ''}`);
 }
