@@ -79,7 +79,8 @@ import { mountGatewayRoutes } from './scripts/responses-gateway.mjs';
 import { createApiKeys } from './scripts/api-keys.mjs';
 import { createPermissionStore, mountPermissionRoutes } from './scripts/permission-store.mjs';
 // Pipelines, phase 1 (0.41.0) : chaque entrée est classée et journalisée, sans effet.
-import { createObserver, TerminalLineBuffer, ENTRY_KINDS, classify as classifyEntrySync } from './scripts/pipeline-observe.mjs';
+import { createObserver, TerminalLineBuffer, ENTRY_KINDS, explicitChoice } from './scripts/pipeline-observe.mjs';
+import { classifyEntry } from './scripts/pipeline-classify.mjs';
 import { readEnforcement, isEnforced, ENGINE_PIPELINES, RUN_RE } from './scripts/pipeline-engine.mjs';
 import { TerminalRouter, discussionArgs, encodeFrame, targetOf, HOLD_TIMEOUT_MS } from './scripts/terminal-route.mjs';
 import { pipelineOptsFrom, pipelineArgs, withPipelinePrefix } from './scripts/pipeline-entry-opts.mjs';
@@ -110,11 +111,10 @@ const SECRETS_DIR     = path.join(__dirname, 'secrets');
 const PKG_VERSION     = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version;
 // Pipelines, phase 1 (observation) : créé avant tout ce qui peut lancer un tour
 // au démarrage (réveil réhydraté, file, pool).
-// Les mots-clés des lacunes acceptées (page Models) complètent le classifieur.
-// `modelRouting` est défini plus bas : avant lui, aucune règle ajoutée.
+// 0.66.0 : le journal ne garde que les choix explicites (aucun mot-clé) ; le
+// classement par le sens est fait par le model de la case routage.classifier.
 const pipelineObserver = createObserver({
   logsDir: LOGS_DIR,
-  extraRules: () => (typeof modelRouting === 'undefined' ? [] : modelRouting.classifierExtras()),
 });
 const OBS_ID_RE = /^obs-[a-z0-9-]{4,40}$/;
 // Outils d'un musicien quand config.json n'a pas de defaults.allowedTools.
@@ -2877,7 +2877,7 @@ mountGatewayRoutes(app, express, {
 // Classifications récentes (phase 1 des pipelines, observation seule).
 app.get('/api/pipeline-observe', (req, res) => {
   const n = Math.min(500, Math.max(1, Number(req.query.n) || 100));
-  res.json({ ok: true, mode: 'observation', classifier: 'règles-v1', entryKinds: ENTRY_KINDS, ...pipelineObserver.recent(n) });
+  res.json({ ok: true, mode: 'observation', classifier: 'model (routage.classifier) — aucun mot-clé', entryKinds: ENTRY_KINDS, ...pipelineObserver.recent(n) });
 });
 
 // Pipelines, phase 3 (0.48.0) : mise en service (lecture seule ici ; écriture
@@ -2959,7 +2959,6 @@ function cleanProposal(p) {
   const out = { kind: p.kind, text: String(p.text || '').slice(0, 300) };
   for (const k of ['id', 'pipeline', 'step', 'after']) if (p[k] != null) { if (!GAP_SLUG.test(String(p[k]))) return null; out[k] = String(p[k]); }
   for (const k of ['label', 'what']) if (p[k] != null) out[k] = String(p[k]).slice(0, 160);
-  if (Array.isArray(p.keywords)) out.keywords = p.keywords.map(x => String(x).slice(0, 30)).slice(0, 6);
   if ((p.kind === 'pipeline' || p.kind === 'variante' || p.kind === 'etape') && !out.id) return null;
   if (!out.text) out.text = `${p.kind} ${out.id || out.pipeline || ''}`.trim();
   return out;
@@ -5706,13 +5705,28 @@ app.ws('/ws/pty', (ws, req) => {
   };
   // Phase 5 (0.52.0) : terminal routé — une ligne d'action est retenue jusqu'à
   // confirmation (lancer en exécution, envoyer quand même en Discussion, annuler).
-  const router = new TerminalRouter({ classify: (line) => classifyEntrySync({ text: line }) });
+  // 0.66.0: only explicit choices are decided here; any other line is classified
+  // by the classifier model (by its meaning), never by keywords.
+  const router = new TerminalRouter({ classify: (line) => explicitChoice({ text: line }) });
   let holdTimer = null;
   const sendFrame = (obj) => { try { ws.send(encodeFrame(obj)); } catch {} };
   const announce = (hold) => {
     if (!hold) return;
+    if (hold.toClassify) {
+      // Held while the model reads it: a discussion goes on at once; an action,
+      // or a failed classification, is shown for confirmation (never a guess).
+      hold.toClassify = false;
+      try { ws.send('\r\n\x1b[2m[orchestrateur] classement par le model…\x1b[0m\r\n'); } catch {}
+      classifyEntry({ root: __dirname, logsDir: LOGS_DIR, text: hold.line, project: 'central', entry: 'terminal' }).then((c) => {
+        if (!c.failed && c.pipeline === 'discussion') return decide({ id: hold.id, action: 'discuss' });
+        hold.classification = c.failed ? { pipeline: null, mode: null, failed: c.why } : { pipeline: c.pipeline, mode: c.mode, kind: c.kind || null };
+        announce(hold);
+      }).catch((e) => { hold.classification = { pipeline: null, mode: null, failed: e.message }; announce(hold); });
+      return;
+    }
     const t = targetOf(hold.line, config.projects, conductorName());
     const label = hold.shell ? 'commande directe (shell / mémoire), interdite en Discussion'
+      : hold.classification.failed ? `classement impossible par le model (${hold.classification.failed}) — à vous de choisir`
       : `${hold.classification.pipeline}${hold.classification.pipeline === 'dev' ? ` (${hold.classification.mode === 'complet' ? 'complet' : 'léger'})` : ''}`;
     sendFrame({ type: 'route-confirm', id: hold.id, line: hold.line, pipeline: hold.classification.pipeline, mode: hold.classification.mode || null,
       shell: hold.shell, target: t.project, actions: hold.shell ? ['run', 'cancel'] : ['run', 'discuss', 'cancel'] });

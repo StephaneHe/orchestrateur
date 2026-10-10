@@ -262,7 +262,7 @@ section('7. De bout en bout (vrai dispatch.mjs) : « après O » libéré par le
     conductor: 'chef', defaults: { model: 'claude-haiku-5-5', allowedTools: 'Read,Edit,Write,Bash', provider: 'claude' },
     projects: [{ name: 'chef', path: path.join(R, 'chef') }, { name: 'P', path: P }, { name: 'O', path: O }],
   }));
-  fs.writeFileSync(path.join(R, 'model-routing.json'), JSON.stringify({ version: 2, assignments: {
+  fs.writeFileSync(path.join(R, 'model-routing.json'), JSON.stringify({ version: 2, assignments: { 'routage.classifier': { provider: 'anthropic', model: 'claude-haiku-5-5' },
     'dev.rouge': { provider: 'anthropic', model: 'claude-opus-5-5' }, 'dev.vert': { provider: 'anthropic', model: 'claude-sonnet-5-5' },
     'dev.revue': { provider: 'anthropic', model: 'claude-fable-5-1' }, 'dev.livrer': { provider: 'anthropic', model: 'claude-sonnet-5-5' },
   }, history: [], enforcement: { projects: ['P'], pipelines: ['discussion', 'dev'] } }));
@@ -290,7 +290,7 @@ section('7. De bout en bout (vrai dispatch.mjs) : « après O » libéré par le
   const runsOf = (p) => fs.readdirSync(path.join(L2, 'runs')).filter(d => JSON.parse(fs.readFileSync(path.join(L2, 'runs', d, 'run.json'), 'utf8')).project === p);
 
   // A paused run on P (the frenchradio case: honest green test, no claim).
-  let r = await dispatch(['P', 'Passe la version à 1.5.4 (déjà fait)', '--mode', 'leger'], { FAKE_PIPE_COVERED: '0', FAKE_PIPE_NOCLAIM: '1' });
+  let r = await dispatch(['P', 'Passe la version à 1.5.4 (déjà fait)', '--pipeline', 'dev', '--mode', 'leger'], { FAKE_PIPE_COVERED: '0', FAKE_PIPE_NOCLAIM: '1' });
   const run = runsOf('P')[0];
   ok(r.code === 2 && run && JSON.parse(fs.readFileSync(path.join(L2, 'runs', run, 'run.json'), 'utf8')).status === 'paused', `exécution de P en pause (${run})`, r.out.slice(-600));
 

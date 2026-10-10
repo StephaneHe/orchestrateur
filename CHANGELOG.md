@@ -11,6 +11,75 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.66.0] - 2026-10-10
+
+Demande de l'utilisateur : « Ce n'est pas une recherche de mot qui pourra faire
+un routage efficace, c'est une recherche de sens que seul un modele peut faire ».
+Tout le routage et tout le classement par mots-clés sont supprimés. Seul le
+model de la case `routage.classifier` décide.
+
+### Removed
+- (server) **Classifieur à règles `règles-v1`** (`pipeline-observe.mjs`) :
+  tables de mots-clés pondérés par pipeline, détection de question ou de
+  demande d'action, verbes de production média, mots « lourd » et « léger »,
+  et `classify()`. Il servait de **repli** au classement par model (case vide,
+  model en échec), au mode d'un `--pipeline dev` sans `--mode`, au journal
+  d'observation et au terminal routé.
+- **Détection des lacunes par mots** (`detectGap`, `significantWords`) et
+  **mots-clés appris des lacunes acceptées** (`classifierExtras`,
+  `keywords`). Une lacune n'est plus « reconnue par les mots … ».
+- **`devKind`** (nature bugfix / mécanique / simple devinée par mots) et
+  **`isDeliveryFix`** (constat de revue retrié par mots).
+- **Regex de variantes** des étapes Images, Vidéo et Audio.
+- **Mots d'arrêt** (`STOP_WORDS`, `detectStopWord`) de
+  `src/interrupt_policy.mjs` (non branchés dans le serveur).
+
+### Changed
+- (server) `classifyEntry` décide **par le sens** : pipeline, mode, nature
+  d'une demande de dev et lacune proposée, pris en compte avec les choix
+  explicites déjà faits. Les pipelines proposés au model incluent les
+  lacunes acceptées, par leur description.
+- (server) **Model indisponible, case vide ou réponse invalide : une pause
+  avec question**, jamais un repli. La demande est gardée dans
+  `logs/<projet>.a-classer.json`, donc aucun message n'est perdu. Réponses :
+  - « continuer » : nouvel essai ;
+  - un préfixe seul, par exemple « /dev /léger » : appliqué à la demande
+    gardée ;
+  - « abandonner » : la demande est oubliée.
+- (server) Une variante d'étape média est choisie par le model
+  (`chooseOption`). En cas d'échec, l'exécution se met en pause
+  `classifier`, et « continuer » réessaie.
+- (server) Le terminal routé fait classer toute ligne sans choix explicite par
+  le model. Une Discussion est transmise ; sinon, ou si le classement échoue,
+  une confirmation est demandée.
+- (server) Le journal d'observation ne garde que le choix explicite (« à
+  classer » sinon). La page Models le dit (« Aucun classement par
+  mots-clés »).
+- `dispatch.mjs` : nouveau drapeau `--kind simple|bugfix|mecanique` (nature
+  explicite). Le moteur refuse une demande de dev sans nature.
+- **Gardés**, car ce sont des choix explicites et non des recherches de mots :
+  préfixes `/dev`, `/complet`, `/discussion`…, drapeaux, entrées système,
+  `!`/`#`, `!interrupt`, réponses aux pauses, identifiants d'exécution cités,
+  sentinelles.
+
+### Tests
+- `scripts/_test_no_lexical_routing.mjs` (32 contrôles) :
+  - scan statique des modules (aucune mécanique de mots-clés) ;
+  - échec du model donne un échec explicite ;
+  - avec le vrai `dispatch.mjs` : pause sans perte de message, puis
+    « continuer », préfixe ou « abandonner » ;
+  - nature et lacune données par le model ;
+  - variante choisie par le model, ou pause.
+- Réécrits pour la nouvelle règle : `_test_pipeline_observe.mjs`,
+  `_test_pipeline_gaps.mjs`, `_test_pipeline_entries.mjs` (l'échec du model
+  donne une pause, le terminal passe par le model) et les parcours HTTP
+  `pipeline-observe`, `pipeline-gaps`, `pipeline-all-entries` et
+  `terminal-routing`.
+- Les suites qui comptaient sur le repli par règles affectent la case
+  `routage.classifier` ou font un choix explicite.
+- `_test_pool_chef_dispatch.mjs` ne lit plus que la fin de
+  `logs/orchestrateur.jsonl`, qui dépassait la taille maximale d'une chaîne.
+
 ## [0.65.0] - 2026-10-10
 
 Règle de l'utilisateur : « tout problème détecté doit bloquer une livraison et

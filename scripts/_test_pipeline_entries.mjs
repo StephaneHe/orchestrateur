@@ -19,7 +19,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as C from './pipeline-classify.mjs';
 import * as TR from './terminal-route.mjs';
-import { classify } from './pipeline-observe.mjs';
+import { explicitChoice } from './pipeline-observe.mjs';
 import { readEnforcement, writeEnforcement } from './pipeline-engine.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -33,26 +33,27 @@ const routing = (assignments, enforcement = { projects: ['P'], pipelines: ['disc
   fs.writeFileSync(path.join(T, 'model-routing.json'), JSON.stringify({ version: 2, assignments, history: [], enforcement }));
 
 // ---------------------------------------------------------------------------
-section('1. Classement par le model de la case routage.classifier');
+section('1. Classement par le model de la case routage.classifier — sans aucun repli par mots-clés (0.66.0)');
 const fakeShot = (answers) => { const calls = []; return { calls, fn: async (prompt, o) => { calls.push({ prompt, model: o.model }); const a = answers.shift(); return typeof a === 'string' ? { ok: true, text: a } : a; } }; };
-ok(C.parseClassification('{"pipeline":"dev","mode":"complet","raison":"nouvelle vue"}')?.mode === 'complet', 'JSON valide accepté');
-ok(C.parseClassification('Voici : {"pipeline":"dev","mode":"leger"} fin')?.pipeline === 'dev', 'JSON entouré de texte accepté');
+ok(C.parseClassification('{"pipeline":"dev","mode":"complet","nature":"comportement","raison":"nouvelle vue"}')?.mode === 'complet', 'JSON valide accepté');
+ok(C.parseClassification('Voici : {"pipeline":"dev","mode":"leger","nature":"bugfix"} fin')?.kind === 'bugfix', 'JSON entouré de texte accepté ; la nature d’une demande de dev est lue');
 ok(C.parseClassification('{"pipeline":"routage","mode":"leger"}') === null, 'Routage refusé (pipeline du chef)');
 ok(C.parseClassification('{"pipeline":"inconnu","mode":"leger"}') === null && C.parseClassification('{"pipeline":"dev"}') === null && C.parseClassification('non') === null, 'pipeline inconnu, mode absent, texte libre → refusés');
+ok(C.parseClassification('{"pipeline":"dev","mode":"leger"}') === null, 'dev sans nature → refusé (la nature est classée par le model, pas devinée)');
 ok(/\[CLASSIFY\]/.test(C.classificationPrompt('x')) && /discussion/.test(C.classificationPrompt('x')) && !/- routage:/.test(C.classificationPrompt('x')), 'prompt : marqueur, liste des pipelines sans Routage');
 
 routing({});
-let s = fakeShot(['{"pipeline":"dev","mode":"leger","raison":"x"}']);
+let s = fakeShot(['{"pipeline":"dev","mode":"leger","nature":"comportement","raison":"x"}']);
 let r = await C.classifyEntry({ root: T, logsDir: path.join(T, 'logs'), text: 'ajoute un bouton', oneShot: s.fn });
-ok(r.classifier === 'règles-v1' && s.calls.length === 0 && /non affectée/.test(r.note), 'case vide → règles, sans appel au model, note');
+ok(r.failed === true && s.calls.length === 0 && /routage\.classifier/.test(r.why) && !r.pipeline, 'case vide → ÉCHEC (pause chez l’appelant), sans appel au model, jamais de règles');
 
 routing({ 'routage.classifier': { provider: 'anthropic', model: 'claude-haiku-5-5' } });
-s = fakeShot(['{"pipeline":"dev","mode":"complet","raison":"nouvelle fonctionnalité"}']);
+s = fakeShot(['{"pipeline":"dev","mode":"complet","nature":"comportement","raison":"nouvelle fonctionnalité"}']);
 r = await C.classifyEntry({ root: T, logsDir: path.join(T, 'logs'), text: 'implémente une page de statistiques', oneShot: s.fn });
-ok(r.classifier === 'model:claude-haiku-5-5' && r.pipeline === 'dev' && r.mode === 'complet' && s.calls[0].model === 'claude-haiku-5-5', 'case affectée → le model de la case classe');
-ok(r.rules?.pipeline && typeof r.agree === 'boolean', 'décision comparée aux règles');
+ok(r.classifier === 'model:claude-haiku-5-5' && r.pipeline === 'dev' && r.mode === 'complet' && r.kind === 'simple' && s.calls[0].model === 'claude-haiku-5-5', 'case affectée → le model de la case classe (pipeline, mode, nature)');
+ok(!('rules' in r) && !('agree' in r), 'aucune comparaison à des règles : il n’y en a plus');
 const rec = fs.readFileSync(path.join(T, 'logs', C.CLASSIFY_FILE), 'utf8').trim().split('\n').map(l => JSON.parse(l)).pop();
-ok(rec.ok && rec.model === 'claude-haiku-5-5' && rec.model_result.pipeline === 'dev', 'comparaison journalisée (pipeline-classify.ndjson)');
+ok(rec.ok && rec.model === 'claude-haiku-5-5' && rec.model_result.pipeline === 'dev', 'décision journalisée (pipeline-classify.ndjson)');
 
 s = fakeShot(['bof', '{"pipeline":"discussion","mode":"leger","raison":"question"}']);
 r = await C.classifyEntry({ root: T, logsDir: path.join(T, 'logs'), text: 'pourquoi ça marche ?', oneShot: s.fn });
@@ -60,11 +61,15 @@ ok(s.calls.length === 2 && r.pipeline === 'discussion' && r.classifier.startsWit
 
 s = fakeShot(['bof', { ok: false, why: 'délai dépassé' }]);
 r = await C.classifyEntry({ root: T, logsDir: path.join(T, 'logs'), text: 'ajoute un bouton export', oneShot: s.fn });
-ok(s.calls.length === 2 && r.classifier === 'règles-v1' && /impossible/.test(r.note) && r.pipeline === classify({ text: 'ajoute un bouton export' }).pipeline, 'deux échecs → règles, tracé');
+const recFail = fs.readFileSync(path.join(T, 'logs', C.CLASSIFY_FILE), 'utf8').trim().split('\n').map(l => JSON.parse(l)).pop();
+ok(s.calls.length === 2 && r.failed === true && /délai dépassé/.test(r.why) && !r.pipeline && recFail.ok === false, 'deux échecs → ÉCHEC tracé, aucun classement par règles');
 
 s = fakeShot([]);
-r = await C.classifyEntry({ root: T, logsDir: path.join(T, 'logs'), text: '/dev /complet ajoute un bouton', oneShot: s.fn });
-ok(s.calls.length === 0 && r.explicit && r.pipeline === 'dev' && r.mode === 'complet', 'préfixe explicite → jamais de model (le choix l’emporte)');
+r = await C.classifyEntry({ root: T, logsDir: path.join(T, 'logs'), text: '/redaction écris un courriel', oneShot: s.fn });
+ok(s.calls.length === 0 && r.explicit && r.pipeline === 'redaction', 'préfixe explicite complet → jamais de model (le choix l’emporte)');
+s = fakeShot(['{"nature":"bugfix","raison":"un défaut"}']);
+r = await C.classifyEntry({ root: T, logsDir: path.join(T, 'logs'), text: '/dev /complet corrige le titre', oneShot: s.fn });
+ok(s.calls.length === 1 && /The user already chose pipeline "dev" and mode "complet"/.test(s.calls[0].prompt) && r.pipeline === 'dev' && r.mode === 'complet' && r.kind === 'bugfix', '/dev /complet : le model ne décide que la nature, le choix explicite est gardé');
 
 routing({ 'routage.classifier': { provider: 'openai', model: 'gpt-6-astra' } });
 // 0.53.0 : tout fournisseur classe. codex : vrai lancement d'une doublure de `codex exec`.
@@ -83,26 +88,29 @@ routing({ 'routage.classifier': { provider: 'nvidia', model: 'moonshotai/kimi-k3
 r = await C.classifyEntry({ root: T, logsDir: path.join(T, 'logs'), text: 'écris un courriel au client', keys: () => 'key-nv-0000000000000000', fetchImpl: fakeFetch });
 ok(r.classifier === 'model:moonshotai/kimi-k3' && new URL(calls[1].url).host === 'integrate.api.nvidia.com' && calls[1].model === 'moonshotai/kimi-k3', 'case NVIDIA → API de NVIDIA seulement');
 r = await C.classifyEntry({ root: T, logsDir: path.join(T, 'logs'), text: 'ajoute un bouton', keys: () => null, fetchImpl: fakeFetch });
-ok(r.classifier === 'règles-v1' && /clé NVIDIA absente/.test(r.note), 'clé absente → règles, dit pourquoi');
+ok(r.failed === true && /clé NVIDIA absente/.test(r.why), 'clé absente → ÉCHEC (pause), dit pourquoi — jamais de règles');
 const last = fs.readFileSync(path.join(T, 'logs', C.CLASSIFY_FILE), 'utf8').trim().split('\n').map(l => JSON.parse(l));
 ok(last.some(x => x.provider === 'openrouter' && x.ok) && last.some(x => x.provider === 'codex' && x.ok), 'fournisseur tracé dans la comparaison');
 
 // ---------------------------------------------------------------------------
-section('2. Terminal routé : lignes retenues, confirmation, octets transmis');
-const mk = () => new TR.TerminalRouter({ classify: (l) => classify({ text: l }) });
+section('2. Terminal routé : aucune décision par mots — lignes retenues pour le model, confirmation, octets transmis');
+const mk = () => new TR.TerminalRouter({ classify: (l) => explicitChoice({ text: l }) });
 let t = mk();
-let f = t.feed('Pourquoi la suite passe ?\r');
-ok(f.forward === 'Pourquoi la suite passe ?\r' && !f.hold, 'question → transmise telle quelle');
+let f = t.feed('/discussion Pourquoi la suite passe ?\r');
+ok(f.forward === '/discussion Pourquoi la suite passe ?\r' && !f.hold, 'Discussion choisie explicitement (/discussion) → transmise telle quelle');
 f = t.feed('ajoute une fonction moitie');
 ok(f.forward === 'ajoute une fonction moitie' && !f.hold, 'frappe transmise caractère par caractère (affichage normal)');
 f = t.feed('\rsuite tapée');
-ok(f.forward === '' && f.hold?.classification.pipeline === 'dev' && f.hold.line === 'ajoute une fonction moitie', 'Entrée d’une ligne d’action → retenue (Entrée non transmise)');
+ok(f.forward === '' && f.hold?.toClassify === true && f.hold.classification === null && f.hold.line === 'ajoute une fonction moitie', 'Entrée d’une ligne sans choix explicite → retenue, à classer par le MODEL (aucune devinette par mots)');
 ok(t.feed('encore').forward === '', 'pendant l’attente, la frappe est mise de côté');
 let res = t.resolve(f.hold.id, 'run');
 ok(res.action === 'run' && res.forward === '\x15suite tapéeencore', 'lancer → Ctrl+U efface la ligne, la frappe mise de côté est rendue');
-t = mk(); f = t.feed('corrige le bug du titre\r');
+t = mk(); f = t.feed('Pourquoi la suite passe ?\r');
+ok(f.hold?.toClassify === true, 'même une question est classée par le model (le serveur la transmet si le model dit « discussion »)');
 res = t.resolve(f.hold.id, 'discuss');
 ok(res.forward === '\r', 'envoyer en Discussion → Entrée transmise');
+t = mk(); f = t.feed('/dev /complet ajoute un export\r');
+ok(f.hold?.classification?.pipeline === 'dev' && f.hold.classification.mode === 'complet' && !f.hold.toClassify, 'préfixe explicite → retenu avec le choix de l’utilisateur, sans model');
 t = mk(); f = t.feed('!del fichier\r');
 ok(f.hold?.shell === true, 'commande shell directe « ! » retenue');
 res = t.resolve(f.hold.id, 'discuss');
@@ -112,9 +120,11 @@ ok(f.hold?.shell === true, 'écriture en mémoire « # » retenue');
 t = mk(); f = t.feed('\x1b[200~ajoute un bouton\rsur deux lignes\x1b[201~');
 ok(!f.hold && f.forward.includes('\r'), 'Entrée DANS un collage : jamais interceptée');
 f = t.feed('\r');
-ok(f.hold?.line === 'ajoute un bouton sur deux lignes', 'collage validé ensuite : ligne entière classée');
+ok(f.hold?.line === 'ajoute un bouton sur deux lignes', 'collage validé ensuite : ligne entière retenue');
 t = mk(); f = t.feed('ajoute un truc\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7fpourquoi ?\r');
-ok(!f.hold, 'retour arrière appliqué avant le classement');
+ok(f.hold?.line === 'pourquoi ?', 'retour arrière appliqué avant le classement');
+const srvT = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+ok(/hold\.toClassify[\s\S]{0,600}classifyEntry\(\{ root: __dirname/.test(srvT) && /c\.pipeline === 'discussion'\) return decide\(\{ id: hold\.id, action: 'discuss' \}\)/.test(srvT), 'serveur : la ligne retenue est classée par le model ; « discussion » → transmise, sinon confirmation');
 t = mk();
 ok(t.resolve('t-inconnu', 'run') === null, 'identifiant inconnu → rien');
 const frame = TR.encodeFrame({ type: 'route-confirm', id: 'x', line: 'é' });
@@ -147,7 +157,7 @@ ok(O.pipelineArgs(o2).length === 0 && O.pipelineArgs(O.pipelineOptsFrom({ pipeli
 ok(O.withPipelinePrefix('ajoute x', { pipeline: 'dev', pipelineMode: 'complet' }) === '/dev /complet ajoute x', 'vers le chef : Dév. complet → « /dev /complet … »');
 ok(O.withPipelinePrefix('pourquoi ?', { pipeline: 'discussion' }) === '/discussion pourquoi ?', 'vers le chef : Discussion → « /discussion … »');
 ok(O.withPipelinePrefix('/léger corrige x', { pipeline: 'dev', pipelineMode: 'complet' }) === '/léger corrige x' && O.withPipelinePrefix('x', {}) === 'x', 'préfixe déjà tapé ou auto → texte inchangé');
-ok(classify({ text: O.withPipelinePrefix('ajoute x', { pipeline: 'dev', pipelineMode: 'complet' }) }).mode === 'complet', 'le préfixe produit est bien reconnu par le classement');
+ok(explicitChoice({ text: O.withPipelinePrefix('ajoute x', { pipeline: 'dev', pipelineMode: 'complet' }) }).mode === 'complet', 'le préfixe produit est bien reconnu par le classement');
 const srv = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
 ok(/text: withPipelinePrefix\(isOverride \? promptForRouting : prompt, pipelineOptsFrom\(req\.body\)\)/.test(srv), 'serveur : le message au chef porte le préfixe du sélecteur');
 ok(/queuePush\(directProj\.name, \{[^}]*\.\.\.pOpts \}\)/.test(srv) && /spawnDirectDispatch\(directProj\.name, stripped, attachmentPaths, videoPaths, \{ obsId, \.\.\.pOpts \}\)/.test(srv), 'serveur : @mention (file et lancement direct) garde le choix');
@@ -160,7 +170,7 @@ fs.mkdirSync(NG);
 fs.writeFileSync(path.join(T, 'config.json'), JSON.stringify({ conductor: 'chef', defaults: { model: 'claude-haiku-5-5', allowedTools: 'Read' }, projects: [{ name: 'chef', path: T }, { name: 'NG', path: NG }] }));
 const env = { ...process.env, DISPATCH_ROOT_FOR_TESTS: T, CLAUDE_BIN: path.join(ROOT, 'tests', 'fake_claude', 'fake_claude.mjs'), ORCH_PERM_DISABLE: '1', ORCH_PORT: '9', FAKE_CLAUDE_LATENCY_MS: '5' };
 for (const k of ['ANTHROPIC_API_KEY', 'ORCH_TURN_PROJECT', 'ORCH_TURN_STEP', 'ORCH_STEP_TOKEN', 'ORCH_OBS_ID', 'DISPATCH_SLOT']) delete env[k];
-const d = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'dispatch.mjs'), 'NG', 'ajoute un bouton', '--pipeline', 'dev'], { env, encoding: 'utf8', timeout: 60_000 });
+const d = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'dispatch.mjs'), 'NG', 'ajoute un bouton', '--pipeline', 'dev', '--mode', 'leger', '--kind', 'simple'], { env, encoding: 'utf8', timeout: 60_000 });
 const lg = fs.readFileSync(path.join(T, 'logs', 'NG.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
 ok(d.status === 64 && lg.some(e => e.type === 'user_prompt') && lg.some(e => e.type === 'result' && e.is_error && e.subtype === 'error_pipeline_refused' && /dépôt git/.test(e.result)),
   'refus écrit dans le log du musicien (demande + result ✕ avec la raison)', `${d.status} ${JSON.stringify(lg.slice(-1))}`);

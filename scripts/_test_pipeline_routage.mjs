@@ -185,8 +185,10 @@ ok(x.r.code === 0 && gap9?.entry === 'signalement' && gap9.caller === 'routage' 
 ok(x.evs.some(e => e.subtype === 'pipeline_gap'), 'le fil du chef le dit (⚑ lacune signalée)');
 const O = await import('./pipeline-observe.mjs');
 const ob = O.createObserver({ logsDir: path.join(T, 'obs-unit') });
+// 0.66.0: a gap is never detected on words at the observation, deferred or not —
+// only the model (classification, Routage) or an explicit report brings one.
 ok(!ob.record({ entry: 'dashboard:chef', project: 'chef', text: 'planifie mes vacances en Italie avec un budget serré', deferGap: true }).gap
-  && !!ob.record({ entry: 'dashboard:chef', project: 'chef', text: 'planifie mes vacances en Italie avec un budget serré' }).gap, 'à l’observation : lacune reportée quand le Routage décidera, émise sinon (comportement d’avant)');
+  && !ob.record({ entry: 'dashboard:chef', project: 'chef', text: 'planifie mes vacances en Italie avec un budget serré' }).gap, 'à l’observation : aucune lacune détectée sur des mots (le Routage ou le model de classement la proposent)');
 
 // ---------------------------------------------------------------------------
 section('7. Mise en service : désactivé par défaut, --model refusé, --hors-pipeline tracé');

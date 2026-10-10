@@ -97,7 +97,7 @@ Inventaire fait dans le code (`server.js`, `scripts/`, app Android, `ssh-server.
 - **Sur quel model** : celui de la case **`routage.classifier`** (Haiku suffit sans doute ; c'est l'utilisateur qui décide dans la page Models).
 - **Sortie imposée** : un JSON validé par le serveur, `{pipeline, mode: "leger"|"complet", raison, projets[]}`. S'il est invalide : une nouvelle tentative, puis le pipeline par défaut.
 - **Choix explicite** : il l'emporte toujours. Il passe par le sélecteur du composer ou de l'app, `--pipeline` sur `dispatch.mjs`, ou un préfixe du message (`/dev`, `/incident`, `/léger`, `/complet`…).
-- **En phase 1 (observation, 0.41.0)** : un classifieur **à règles** (`scripts/pipeline-observe.mjs`, `règles-v1`) classe toutes les entrées, sans coût ni latence. Il a été calé sur les vraies demandes du fleet. La classification par model ne remplacera ces règles qu'à la mise en service, après comparaison avec ce journal.
+- **En phase 1 (observation, 0.41.0)** : un classifieur **à règles** (`scripts/pipeline-observe.mjs`, `règles-v1`) classe toutes les entrées, sans coût ni latence. Il a été calé sur les vraies demandes du fleet. La classification par model ne remplacera ces règles qu'à la mise en service, après comparaison avec ce journal. **Depuis 0.66.0, ces règles n'existent plus** (demande utilisateur du 2026-10-10 : « c'est une recherche de sens que seul un modele peut faire ») : seul le model de `routage.classifier` classe ; un échec met en pause.
 - **Pipeline par défaut** quand rien n'est décidé : **Discussion** (lecture seule). Une demande mal classée ne modifie donc jamais rien. Q3.
 
 ### 1.4 Lacunes : ne jamais forcer un classement, toujours proposer
@@ -500,7 +500,7 @@ Chaque phase suit le protocole 0.29.0 : tag `pre-pipeline-enforce-pN-v<X.Y.Z>`, 
 
 - **Livré** :
   - classement par le model de la case `routage.classifier`
-    (`scripts/pipeline-classify.mjs`), avec repli tracé sur les règles et
+    (`scripts/pipeline-classify.mjs`) ; le repli sur les règles, d'abord prévu, a été supprimé en 0.66.0 (un échec met en pause), et
     comparaison journalisée (`logs/pipeline-classify.ndjson`). C'était
     l'écart n° 1 de la phase 3 ;
   - sélecteur de pipeline dans le composer du dashboard et de l'app Android

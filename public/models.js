@@ -361,7 +361,7 @@
   }
 
   // --- Observation (phase 1) : classifications récentes, rien n'est imposé ---
-  function pipelineLabel(id) { return st.routing?.pipelines?.find(p => p.id === id)?.label || id; }
+  function pipelineLabel(id) { return id == null || id === "null" ? "à classer (model)" : st.routing?.pipelines?.find(p => p.id === id)?.label || id; }
 
   function obsHtml() {
     if (st.obsError) return `<p class="mr-error" role="alert">${esc(st.obsError)}</p>`;
@@ -380,9 +380,10 @@
         <td class="mr-obs-dim">${esc(r.confidence || "")}</td>
         <td class="mr-obs-head" title="${esc((r.reasons || []).join(" ; "))}">${esc(r.head || "")}</td>
       </tr>`).join("");
-    return `<p class="mr-obs-intro"><b>Phase 1 — observation.</b> Chaque entrée (composer, @musicien, app, dispatch.mjs, file, réveil,
-        relais, notify, session neuve, terminal interactif) est classée et journalisée ; <b>rien n’est encore imposé</b>.
-        Inclassable = Discussion. Classifieur : ${esc(o.classifier || "")} (${o.total || 0} entrées journalisées).</p>
+    return `<p class="mr-obs-intro"><b>Observation.</b> Chaque entrée (composer, @musicien, app, dispatch.mjs, file, réveil,
+        relais, notify, session neuve, terminal interactif) est journalisée avec son choix explicite (préfixe /dev, /complet…) s’il y en a un.
+        <b>Aucun classement par mots-clés</b> : le reste est classé par le sens, par le model de la case « routage.classifier »
+        (${o.total || 0} entrées journalisées).</p>
       <div class="mr-obs-chips">${chips || '<span class="mr-empty">Aucune entrée pour l’instant.</span>'}
         ${o.counts?.unclassifiable ? `<span class="mr-obs-chip mr-warn">inclassables <b>${o.counts.unclassifiable}</b></span>` : ""}</div>
       ${rows ? `<div class="mr-obs-scroll"><table class="mr-obs-table">

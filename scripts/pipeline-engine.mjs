@@ -199,14 +199,6 @@ function readAssignments(root) {
 // ---------------------------------------------------------------------------
 const STRIP = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
-/** Nature d'une demande de développement léger : bugfix, mécanique ou simple. */
-export function devKind(text) {
-  const t = STRIP(text);
-  if (/\b(bug|corrig|fix|repar|erreur|plante|crash|regression|ne marche|ne fonctionne|casse)/.test(t)) return 'bugfix';
-  if (/\b(renomm|remplac|rename|deplac|typo|coquille|faute d'orthographe|libelle|wording|reformat)/.test(t)) return 'mecanique';
-  return 'simple';
-}
-
 /** Étapes d'une exécution, dans l'ordre. */
 export function planSteps(pipeline, { mode = 'leger', kind = 'simple' } = {}) {
   if (pipeline === 'discussion') {
@@ -252,17 +244,6 @@ export function devCatalog({ mode = 'leger', kind = 'simple' } = {}) {
     revue: { id: 'revue', title: '5 Revue', chain: ['dev.revue.code', 'dev.revue'], group: 'revue', artefact: 'revue.json', judge: true },
     livrer: { id: 'livrer', title: '6 Livrer (+ 7 Documenter)', chain: ['dev.livrer.git', 'dev.livrer'], group: 'code', artefact: 'livraison.md', final: true },
   };
-}
-
-/**
- * Constat de revue qui n'est PAS un comportement testable : documentation,
- * registre des exigences, CHANGELOG, version, commentaires (retour utilisateur
- * du 2026-10-09). Il part à l'étape Livrer, jamais dans la boucle TDD, et ne
- * consomme pas la limite de tests.
- */
-export function isDeliveryFix(text) {
-  const t = STRIP(text);
-  return /(user_requirements|registre des exigences|registre d.exigence|changelog|readme|claude\.md|documentation|\bdocs?\b|docs\/|\.md\b|numero de version|version (non |pas )?(incrementee|bumpee|a jour)|\bbump|versionname|versioncode|commentaire|tracabilite|faute d.orthographe dans la doc)/.test(t);
 }
 
 /** Items de tests.md : « - [ ] texte » / « - [x] texte », dans l'ordre.
@@ -792,12 +773,13 @@ const CODE_STEPS = {
 /** Signalement de lacune émis par le Routage (classement « lacune »). */
 async function emitRoutingGap(logsDir, project, text, why) {
   const obs = await import('./pipeline-observe.mjs');
-  const c = obs.classify({ text });
-  const detected = obs.detectGap({ text, classification: { ...c, explicit: false } });
-  const key = detected?.key || `routage:${crypto.createHash('sha1').update(String(text)).digest('hex').slice(0, 16)}`;
+  // The gap and its proposal come from the Classifier model's reasoning only —
+  // no keyword detection, no « recognised by the words … » proposal (0.66.0).
+  const key = `routage:${crypto.createHash('sha1').update(String(text)).digest('hex').slice(0, 16)}`;
   const gap = {
-    ...(detected || { reason: 'aucun-pipeline', proposal: { kind: 'rattachement', pipeline: 'discussion', text: 'rattacher la demande à un pipeline existant' } }),
-    key, why: `Routage : aucune question ouverte ni aucun contexte ne rattache ce message${why ? ` (${String(why).slice(0, 200)})` : ''}`,
+    key, reason: 'aucun-pipeline',
+    why: `Routage : aucune question ouverte ni aucun contexte ne rattache ce message${why ? ` (${String(why).slice(0, 200)})` : ''}`,
+    proposal: { kind: 'pipeline', text: why ? `proposition du model de classement : ${String(why).slice(0, 300)}` : 'ajouter un pipeline ou une étape qui couvre ce besoin (à décrire dans la page Models)' },
   };
   try { obs.createObserver({ logsDir }).record({ entry: 'signalement', project, text, caller: 'routage', gap }); } catch { /* jamais bloquant */ }
   return gap;
@@ -1122,8 +1104,10 @@ function checkCriteria(ctx, step, before, after) {
       // registry, CHANGELOG…) on the other. Since 0.65.0 BOTH block delivery
       // (user rule « tout problème détecté doit bloquer une livraison »): the
       // latter are fixed by a correction step before the item is delivered.
-      const delivery = [...(Array.isArray(j.hors_tdd) ? j.hors_tdd.map(txt).filter(Boolean) : []), ...all.filter(isDeliveryFix)];
-      const items = all.filter(i => !isDeliveryFix(i)).slice(0, 15);
+      // The split testable / non-testable is the REVIEW model's (items vs
+      // hors_tdd) — no keyword re-sorting since 0.66.0.
+      const delivery = Array.isArray(j.hors_tdd) ? j.hors_tdd.map(txt).filter(Boolean) : [];
+      const items = all.slice(0, 15);
       // Complet : ces items deviennent des cases « (revue) » de tests.md — même
       // règle que la Liste de tests (décision « c+d », 0.61.0).
       if (ctx.mode === 'complet' && items.length) {
@@ -1328,7 +1312,10 @@ export async function runPipeline(o) {
   fs.mkdirSync(artDir, { recursive: true });
   const modes = catalogOf(pipeline)?.modes;
   const mode = state?.mode || (pipeline === 'dev' && o.mode === 'complet' ? 'complet' : modes ? (modes[o.mode] ? o.mode : Object.keys(modes)[0]) : 'leger');
-  const kind = state?.kind || (pipeline === 'dev' ? devKind(prompt) : pipeline === 'incident' ? 'bugfix' : null);
+  // The nature of a dev request comes from the classifier model or --kind
+  // (0.66.0) — never guessed from its words.
+  const kind = state?.kind || (pipeline === 'dev' ? o.kind || null : pipeline === 'incident' ? 'bugfix' : null);
+  if (pipeline === 'dev' && !kind) return refuse(64, 'nature de la demande (comportement, bugfix ou mécanique) non classée : le model de classement doit la donner (ou --kind).');
   const assignments = readAssignments(root);
   if (!state) {
     state = {
@@ -1408,13 +1395,25 @@ export async function runPipeline(o) {
   try { fs.writeFileSync(pidPath, String(process.pid)); } catch {}
   let stepDefs = pipeline === 'dev' ? devCatalog({ mode: state.mode, kind }) : Object.fromEntries(planSteps(pipeline, { mode, kind }).map(s => [s.id, s]));
   const catalog = catalogOf(pipeline);
-  // Variante d'étape (média, 0.55.0) : choisie d'après la demande ; sa case passe
-  // en tête de la chaîne, et le type de fichier attendu peut en dépendre.
+  // Variante d'étape (média, 0.55.0) : sa case passe en tête de la chaîne, et le
+  // type de fichier attendu peut en dépendre. Depuis 0.66.0 elle est choisie par
+  // le SENS de la demande, par le model de la case routage.classifier — jamais
+  // par mots-clés ; un échec met l'exécution en pause (plus bas, `variantFailure`).
+  let variantFailure = null;
   if (catalog) for (const [sid, s] of Object.entries(stepDefs)) {
     if (!s.variants) continue;
-    const t = STRIP(state.request || prompt);
-    const v = Object.entries(s.variants).find(([, re]) => re.test(t))?.[0];
-    if (v) stepDefs[sid] = { ...s, variant: v, chain: [`${pipeline}.${s.id}.${v}`, ...s.chain], mediaKind: s.mediaByVariant?.[v] || s.checks?.media?.kind };
+    let v = state.variants?.[sid];
+    if (!v) {
+      const { chooseOption } = await import('./pipeline-classify.mjs');
+      const r = await chooseOption({ root, logsDir, project: projectName, request: state.request || prompt,
+        question: `Which variant of the step "${s.title}" of the "${pipeline}" pipeline does this request need?`,
+        options: Object.entries(s.variants).map(([id, what]) => ({ id, what })) });
+      if (!r.ok) { variantFailure = { step: s, why: r.why }; break; }
+      v = r.id;
+      state.variants = { ...(state.variants || {}), [sid]: v };
+      saveState();
+    }
+    stepDefs[sid] = { ...s, variant: v, chain: [`${pipeline}.${s.id}.${v}`, ...s.chain], mediaKind: s.mediaByVariant?.[v] || s.checks?.media?.kind };
   }
   // Frise annoncée : la boucle TDD se lit 4a → 4b → 4c (→ 5 Revue de l'item), répétée par item.
   const loopIds = ['rouge', 'vert', 'refactor', ...(state.itemReview ? ['revue'] : [])];
@@ -1833,6 +1832,21 @@ export async function runPipeline(o) {
     state.defectsReported = (state.defectsReported || 0) + defects.length;
     await postNotify(root, 'chef', `[DÉFAUT — ${projectName} — ${run}] ${text}`, 'pipeline-defect');
   };
+  // Variant not classified by the model (0.66.0): a pause with a question,
+  // never a keyword guess. « continuer » asks the model again.
+  if (variantFailure) {
+    const sv = variantFailure.step;
+    const opts = Object.entries(sv.variants).map(([id, what]) => `« ${id} » (${what})`).join(', ');
+    return finish({ code: 2, paused: true, limit: 'classifier',
+      notice: `⏸ ${projectName} : le model de classement n’a pas pu choisir la variante de l’étape « ${plainStep(sv.id)} »`,
+      question: `${projectName} en pause — répondez « continuer » (réessayer, par exemple après avoir choisi un model pour la case routage.classifier) ou « abandonner » : la variante de l’étape « ${plainStep(sv.id)} » n’a pas pu être choisie par le model (${variantFailure.why}).`,
+      result: pauseText({
+        what: `le choix de la variante de l’étape « ${plainStep(sv.id)} » se fait par le sens de la demande, par le model de la case « routage.classifier » de la page Models, jamais par mots-clés. Ce choix a échoué : ${variantFailure.why}. Variantes possibles : ${opts}.`,
+        options: [['continuer', 'je redemande ce choix au model (par exemple après avoir affecté un model à cette case).'], ['abandonner', 'j’arrête sans rien modifier.']],
+        recommend: ['continuer', 'une fois la case routage.classifier affectée à un model disponible.'],
+      }) });
+  }
+
   // ── Préconditions de Développement : la suite doit être verte au départ ──
   // Incident : une suite déjà rouge reproduit le problème — l'étape « test qui
   // reproduit » est alors sautée (dit), et la correction doit la rendre verte.

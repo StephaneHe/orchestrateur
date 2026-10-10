@@ -845,15 +845,18 @@ Demande utilisateur : « Il faut que toute entree dans l'orchestrateur passe par
 les pipelines decides dans la page Models ». Plan et décisions :
 `docs/PLAN-pipeline-enforcement.md`.
 
-- **Rien n'est imposé** pour l'instant. Chaque entrée est classée (pipeline et
-  mode) et journalisée dans `logs/pipeline-observe.ndjson` par
-  `scripts/pipeline-observe.mjs` (classifieur à règles `règles-v1`).
+- **Rien n'est imposé** pour l'instant. Chaque entrée est journalisée dans
+  `logs/pipeline-observe.ndjson` par `scripts/pipeline-observe.mjs`. Depuis
+  0.66.0, le journal ne garde que le **choix explicite** (`explicitChoice` :
+  préfixe, entrée système). Il n'y a plus aucun classifieur à règles ; le reste
+  est « à classer » par le model (voir « Aucun routage par mots-clés »).
   - Les entrées : `/api/dispatch` (dashboard ou Android × chef, @mention,
     musicien), `dispatch.mjs` hors serveur (`dispatch-cli`, appelant déduit du
     cwd), réveil, relais dans les deux sens, notify, session neuve, **terminal
     interactif** (une ligne validée = une entrée), et un filet de sécurité dans
     `spawnDirectDispatch`.
-  - **Inclassable = Discussion** (règle utilisateur).
+  - **Inclassable = Discussion** (règle utilisateur) : c'est une consigne du
+    model de classement depuis 0.66.0.
 - **Une entrée n'est comptée qu'une fois** : l'identifiant d'observation voyage
   dans la file, le pool et le corps du POST de `dispatch.mjs` (`obsId`), puis
   jusqu'au tour (`ORCH_OBS_ID`). `dispatch.mjs` le retire de son environnement :
@@ -873,18 +876,22 @@ les pipelines decides dans la page Models ». Plan et décisions :
 - Projet pilote dédié : `pipelineLab` (`I:\Dev\pipelineLab`, `npm test`), le
   seul projet où les phases suivantes seront mises en service d'abord.
 - **Décision Q9 (0.42.0)** : quand la classification hésite entre léger et
-  complet pour du développement, le mode est **léger** (`modeUncertain`). Le
-  classifieur compare tout **sans accents**, car l'utilisateur tape souvent sans.
+  complet pour du développement, le mode est **léger**. Depuis 0.66.0, c'est une
+  consigne du model de classement (`classificationPrompt`).
 - **Lacunes (0.42.0)**. Règle utilisateur : « si il manque des taches, ou une
   etape ne peut pas etre classee en une tache precise, il faut remonter
   l'information en proposant une solution ».
-  - **Détection** : `detectGap()` dans `pipeline-observe.mjs`.
-    - Il y a lacune pour une demande d'**action** qu'aucun pipeline ne
-      reconnaît, ou pour un classement flou (égalité entre deux pipelines).
-    - Les remarques, les questions et les messages internes (`[…]`, réponses
-      relayées) ne sont pas des lacunes.
-    - Le signalement est porté par l'enregistrement d'observation (`gap`), avec
-      une proposition et une alternative.
+  - **Détection (0.66.0) : par le model, jamais par mots.** `detectGap()`
+    n'existe plus.
+    - Le model de classement renvoie `lacune` (une phrase de proposition) pour
+      une demande d'action qu'aucun pipeline ne couvre. `dispatch.mjs`
+      l'enregistre (`entry: 'signalement'`, clé `model:<hash>`).
+    - Le Routage du chef (Classifier « lacune ») le fait par
+      `emitRoutingGap`.
+    - Un signalement explicite passe par `POST /api/pipeline-gaps`.
+    - Une lacune acceptée complète la **description** des pipelines lue par le
+      model (`classifierChoices`). Elle n'apprend plus aucun mot-clé
+      (`classifierExtras` supprimé).
   - **Lecture et décisions** :
     - `GET /api/pipeline-gaps` regroupe les signalements par clé ;
     - les décisions vont dans `model-routing.json` (`gapDecisions`) ;
@@ -1073,12 +1080,12 @@ Suite de la demande du 2026-10-09. Plan : `docs/PLAN-pipeline-enforcement.md`.
 
 - **Classement** : `scripts/pipeline-classify.mjs` (`classifyEntry`), appelé
   par la porte de `dispatch.mjs` pour toute demande sans choix explicite.
-  - Il utilise le model de la case `routage.classifier` (Claude seulement,
-    via `oneShotClaude`, sans outils).
-  - Sortie JSON validée, une nouvelle tentative, puis les règles
-    (`règles-v1`), avec une note.
-  - Chaque décision du model est comparée aux règles dans
-    `logs/pipeline-classify.ndjson`.
+  - Il utilise le model de la case `routage.classifier`, tout fournisseur
+    depuis 0.53.0.
+  - Sortie JSON validée (pipeline, mode, nature d'une demande de dev,
+    lacune), avec une nouvelle tentative. **Plus aucun repli par règles
+    depuis 0.66.0** : voir « Aucun routage par mots-clés ».
+  - Chaque décision ou échec est tracé dans `logs/pipeline-classify.ndjson`.
 - **Aucun tour hors pipeline** sur un projet en service. Un pipeline pas
   encore en service donne une Discussion, avec
   `classification.notInService` et une note. Seule sortie :
@@ -1098,8 +1105,11 @@ Suite de la demande du 2026-10-09. Plan : `docs/PLAN-pipeline-enforcement.md`.
   on|off --terminal`, et désactivé par `off --all`.
   - Module `scripts/terminal-route.mjs` (`TerminalRouter`,
     `discussionArgs`, trames OSC `OrchRoute`).
-  - Le serveur retient les lignes d'action, envoie `route-confirm`, et
+  - Le serveur retient chaque ligne sans choix explicite, la fait classer par
+    le model (0.66.0, `toClassify`) et la transmet si c'est une Discussion.
+    Sinon, ou en cas d'échec du classement, il envoie `route-confirm` et
     attend `{type:'route', id, action: run|discuss|cancel, project?}`.
+    `!`/`#` et les préfixes restent décidés sans model.
   - La lecture seule s'applique au **prochain lancement** du claude central.
   - Aucun client du dashboard n'ouvre `/ws/pty` aujourd'hui : le protocole
     est servi et testé, mais il n'y a pas d'interface.
@@ -1116,6 +1126,48 @@ Suite de la demande du 2026-10-09. Plan : `docs/PLAN-pipeline-enforcement.md`.
   et à l'@mention, préfixe vers le chef, session neuve, terminal. Le
   classement par model et la règle « aucun tour hors pipeline » sont dans
   `dispatch.mjs` : ils sont actifs tout de suite.
+
+## Aucun routage par mots-clés (0.66.0)
+
+Demande utilisateur (2026-10-10) : « Ce n'est pas une recherche de mot qui
+pourra faire un routage efficace, c'est une recherche de sens que seul un
+modele peut faire ». **Toute décision de routage ou de classement est prise
+par le model de la case `routage.classifier`.**
+
+- **Supprimés** :
+  - le classifieur `règles-v1` (`RULES`, `QUESTION_START`, `ACTION_REQUEST`,
+    `MEDIA_VERB`, `HEAVY`/`LIGHT`, `classify`) ;
+  - le repli par règles de `classifyEntry` ;
+  - `detectGap` et `significantWords` ;
+  - les mots-clés appris des lacunes (`classifierExtras`, `keywords`) ;
+  - `devKind` (nature d'une demande de dev) ;
+  - `isDeliveryFix` (tri d'un constat de revue) ;
+  - les regex de variantes média ;
+  - le classement par mots du terminal routé ;
+  - les mots d'arrêt (`STOP_WORDS`) de `src/interrupt_policy.mjs`.
+- **Gardés**, car ce sont des choix explicites et non des recherches de mots :
+  - les préfixes `/dev /complet /discussion…` (`explicitChoice`) ;
+  - les drapeaux `--pipeline`, `--mode` et `--kind` ;
+  - les entrées système (réveil, relais, notify → Routage) ;
+  - `!`/`#` du terminal ;
+  - la commande `!interrupt` ;
+  - les réponses aux menus des pauses (« continuer », « accepter »…) ;
+  - les identifiants d'exécution cités (`RUN_ID_RE`) ;
+  - les sentinelles `NEEDS_USER_INPUT` / `NEEDS_CHEF_INPUT`.
+- **Échec du model** (case vide, model indisponible, réponse invalide deux
+  fois) : `classifyEntry` renvoie `{ failed }`. `dispatch.mjs` écrit alors une
+  pause (`NEEDS_USER_INPUT`) et **garde la demande** dans
+  `logs/<projet>.a-classer.json`. Réponses possibles :
+  - « continuer » : nouvel essai ;
+  - un préfixe seul, comme « /dev /léger » : appliqué à la demande gardée ;
+  - « abandonner » : la demande est oubliée.
+
+  Jamais de repli lexical. Pour une variante média, l'exécution se met en
+  pause `classifier`.
+- Recette : `_test_no_lexical_routing.mjs`. Elle fait un scan statique des
+  modules et vérifie, avec le vrai dispatch, la pause sans perte de message,
+  la nature, la variante et la lacune par le model. Les suites d'observation,
+  de lacunes et d'entrées ont été réécrites dans ce sens.
 
 ## Pipelines obligatoires — phase 6, lot A : autres pipelines (0.53.0)
 
@@ -1195,9 +1247,11 @@ Suite de la demande du 2026-10-09. Plan : `docs/PLAN-pipeline-enforcement.md`.
   - `mediaByVariant` change le type attendu.
   - `wer: true` mesure la transcription contre `reference.txt` ou
     `cfg.werReference` (maximum `cfg.werMax`, 0,35 par défaut).
-- **Variantes** (`variants: {nom: regex}` sur la demande sans accents, la
-  première qui correspond) : la case `pipeline.étape.variante` passe en tête
-  de `chain`.
+- **Variantes** (`variants: {nom: description}`) : depuis 0.66.0, le model de
+  la case `routage.classifier` choisit la variante par le sens de la demande
+  (`chooseOption`), mémorisée dans `state.variants`. Un échec met l'exécution
+  en pause (`classifier`) ; « continuer » réessaie. La case
+  `pipeline.étape.variante` passe en tête de `chain`.
 - **Outil local** : `localToolFor(assignments, chain)` repère une case
   `provider: 'local'`. L'étape reçoit `OUTIL_LOCAL=`.
 - La vérification reçoit `ctx.lastMedia`. Les fichiers produits sont listés
@@ -1252,11 +1306,10 @@ Suite de la demande du 2026-10-09. Plan : `docs/PLAN-pipeline-enforcement.md`.
   attendre la tâche dans `logs/routage-pending.json`. Le mode réveil passe
   par l'étape **Relancer** (code), qui la lance après un result réel de la
   tâche attendue.
-- **Lacunes** : l'observateur a l'option `deferGap`. Pour un message au chef
-  routé ou à un projet en service, aucune lacune n'est signalée à
-  l'observation : le Routage la signale (`emitRoutingGap`) si le Classifier
-  conclut à « lacune », et la porte de `dispatch.mjs` seulement si le
-  classement a fini par les règles.
+- **Lacunes** : aucune n'est jamais signalée à l'observation (0.66.0). Le
+  Routage la signale (`emitRoutingGap`) si le Classifier conclut à « lacune »,
+  avec la raison du model pour proposition. La porte de `dispatch.mjs` la
+  signale quand le model de classement renvoie `lacune`.
 - Rejet avec motif : `decideGap(…, {reason})`.
 - Recette : `_test_pipeline_routage.mjs`, sections 8 et 9.
 
@@ -1455,9 +1508,9 @@ probleme pour le model utilise ».
 - **Revue** : elle ne relève jamais l'absence de version, de CHANGELOG ou de
   ligne d'exigence. C'est l'étape Livrer qui les ajoute et les fait vérifier.
 - **Constats non testables** (retour utilisateur, 0.50.1). La Revue rend
-  `items` (comportements) et `hors_tdd`. Pour l'ancien format, le tri se fait
-  par `isDeliveryFix` (doc, README, registre, CHANGELOG, version,
-  commentaires).
+  `items` (comportements) et `hors_tdd`. Depuis 0.66.0, ce tri est celui du
+  model de la Revue seulement : `isDeliveryFix`, qui retriait par mots-clés, a
+  été supprimé.
   - **Depuis 0.65.0, ils bloquent la livraison** (voir ci-dessous) : ils ne
     vont plus à Livrer. Une étape `vert` de correction (`reviewItems`,
     `state.fixGroup`) les corrige, puis l'item est relu de nouveau.
@@ -1561,10 +1614,12 @@ probleme pour le model utilise ».
   - insertion de `liste-tests, @loop` ;
   - événement `system/pipeline_escalate` ;
   - mention dans le résultat.
-- **Mode** : `--mode leger|complet`, sinon la classification
-  (`pipeline-observe.classify`) : nouvelle fonctionnalité → complet,
-  hésitation → léger (Q9), préfixes `/léger` et `/complet`. Le champ
-  `pipelineMode` voyage dans la file.
+- **Mode et nature** : `--mode leger|complet` et `--kind
+  simple|bugfix|mecanique` (0.66.0), ou les préfixes `/léger` et `/complet`.
+  Sinon, le model de classement décide : nouvelle fonctionnalité → complet,
+  hésitation → léger (Q9). Le moteur ne devine plus la nature (`devKind`
+  supprimé) et refuse une demande de dev sans nature. Le champ `pipelineMode`
+  voyage dans la file.
 - **Limites** : `items`, `green`, `criteria`, `review` et `duration`. Chacune
   produit `notification/pipeline_limit`, l'état `input` (question) et
   `/api/notify` au chef (`pipeline-limit`). Réglage en test :

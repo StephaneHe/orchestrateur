@@ -53,7 +53,7 @@ fs.writeFileSync(path.join(T, 'config.json'), JSON.stringify({
   projects: [{ name: 'chef', path: path.join(T, 'chef') }, { name: 'P', path: P }],
 }));
 fs.writeFileSync(path.join(T, 'model-routing.json'), JSON.stringify({
-  version: 2, assignments: {
+  version: 2, assignments: { 'routage.classifier': { provider: 'anthropic', model: 'claude-haiku-5-5' },
     'dev.rouge': { provider: 'anthropic', model: 'claude-opus-5-5' },
     'dev.vert': { provider: 'anthropic', model: 'claude-sonnet-5-5' },
     'dev.revue': { provider: 'anthropic', model: 'claude-fable-5-1' },
@@ -111,7 +111,7 @@ section('1. Briques : preuve d’un DEJA_COUVERT, cause d’un échec de tests')
 // ---------------------------------------------------------------------------
 section('2. Léger, comportement déjà présent : DEJA_COUVERT prouvé accepté, sans 4b, livraison qui le mentionne');
 reset(); try { fs.unlinkSync(DUMP); } catch {}
-let r = await go([REQ, '--mode', 'leger'], { FAKE_PIPE_COVERED: '0', FAKE_CLAUDE_DUMP_PROMPT: DUMP });
+let r = await go([REQ, '--pipeline', 'dev', '--mode', 'leger'], { FAKE_PIPE_COVERED: '0', FAKE_CLAUDE_DUMP_PROMPT: DUMP });
 ok(r.code === 0, `exécution terminée (code ${r.code})`, r.out.slice(-1500));
 ok(seq(r.done) === 'rouge,vert:skipped,revue,livrer', `enchaînement : ${seq(r.done)}`);
 const rg = r.done.find(d => d.pipeline.step === 'rouge');
@@ -130,7 +130,7 @@ ok(fs.existsSync(path.join(P, 'test', 'pipe-covered.test.mjs')) && g('rev-list',
 // ---------------------------------------------------------------------------
 section('3. Refus « de forme » d’un DEJA_COUVERT honnête : essai non compté (une fois)');
 reset();
-r = await go([REQ, '--mode', 'leger'], { FAKE_PIPE_COVERED: '0', FAKE_PIPE_PROOF: 'none:2' });
+r = await go([REQ, '--pipeline', 'dev', '--mode', 'leger'], { FAKE_PIPE_COVERED: '0', FAKE_PIPE_PROOF: 'none:2' });
 let rr = r.done.filter(d => d.pipeline.step === 'rouge');
 ok(r.code === 0 && rr.length === 3 && rr[0].status === 'refused' && rr[1].status === 'refused' && rr[2].status === 'ok',
   `sans preuve 2 fois : 3 essais (2 + 1 non compté), puis accepté — ${rr.map(d => d.status).join(',')} (code ${r.code})`, r.out.slice(-800));
@@ -138,19 +138,19 @@ ok(/sans preuve/.test(rr[0].why || ''), `motif du refus : ${rr[0].why}`);
 ok(r.evs.filter(e => e.subtype === 'pipeline_retry_not_counted').length === 1, 'un seul essai non compté, tracé (pipeline_retry_not_counted)');
 
 reset();
-r = await go([REQ, '--mode', 'leger'], { FAKE_PIPE_COVERED: '0', FAKE_PIPE_NOTEST: '1:1' });
+r = await go([REQ, '--pipeline', 'dev', '--mode', 'leger'], { FAKE_PIPE_COVERED: '0', FAKE_PIPE_NOTEST: '1:1' });
 rr = r.done.filter(d => d.pipeline.step === 'rouge');
 ok(r.code === 0 && rr.length === 2 && rr[0].status === 'refused' && /réécris le test/.test(rr[0].why || '') && rr[1].status === 'ok',
   `cas réel (essai 2 sans test réécrit) : refus explicite non compté, puis accepté — ${rr.map(d => `${d.status}:${(d.why || '').slice(0, 60)}`).join(' | ')}`, r.out.slice(-800));
 
 reset();
-r = await go([REQ, '--mode', 'leger'], { FAKE_PIPE_COVERED: '0', FAKE_PIPE_PROOF: 'none' });
+r = await go([REQ, '--pipeline', 'dev', '--mode', 'leger'], { FAKE_PIPE_COVERED: '0', FAKE_PIPE_PROOF: 'none' });
 rr = r.done.filter(d => d.pipeline.step === 'rouge');
 ok(r.code === 2 && rr.length === 3 && rr.every(d => d.status === 'refused'), `jamais de preuve : borné à 3 essais, puis pause (code ${r.code}, ${rr.length} essais)`);
 ok(runState(r.run).status === 'paused', 'exécution en pause (limite)');
 
 reset();
-r = await go([REQ, '--mode', 'leger'], { FAKE_PIPE_COVERED: '0', FAKE_PIPE_NOCLAIM: '1' });
+r = await go([REQ, '--pipeline', 'dev', '--mode', 'leger'], { FAKE_PIPE_COVERED: '0', FAKE_PIPE_NOCLAIM: '1' });
 rr = r.done.filter(d => d.pipeline.step === 'rouge');
 ok(r.code === 2 && rr.length === 2 && rr.every(d => d.status === 'refused' && /DEJA_COUVERT/.test(d.why) && /preuve/.test(d.why)),
   'test vert SANS déclaration : règle stricte inchangée (2 refus avec l’indication DEJA_COUVERT + preuve, puis pause)');

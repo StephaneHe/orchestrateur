@@ -99,7 +99,7 @@ ok(!enf.projects.length && !enf.chef && !enf.terminal, 'retour arrière EN BLOC 
 // ---------------------------------------------------------------------------
 section('5. Relevé : exécutions, hors pipeline, tours ordinaires, refus, pauses, jours sans contournement');
 const since = '2026-10-01T00:00:00.000Z';
-fs.writeFileSync(path.join(T, 'model-routing.json'), JSON.stringify({ version: 2, assignments: {}, history: [], enforcement: { projects: ['G'], pipelines: ['discussion', 'dev'], generalSince: since } }));
+fs.writeFileSync(path.join(T, 'model-routing.json'), JSON.stringify({ version: 2, assignments: { 'routage.classifier': { provider: 'anthropic', model: 'claude-haiku-5-5' },}, history: [], enforcement: { projects: ['G'], pipelines: ['discussion', 'dev'], generalSince: since } }));
 const ev = (o) => JSON.stringify(o);
 fs.writeFileSync(path.join(T, 'logs', 'G.jsonl'), [
   ev({ type: 'user_prompt', text: 'ancien', timestamp: '2026-09-30T10:00:00Z' }),

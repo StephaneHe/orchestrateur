@@ -72,7 +72,7 @@ const writeConfig = () => fs.writeFileSync(path.join(T, 'config.json'), JSON.str
 writeConfig();
 const routing = (pipelines = E.ENGINE_PIPELINES, extra = {}) => fs.writeFileSync(path.join(T, 'model-routing.json'), JSON.stringify({
   version: 2, history: [], enforcement: { projects: NAMES, pipelines },
-  assignments: {
+  assignments: { 'routage.classifier': { provider: 'anthropic', model: 'claude-haiku-5-5' },
     'incident.detecter': { provider: 'anthropic', model: 'claude-opus-5-5' },
     'incident.corriger': { provider: 'anthropic', model: 'claude-sonnet-5-5' },
     'recherche.synthetiser': { provider: 'anthropic', model: 'claude-sonnet-5-5' },
@@ -177,7 +177,8 @@ ok(rd[0]?.status === 'refused' && /seuls des documents/.test(rd[0].why) && rd[1]
 section('9. Classement automatique vers les nouveaux pipelines, et mise en service');
 repo('P');
 let n0 = logOf('P').length;
-let r = dispatch(['P', 'fais un état de l\'art comparatif des bibliothèques de tests et donne les sources', '--test', 'classement']);
+// The classifier MODEL decides « recherche » (0.66.0: by meaning, no keyword rules).
+let r = dispatch(['P', 'fais un état de l\'art comparatif des bibliothèques de tests et donne les sources', '--test', 'classement'], { FAKE_CLAUDE_CLASSIFY: JSON.stringify({ pipeline: 'recherche', mode: 'complet', raison: 'état de l’art' }) });
 let evs = logOf('P').slice(n0);
 ok(r.code === 0 && evs.find(e => e.type === 'user_prompt')?.pipeline?.pipeline === 'recherche', 'demande classée « recherche » → exécution Recherche (plus de repli en Discussion)', r.out.slice(-500));
 routing(['discussion', 'dev']);

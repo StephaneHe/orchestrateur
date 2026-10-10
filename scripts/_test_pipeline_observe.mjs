@@ -7,60 +7,59 @@
 // (réponse n° 1) « Le terminal interactif […] Il faut que ca passe dans le
 // routeur aussi. Si aucune classification possible, alors consideres une
 // discussion ».
+//
+// 0.66.0 — demande utilisateur (2026-10-10) : « Ce n'est pas une recherche de
+// mot qui pourra faire un routage efficace, c'est une recherche de sens que
+// seul un modele peut faire ». L'observation ne garde que le choix EXPLICITE ;
+// les vraies demandes du fleet ne sont plus du tout classées par mots-clés.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { classify, createObserver, TerminalLineBuffer, projectFromCwd, normalizeText, ENTRY_KINDS } from './pipeline-observe.mjs';
+import { explicitChoice, createObserver, TerminalLineBuffer, projectFromCwd, normalizeText, ENTRY_KINDS } from './pipeline-observe.mjs';
+import { classificationPrompt } from './pipeline-classify.mjs';
 import { PIPELINES } from './model-pipelines.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let ok = 0, ko = 0;
 const t = (name, cond, extra = '') => { if (cond) { ok++; console.log(`  ✓ ${name}`); } else { ko++; console.log(`  ✗ ${name} ${extra}`); } };
 
-console.log('\n── 1. Classification (règles) — vraies demandes du fleet');
+console.log('\n── 1. Plus aucun classement par mots-clés — vraies demandes du fleet : « à classer » par le model');
 const CASES = [
-  // [texte, pipeline attendu, mode attendu ou null]
-  ['Je voudrais rajouter un mode discussion sur l\'orchestrateur. Fais moi un plan', 'dev', null],
-  ['Il faut que toute entree dans l\'orchestrateur passe par les pipelines decides dans la page Models, est-ce deja le cas ?', 'dev', null],
-  ['donne la possibilité d\'augmenter ou diminuer la taille de la police', 'dev', null],
-  ['implémente une fonction de lecture audio des réponses, déjà du chef', 'dev', 'complet'],
-  ['On peut aussi rajouter du travail sur images ? Videos ? Sons ?', 'dev', null],
-  ['Ce concept de mis de cote n\'a plus d\'interet. Fais une etude du code, et supprime le concept.', 'dev', 'complet'],
-  ['corrige la typo dans le README', 'dev', 'leger'],
-  ['pourquoi le serveur est lent ?', 'discussion', 'leger'],
-  ['c\'est quoi le mode léger ?', 'discussion', 'leger'],
-  ['le serveur est en panne, plus rien ne répond', 'incident', null],
-  ['fais un audit sécurité du dépôt avant publication', 'audit', null],
-  ['quelles sont les alternatives à whisper pour la transcription ?', 'recherche', null],
-  ['traduis ce texte en anglais', 'redaction', null],
-  ['crée un nouveau projet pour une app de recettes', 'nouveau', null],
-  ['scrape les annonces du site et fais un csv', 'donnees', null],
-  ['transcris l\'enregistrement de la réunion de ce matin', 'audio', null],
-  ['génère une icône pour l\'app compagnon', 'images', null],
-  ['monte la vidéo de la séance et ajoute les chapitres', 'video', null],
-  ['mets à jour les dépendances npm', 'maintenance', null],
+  'Je voudrais rajouter un mode discussion sur l\'orchestrateur. Fais moi un plan',
+  'donne la possibilité d\'augmenter ou diminuer la taille de la police',
+  'implémente une fonction de lecture audio des réponses, déjà du chef',
+  'corrige la typo dans le README',
+  'pourquoi le serveur est lent ?',
+  'le serveur est en panne, plus rien ne répond',
+  'fais un audit sécurité du dépôt avant publication',
+  'quelles sont les alternatives à whisper pour la transcription ?',
+  'traduis ce texte en anglais',
+  'transcris l\'enregistrement de la réunion de ce matin',
+  'génère une icône pour l\'app compagnon',
+  'mets à jour les dépendances npm',
 ];
-for (const [text, want, mode] of CASES) {
-  const c = classify({ text, entry: 'dashboard:chef' });
-  t(`« ${text.slice(0, 60)} » → ${want}${mode ? ' ' + mode : ''}`, c.pipeline === want && (!mode || c.mode === mode), `(obtenu ${c.pipeline} ${c.mode} — ${c.reasons.join(' ; ')})`);
+for (const text of CASES) {
+  const c = explicitChoice({ text, entry: 'dashboard:chef' });
+  t(`« ${text.slice(0, 60)} » → aucun pipeline deviné (à classer par le model)`, c.pipeline === null && c.explicit === false, JSON.stringify(c));
 }
 
-console.log('\n── 2. Inclassable = Discussion (règle utilisateur)');
-for (const text of ['bonjour', 'ok', '', '   ', 'hmm 42']) {
-  const c = classify({ text, entry: 'terminal' });
-  t(`« ${text} » → Discussion, marquée inclassable`, c.pipeline === 'discussion' && c.unclassifiable === true);
-}
+console.log('\n── 2. Inclassable = Discussion (règle utilisateur) : une consigne du model, plus une règle de mots');
+const p = classificationPrompt('bonjour');
+t('la consigne du model porte « inclassable = Discussion »', /If nothing fits clearly → discussion/.test(p) && /unclassifiable = Discussion/.test(p));
+t('la consigne demande un classement par le SENS', /by their MEANING/.test(p));
+for (const text of ['bonjour', 'ok', '', '   ']) t(`« ${text} » : aucun pipeline deviné par l’orchestrateur`, explicitChoice({ text, entry: 'terminal' }).pipeline === null);
 
-console.log('\n── 3. Choix explicite et entrées système');
-t('/incident en tête : explicite', (() => { const c = classify({ text: '/incident le build casse' }); return c.pipeline === 'incident' && c.explicit; })());
-t('/léger force le mode', classify({ text: '/dev /léger renomme la variable' }).mode === 'leger');
-t('/complet force le mode', classify({ text: '/complet corrige la typo' }).mode === 'complet');
-for (const entry of ['wake', 'relais-vers-chef', 'notify']) t(`${entry} → Routage`, classify({ text: 'n’importe quoi', entry }).pipeline === 'routage');
+console.log('\n── 3. Choix explicite et entrées système (gardés : ce ne sont pas des recherches de mots)');
+t('/incident en tête : explicite', (() => { const c = explicitChoice({ text: '/incident le build casse' }); return c.pipeline === 'incident' && c.explicit; })());
+t('/léger force le mode', explicitChoice({ text: '/dev /léger renomme la variable' }).mode === 'leger');
+t('/complet force le mode', explicitChoice({ text: '/complet corrige la typo' }).mode === 'complet');
+t('un « /dev » au milieu du texte n’est pas un préfixe', explicitChoice({ text: 'parle-moi du /dev ici' }).pipeline === null);
+for (const entry of ['wake', 'relais-vers-chef', 'notify']) t(`${entry} → Routage`, explicitChoice({ text: 'n’importe quoi', entry }).pipeline === 'routage');
 t('les consignes injectées (RÈGLE DE FIN DE TOUR…) sont ignorées', normalizeText('corrige le bug\n\n---\nRÈGLE DE FIN DE TOUR : ton tour…') === 'corrige le bug');
-const ids = new Set(PIPELINES.map(p => p.id));
-t('toute classification désigne un pipeline existant de la page Models', CASES.every(([text]) => ids.has(classify({ text }).pipeline)));
+const ids = new Set(PIPELINES.map(x => x.id));
+t('tout préfixe explicite désigne un pipeline existant de la page Models', ['/dev x', '/incident x', '/audio x', '/redaction x', '/donnees x'].every(x => ids.has(explicitChoice({ text: x }).pipeline)));
 t('chaque sorte d’entrée a un libellé', ['dashboard:chef', 'dashboard:mention', 'android:chef', 'dispatch-cli', 'terminal', 'wake', 'notify', 'file', 'session-neuve', 'relais-vers-musicien'].every(k => ENTRY_KINDS[k]));
 
 console.log('\n── 4. Terminal interactif : lignes validées');
@@ -82,8 +81,10 @@ console.log('\n── 5. Journal');
   o.record({ entry: 'terminal', project: 'central', text: 'bonjour' });
   const v = o.recent(10);
   t('append-only, plus récent d’abord', v.items.length === 2 && v.items[0].entry === 'terminal' && v.items[1].id === r1.id);
-  t('champs : pipeline, mode, confiance, classifieur, extrait', r1.pipeline === 'dev' && r1.mode === 'leger' && r1.classifier && r1.head === 'corrige la typo');
-  t('compteurs par pipeline / entrée / inclassables', v.counts.byPipeline.dev === 1 && v.counts.byEntry.terminal === 1 && v.counts.unclassifiable === 1);
+  t('champs : aucun pipeline deviné (à classer), classifieur « explicite », extrait', r1.pipeline === null && r1.explicit === false && r1.classifier === 'explicite' && r1.head === 'corrige la typo');
+  const r3 = o.record({ entry: 'dashboard:chef', project: 'chef', text: '/dev /complet ajoute X' });
+  t('un préfixe explicite est journalisé tel quel', r3.pipeline === 'dev' && r3.mode === 'complet' && r3.explicit === true);
+  t('compteurs par entrée', o.recent(10).counts.byEntry.terminal === 1);
   t('projectFromCwd : dossier le plus profond', projectFromCwd('I:\\Dev\\Chef\\sub', [{ name: 'dev', path: 'I:\\Dev' }, { name: 'chef', path: 'I:\\Dev\\Chef' }]) === 'chef' && projectFromCwd('C:\\x', [{ name: 'a', path: 'I:\\Dev\\a' }]) === null);
 }
 
@@ -112,11 +113,11 @@ console.log('\n── 6. dispatch.mjs (vrai script) : observé hors serveur, san
   const recs = read();
   t('le tour a lieu normalement (exit 0, result dans le log)', r.status === 0 && fs.readFileSync(path.join(root, 'logs', 'alpha.jsonl'), 'utf8').includes('"type":"result"'), `exit ${r.status} ${r.stderr.slice(-300)}`);
   t('une observation « dispatch-cli », projet alpha, appelant = chef (depuis un tour d’agent)', recs.length === 1 && recs[0].entry === 'dispatch-cli' && recs[0].project === 'alpha' && recs[0].caller === 'chef' && recs[0].fromAgent === true, JSON.stringify(recs));
-  t('classée dev léger', recs[0]?.pipeline === 'dev' && recs[0]?.mode === 'leger');
+  t('observée sans classement par mots (à classer par le model)', recs[0]?.pipeline === null && recs[0]?.explicit === false);
   run(root, { ORCH_OBS_ID: 'obs-deja-vu' });
   t('lancé par le serveur (ORCH_OBS_ID) : pas de double observation', read().length === 1);
   const prompt = fs.readFileSync(path.join(root, 'logs', 'alpha.jsonl'), 'utf8').split('\n').filter(Boolean).map(JSON.parse).filter(e => e.type === 'user_prompt');
-  t('le texte du tour n’est pas modifié par l’observation', prompt.every(p => p.text === 'corrige la typo du titre'));
+  t('le texte du tour n’est pas modifié par l’observation', prompt.every(x => x.text === 'corrige la typo du titre'));
 }
 
 console.log('\n── 7. Câblage : aucun point d’entrée n’échappe à l’observation');

@@ -471,10 +471,10 @@ export function stepsOf(p) {
  * Pipelines effectifs = ceux du code + les ajouts ACCEPTÉS depuis la page
  * Models (lacunes signalées, 0.42.0). Les ajouts vivent dans model-routing.json
  * (`custom`), jamais dans ce fichier versionné :
- *   pipelines : [{ id, label, icon, purpose, when, flow, keywords }]
+ *   pipelines : [{ id, label, icon, purpose, when, flow }]
  *   steps     : [{ pipeline, after, step: { id, n, title, what, example } }]
  *   variants  : [{ pipeline, step, variant: { id, label, what } }]
- *   attach    : [{ pipeline, keywords, when }]   (description complétée)
+ *   attach    : [{ pipeline, when }]   (description complétée)
  * Un ajout qui ne trouve pas sa cible est ignoré (jamais d'exception).
  */
 export function applyCustom(custom) {

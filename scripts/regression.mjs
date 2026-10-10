@@ -519,7 +519,8 @@ async function apiChecks(sb) {
     g('init', '-q'); g('add', '-A'); g('commit', '-q', '-m', 'init');
     return g;
   };
-  const enforceOmega = (assignments = {}) => fs.writeFileSync(routingFile, JSON.stringify({ version: 2, assignments, history: [], enforcement: { projects: ['omega'], pipelines: ['discussion', 'dev'] } }));
+  // 0.66.0: routing is decided by the classifier model only — the fixture assigns its slot.
+  const enforceOmega = (assignments = {}) => fs.writeFileSync(routingFile, JSON.stringify({ version: 2, assignments: { 'routage.classifier': { provider: 'anthropic', model: 'claude-haiku-5-5' }, ...assignments }, history: [], enforcement: { projects: ['omega'], pipelines: ['discussion', 'dev'] } }));
   const runsOf = async () => (await json('/api/pipeline-runs?project=omega')).runs || [];
   await check(S, 'pipeline-run', 'Pipelines, phase 3 : une demande au projet en service passe par son pipeline (Discussion, Développement léger) — une étape = un tour, artefacts, critères vérifiés par le code, un seul tour côté musicien, frise dans le journal', async () => {
     if ((await get('/api/pipeline-enforcement')).status === 404) NA('moteur absent de cet état du code');
@@ -644,16 +645,28 @@ async function apiChecks(sb) {
     await entry('dispatch.mjs', () => pipeDispatch(['omega', 'Explique le rôle du fichier src/pipe.mjs']), (run, st) => {
       assert(st.classification?.classifier === 'model:claude-haiku-5-5', `classement : ${JSON.stringify(st.classification)}`);
       const rec = fs.readFileSync(classifyLog, 'utf8').trim().split('\n').map(l => JSON.parse(l)).pop();
-      assert(rec?.ok && rec.model === 'claude-haiku-5-5' && typeof rec.agree === 'boolean', `comparaison règles / model absente : ${JSON.stringify(rec)}`);
+      assert(rec?.ok && rec.model === 'claude-haiku-5-5' && !('agree' in rec), `décision du model non journalisée : ${JSON.stringify(rec)}`);
     });
     // E10 — réponse du chef relayée au musicien.
     await entry('relais du chef', () => pipeDispatch(['omega', '[CHEF_ANSWER] Pourquoi garder un seul fichier source ?', '--source', 'chef']));
     // Pipeline pas encore en service → Discussion, notée (plus aucun tour ordinaire).
     await entry('pas en service', () => pipeDispatch(['omega', 'Compare les bibliothèques de tests'], { FAKE_CLAUDE_CLASSIFY: '{"pipeline":"recherche","mode":"complet","raison":"comparatif"}' }),
       (run, st) => assert(run.pipeline === 'discussion' && st.classification?.notInService === 'recherche', `pas en service : ${JSON.stringify(st.classification)}`));
-    // Réponse du classifieur illisible deux fois → règles, tracé.
-    await entry('classifieur en échec', () => pipeDispatch(['omega', 'Pourquoi node --test ?'], { FAKE_CLAUDE_CLASSIFY: 'je ne sais pas' }),
-      (run, st) => assert(st.classification?.classifier === 'règles-v1' && /impossible/.test(st.classification.note || ''), `repli règles non tracé : ${JSON.stringify(st.classification)}`));
+    // 0.66.0 — réponse du classifieur illisible deux fois : PAUSE avec question,
+    // demande gardée, aucune exécution, jamais de classement par mots-clés.
+    {
+      const before = new Set((await runsOf()).map(x => x.run));
+      const nLog = readLog('omega').length;
+      const r = await pipeDispatch(['omega', 'Pourquoi node --test ?'], { FAKE_CLAUDE_CLASSIFY: 'je ne sais pas' });
+      const evs = readLog('omega').slice(nLog);
+      const res = evs.filter(e => e.type === 'result').pop()?.result || '';
+      assert(r.code === 2 && !(await runsOf()).some(x => !before.has(x.run)) && /NEEDS_USER_INPUT:.*« continuer »/.test(res), `classifieur en échec : pause attendue (code ${r.code}) ${res.slice(0, 200)}`);
+      const pend = JSON.parse(fs.readFileSync(path.join(sb.root, 'logs', 'omega.a-classer.json'), 'utf8'));
+      assert(pend[0]?.prompt === 'Pourquoi node --test ?', 'demande non gardée');
+      const ab = await pipeDispatch(['omega', 'abandonner']);
+      assert(ab.code === 0 && !fs.existsSync(path.join(sb.root, 'logs', 'omega.a-classer.json')), '« abandonner » n’a pas oublié la demande gardée');
+      done.push('classifieur en échec→pause (demande gardée, puis abandonnée)');
+    }
     return `${done.length} entrées → exécutions : ${done.join(', ')}`;
   });
   await check(S, 'terminal-routing', 'Pipelines, phase 5 : terminal interactif routé — Discussion en lecture seule, ligne d’action retenue puis lancée en exécution après confirmation, commande shell directe jamais envoyée', async () => {
@@ -661,7 +674,7 @@ async function apiChecks(sb) {
     const { decodeFrames } = await import(pathToFileURL(path.join(sb.root, 'scripts', 'terminal-route.mjs')).href);
     const g = omegaRepo();
     g('reset', '-q', '--hard', g('rev-list', '--max-parents=0', 'HEAD').stdout.trim()); g('clean', '-qfd', '-e', '.orchestrateur');
-    fs.writeFileSync(routingFile, JSON.stringify({ version: 2, assignments: {}, history: [], enforcement: { projects: ['omega'], pipelines: ['discussion', 'dev'], terminal: true } }));
+    fs.writeFileSync(routingFile, JSON.stringify({ version: 2, assignments: { 'routage.classifier': { provider: 'anthropic', model: 'claude-haiku-5-5' } }, history: [], enforcement: { projects: ['omega'], pipelines: ['discussion', 'dev'], terminal: true } }));
     const ws = new WebSocket(`ws://127.0.0.1:${sb.port}/ws/pty?token=${sb.token}`);
     let all = '';
     ws.onmessage = (m) => { all += typeof m.data === 'string' ? m.data : Buffer.from(m.data).toString('utf8'); };
@@ -701,10 +714,11 @@ async function apiChecks(sb) {
     const { ENGINE_PIPELINES } = await import(pathToFileURL(path.join(sb.root, 'scripts', 'pipeline-engine.mjs')).href);
     const g = omegaRepo();
     g('reset', '-q', '--hard', g('rev-list', '--max-parents=0', 'HEAD').stdout.trim()); g('clean', '-qfd', '-e', '.orchestrateur');
-    fs.writeFileSync(routingFile, JSON.stringify({ version: 2, assignments: {}, history: [], enforcement: { projects: ['omega'], pipelines: ENGINE_PIPELINES } }));
+    fs.writeFileSync(routingFile, JSON.stringify({ version: 2, assignments: { 'routage.classifier': { provider: 'anthropic', model: 'claude-haiku-5-5' } }, history: [], enforcement: { projects: ['omega'], pipelines: ENGINE_PIPELINES } }));
     const h0 = g('rev-parse', 'HEAD').stdout.trim();
     let before = new Set((await runsOf()).map(x => x.run));
-    const r = await post('/api/dispatch', { project: 'omega', prompt: 'fais un état de l\'art comparatif des bibliothèques de tests et donne les sources' });
+    // Recherche chosen explicitly: a server-launched dispatch cannot be given a scripted model answer.
+    const r = await post('/api/dispatch', { project: 'omega', prompt: '/recherche fais un état de l\'art comparatif des bibliothèques de tests et donne les sources' });
     assert(r.status === 202, `dispatch : ${r.status}`);
     const rech = await waitNewRun(before, 150_000);
     assert(rech?.pipeline === 'recherche' && rech.status === 'done' && rech.steps.filter(s => s.status === 'ok').length === 5, `Recherche : ${JSON.stringify(rech && { p: rech.pipeline, s: rech.status, st: rech.steps.map(x => `${x.id}:${x.status}:${x.why || ''}`) })}`);
@@ -718,7 +732,7 @@ async function apiChecks(sb) {
     const turns = (await json('/api/project/omega/journal?n=4')).turns || [];
     assert(turns[0]?.pipeline?.pipeline === 'maintenance' && turns[1]?.pipeline?.pipeline === 'recherche', `journal : ${turns.slice(0, 2).map(t => t.pipeline?.pipeline).join(', ')}`);
     fs.rmSync(routingFile, { force: true });
-    return `Recherche 5/5 par l’API (classée automatiquement), Maintenance livrée (commit ${g('log', '-1', '--format=%h').stdout.trim()}), frises au journal`;
+    return `Recherche 5/5 par l’API (choisie par préfixe explicite), Maintenance livrée (commit ${g('log', '-1', '--format=%h').stdout.trim()}), frises au journal`;
   });
   // 0.54.0 — phase 6, lot B : le tour du chef est lui-même un pipeline (Routage).
   await check(S, 'pipeline-routage', 'Pipelines, phase 6 (lot B) : avec « chef » en service, un message au chef passe par le pool et devient une exécution Routage (Lire → Classifier → … → Rapporter, étapes sur leurs cases) ; la réponse arrive dans le fil du chef ; interrupteur coupé = tour ordinaire', async () => {
@@ -756,10 +770,12 @@ async function apiChecks(sb) {
     const { ENGINE_PIPELINES } = await import(pathToFileURL(path.join(sb.root, 'scripts', 'pipeline-engine.mjs')).href);
     const g = omegaRepo();
     g('reset', '-q', '--hard', g('rev-list', '--max-parents=0', 'HEAD').stdout.trim()); g('clean', '-qfd', '-e', '.orchestrateur');
-    fs.writeFileSync(routingFile, JSON.stringify({ version: 2, assignments: {}, history: [], enforcement: { projects: ['omega'], pipelines: ENGINE_PIPELINES } }));
+    fs.writeFileSync(routingFile, JSON.stringify({ version: 2, assignments: { 'routage.classifier': { provider: 'anthropic', model: 'claude-haiku-5-5' } }, history: [], enforcement: { projects: ['omega'], pipelines: ENGINE_PIPELINES } }));
     try {
       const before = new Set((await runsOf()).map(x => x.run));
-      const r = await post('/api/dispatch', { project: 'omega', prompt: 'génère une image : dessine une icône pour le projet' });
+      // 0.66.0: « images » chosen explicitly (a server-launched dispatch cannot be given a
+      // scripted classifier answer); the variant is chosen by the classifier model.
+      const r = await post('/api/dispatch', { project: 'omega', prompt: '/images génère une image : dessine une icône pour le projet' });
       assert(r.status === 202, `dispatch : ${r.status}`);
       const run = await waitNewRun(before, 150_000);
       assert(run?.pipeline === 'images' && run.status === 'done' && run.steps.map(s => `${s.id}:${s.status}`).join() === 'cadrer:ok,produire:ok,verifier:ok,livrer:ok', `Images : ${JSON.stringify(run && { p: run.pipeline, s: run.status, st: run.steps.map(x => `${x.id}:${x.status}:${x.why || ''}`) })}`);
@@ -774,7 +790,7 @@ async function apiChecks(sb) {
   await check(S, 'pipeline-health', 'Pipelines, phase 7 : relevé de la mise en service — exécutions, tours hors pipeline, tours ordinaires, refus (moteur et porte), pauses, jours complets sans contournement', async () => {
     if (!fs.existsSync(path.join(sb.root, 'scripts', 'pipeline-health.mjs'))) NA('relevé absent de cet état du code');
     const since = new Date(Date.now() - 3 * 86400_000).toISOString();
-    fs.writeFileSync(routingFile, JSON.stringify({ version: 2, assignments: {}, history: [], enforcement: { projects: ['omega'], pipelines: ['discussion', 'dev'], generalSince: since } }));
+    fs.writeFileSync(routingFile, JSON.stringify({ version: 2, assignments: { 'routage.classifier': { provider: 'anthropic', model: 'claude-haiku-5-5' } }, history: [], enforcement: { projects: ['omega'], pipelines: ['discussion', 'dev'], generalSince: since } }));
     try {
       const at = new Date().toISOString();
       fs.appendFileSync(path.join(sb.root, 'logs', 'omega.jsonl'), [
@@ -1117,7 +1133,7 @@ async function apiChecks(sb) {
     fs.rmSync(path.join(sb.root, 'model-routing.json'), { force: true });
     return 'passerelle montée et protégée ; NVIDIA / OpenRouter acceptés sur une étape d’action';
   });
-  await check(S, 'pipeline-observe', 'Pipelines, phase 1 (observation) : chaque entrée (composer → chef, @musicien, app Android, musicien direct, dispatch.mjs via la file, notify, session neuve) est classée et journalisée une seule fois, inclassable = Discussion, aucun changement de comportement', async () => {
+  await check(S, 'pipeline-observe', 'Pipelines, phase 1 (observation) : chaque entrée (composer → chef, @musicien, app Android, musicien direct, dispatch.mjs via la file, notify, session neuve) est journalisée une seule fois avec son choix explicite, sans aucun classement par mots-clés (0.66.0), aucun changement de comportement', async () => {
     const first = await get('/api/pipeline-observe?n=5');
     if (first.status === 404) NA('observation absente de cet état du code');
     const obsFile = path.join(sb.root, 'logs', 'pipeline-observe.ndjson');
@@ -1150,10 +1166,12 @@ async function apiChecks(sb) {
     const by = (entry) => recs.filter(x => x.entry === entry);
     assert(ok, `observations : ${recs.map(x => x.entry).join(', ')}`);
     assert(!recs.some(x => ['pool', 'file', 'spawn'].includes(x.entry)), `entrée recomptée au lancement : ${recs.map(x => x.entry).join(', ')}`);
-    assert(by('dashboard:chef').some(x => x.pipeline === 'dev' && x.mode === 'leger'), 'composer → chef non classé dev léger');
-    assert(by('dashboard:mention').some(x => x.target === 'omega' && x.pipeline === 'discussion'), '@omega non observé (discussion)');
-    assert(by('android:chef').some(x => x.pipeline === 'redaction'), 'entrée Android non reconnue');
-    assert(by('dashboard:musicien').some(x => x.project === 'lambda' && x.pipeline === 'discussion' && x.unclassifiable), 'inclassable non rangé en Discussion');
+    // 0.66.0 : plus aucun classement par mots-clés à l'observation — sans préfixe,
+    // l'entrée est « à classer » (par le model de la case routage.classifier).
+    assert(by('dashboard:chef').some(x => x.pipeline === null && x.explicit === false), 'composer → chef : un pipeline a été deviné par mots-clés');
+    assert(by('dashboard:mention').some(x => x.target === 'omega' && x.pipeline === null), '@omega non observé, ou deviné par mots-clés');
+    assert(by('android:chef').some(x => x.pipeline === null), 'entrée Android non observée, ou devinée par mots-clés');
+    assert(by('dashboard:musicien').some(x => x.project === 'lambda' && x.pipeline === null), 'entrée « bonjour » non observée, ou devinée par mots-clés');
     assert(!recs.some(x => x.project === 'mu'), 'entrée venue de dispatch.mjs comptée deux fois');
     assert(by('notify').some(x => x.pipeline === 'routage'), 'notify non rattaché au Routage');
     assert(by('session-neuve').some(x => x.project === 'kappa'), 'session neuve non observée');
@@ -1165,19 +1183,21 @@ async function apiChecks(sb) {
     assert(v.mode === 'observation' && v.items.length && v.counts.byPipeline && v.entryKinds['terminal'], 'route /api/pipeline-observe incomplète');
     return `${recs.length} entrées observées : ${[...new Set(recs.map(x => x.entry))].join(', ')}`;
   });
-  await check(S, 'pipeline-gaps', 'Lacunes de pipeline : une entrée inclassable est traitée en Discussion ET produit un signalement avec proposition, notifié au chef ; « Accepter » ajoute bien l’étape (choix du model ensuite), « Rejeter » n’ajoute rien ; signalement explicite d’une étape sans case', async () => {
+  await check(S, 'pipeline-gaps', 'Lacunes de pipeline : une lacune proposée (par le model ou signalée, jamais détectée sur des mots) produit un signalement avec proposition, notifié au chef ; « Accepter » ajoute bien l’étape (choix du model ensuite), « Rejeter » n’ajoute rien ; signalement explicite d’une étape sans case', async () => {
     const first = await get('/api/pipeline-gaps');
     if (first.status === 404) NA('lacunes absentes de cet état du code');
     const routingPath = path.join(sb.root, 'model-routing.json');
     const text = 'planifie mes vacances en Italie avec un budget serré';
-    // lambda : fixture sans état à préserver (beta porte la question des parcours « attention »).
-    let r = await post('/api/dispatch', { project: 'lambda', prompt: text, queueIfBusy: true });
-    assert(r.status === 202, `dispatch : ${r.status}`);
+    // 0.66.0 : une lacune n'est plus détectée sur des mots ; elle vient du model
+    // (classement, Routage) ou d'un signalement explicite — joué ici comme le model.
+    let r = await post('/api/pipeline-gaps', { text, project: 'lambda', by: 'model:recette', why: 'le model de classement ne trouve aucun pipeline pour cette demande d’action',
+      proposal: { kind: 'pipeline', id: 'x-voyages', label: 'Voyages', text: 'créer un pipeline « Voyages »' }, alternative: { kind: 'rattachement', pipeline: 'discussion', text: 'rattacher à Discussion' } });
+    assert(r.status === 201, `signalement : ${r.status}`);
     const open = async () => (await json('/api/pipeline-gaps')).open;
-    assert(await until(async () => (await open()).some(g => g.entries?.[0]?.head === text), 8000), 'aucun signalement pour l’entrée inclassable');
+    assert(await until(async () => (await open()).some(g => g.entries?.[0]?.head === text), 8000), 'aucun signalement pour la demande');
     const gap = (await open()).find(g => g.entries[0].head === text);
-    assert(gap.reason === 'aucun-pipeline' && gap.entries[0].pipeline === 'discussion', 'l’entrée n’est pas traitée en Discussion');
-    assert(gap.proposal?.kind === 'pipeline' && gap.proposal.text && gap.alternative?.kind === 'rattachement', `proposition : ${JSON.stringify(gap.proposal)}`);
+    assert(gap.reason === 'signalée' && gap.entries[0].pipeline === null, 'la demande a été classée par mots-clés à l’observation');
+    assert(gap.proposal?.kind === 'pipeline' && gap.proposal.text && !gap.proposal.keywords && gap.alternative?.kind === 'rattachement', `proposition : ${JSON.stringify(gap.proposal)}`);
     assert(await until(() => readLog('chef').some(e => e.type === 'user_prompt' && e.source === 'pipeline-gap' && e.text.includes(text.slice(0, 30))), 5000), 'le chef n’a pas été notifié');
     // Accepter → le pipeline et ses cases existent, le model se choisit ensuite.
     r = await post(`/api/pipeline-gaps/${encodeURIComponent(gap.key)}/accept`, { choice: 'primary' });

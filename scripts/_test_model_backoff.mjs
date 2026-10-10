@@ -103,7 +103,7 @@ fs.writeFileSync(path.join(T, 'config.json'), JSON.stringify({
   projects: [{ name: 'chef', path: path.join(T, 'chef') }, { name: 'P', path: P }],
 }));
 const routing = (rougeModel) => fs.writeFileSync(path.join(T, 'model-routing.json'), JSON.stringify({
-  version: 2, assignments: {
+  version: 2, assignments: { 'routage.classifier': { provider: 'anthropic', model: 'claude-haiku-5-5' },
     'dev.rouge': { provider: 'anthropic', model: rougeModel },
     'dev.vert': { provider: 'anthropic', model: 'claude-sonnet-5-5' },
     'dev.revue': { provider: 'anthropic', model: 'claude-fable-5-1' },

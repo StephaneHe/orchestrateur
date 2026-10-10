@@ -82,7 +82,7 @@ fs.writeFileSync(path.join(T, 'config.json'), JSON.stringify({
   projects: [{ name: 'chef', path: path.join(T, 'chef') }, { name: 'P', path: P }],
 }));
 fs.writeFileSync(path.join(T, 'model-routing.json'), JSON.stringify({
-  version: 2, assignments: Object.fromEntries(['comprendre', 'concevoir', 'liste-tests', 'rouge', 'vert', 'refactor', 'revue', 'livrer'].map(s => [`dev.${s}`, { provider: 'anthropic', model: 'claude-sonnet-5-5' }])),
+  version: 2, assignments: { 'routage.classifier': { provider: 'anthropic', model: 'claude-haiku-5-5' }, ...Object.fromEntries(['comprendre', 'concevoir', 'liste-tests', 'rouge', 'vert', 'refactor', 'revue', 'livrer'].map(s => [`dev.${s}`, { provider: 'anthropic', model: 'claude-sonnet-5-5' }])) },
   history: [], enforcement: { projects: ['P'], pipelines: ['discussion', 'dev'] },
 }));
 const g = (...a) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@localhost', ...a], { cwd: P, encoding: 'utf8' });

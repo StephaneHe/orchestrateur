@@ -196,7 +196,14 @@ scenario('codex : choix du model (flag > projet > défaut config > config.toml d
   ok(r.status === 64 && /--provider codex/.test(r.stderr), 'model OpenAI sans --provider codex ⇒ refus clair (exit 64)');
   // Le log de ce projet grossit tout seul (c'est le musicien en cours) : on ne
   // vérifie pas son égalité, seulement qu'aucune ligne « bonjour » n'y est née.
-  const tail = fs.readFileSync(path.join(ROOT, 'logs', 'orchestrateur.jsonl'), 'utf8').slice(logBefore);
+  // Read only what was appended (the real log can exceed the max string length).
+  const tail = (() => {
+    const f = path.join(ROOT, 'logs', 'orchestrateur.jsonl');
+    const len = Math.max(0, fs.statSync(f).size - logBefore);
+    const fd = fs.openSync(f, 'r'); const b = Buffer.alloc(len);
+    try { fs.readSync(fd, b, 0, len, logBefore); } finally { fs.closeSync(fd); }
+    return b.toString('utf8');
+  })();
   ok(!/"text":"bonjour"/.test(tail), 'aucune écriture de log pour un dispatch refusé');
 
   // Résolution : on évalue l'expression RÉELLE de runCodex avec des entrées pilotées.

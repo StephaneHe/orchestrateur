@@ -7,11 +7,13 @@
 // `--pipeline`) is classified by the model the user assigned to the
 // `routage.classifier` slot in the Models page (any provider since 0.53.0:
 // Claude and codex via their CLI, OpenRouter and NVIDIA via their API). The
-// output is a validated JSON object; an invalid answer gets one retry. If the
-// slot is empty, the provider key is missing, or the model fails twice, the
-// rule classifier of phase 1 decides — and the record says so.
-// Every model decision is compared with the rules in
-// logs/pipeline-classify.ndjson (plan: "compared with the observation log").
+// output is a validated JSON object; an invalid answer gets one retry.
+// Since 0.66.0 there is NO keyword fallback (user request, 2026-10-10: « Ce
+// n'est pas une recherche de mot qui pourra faire un routage efficace, c'est
+// une recherche de sens que seul un modele peut faire »): an empty slot, a
+// missing key or a model failing twice gives { failed } — the caller pauses
+// and asks the user; only an explicit choice (prefix, flag) skips the model.
+// Every decision (or failure) is traced in logs/pipeline-classify.ndjson.
 // ============================================================================
 
 import fs from 'node:fs';
@@ -19,14 +21,21 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { oneShotClaude, chatCompletion } from './language.mjs';
-import { classify as classifyRules, CLASSIFIER as RULES_CLASSIFIER, normalizeText } from './pipeline-observe.mjs';
-import { PIPELINES } from './model-pipelines.mjs';
+import { explicitChoice, normalizeText } from './pipeline-observe.mjs';
+import { PIPELINES, applyCustom } from './model-pipelines.mjs';
 
 export const CLASSIFIER_SLOT = 'routage.classifier';
 export const CLASSIFY_FILE = 'pipeline-classify.ndjson';
 const PROVIDER_OF = { anthropic: 'claude', openai: 'codex', nvidia: 'nvidia', openrouter: 'openrouter' };
 // Routage is the chef's own pipeline: a musician entry is never classified into it.
 const CHOICES = PIPELINES.filter(p => p.id !== 'routage');
+
+/** Pipelines offered to the model: the Models page structure, accepted gaps included (their description, never keywords). */
+export function classifierChoices(root) {
+  let custom = null;
+  try { custom = JSON.parse(fs.readFileSync(path.join(root, 'model-routing.json'), 'utf8')).custom || null; } catch { /* no file */ }
+  try { return applyCustom(custom).filter(p => p.id !== 'routage'); } catch { return CHOICES; }
+}
 
 /** The assigned classifier model, or null when the slot is empty. */
 export function classifierCase(root) {
@@ -36,28 +45,40 @@ export function classifierCase(root) {
   return { model: a.model, provider: PROVIDER_OF[a.provider] };
 }
 
-export function classificationPrompt(text) {
-  const list = CHOICES.map(p => `- ${p.id}: ${p.label} — ${p.when || p.purpose || ''}`).join('\n');
-  return '[CLASSIFY] You route requests sent to a software project agent. Pick the ONE pipeline that fits the request below.\n' +
+// Nature of a dev request (case variants; « mecanique » has no red test).
+const KINDS = { comportement: 'simple', simple: 'simple', bugfix: 'bugfix', mecanique: 'mecanique', 'mécanique': 'mecanique' };
+
+/** `fixed`: what the user already chose explicitly (pipeline and/or mode) — the model fills the rest. */
+export function classificationPrompt(text, fixed = {}, choices = CHOICES) {
+  const list = choices.map(p => `- ${p.id}: ${p.label} — ${p.when || p.purpose || ''}`).join('\n');
+  const imposed = [fixed.pipeline && `pipeline "${fixed.pipeline}"`, fixed.mode && `mode "${fixed.mode}"`].filter(Boolean);
+  return '[CLASSIFY] You route requests sent to a software project agent, by their MEANING. Pick the ONE pipeline that fits the request below.\n' +
     `Pipelines:\n${list}\n\n` +
-    'Rules: a question, a remark or a reflection that does not ask for a change → discussion. If nothing fits clearly → discussion. ' +
+    (imposed.length ? `The user already chose ${imposed.join(' and ')}: keep it as is and decide only the rest.\n` : '') +
+    'Rules: a question, a remark or a reflection that does not ask for a change → discussion. If nothing fits clearly → discussion (user rule: unclassifiable = Discussion). ' +
     'For dev: mode "complet" for a new feature or behaviour, "leger" for a small fix or a mechanical edit; if unsure between the two → "leger". ' +
+    'For dev, also the nature: "bugfix" (a defect to reproduce then fix), "mecanique" (a mechanical edit that changes no behaviour: rename, replace, reformat), or "comportement" (a behaviour to add or change). ' +
     'Other pipelines: mode "complet" unless the request is clearly small.\n' +
-    'Answer with ONE JSON object and nothing else: {"pipeline":"<id>","mode":"leger"|"complet","raison":"<one short sentence in French>"}\n\n' +
+    'If the request asks for an ACTION that no pipeline covers, answer "discussion" and set "lacune" to one sentence proposing the missing pipeline or step; otherwise leave it out.\n' +
+    'Answer with ONE JSON object and nothing else: {"pipeline":"<id>","mode":"leger"|"complet","nature":"comportement"|"bugfix"|"mecanique","raison":"<one short sentence in French>","lacune":"<optional, French>"}\n\n' +
     `Request:\n<<<\n${normalizeText(text).slice(0, 6000)}\n>>>`;
 }
 
-/** Validated {pipeline, mode, raison} from the model's answer, or null. */
-export function parseClassification(answer) {
+/** Validated {pipeline, mode, kind, raison, lacune} from the model's answer, or null. */
+export function parseClassification(answer, fixed = {}, choices = CHOICES) {
   const m = /\{[\s\S]*\}/.exec(String(answer || ''));
   if (!m) return null;
   let j; try { j = JSON.parse(m[0]); } catch { return null; }
-  const pipeline = typeof j.pipeline === 'string' ? j.pipeline.trim().toLowerCase() : '';
-  if (!CHOICES.some(p => p.id === pipeline)) return null;
-  const mode = j.mode === 'complet' ? 'complet' : j.mode === 'leger' || j.mode === 'léger' ? 'leger' : null;
+  const pipeline = fixed.pipeline || (typeof j.pipeline === 'string' ? j.pipeline.trim().toLowerCase() : '');
+  if (!choices.some(p => p.id === pipeline) && pipeline !== fixed.pipeline) return null;
+  const mode = fixed.mode || (j.mode === 'complet' ? 'complet' : j.mode === 'leger' || j.mode === 'léger' ? 'leger' : null);
   if (!mode) return null;
+  // The nature is part of the classification of a dev request: no default.
+  const kind = pipeline === 'dev' ? KINDS[String(j.nature || '').trim().toLowerCase()] || null : null;
+  if (pipeline === 'dev' && !kind) return null;
   const raison = typeof j.raison === 'string' ? j.raison.replace(/\s+/g, ' ').trim().slice(0, 300) : '';
-  return { pipeline, mode, raison };
+  const lacune = typeof j.lacune === 'string' && j.lacune.trim() ? j.lacune.replace(/\s+/g, ' ').trim().slice(0, 400) : null;
+  return { pipeline, mode, kind, raison, lacune };
 }
 
 /** Provider key from the environment, then the orchestrator's own .env (never logged). */
@@ -128,36 +149,78 @@ function record(logsDir, rec) {
 }
 
 /**
- * Classifies one entry. Explicit choices (prefix) never reach the model.
- * Returns the rules' shape plus { classifier, rules?, agree?, raison?, note? }.
+ * Asks the classifier model, with one retry on an invalid answer.
+ * → { ok:true, value, model } | { ok:false, why, model? }  (never a keyword fallback)
  */
-export async function classifyEntry({ root, logsDir, text, project = null, entry = null, oneShot = null, keys, fetchImpl, timeoutMs = 60_000, env = process.env } = {}) {
-  const rules = classifyRules({ text });
-  const base = { ...rules, classifier: RULES_CLASSIFIER };
-  if (rules.explicit) return base;
+async function askClassifier({ root, prompt, parse, oneShot, keys, fetchImpl, timeoutMs, env }) {
   const c = classifierCase(root);
-  if (!c) return { ...base, note: `case ${CLASSIFIER_SLOT} non affectée : classement par règles` };
+  if (!c) return { ok: false, why: `la case « ${CLASSIFIER_SLOT} » de la page Models n’a pas de model affecté` };
   // Every provider of the Models page can classify (0.53.0): Claude and codex
   // through their CLI (subscription), OpenRouter and NVIDIA through their API.
-  oneShot = oneShot || callerFor(c.provider, { root, keys, env, fetchImpl });
-  if (!oneShot) return { ...base, note: `fournisseur ${c.provider} non géré : classement par règles` };
-  let parsed = null, why = '';
-  for (let attempt = 1; attempt <= 2 && !parsed; attempt++) {
-    const r = await oneShot(classificationPrompt(text), { model: c.model, timeoutMs, env });
+  const call = oneShot || callerFor(c.provider, { root, keys, env, fetchImpl });
+  if (!call) return { ok: false, why: `fournisseur ${c.provider} non géré`, model: c.model, provider: c.provider };
+  let why = '';
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const r = await call(prompt, { model: c.model, timeoutMs, env });
     if (!r.ok) { why = r.why || 'échec'; continue; }
-    parsed = parseClassification(r.text);
-    if (!parsed) why = `réponse non conforme (« ${String(r.text).slice(0, 80)} »)`;
+    const value = parse(r.text);
+    if (value) return { ok: true, value, model: c.model, provider: c.provider };
+    why = `réponse non conforme (« ${String(r.text).slice(0, 80)} »)`;
   }
-  const rulesView = { pipeline: rules.pipeline, mode: rules.mode, confidence: rules.confidence };
-  if (!parsed) {
-    record(logsDir, { project, entry, provider: c.provider, model: c.model, ok: false, why, rules: rulesView });
-    return { ...base, note: `classement par ${c.model} impossible (${why}) : classement par règles` };
+  return { ok: false, why: `${c.model} : ${why}`, model: c.model, provider: c.provider };
+}
+
+/**
+ * Classifies one entry by its meaning. Explicit choices (prefix, `fixed` from
+ * flags) never reach the model when they are complete; otherwise the model of
+ * the routage.classifier slot decides the rest. No keyword fallback (0.66.0):
+ * → { pipeline, mode, kind, explicit, classifier, raison?, lacune? }
+ *   | { failed: true, why, explicit }   (the caller pauses and asks the user)
+ */
+export async function classifyEntry({ root, logsDir, text, project = null, entry = null, fixed = {}, oneShot = null, keys, fetchImpl, timeoutMs = 60_000, env = process.env } = {}) {
+  const e = explicitChoice({ text, entry });
+  const want = { pipeline: fixed.pipeline || e.pipeline || null, mode: fixed.mode || e.mode || null, kind: fixed.kind || null };
+  if (e.system) return { pipeline: 'routage', mode: null, kind: null, explicit: true, classifier: 'explicite', reasons: [`entrée système « ${entry} »`] };
+  // Complete explicit choice: dev needs its nature too; other pipelines take
+  // their only mode (« complet ») unless one was chosen.
+  if (want.pipeline && want.pipeline !== 'dev') {
+    return { pipeline: want.pipeline, mode: want.mode || (want.pipeline === 'discussion' ? 'leger' : 'complet'), kind: null, explicit: true, classifier: 'explicite', reasons: [`choix explicite → ${want.pipeline}`] };
   }
-  const agree = parsed.pipeline === rules.pipeline && (parsed.pipeline !== 'dev' || parsed.mode === rules.mode);
-  record(logsDir, { project, entry, provider: c.provider, model: c.model, ok: true, model_result: parsed, rules: rulesView, agree });
+  if (want.pipeline === 'dev' && want.mode && want.kind) {
+    return { pipeline: 'dev', mode: want.mode, kind: want.kind, explicit: true, classifier: 'explicite', reasons: ['choix explicite → dev'] };
+  }
+  const fixedForModel = { ...(want.pipeline ? { pipeline: want.pipeline } : {}), ...(want.mode ? { mode: want.mode } : {}) };
+  const choices = classifierChoices(root);
+  const r = await askClassifier({ root, prompt: classificationPrompt(text, fixedForModel, choices), parse: (t) => parseClassification(t, fixedForModel, choices), oneShot, keys, fetchImpl, timeoutMs, env });
+  if (!r.ok) {
+    record(logsDir, { project, entry, provider: r.provider || null, model: r.model || null, ok: false, why: r.why, fixed: fixedForModel });
+    return { failed: true, why: r.why, explicit: !!want.pipeline, fixed: fixedForModel };
+  }
+  const v = r.value;
+  record(logsDir, { project, entry, provider: r.provider, model: r.model, ok: true, model_result: v, fixed: fixedForModel });
   return {
-    pipeline: parsed.pipeline, mode: parsed.mode, explicit: false, confidence: 'model',
-    reasons: [`${c.model} : ${parsed.raison || 'sans raison'}`], unclassifiable: false,
-    classifier: `model:${c.model}`, raison: parsed.raison, rules: rulesView, agree,
+    pipeline: v.pipeline, mode: v.mode, kind: v.kind, explicit: !!want.pipeline, confidence: 'model',
+    reasons: [`${r.model} : ${v.raison || 'sans raison'}`], classifier: `model:${r.model}`,
+    raison: v.raison, ...(v.lacune ? { lacune: v.lacune } : {}),
   };
+}
+
+/**
+ * One choice among named options, by the classifier model (e.g. the variant
+ * of a media step). options: [{ id, what }]. → { ok, id } | { ok:false, why }
+ */
+export async function chooseOption({ root, logsDir, question, request, options, project = null, oneShot = null, keys, fetchImpl, timeoutMs = 60_000, env = process.env } = {}) {
+  const ids = options.map(o => o.id);
+  const prompt = `[CLASSIFY] ${question}\nOptions:\n${options.map(o => `- ${o.id}: ${o.what || o.id}`).join('\n')}\n\n` +
+    'Decide by the MEANING of the request. Answer with ONE JSON object and nothing else: {"choix":"<id>","raison":"<one short sentence in French>"}\n\n' +
+    `Request:\n<<<\n${normalizeText(request).slice(0, 6000)}\n>>>`;
+  const parse = (t) => {
+    const m = /\{[\s\S]*\}/.exec(String(t || ''));
+    let j = null; try { j = m ? JSON.parse(m[0]) : null; } catch { return null; }
+    const id = typeof j?.choix === 'string' ? j.choix.trim() : '';
+    return ids.includes(id) ? { id, raison: String(j.raison || '').slice(0, 300) } : null;
+  };
+  const r = await askClassifier({ root, prompt, parse, oneShot, keys, fetchImpl, timeoutMs, env });
+  record(logsDir, { project, entry: 'choix', question: question.slice(0, 200), options: ids, provider: r.provider || null, model: r.model || null, ok: r.ok, ...(r.ok ? { model_result: r.value } : { why: r.why }) });
+  return r.ok ? { ok: true, id: r.value.id, raison: r.value.raison, model: r.model } : { ok: false, why: r.why };
 }

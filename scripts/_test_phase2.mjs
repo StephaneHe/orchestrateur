@@ -8,7 +8,7 @@ import os   from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { decide, detectStopWord, STOP_WORDS } from '../src/interrupt_policy.mjs';
+import { decide } from '../src/interrupt_policy.mjs';
 import { route, validateRouterRecord }        from '../src/message_router.mjs';
 import { classify }                           from '../src/classifier.mjs';
 

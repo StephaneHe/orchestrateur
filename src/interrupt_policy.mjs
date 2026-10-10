@@ -3,7 +3,7 @@
 // ============================================================================
 //
 // Returns one of:
-//   { decision: 'interrupt', reason: 'stop_word' | 'classifier_useless_now' }
+//   { decision: 'interrupt', reason: 'classifier_useless_now' }
 //   { decision: 'queue',     reason: 'classifier_still_useful' | 'default' }
 //   { decision: 'consult',   reason: 'classifier_uncertain',
 //     recommendation: 'interrupt' | 'queue' }
@@ -12,30 +12,11 @@
 // does not freeze on ambiguity; it logs and queues.
 // ============================================================================
 
-export const STOP_WORDS = {
-  en: ['stop', 'abort', 'cancel', 'scrap that', 'never mind', 'wait'],
-  fr: ['stop', 'arrête', 'arrete', 'annule', 'oublie', 'attends', 'laisse tomber'],
-};
-
-const ALL_STOP_WORDS = [...STOP_WORDS.en, ...STOP_WORDS.fr];
-
-function buildStopWordRegex() {
-  const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const parts = ALL_STOP_WORDS.map(w => {
-    const e = escapeRe(w);
-    if (w.includes(' ')) return e;
-    return `(?<![\\p{L}])${e}(?![\\p{L}])`;
-  });
-  return new RegExp(`(?:${parts.join('|')})`, 'iu');
-}
-
-const STOP_RE = buildStopWordRegex();
-
-export function detectStopWord(prompt) {
-  if (typeof prompt !== 'string' || !prompt) return null;
-  const m = STOP_RE.exec(prompt);
-  return m ? m[0] : null;
-}
+// 0.66.0: no stop-word list any more (user request, 2026-10-10: « Ce n'est pas
+// une recherche de mot qui pourra faire un routage efficace, c'est une recherche
+// de sens que seul un modele peut faire »). Whether a new message makes the
+// in-flight task useless is decided by the classifier model; the explicit
+// `!interrupt` command (message_router.mjs) stays — it is a command, not a word search.
 
 export async function decide({
   turnSummary,
@@ -50,11 +31,6 @@ export async function decide({
   if (budgetGuardFired) {
     return { decision: 'interrupt', reason: 'budget_guard' };
   }
-  const stop = detectStopWord(newPrompt);
-  if (stop) {
-    return { decision: 'interrupt', reason: 'stop_word', match: stop };
-  }
-
   let v;
   try { v = await classifier(turnSummary, newPrompt); }
   catch (e) {

@@ -249,6 +249,10 @@ const horsPipelineArg   = takeFlagValue('--hors-pipeline');
 // --mode leger|complet (0.49.0) : force le mode du Développement ; sinon la classification.
 const pipelineModeArg   = takeFlagValue('--mode');
 if (pipelineModeArg && !['leger', 'complet'].includes(pipelineModeArg)) die(`--mode leger|complet (reçu « ${pipelineModeArg} »)`);
+// --kind simple|bugfix|mecanique (0.66.0): explicit nature of a dev request;
+// otherwise the classifier model decides it (never a keyword guess).
+const pipelineKindArg   = takeFlagValue('--kind');
+if (pipelineKindArg && !['simple', 'bugfix', 'mecanique'].includes(pipelineKindArg)) die(`--kind simple|bugfix|mecanique (reçu « ${pipelineKindArg} »)`);
 const STEP_TOKEN = process.env.ORCH_STEP_TOKEN || null;
 const TURN_OF    = process.env.ORCH_TURN_PROJECT || null;   // ce dispatch est lancé DEPUIS un tour de ce projet
 const TURN_STEP  = process.env.ORCH_TURN_STEP || null;      // … qui est une étape de pipeline
@@ -1115,23 +1119,72 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
     }
   }
   const pipeNotes = [];
+  let kind = pipelineKindArg || null;
+  // A request the classifier model could not classify is KEPT (never lost,
+  // never classified by keywords — 0.66.0) until the user answers the pause:
+  // « continuer » retries the model, an explicit prefix (/dev /léger…) chooses,
+  // « abandonner » drops it.
+  const PENDING_CLS = path.join(LOGS, `${projectName}.a-classer.json`);
+  const readPendingCls = () => { try { const a = JSON.parse(fs.readFileSync(PENDING_CLS, 'utf8')); return Array.isArray(a) ? a : []; } catch { return []; } };
+  const writePendingCls = (a) => { if (a.length) fs.writeFileSync(PENDING_CLS, JSON.stringify(a, null, 2)); else { try { fs.rmSync(PENDING_CLS, { force: true }); } catch {} } };
+  const musicianLog = (ev) => { try { fs.appendFileSync(path.join(LOGS, `${projectName}.jsonl`), JSON.stringify({ ...ev, timestamp: new Date().toISOString() }) + '\n'); } catch {} };
+  const endTurn = (text, { paused = false } = {}) => {
+    musicianLog({ type: 'assistant', message: { model: '<synthetic>', content: [{ type: 'text', text }] } });
+    musicianLog({ type: 'result', subtype: paused ? 'success' : 'success', is_error: false, num_turns: 1, duration_ms: 1, duration_api_ms: 1, stop_reason: 'end_turn',
+      ...(paused ? { classification_pending: true } : {}), result: text });
+  };
+  let retriedPending = null;
   if (!pipe && !resumeRun) {
-    // Phase 5 (0.52.0) : classement par le model de la case routage.classifier
-    // (règles de la phase 1 si la case est vide ou si le model échoue, tracé).
+    const pendingCls = readPendingCls();
+    const reply = prompt.replace(/^\s*\[CHEF_ANSWER\]\s*/i, '').trim();
+    if (pendingCls.length) {
+      const prefixOnly = /^(\/[\p{L}-]+\s*)+$/u.test(reply);
+      if (/^(continue|continuer|reprends|reprendre|r[ée]essa(ie|yer)|oui|go|vas-y)\b/i.test(reply) || prefixOnly) {
+        retriedPending = pendingCls[0];
+        musicianLog({ type: 'user_prompt', text: prompt, ...(sourceProject ? { source: sourceProject } : {}), ...(callbackProject ? { callback: callbackProject } : {}) });
+        prompt = prefixOnly ? `${reply} ${retriedPending.prompt}` : retriedPending.prompt;
+      } else if (/^(abandonner|abandonne|abandon|annuler|annule)\b/i.test(reply)) {
+        writePendingCls(pendingCls.slice(1));
+        musicianLog({ type: 'user_prompt', text: prompt, ...(sourceProject ? { source: sourceProject } : {}) });
+        endTurn(`■ Demande abandonnée à votre demande, sans avoir été traitée : « ${String(pendingCls[0].prompt).slice(0, 200)} ».`);
+        process.exit(0);
+      }
+    }
+  }
+  // Explicit --pipeline dev without its mode or nature: the model decides them.
+  if (!resumeRun && (!pipe || (pipe === 'dev' && (!mode || !kind)))) {
+    // Phase 5 (0.52.0), 0.66.0: classification by the MEANING, by the model of
+    // the routage.classifier slot — no keyword fallback.
     const { classifyEntry } = await import('./pipeline-classify.mjs');
-    const c = await classifyEntry({ root: ROOT, logsDir: LOGS, text: prompt, project: projectName, entry: sourceProject ? `source:${sourceProject}` : 'dispatch' });
-    classification = { pipeline: c.pipeline, mode: c.mode, confidence: c.confidence, classifier: c.classifier, unclassifiable: !!c.unclassifiable,
-      ...(c.rules ? { rules: c.rules, agree: c.agree } : {}), ...(c.raison ? { raison: c.raison } : {}), ...(c.note ? { note: c.note } : {}) };
-    if (c.note) pipeNotes.push(c.note);
-    // Lacune (0.57.0) : seulement si le classement s'est fait par les règles (le
-    // model n'a pas pu trancher) et qu'elles ne rattachent pas la demande.
-    if (c.classifier === 'règles-v1') {
+    const c = await classifyEntry({ root: ROOT, logsDir: LOGS, text: prompt, project: projectName, entry: sourceProject ? `source:${sourceProject}` : 'dispatch',
+      fixed: { ...(pipe ? { pipeline: pipe } : {}), ...(mode ? { mode } : {}), ...(kind ? { kind } : {}) } });
+    if (c.failed) {
+      // Model unavailable, slot empty or invalid answer: a pause with a question,
+      // the request kept — never a classification by keywords.
+      const pend = readPendingCls().filter(p => p.prompt !== prompt);
+      writePendingCls([{ prompt, at: new Date().toISOString(), why: c.why, ...(sourceProject ? { source: sourceProject } : {}) }, ...pend]);
+      if (!retriedPending) musicianLog({ type: 'user_prompt', text: prompt, ...(sourceProject ? { source: sourceProject } : {}), ...(callbackProject ? { callback: callbackProject } : {}) });
+      const q = `${projectName} en pause — répondez « continuer » (réessayer le classement), un préfixe explicite comme « /dev /léger » ou « /discussion » (je l’applique à la demande gardée), ou « abandonner » : la demande n’a pas pu être classée par le model (${c.why}).`;
+      endTurn(`⏸ Je n’ai pas pu classer cette demande : ${c.why}.\n\nLe classement se fait par le sens, par le model de la case « routage.classifier » de la page Models, jamais par mots-clés. La demande est gardée, rien n’a été lancé.\n\n- « continuer » : je réessaie le classement (par exemple après avoir choisi un model pour cette case) ;\n- « /dev », « /dev /léger », « /discussion »… : vous choisissez vous-même le pipeline, je l’applique à la demande gardée ;\n- « abandonner » : j’oublie cette demande.\n\nNEEDS_USER_INPUT: ${q}`, { paused: true });
+      process.exit(2);
+    }
+    if (retriedPending) writePendingCls(readPendingCls().filter(p => p.prompt !== retriedPending.prompt));
+    classification = { pipeline: c.pipeline, mode: c.mode, kind: c.kind || null, confidence: c.confidence || 'explicite', classifier: c.classifier,
+      ...(c.raison ? { raison: c.raison } : {}) };
+    if (!kind && c.kind) kind = c.kind;
+    // A gap is reported by the MODEL (« lacune »), never detected on words (0.66.0).
+    if (c.lacune) {
       try {
         const obs = await import('./pipeline-observe.mjs');
-        const gap = obs.detectGap({ text: prompt, classification: c });
-        if (gap) obs.createObserver({ logsDir: LOGS }).record({ entry: 'signalement', project: projectName, text: prompt, caller: 'porte', gap });
+        const key = `model:${crypto.createHash('sha1').update(String(prompt)).digest('hex').slice(0, 16)}`;
+        obs.createObserver({ logsDir: LOGS }).record({ entry: 'signalement', project: projectName, text: prompt, caller: 'porte',
+          gap: { key, reason: 'aucun-pipeline', why: `le model de classement ne trouve aucun pipeline pour cette demande d’action : ${c.raison || ''}`.trim(),
+            proposal: { kind: 'pipeline', text: c.lacune } } });
       } catch { /* jamais bloquant */ }
     }
+  }
+  if (!pipe && !resumeRun && classification) {
+    const c = classification;
     if (ENFORCEMENT.pipelines.includes(c.pipeline)) {
       pipe = c.pipeline;
       if (!mode) mode = c.mode;
@@ -1146,8 +1199,8 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
     }
   }
   if (NEW_SESSION) pipeNotes.push('--new-session sans effet : chaque exécution a ses propres sessions, par étape et par model');
-  // --pipeline dev sans --mode : la classification choisit (Q9 : hésitation → léger).
-  if (pipe === 'dev' && !mode) mode = (await import('./pipeline-observe.mjs')).classify({ text: `/dev ${prompt}` }).mode;
+  // --pipeline dev sans --mode : c'est le model de classement qui a choisi (Q9 : hésitation → léger, dans sa consigne).
+  if (pipe === 'dev' && !mode && classification?.mode) mode = classification.mode;
   if (pipe || resumeRun) {
     const code = await pipeEngine.runPipeline({
       root: ROOT, logsDir: LOGS, project, projectName,
@@ -1157,7 +1210,7 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
         ? `\n\n[Note de l'orchestrateur : cette demande relève du pipeline « ${classification.notInService} », pas encore en service sur ce projet. ` +
           'Elle est traitée en Discussion : ne modifie rien ; si elle demande une action, termine ta réponse en disant à l’utilisateur de la relancer avec /dev.]'
         : ''),
-      promptForLog: prompt, pipeline: pipe, resumeRun, classification, mode, acceptDefects,
+      promptForLog: prompt, pipeline: pipe, resumeRun, classification, mode, kind, acceptDefects,
       ...(pipeNotes.length ? { modeNote: pipeNotes.join(' ; ') } : {}),
       callbackProject, sourceProject, obsId, testLabel,
       dispatchScript: fileURLToPath(import.meta.url),

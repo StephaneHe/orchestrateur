@@ -10,7 +10,8 @@
 // When `enforcement.terminal` is on:
 //   - the central claude is started as a read-only Discussion (plan mode, no
 //     write or shell tool) — see discussionArgs();
-//   - every validated line is classified; a discussion line goes to the
+//   - every validated line is classified by the classifier model (by its
+//     meaning, 0.66.0 — never keywords); a discussion line goes to the
 //     terminal unchanged, an ACTION line is held (its Enter is not sent) until
 //     the user confirms: run it as a pipeline execution, send it to the
 //     terminal as a discussion anyway, or cancel;
@@ -101,12 +102,18 @@ export class TerminalRouter {
     return { forward, hold: null };
   }
 
-  /** null = a discussion line (send it); otherwise why it is held. */
+  /**
+   * null = a discussion line (send it); otherwise why it is held. Since 0.66.0
+   * no keyword classification here: `!`/`#` (CLI syntax) and an explicit prefix
+   * are decided at once; any other line is held `toClassify` — the server asks
+   * the classifier model, by its meaning, then sends it or asks for confirmation.
+   */
   judge(line) {
     if (/^[!#]/.test(line)) return { shell: true, classification: { pipeline: 'dev', mode: 'leger', reasons: ['commande directe (shell ou mémoire) : interdite en Discussion'] } };
-    const c = this.classify(line);
-    if (!c || c.unclassifiable || c.pipeline === 'discussion') return null;
-    return { shell: false, classification: c };
+    const c = this.classify ? this.classify(line) : null;
+    if (c?.explicit && c.pipeline === 'discussion') return null;
+    if (c?.explicit && c.pipeline) return { shell: false, classification: { pipeline: c.pipeline, mode: c.mode || null, reasons: [`préfixe explicite → ${c.pipeline}`] } };
+    return { shell: false, classification: null, toClassify: true };
   }
 
   /** Decision on the held line: 'run' | 'discuss' | 'cancel'. */

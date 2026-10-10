@@ -54,7 +54,7 @@ fs.writeFileSync(path.join(T, 'config.json'), JSON.stringify({
   projects: [{ name: 'chef', path: path.join(T, 'chef') }, { name: 'P', path: P }],
 }));
 fs.writeFileSync(path.join(T, 'model-routing.json'), JSON.stringify({
-  version: 2, assignments: {
+  version: 2, assignments: { 'routage.classifier': { provider: 'anthropic', model: 'claude-haiku-5-5' },
     'dev.comprendre': { provider: 'anthropic', model: 'claude-opus-5-5' },
     'dev.concevoir': { provider: 'anthropic', model: 'claude-opus-5-5' },
     'dev.liste-tests': { provider: 'anthropic', model: 'claude-opus-5-5' },
@@ -171,9 +171,9 @@ await limitCase('tours de revue épuisés', ['Ajoute la multiplication', '--mode
 await limitCase('durée maximale', ['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '1', ORCH_PIPE_RUN_MS: '1' }, 'duration');
 
 // ---------------------------------------------------------------------------
-section('7. Classification : nouvelle fonctionnalité → complet ; /léger → léger');
-r = await go(['Ajoute une fonction de multiplication'], { FAKE_PIPE_ITEMS: '1' });
-ok(r.code === 0 && r.evs.find(e => e.type === 'user_prompt')?.pipeline?.mode === 'complet', `sans --mode : ${r.evs.find(e => e.type === 'user_prompt')?.pipeline?.mode}`);
+section('7. Classification par le model (0.66.0) : le mode qu’il choisit est suivi ; /léger → léger');
+r = await go(['Ajoute une fonction de multiplication'], { FAKE_PIPE_ITEMS: '1', FAKE_CLAUDE_CLASSIFY: JSON.stringify({ pipeline: 'dev', mode: 'complet', nature: 'comportement', raison: 'nouvelle fonctionnalité' }) });
+ok(r.code === 0 && r.evs.find(e => e.type === 'user_prompt')?.pipeline?.mode === 'complet', `sans --mode : le mode du model (${r.evs.find(e => e.type === 'user_prompt')?.pipeline?.mode})`);
 reset();
 r = await go(['/léger ajoute une fonction double']);
 ok(r.code === 0 && r.evs.find(e => e.type === 'user_prompt')?.pipeline?.mode === 'leger', '« /léger » force le mode léger');
@@ -243,7 +243,8 @@ section('11. Constat de revue NON testable (doc, registre, CHANGELOG) : jamais u
 // removed that exception: the finding is corrected (step « vert » in correction mode),
 // the item is reviewed again, and only then delivered. What stays from 0.50.1: it
 // never becomes a test and never consumes the test limit.
-ok(E.isDeliveryFix('docs/USER_REQUIREMENTS.md : la demande est absente du registre') && E.isDeliveryFix('CHANGELOG : décrire la fonction') && E.isDeliveryFix('version non incrémentée') && !E.isDeliveryFix('nommer le paramètre de double') && !E.isDeliveryFix('charCount(null) doit renvoyer 0'), 'tri : doc / registre / CHANGELOG / version d’un côté, comportements de l’autre');
+// 0.66.0: the split behaviour / non-testable is the REVIEW model's (items / hors_tdd) — no keyword sorting.
+ok(typeof E.isDeliveryFix === 'undefined', 'tri doc / comportement : fait par le model de la Revue (items / hors_tdd), plus par mots-clés');
 // Le cas signalé en 0.50.1 : liste pleine (2/2), puis un constat de registre en revue.
 r = await go(['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '2', ORCH_PIPE_ITEMS: '2', FAKE_PIPE_REVIEW: 'doc:1' });
 const order11 = r.evs.filter(e => (e.subtype === 'pipeline_step_done' && ['revue', 'vert'].includes(e.pipeline.step)) || e.subtype === 'pipeline_item_delivered' || e.subtype === 'pipeline_defect').map(e => e.subtype === 'pipeline_item_delivered' ? `livré${e.pipeline.item}` : e.subtype === 'pipeline_defect' ? 'défaut' : e.pipeline.step).join(',');

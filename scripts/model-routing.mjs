@@ -214,14 +214,9 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
     return { pipelines, slots: slotsOf(pipelines) };
   }
 
-  /** Mots-clés des lacunes acceptées, pour le classifieur (pipeline-observe). */
-  function classifierExtras() {
-    const c = readRouting().custom || {};
-    return [
-      ...(c.pipelines || []).map(p => ({ pipeline: p.id, keywords: p.keywords || [] })),
-      ...(c.attach || []).map(a => ({ pipeline: a.pipeline, keywords: a.keywords || [] })),
-    ].filter(x => x.pipeline && x.keywords.length);
-  }
+  // 0.66.0: no more keywords from accepted gaps — a gap accepted becomes a
+  // pipeline (or an attachment) DESCRIBED in words the classifier model reads
+  // (« Quand il s’applique »), never a keyword list matched against requests.
 
   const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
   const clean = (t, n = 160) => String(t ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
@@ -249,19 +244,19 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
     if (!prop?.kind) return { ok: false, status: 400, error: 'aucune proposition à appliquer' };
     const cur = effective(data);
     const custom = data.custom = data.custom || {};
-    const keywords = (Array.isArray(prop.keywords) ? prop.keywords : []).map(k => clean(k, 30).toLowerCase()).filter(Boolean).slice(0, 6);
     const head = clean(gap.entries?.[0]?.head || gap.why, 120);
     let applied;
     if (prop.kind === 'pipeline') {
-      let id = String(prop.id || '').toLowerCase();
+      // A gap proposed by the model carries no id: one is derived from its key.
+      let id = String(prop.id || `x-${String(gap.key).replace(/[^a-z0-9]/gi, '').slice(-6).toLowerCase()}`).toLowerCase();
       if (!SLUG_RE.test(id)) return { ok: false, status: 400, error: 'identifiant de pipeline invalide' };
       for (let i = 2; cur.pipelines.some(p => p.id === id); i++) id = `${String(prop.id).slice(0, 36)}-${i}`;
-      const label = clean(prop.label || id, 60);
+      const label = clean(prop.label || prop.text || id, 60);
       custom.pipelines = custom.pipelines || [];
       custom.pipelines.push({
-        id, label, icon: '✦', keywords,
+        id, label, icon: '✦',
         purpose: `Ajouté depuis une lacune signalée et acceptée : « ${head} ».`,
-        when: `Demandes du type « ${head} ».`,
+        when: `${prop.text ? `${clean(prop.text, 300)} — ` : ''}demandes du type « ${head} ».`,
         flow: [
           { id: 'cadrer', n: '1', title: 'Cadrer', what: 'Préciser ce qui est attendu et comment le vérifier.', example: head, judge: true },
           { id: 'realiser', n: '2', title: 'Réaliser', what: 'Faire le travail demandé.', example: head },
@@ -273,7 +268,7 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
     } else if (prop.kind === 'rattachement') {
       if (!cur.pipelines.some(p => p.id === prop.pipeline)) return { ok: false, status: 400, error: 'pipeline cible inconnu' };
       custom.attach = custom.attach || [];
-      custom.attach.push({ pipeline: prop.pipeline, keywords, when: `« ${head} »` });
+      custom.attach.push({ pipeline: prop.pipeline, when: `« ${head} »` });
       applied = { kind: 'rattachement', pipeline: prop.pipeline, slot: cur.slots.find(x => x.pipeline === prop.pipeline)?.id || null };
     } else if (prop.kind === 'variante' || prop.kind === 'etape') {
       const p = cur.pipelines.find(x => x.id === prop.pipeline);
@@ -618,5 +613,5 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
     return decorateCatalog(catalog, catalogRules());
   }
 
-  return { view, setAssignment, getCatalog, refresh, openrouterKey, routingFile, readRouting, effective, classifierExtras, decideGap, gapDecisions };
+  return { view, setAssignment, getCatalog, refresh, openrouterKey, routingFile, readRouting, effective, decideGap, gapDecisions };
 }

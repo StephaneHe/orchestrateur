@@ -988,7 +988,7 @@ export async function browserChecks(sb, t) {
       await page.click('#models .mr-keys-btn');
       await setHash(page, '#/');
     });
-    await check(B, 'observe-view', 'Pipelines, phase 1 : panneau « Observation » — classifications récentes (entrée, projet, pipeline, mode, inclassable = Discussion), mention « rien n’est encore imposé »', async () => {
+    await check(B, 'observe-view', 'Panneau « Observation » — entrées récentes (entrée, projet, choix explicite ou « à classer (model) »), mention « aucun classement par mots-clés » (0.66.0)', async () => {
       if (!(await hasModels(page))) NA('vue absente de cet état du code');
       await setHash(page, '#/models');
       assert(await until(async () => (await page.locator('#models .mr-tab').count()) > 0, 10_000), 'vue');
@@ -996,10 +996,11 @@ export async function browserChecks(sb, t) {
       await page.click('#models .mr-obs-btn');
       assert(await until(async () => (await page.locator('#models .mr-obs-table tbody tr').count()) > 0, 8000), 'aucune classification affichée');
       const txt = await page.textContent('#models .mr-obs');
-      assert(/rien n’est encore imposé/.test(txt) && /Inclassable = Discussion/.test(txt), 'explication de la phase absente');
+      // 0.66.0: the panel says no keyword classification is done any more.
+      assert(/Aucun classement par mots-clés/.test(txt) || (/rien n’est encore imposé/.test(txt) && /Inclassable = Discussion/.test(txt)), 'explication du panneau absente');
       const rows = await page.$$eval('#models .mr-obs-table tbody tr', trs => trs.map(tr => ({ e: tr.dataset.entry, p: tr.dataset.pipeline, t: tr.textContent })));
       assert(rows.some(r => r.e === 'dashboard:chef'), `entrées : ${[...new Set(rows.map(r => r.e))].join(', ')}`);
-      assert(rows.some(r => /inclassable → Discussion/.test(r.t) && r.p === 'discussion'), 'inclassable non affiché en Discussion');
+      assert(rows.some(r => r.t.includes('à classer (model)')) || rows.some(r => /inclassable → Discussion/.test(r.t) && r.p === 'discussion'), 'entrée sans choix explicite non affichée « à classer (model) »');
       assert(await page.getAttribute('#models .mr-obs-btn', 'aria-expanded') === 'true', 'aria-expanded');
       await shot(page, 'observation');
       await page.click('#models .mr-obs-btn');

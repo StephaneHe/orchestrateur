@@ -65,7 +65,7 @@ fs.writeFileSync(path.join(T, 'config.json'), JSON.stringify({ conductor: 'chef'
   projects: [{ name: 'chef', path: path.join(T, 'chef') }, { name: 'P', path: path.join(T, 'P') }] }));
 const routing = (extra = {}) => fs.writeFileSync(path.join(T, 'model-routing.json'), JSON.stringify({ version: 2, history: [],
   enforcement: { projects: ['P'], pipelines: E.ENGINE_PIPELINES },
-  assignments: { 'images.verifier': { provider: 'anthropic', model: 'claude-opus-5-5' }, 'images.produire.ocr': { provider: 'anthropic', model: 'claude-sonnet-5-5' }, ...extra } }));
+  assignments: { 'routage.classifier': { provider: 'anthropic', model: 'claude-haiku-5-5' }, 'images.verifier': { provider: 'anthropic', model: 'claude-opus-5-5' }, 'images.produire.ocr': { provider: 'anthropic', model: 'claude-sonnet-5-5' }, ...extra } }));
 routing();
 const baseEnv = { ...process.env, DISPATCH_ROOT_FOR_TESTS: T, CLAUDE_BIN: FAKE, FAKE_CLAUDE_PIPELINE: '1', FAKE_CLAUDE_ECHO_MODEL: '1', ORCH_FFPROBE: 'none',
   FAKE_CLAUDE_LATENCY_MS: '5', ORCH_PERM_DISABLE: '1', ORCH_PORT: '9', ORCH_PIPE_PROGRESS_MS: '200' };
@@ -85,44 +85,44 @@ const ids = (st) => st.steps.map(s => `${s.id}:${s.status}`).join(' ');
 // ---------------------------------------------------------------------------
 section('2. Images : cadrer → produire (fichier vérifié) → vérifier visuellement → livrer');
 const dump = path.join(T, 'prompts.ndjson');
-let x = play('images', 'génère une icône pour l’application', { env: { FAKE_CLAUDE_DUMP_PROMPT: dump } });
+let x = play('images', 'génère une icône pour l’application', { env: { FAKE_CLAUDE_DUMP_PROMPT: dump, FAKE_CLAUDE_CHOICE: 'generation' } });
 ok(x.code === 0 && ids(x.st) === 'cadrer:ok produire:ok verifier:ok livrer:ok', `${ids(x.st || { steps: [] })}`, x.out.slice(-800));
-ok(x.st.steps.find(s => s.id === 'produire')?.slot === 'images.produire.generation', 'variante « génération » choisie d’après la demande (sa case en tête)');
+ok(x.st.steps.find(s => s.id === 'produire')?.slot === 'images.produire.generation', 'variante « génération » choisie par le model de classement, d’après le sens de la demande (sa case en tête)');
 ok(x.st.steps.find(s => s.id === 'verifier')?.served === 'claude-opus-5-5', 'vérification visuelle sur le model de sa case');
 const vp = fs.readFileSync(dump, 'utf8').trim().split('\n').map(l => JSON.parse(l)).find(p => /PIPELINE_STEP=verifier/.test(p.prompt));
 ok(/media\/produire\.png/.test(vp?.prompt || '') && /outil Read/.test(vp.prompt), 'la vérification reçoit la liste des fichiers produits, à ouvrir avec Read');
 ok(/media\/produire\.png/.test(x.result) && g(x.dir, 'log', '-1', '--format=%s').stdout.trim() !== 'init', 'résultat : fichiers produits listés ; livrés en un commit');
-x = play('images', 'extrais le texte de cette capture d’écran');
+x = play('images', 'extrais le texte de cette capture d’écran', { env: { FAKE_CLAUDE_CHOICE: 'ocr' } });
 ok(x.code === 0 && x.st.steps.find(s => s.id === 'produire')?.slot === 'images.produire.ocr' && x.st.steps.find(s => s.id === 'produire')?.served === 'claude-sonnet-5-5', 'OCR : variante « ocr » (sa case), un fichier TEXTE attendu', ids(x.st || { steps: [] }));
-x = play('images', 'génère une icône', { env: { FAKE_PIPE_BAD: 'produire:1' } });
+x = play('images', 'génère une icône', { env: { FAKE_PIPE_BAD: 'produire:1', FAKE_CLAUDE_CHOICE: 'generation' } });
 const pr = x.st.steps.filter(s => s.id === 'produire');
 ok(pr[0]?.status === 'refused' && /annoncé mais absent/.test(pr[0].why) && pr[1]?.status === 'ok', 'fichier annoncé mais jamais écrit : refusé, refait');
-x = play('images', 'génère une icône', { env: { FAKE_PIPE_JSON: JSON.stringify({ verifier: { verdict: 'problemes', items: ['image floue'] } }) } });
+x = play('images', 'génère une icône', { env: { FAKE_CLAUDE_CHOICE: 'generation', FAKE_PIPE_JSON: JSON.stringify({ verifier: { verdict: 'problemes', items: ['image floue'] } }) } });
 ok(x.code === 2 && x.evs.some(e => e.subtype === 'pipeline_loop') && x.st.steps.filter(s => s.id === 'produire').length === 3 && x.st.status === 'paused', 'défaut visuel → retour à « produire », borné (2 tours), puis pause expliquée');
 routing({ 'images.produire': { provider: 'local', model: 'imagemagick' } });
 fs.rmSync(dump, { force: true });
-x = play('images', 'redimensionne le logo en 64 px', { env: { FAKE_CLAUDE_DUMP_PROMPT: dump } });
+x = play('images', 'redimensionne le logo en 64 px', { env: { FAKE_CLAUDE_DUMP_PROMPT: dump, FAKE_CLAUDE_CHOICE: 'retouche' } });
 const pp = fs.readFileSync(dump, 'utf8').trim().split('\n').map(l => JSON.parse(l)).find(p => /PIPELINE_STEP=produire/.test(p.prompt));
 ok(/OUTIL_LOCAL=imagemagick/.test(pp?.prompt || '') && x.st.steps.find(s => s.id === 'produire')?.slot === 'images.produire.retouche', 'case affectée à un OUTIL LOCAL : annoncé à l’étape (retouche → imagemagick)');
 routing();
 
 // ---------------------------------------------------------------------------
 section('3. Vidéo : acquérir → analyser (texte) → monter (vidéo) → vérifier → livrer');
-x = play('video', 'ajoute des sous-titres à la vidéo de la séance');
+x = play('video', 'ajoute des sous-titres à la vidéo de la séance', { env: { FAKE_CLAUDE_CHOICE: 'transcription,sous-titres' } });
 ok(x.code === 0 && ids(x.st) === 'acquerir:ok analyser:ok monter:ok verifier:ok livrer:ok', ids(x.st || { steps: [] }), x.out.slice(-800));
 ok(x.st.steps.find(s => s.id === 'monter')?.slot === 'video.monter.sous-titres' && x.st.steps.find(s => s.id === 'analyser')?.slot === 'video.analyser.transcription', 'variantes : transcription puis incrustation des sous-titres');
-x = play('video', 'fais le résumé de cette vidéo', { env: { FAKE_PIPE_NOTHING: 'monter' } });
+x = play('video', 'fais le résumé de cette vidéo', { env: { FAKE_PIPE_NOTHING: 'monter', FAKE_CLAUDE_CHOICE: 'resume,decoupe' } });
 ok(x.code === 0 && x.st.steps.find(s => s.id === 'monter')?.status === 'ok' && x.st.steps.find(s => s.id === 'analyser')?.slot === 'video.analyser.resume', 'analyse seule : « AUCUN_MONTAGE » accepté, variante « résumé »');
 
 // ---------------------------------------------------------------------------
 section('4. Audio : transcription mesurée contre une référence ; synthèse vocale');
 const REF = 'bonjour à tous nous allons parler du budget de la semaine prochaine';
-x = play('audio', 'transcris la réunion', { repoOpts: { cfg: { werReference: 'ref.txt' }, files: { 'ref.txt': REF } }, env: { FAKE_PIPE_TRANSCRIPT: REF } });
+x = play('audio', 'transcris la réunion', { repoOpts: { cfg: { werReference: 'ref.txt' }, files: { 'ref.txt': REF } }, env: { FAKE_PIPE_TRANSCRIPT: REF, FAKE_CLAUDE_CHOICE: 'source,stt' } });
 ok(x.code === 0 && ids(x.st) === 'acquerir:ok traiter:ok verifier:ok livrer:ok' && x.st.steps.find(s => s.id === 'traiter')?.slot === 'audio.traiter.stt', `transcription fidèle : acceptée (${ids(x.st || { steps: [] })})`, x.out.slice(-600));
-x = play('audio', 'transcris la réunion', { repoOpts: { cfg: { werReference: 'ref.txt' }, files: { 'ref.txt': REF } }, env: { FAKE_PIPE_TRANSCRIPT: 'rien à voir avec la réunion ici' } });
+x = play('audio', 'transcris la réunion', { repoOpts: { cfg: { werReference: 'ref.txt' }, files: { 'ref.txt': REF } }, env: { FAKE_PIPE_TRANSCRIPT: 'rien à voir avec la réunion ici', FAKE_CLAUDE_CHOICE: 'source,stt' } });
 const tr = x.st.steps.filter(s => s.id === 'traiter');
 ok(tr.length && tr.every(s => s.status === 'refused') && /taux d'erreur/.test(tr[0].why) && x.st.status === 'paused', 'transcription infidèle : refusée par le taux d’erreur mesuré, puis pause');
-x = play('audio', 'fais dire ce texte en synthèse vocale');
+x = play('audio', 'fais dire ce texte en synthèse vocale', { env: { FAKE_CLAUDE_CHOICE: 'tts' } });
 ok(x.code === 0 && x.st.steps.find(s => s.id === 'traiter')?.slot === 'audio.traiter.tts' && x.st.steps.find(s => s.id === 'acquerir')?.slot === 'audio.acquerir.tts', 'synthèse vocale : texte acquis, puis fichier AUDIO produit (variantes tts)', ids(x.st || { steps: [] }));
 
 // ---------------------------------------------------------------------------
@@ -130,9 +130,9 @@ section('5. Avec ffprobe (s’il est installé) : décodage réel exigé');
 const ff = M.findFfprobe({ ...process.env, ORCH_FFPROBE: '' });
 if (!ff) ok(true, 'ffprobe absent sur ce poste : section sautée (le contrôle par signature reste actif)');
 else {
-  x = play('audio', 'nettoie le bruit de cet enregistrement', { env: { ORCH_FFPROBE: ff } });
+  x = play('audio', 'nettoie le bruit de cet enregistrement', { env: { ORCH_FFPROBE: ff, FAKE_CLAUDE_CHOICE: 'source,traitement' } });
   ok(x.code === 0 && x.st.steps.find(s => s.id === 'acquerir')?.status === 'ok', 'WAV réel : décodé par ffprobe (durée, piste audio)', ids(x.st || { steps: [] }));
-  x = play('video', 'découpe la vidéo', { env: { ORCH_FFPROBE: ff } });
+  x = play('video', 'découpe la vidéo', { env: { ORCH_FFPROBE: ff, FAKE_CLAUDE_CHOICE: 'transcription,decoupe' } });
   const ac = x.st.steps.filter(s => s.id === 'acquerir');
   ok(ac.length && ac.every(s => s.status === 'refused') && /ffprobe/.test(ac[0].why), 'en-tête MP4 sans vidéo réelle : refusé par ffprobe');
 }

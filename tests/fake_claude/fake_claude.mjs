@@ -139,8 +139,26 @@ async function run() {
   const classifyReply = () => {
     if (process.env.FAKE_CLAUDE_CLASSIFY) return process.env.FAKE_CLAUDE_CLASSIFY;
     const req = (/Request:\n<<<\n([\s\S]*)\n>>>/.exec(userText) || [])[1] || '';
-    const dev = /\b(ajoute|corrige|implémente|implemente|modifie|fix|add)\b/i.test(req);
-    return JSON.stringify({ pipeline: dev ? 'dev' : 'discussion', mode: 'leger', raison: 'classement du faux claude' });
+    // A variant choice (chooseOption): the first option, unless FAKE_CLAUDE_CHOICE names one.
+    if (/^Options:$/m.test(userText) && !/^Pipelines:$/m.test(userText)) {
+      // FAKE_CLAUDE_CHOICE=<id>[,<id>…]: the first offered option in that list (several steps, one env).
+      const opts = [...userText.matchAll(/^- ([^:\n]+): (.*)$/gm)].map(m => ({ id: m[1], what: m[2] }));
+      const offered = opts.map(o => o.id);
+      const wanted = String(process.env.FAKE_CLAUDE_CHOICE || '').split(',').map(x => x.trim()).filter(Boolean);
+      // Without a scripted choice, the double plays a rough « meaning »: the option
+      // whose description shares the most word stems with the request.
+      const stems = (s) => new Set(String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().split(/[^a-z]+/).filter(w => w.length >= 4).map(w => w.slice(0, 5)));
+      const rq = stems(req);
+      const best = opts.map(o => ({ id: o.id, n: [...stems(o.what)].filter(w => rq.has(w)).length })).sort((a, b) => b.n - a.n)[0];
+      return JSON.stringify({ choix: offered.find(o => wanted.includes(o)) || (best?.n ? best.id : offered[0]), raison: 'choix du faux claude' });
+    }
+    // The fake stands for the model: its naive guess (test double only — the
+    // orchestrator itself never classifies by words since 0.66.0).
+    const imposed = /The user already chose pipeline "([a-z-]+)"/.exec(userText)?.[1];
+    const imposedMode = /mode "(leger|complet)": keep it/.exec(userText)?.[1] || /and mode "(leger|complet)"/.exec(userText)?.[1];
+    const dev = imposed ? imposed === 'dev' : /\b(ajoute|corrige|implémente|implemente|modifie|fix|add)\b/i.test(req);
+    const nature = /\b(corrige|bug|fix|répare|repare)\b/i.test(req) ? 'bugfix' : /\b(renomme|remplace|rename)\b/i.test(req) ? 'mecanique' : 'comportement';
+    return JSON.stringify({ pipeline: imposed || (dev ? 'dev' : 'discussion'), mode: imposedMode || 'leger', nature, raison: 'classement du faux claude' });
   };
   const fixedReply = isReformulation
     ? (process.env.FAKE_CLAUDE_TRANSLATION || 'Réponse reformulée en français : la suite de tests passe, le travail est terminé et rien ne reste à faire pour cette demande.')
@@ -436,9 +454,10 @@ function pipelineStep(text) {
       const spec = process.env.FAKE_PIPE_REVIEW;
       // « doc » : constat non testable, à l'ancienne (dans items) ; « hors » :
       // le même, rangé par la revue dans hors_tdd ; « mixte » : un de chaque.
-      if (once(spec, 'doc')) { w(artefact, JSON.stringify({ verdict: 'problèmes', items: ['docs/USER_REQUIREMENTS.md : la demande est absente du registre'] })); break; }
+      // 0.66.0: the model itself files a registry finding under hors_tdd (no keyword re-sorting by the engine).
+      if (once(spec, 'doc')) { w(artefact, JSON.stringify({ verdict: 'problèmes', items: [], hors_tdd: ['docs/USER_REQUIREMENTS.md : la demande est absente du registre'] })); break; }
       if (once(spec, 'hors')) { w(artefact, JSON.stringify({ verdict: 'problèmes', items: [], hors_tdd: ['README : documenter la nouvelle fonction'] })); break; }
-      if (once(spec, 'mixte')) { w(artefact, JSON.stringify({ verdict: 'problèmes', items: ['(tests: 1) nommer le paramètre de double', 'CHANGELOG : décrire la fonction'] })); break; }
+      if (once(spec, 'mixte')) { w(artefact, JSON.stringify({ verdict: 'problèmes', items: ['(tests: 1) nommer le paramètre de double'], hors_tdd: ['CHANGELOG : décrire la fonction'] })); break; }
       const prob = once(spec, 'problemes');
       // 0.61.0: a behaviour item declares its tests; FAKE_PIPE_REVIEW_DECL=none[:n] / over[:n].
       const rcap = Number(process.env.ORCH_PIPE_TESTS_PER_ITEM) || 2;

@@ -46,7 +46,9 @@ ok(c1.slot === 'dev.vert.simple' && c1.provider === 'codex' && c1.second?.provid
 ok(E.resolveCase(A, ['dev.vert.mecanique', 'dev.vert']).model === 'claude-sonnet-5-5', 'variante vide → étape');
 const c3 = E.resolveCase(A, ['dev.rouge.bugfix', 'dev.rouge']);
 ok(c3.source === 'project-default' && c3.model === null, 'outil local ou case vide → défaut du projet (avertissement)');
-ok(E.devKind('corrige le bug du titre') === 'bugfix' && E.devKind('renomme slugify en toSlug') === 'mecanique' && E.devKind('ajoute une fonction double') === 'simple', 'nature : bugfix / mécanique / simple');
+// 0.66.0: the nature (bugfix / mécanique / simple) is classified by the model
+// of routage.classifier (or --kind), never guessed from words by the engine.
+ok(typeof E.devKind === 'undefined', 'nature : plus de devinette par mots-clés dans le moteur (classée par le model ou --kind)');
 ok(E.isTestFile('test/a/b.test.mjs', ['test/**']) && !E.isTestFile('src/a.js', ['test/**']) && E.isTestFile('x.test.js', ['**/*.test.*']), 'globs de test');
 fs.mkdirSync(path.join(R, 'src')); fs.writeFileSync(path.join(R, 'src', 'a.js'), '');
 ok(JSON.stringify(E.missingCitedPaths('voir `src/a.js` et `src/b.js`, `npm test`, `https://x.y/z`', R)) === '["src/b.js"]', 'chemin cité inexistant repéré, le reste ignoré');
@@ -65,7 +67,7 @@ fs.writeFileSync(path.join(T, 'config.json'), JSON.stringify({
   projects: [{ name: 'chef', path: path.join(T, 'chef') }, { name: 'P', path: P }, { name: 'Q', path: Q }],
 }));
 const routing = (extra = {}) => fs.writeFileSync(path.join(T, 'model-routing.json'), JSON.stringify({
-  version: 2, assignments: {
+  version: 2, assignments: { 'routage.classifier': { provider: 'anthropic', model: 'claude-haiku-5-5' },
     'discussion.comprendre': { provider: 'anthropic', model: 'claude-opus-5-5' },
     'discussion.rechercher': { provider: 'anthropic', model: 'claude-sonnet-5-5' },
     'discussion.repondre': { provider: 'anthropic', model: 'claude-opus-5-5' },
@@ -232,7 +234,8 @@ ok(r.code === 0, 'projet hors service : comportement inchangé (un musicien peut
 // avec une note visible ; avant la 0.52.0, c'était un tour ordinaire.
 section('8. Pipeline pas encore en service : Discussion (lecture seule), notée — aucun tour ordinaire');
 n0 = logOf('P').length;
-r = dispatch(['P', 'fais un état de l\'art comparatif des bibliothèques de tests et donne les sources']);
+// The classifier MODEL says « recherche » (0.66.0: by its meaning, never keywords).
+r = dispatch(['P', 'fais un état de l\'art comparatif des bibliothèques de tests et donne les sources'], { FAKE_CLAUDE_CLASSIFY: JSON.stringify({ pipeline: 'recherche', mode: 'complet', raison: 'état de l’art demandé' }) });
 evs = since('P', n0);
 const up8 = evs.find(e => e.type === 'user_prompt');
 const st8 = evs.find(e => e.subtype === 'pipeline_start');
