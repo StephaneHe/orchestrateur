@@ -11,6 +11,57 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.67.1] - 2026-10-10
+
+Demande de l'utilisateur : « La clé de dédoublonnage ne garde que les 120
+premiers caractères de la demande : manifestement mauvaise methode, trouves en
+une autre ». Incident réel : dans une exécution du Routage, la tâche 4 a été
+écartée comme doublon de la tâche 3 (même début de texte, travail différent),
+sans alerte ni trace, et elle a été perdue. Son `dispatch.json` la donnait même
+comme « en attente ».
+
+### Fixed
+- (server) **Dédoublonnage des tâches du Routage sur une identité explicite,
+  jamais sur un début de texte** (`scripts/routage-pending.mjs`, `identities`).
+  Deux entrées sont le même travail si elles ont l'une de ces identités :
+  1. **la même tâche du même Routage** (`run#n`) : rattrape un re-dispatch,
+     même reformulé ;
+  2. **la reprise de la même exécution en pause** du même projet ;
+  3. **le même contenu** : empreinte SHA-256 du **texte complet** normalisé,
+     plus le projet, le pipeline, le mode et le projet attendu. Rattrape le
+     même travail remis en file par un autre Routage (réveil rejoué).
+  - Deux tâches qui ne partagent que leur début ont des empreintes
+    différentes : elles sont **toutes les deux gardées**. Le même texte avec
+    un autre mode n'est pas un doublon.
+  - Choix : la référence de tâche seule ne bloquerait pas un réveil rejoué, qui
+    crée un nouveau Routage. L'empreinte seule laisserait passer un re-dispatch
+    reformulé. Les deux ensemble couvrent les deux cas, sans jamais comparer un
+    préfixe.
+- (server) **Plus aucun doublon écarté en silence.** Chaque doublon donne son
+  motif et l'entrée gardée. Il est ajouté à
+  `logs/routage-pending-duplicates.ndjson` et **signalé au chef** aussitôt
+  (`/api/notify`, `source: routage-duplicate`, avec la liste des tâches
+  écartées). Il figure aussi dans `dispatch.json.duplicates`. La libération
+  (`releaseReady`) trace de même un éventuel jumeau d'ancien format, lancé une
+  seule fois.
+- (server) **`dispatch.json.waiting`** ne liste que ce qui est vraiment en
+  file. Il était calculé avant `addPending`.
+- (server) **Une dépendance attend SA tâche.** La tâche attendue était
+  reconnue dans le log à ses 60 premiers caractères (même défaut). Elle l'est
+  maintenant à l'empreinte de son texte complet (`after.hash`, `textHash`).
+  Les entrées d'avant gardent l'ancienne correspondance.
+
+### Tests
+- `scripts/_test_routage_dedupe.mjs` (18 contrôles) :
+  - tâches 3 et 4 au même début de 200 caractères, les deux gardées ;
+  - vrais doublons écartés, journalisés et décrits (re-dispatch reformulé,
+    réveil rejoué), autre mode gardé ;
+  - dépendance non libérée par la tâche au même début ;
+  - jumeaux libérés une seule fois ;
+  - de bout en bout avec le vrai `dispatch.mjs` et le Routage du chef : tâches
+    2, 3 et 4 en attente, puis le même Routage relancé : rien de remis en
+    file, trois doublons dans `dispatch.json`, au chef et dans le journal.
+
 ## [0.67.0] - 2026-10-10
 
 Demande de l'utilisateur : « Je vois dans le journal d'activite qu'une des

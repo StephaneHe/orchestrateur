@@ -38,7 +38,7 @@ import { derivedToken } from './local-secret.mjs';
 import { readBranchLog } from './dual-run.mjs';
 import { languageFor, languageGate, localize, workingLanguage } from './language.mjs';
 import { CATALOG_PIPELINES, catalogOf, catalogSteps } from './pipeline-catalog.mjs';
-import { readPending, addPending, releaseReady, launchTask, detectReprise, logOffset, taskKey, RUN_ID_RE } from './routage-pending.mjs';
+import { readPending, addPending, releaseReady, launchTask, detectReprise, logOffset, taskKey, textHash, duplicatesText, RUN_ID_RE } from './routage-pending.mjs';
 export { readPending };
 import { backoffConfig, isLaunchFailure, dispatchRefusal, tierAfter, delayFor, waitBackoff, runDirOf } from './model-backoff.mjs';
 import { runModelTest } from './model-test.mjs';
@@ -741,20 +741,32 @@ const CODE_STEPS = {
       if (t.apres) { waiting.push({ ...t, n: i + 1, after: tasks[t.apres - 1].projet }); return; }
       done.push({ n: i + 1, ...launchTask(root, t, dispatchScript) });
     });
-    let duplicates = [];
+    let duplicates = [], queued = [];
     if (waiting.length) {
       const entries = waiting.map(w => {
         const depTask = tasks[w.apres - 1];
         const dep = done.find(d => d.n === w.apres);
         // Anchor: the awaited log position when the awaited task was launched
-        // (or now, if it is itself still waiting) plus its text.
-        return { run, projet: w.projet, pipeline: w.pipeline, mode: w.mode || null, served: w.served, demande: w.demande, rattache: w.rattache || null,
+        // (or now, if it is itself still waiting) plus the fingerprint of its
+        // WHOLE text (0.67.x: a shared opening sentence no longer matches).
+        // `n` + `run` identify this Routage task (deduplication, 0.68.0).
+        return { run, n: w.n, projet: w.projet, pipeline: w.pipeline, mode: w.mode || null, served: w.served, demande: w.demande, rattache: w.rattache || null,
           ...(w.reprise ? { reprise: w.reprise } : {}),
-          after: { projet: w.after, offset: dep ? dep.offset : logOffset(logsDir, w.after), key: taskKey(depTask.demande), since: dep?.at || new Date().toISOString() } };
+          after: { projet: w.after, offset: dep ? dep.offset : logOffset(logsDir, w.after), key: taskKey(depTask.demande), hash: textHash(depTask.demande), since: dep?.at || new Date().toISOString() } };
       });
-      duplicates = addPending(logsDir, entries).duplicates;
+      const res = addPending(logsDir, entries);
+      queued = res.added;
+      duplicates = res.duplicates;
     }
-    fs.writeFileSync(path.join(artDir, 'dispatch.json'), JSON.stringify({ dispatched: done, waiting: waiting.map(w => ({ n: w.n, projet: w.projet, apres: w.apres, after: w.after, ...(w.reprise ? { reprise: w.reprise } : {}) })), ...(duplicates.length ? { duplicates } : {}) }, null, 2));
+    // « waiting » = what is REALLY queued (it was computed before addPending, so
+    // a task dropped as a duplicate still showed as waiting); duplicates apart.
+    fs.writeFileSync(path.join(artDir, 'dispatch.json'), JSON.stringify({ dispatched: done,
+      waiting: waiting.filter(w => queued.some(q => q.n === w.n)).map(w => ({ n: w.n, projet: w.projet, apres: w.apres, after: w.after, ...(w.reprise ? { reprise: w.reprise } : {}) })),
+      ...(duplicates.length ? { duplicates } : {}) }, null, 2));
+    // A duplicate is never dropped silently (user rule): the chef is told at once.
+    if (duplicates.length) {
+      await postNotify(root, conductorOf(root), `[ROUTAGE ${run}] ${duplicates.length} tâche(s) écartée(s) comme doublon d’une tâche déjà en attente — rien n’est perdu, voici lesquelles et pourquoi :\n${duplicatesText(duplicates)}`, 'routage-duplicate');
+    }
     const lost = done.filter(d => !d.pid);
     return lost.length ? { ok: false, why: `lancement impossible pour : ${lost.map(d => d.projet).join(', ')}` } : { ok: true };
   },

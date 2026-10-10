@@ -1359,7 +1359,18 @@ ne se passe. Il faut corriger la situation ».
   Un `result` fantôme ou celui d'un autre tour ne comptent pas.
 - **Reprise** : une tâche `reprise: <run>` part en `--pipeline-resume`. Le
   `dispatcher` la détecte aussi d'après un identifiant cité.
-- **Doublons** : refusés, sur la clé projet + exécution reprise (ou texte).
+- **Doublons** (0.67.1, `identities`) : refusés sur une identité explicite,
+  **jamais sur un début de texte** :
+  - même tâche du même Routage (`run#n`) ;
+  - reprise de la même exécution ;
+  - même contenu (SHA-256 du texte complet + projet + pipeline + mode + projet
+    attendu).
+
+  Chaque doublon écarté est journalisé (`logs/routage-pending-duplicates.ndjson`),
+  listé dans `dispatch.json.duplicates` et signalé au chef
+  (`routage-duplicate`). `dispatch.json.waiting` ne liste que ce qui est
+  vraiment en file. La tâche attendue est reconnue à `after.hash` (texte
+  complet). Recette : `_test_routage_dedupe.mjs`.
 - **Tous les `result` sont horodatés** par `dispatch.mjs`.
 - **Actif tout de suite** (`dispatch.mjs`, moteur, catalogue) : reprise,
   libération en fin de tour, dépendance, dédoublonnage, CLI.

@@ -20,7 +20,21 @@
 //     EVERY turn, the server sweeps it, the Relancer step still calls it;
 //   - a waiter that resumes a paused pipeline run carries `reprise` and is
 //     launched with `--pipeline-resume <run>`, never as a new run;
-//   - entries are deduplicated (same project + same resumed run, or same text).
+//   - entries are deduplicated (0.67.0) on an explicit identity, never on a
+//     text prefix: the same Routage task (run + task number), the same resumed
+//     run, or the same task content (fingerprint of the WHOLE normalised text +
+//     project + pipeline + mode + awaited project). A duplicate is never dropped
+//     silently: it is returned with its reason, appended to
+//     logs/routage-pending-duplicates.ndjson, and the engine reports it to the chef.
+//
+// Why not the first 120 characters any more (user, 2026-10-10: « La clé de
+// dédoublonnage ne garde que les 120 premiers caractères de la demande :
+// manifestement mauvaise methode, trouves en une autre »): two different tasks
+// starting with the same sentence were merged — task 4 of a run was dropped as a
+// duplicate of task 3, without any trace. A full-text fingerprint keeps every
+// distinct task; the task reference catches a re-dispatch of the same task even
+// if its text was reworded; the content fingerprint catches the same work queued
+// again by another Routage run (a replayed wake-up).
 //
 // CLI (never edit the JSON file by hand):
 //   node scripts/routage-pending.mjs list [--json]
@@ -36,6 +50,8 @@ import { fileURLToPath } from 'node:url';
 
 export const PENDING_FILE = 'routage-pending.json';
 export const RUN_ID_RE = /\bp-\d{8}T\d{6}-[0-9a-f]{6}\b/g;
+export const DUPLICATES_FILE = 'routage-pending-duplicates.ndjson';
+// Only a short, human-readable label now (logs, CLI): never an identity.
 const KEY_LEN = 120;
 
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
@@ -47,15 +63,39 @@ export function writePending(logsDir, tasks) {
   fs.renameSync(`${f}.tmp`, f);
 }
 
-/** Normalised head of a task text: what its turn's user_prompt starts with. */
-export function taskKey(text) {
-  return String(text || '').replace(/\n\n\(Rattachée à :[\s\S]*$/, '').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, KEY_LEN);
+/** Whole task text, normalised (the chef's « Rattachée à » suffix is not part of the task). */
+export function normalizeTask(text) {
+  return String(text || '').replace(/\n\n\(Rattachée à :[\s\S]*$/, '').replace(/\s+/g, ' ').trim().toLowerCase();
 }
-export function dedupeKey(t) {
-  return `${t.projet}|${t.reprise ? `run:${t.reprise}` : `txt:${taskKey(t.demande)}`}`;
+/** Short label of a task text (display only). */
+export function taskKey(text) { return normalizeTask(text).slice(0, KEY_LEN); }
+/** Fingerprint of the WHOLE normalised text: what identifies a turn's request. */
+export function textHash(text) {
+  return crypto.createHash('sha256').update(normalizeTask(text)).digest('hex').slice(0, 32);
 }
+/** Fingerprint of a task's content: project, pipeline, mode, awaited project and whole text. */
+export function contentHash(t) {
+  return crypto.createHash('sha256')
+    .update([t.projet || '', t.pipeline || '', t.mode || '', t.after?.projet || '', normalizeTask(t.demande)].join('\u0000'))
+    .digest('hex').slice(0, 32);
+}
+/** Explicit reference of a Routage task: its run and its number in that run. */
+export const taskRef = (t) => (t.run && Number.isInteger(t.n) ? `${t.run}#${t.n}` : null);
+/**
+ * The identities that make two entries the same work, strongest first:
+ * same Routage task, same resumed run of the same project, same content.
+ */
+export function identities(t) {
+  return [
+    ...(taskRef(t) ? [`ref:${taskRef(t)}`] : []),
+    ...(t.reprise ? [`run:${t.projet}|${t.reprise}`] : []),
+    `content:${contentHash(t)}`,
+  ];
+}
+/** Kept for the id of entries written before 0.67.0 (and for display). */
+export function dedupeKey(t) { return identities(t)[0]; }
 export function pendingId(t) {
-  return crypto.createHash('sha1').update(`${t.run || ''}|${dedupeKey(t)}`).digest('hex').slice(0, 8);
+  return crypto.createHash('sha1').update(`${t.run || ''}|${taskRef(t) || ''}|${contentHash(t)}`).digest('hex').slice(0, 8);
 }
 /** Entries written before 0.58.0 have no id: derive a stable one. */
 export const idOf = (t) => t.id || pendingId(t);
@@ -74,22 +114,48 @@ export function detectReprise(logsDir, t) {
   return null;
 }
 
-/** Adds waiters, skipping duplicates. Returns {added, duplicates}. */
+const DUP_REASON = {
+  ref: 'même tâche du même Routage déjà en attente (re-dispatch)',
+  run: 'reprise de la même exécution en pause déjà en attente',
+  content: 'même travail déjà en attente (même projet, même pipeline, même texte complet)',
+};
+
+/**
+ * Adds waiters, skipping true duplicates. Returns {added, duplicates}; every
+ * duplicate says why and which entry it matched, and is appended to
+ * logs/routage-pending-duplicates.ndjson — never dropped silently.
+ */
 export function addPending(logsDir, entries) {
   return withLock(logsDir, () => {
     const tasks = readPending(logsDir);
-    const seen = new Set(tasks.map(dedupeKey));
+    const seen = new Map();
+    const index = (t) => { for (const k of identities(t)) if (!seen.has(k)) seen.set(k, t); };
+    tasks.forEach(index);
     const added = [], duplicates = [];
     for (const e of entries) {
-      const k = dedupeKey(e);
-      if (seen.has(k)) { duplicates.push({ projet: e.projet, reprise: e.reprise || null, key: k }); continue; }
-      seen.add(k);
+      const hit = identities(e).find(k => seen.has(k));
+      if (hit) {
+        const kept = seen.get(hit);
+        duplicates.push({ projet: e.projet, run: e.run || null, n: e.n ?? null, reprise: e.reprise || null, key: hit,
+          reason: DUP_REASON[hit.split(':')[0]], keptId: idOf(kept), keptRun: kept.run || null, keptN: kept.n ?? null,
+          demande: String(e.demande || '').slice(0, 2000) });
+        continue;
+      }
       const t = { ...e, id: e.id || pendingId(e), createdAt: e.createdAt || new Date().toISOString() };
-      tasks.push(t); added.push(t);
+      tasks.push(t); added.push(t); index(t);
     }
     writePending(logsDir, tasks);
+    if (duplicates.length) {
+      const at = new Date().toISOString();
+      try { fs.appendFileSync(path.join(logsDir, DUPLICATES_FILE), duplicates.map(d => JSON.stringify({ at, ...d })).join('\n') + '\n'); } catch {}
+    }
     return { added, duplicates };
   });
+}
+
+/** One line per duplicate, in the user's language, for the chef's report. */
+export function duplicatesText(duplicates) {
+  return duplicates.map(d => `- ${d.projet}${d.n != null ? ` (tâche ${d.n}${d.run ? ` du Routage ${d.run}` : ''})` : ''} : écartée — ${d.reason} ; gardée : ${d.keptId}${d.keptN != null ? ` (tâche ${d.keptN}${d.keptRun ? ` du Routage ${d.keptRun}` : ''})` : ''}. Demande : « ${String(d.demande).replace(/\s+/g, ' ').slice(0, 160)} »`).join('\n');
 }
 
 /**
@@ -115,13 +181,16 @@ export function dependencyResult(logsDir, after) {
     text = buf.toString('utf8');
   } catch { return null; }
   const legacy = !Number.isFinite(after.offset);
-  let armed = legacy || !after.key;
+  let armed = legacy || !(after.key || after.hash);
   for (const l of text.split('\n')) {
     if (!l.includes('"type"')) continue;
     let e; try { e = JSON.parse(l); } catch { continue; }
     // Only a prompt that opens a turn re-arms (a notify message is no turn).
-    if (!legacy && after.key && e.type === 'user_prompt' && typeof e.text === 'string' && (!e.source || e.pipeline || e.callback)) {
-      armed = taskKey(e.text).startsWith(after.key.slice(0, 60)) || taskKey(e.text) === after.key;
+    // 0.67.0: the awaited task is recognised by the fingerprint of its whole
+    // text (`after.hash`); a shared opening sentence is not enough any more.
+    // Entries written before keep the legacy prefix match.
+    if (!legacy && (after.hash || after.key) && e.type === 'user_prompt' && typeof e.text === 'string' && (!e.source || e.pipeline || e.callback)) {
+      armed = after.hash ? textHash(e.text) === after.hash : (taskKey(e.text).startsWith(after.key.slice(0, 60)) || taskKey(e.text) === after.key);
       continue;
     }
     if (e.type !== 'result' || !armed) continue;
@@ -160,7 +229,7 @@ export function launchTask(root, t, dispatchScript) {
     pid = c.pid || null;
   } catch { pid = null; }
   return { projet: t.projet, pipeline: t.reprise ? t.pipeline || null : t.served ? t.pipeline : null, mode: t.mode || null,
-    reprise: t.reprise || null, pid, at: new Date().toISOString(), offset, key: taskKey(t.demande) };
+    reprise: t.reprise || null, pid, at: new Date().toISOString(), offset, key: taskKey(t.demande), hash: textHash(t.demande) };
 }
 
 /**
@@ -171,11 +240,11 @@ export function launchTask(root, t, dispatchScript) {
  * same waiter twice. `onlyAfter` limits the scan to waiters of that project.
  */
 export function releaseReady({ root, logsDir = path.join(root, 'logs'), dispatchScript, onlyAfter = null, ids = null, force = false, launch = launchTask }) {
-  const ready = [], blocked = [];
+  const ready = [], blocked = [], twins = [];
   const still = withLock(logsDir, () => {
     const tasks = readPending(logsDir);
     const keep = [];
-    const keys = new Set();
+    const keys = new Map();
     for (const t of tasks) {
       const id = idOf(t);
       if (ids && !ids.includes(id)) { keep.push(t); continue; }
@@ -187,12 +256,19 @@ export function releaseReady({ root, logsDir = path.join(root, 'logs'), dispatch
         keep.push({ ...t, blocked: t.blocked || new Date().toISOString() });
         continue;
       }
-      const k = dedupeKey(t);
-      if (keys.has(k)) continue;   // same work released once
-      keys.add(k);
+      // Same work released once (identities, never a text prefix); the twin
+      // (entries written before 0.67.0) is traced, never dropped silently.
+      const ks = identities(t);
+      const twin = ks.find(k => keys.has(k));
+      if (twin) { twins.push({ projet: t.projet, run: t.run || null, n: t.n ?? null, key: twin, reason: 'jumeau d’une tâche libérée au même moment : lancée une seule fois', keptId: keys.get(twin), demande: String(t.demande || '').slice(0, 2000) }); continue; }
+      ks.forEach(k => keys.set(k, id));
       ready.push({ ...t, id });
     }
     writePending(logsDir, keep);
+    if (twins.length) {
+      const at = new Date().toISOString();
+      try { fs.appendFileSync(path.join(logsDir, DUPLICATES_FILE), twins.map(d => JSON.stringify({ at, ...d })).join('\n') + '\n'); } catch {}
+    }
     return keep;
   });
   const launched = ready.map(t => {
@@ -204,7 +280,7 @@ export function releaseReady({ root, logsDir = path.join(root, 'logs'), dispatch
     if (t.reprise && !reprise) return { id: t.id, projet: t.projet, skipped: `exécution ${t.reprise} plus en pause : rien relancé` };
     return { id: t.id, ...launch(root, { ...t, reprise }, dispatchScript), after: t.after?.projet };
   });
-  return { launched, blocked, still };
+  return { launched, blocked, still, duplicates: twins };
 }
 
 /** Waiters older than `maxMs` (default 2 h), not yet reported. */
