@@ -106,7 +106,7 @@ const tmd = fs.readFileSync(path.join(P, '.orchestrateur', 'runs', r.run, 'tests
 ok(E.parseItems(tmd).every(i => i.done), 'la boucle s’arrête quand la liste est vide (tout est coché, par le moteur)');
 ok(r.done.filter(d => d.pipeline.step === 'refactor').every(d => /seuil/.test(d.why || '')), '4c sautée quand 4b a très peu changé — et c’est dit');
 ok(['comprendre', 'concevoir', 'liste-tests'].every(id => r.done.find(d => d.pipeline.step === id)?.served === 'claude-opus-5-5') && verts.every(d => d.served === 'claude-sonnet-5-5'), 'chaque étape sur le model de SA case');
-ok(g('rev-list', '--count', `${H0}..HEAD`).stdout.trim() === '1' && fs.existsSync(path.join(P, 'test', 'pipe-1.test.mjs')) && fs.existsSync(path.join(P, 'test', 'pipe-2.test.mjs')), 'un seul commit, un test par item');
+ok(g('rev-list', '--count', `${H0}..HEAD`).stdout.trim() === '3' && fs.existsSync(path.join(P, 'test', 'pipe-1.test.mjs')) && fs.existsSync(path.join(P, 'test', 'pipe-2.test.mjs')), 'un commit par item puis la version (livraison par item, 0.64.0), un test par item');
 ok(/Développement complet terminé/.test(r.evs.find(e => e.type === 'result')?.result || '') && /2 item\(s\)/.test(r.evs.find(e => e.type === 'result').result), 'résultat : « Développement complet », 2 items');
 reset();
 
@@ -158,7 +158,10 @@ const limitCase = async (label, args, env, want) => {
   const lim = x.evs.find(e => e.type === 'notification' && e.subtype === 'pipeline_limit');
   const input = deriveState(logOf().map(e => JSON.stringify(e))).state === 'input';
   const chef = x.notes.find(n => n.path === '/api/notify' && n.project === 'chef' && n.source === 'pipeline-limit' && /Limite atteinte/.test(n.text));
-  ok(x.code === 2 && lim?.limit === want && input && chef, `${label} → pause « ${want} » : log ${!!lim}, dashboard ${input}, chef ${!!chef}`, x.out.slice(-500));
+  // 0.64.0 (per-item delivery): a limit of an item's own sets that item aside;
+  // with nothing else to do, the run then pauses « items_blocked » naming its cause.
+  const asideLimit = lim?.limit === 'items_blocked' ? runState(x.run).aside?.[0]?.limit : null;
+  ok(x.code === 2 && (lim?.limit === want || asideLimit === want) && input && chef, `${label} → pause « ${want} »${asideLimit ? ' (item mis de côté, puis pause qui le nomme)' : ''} : log ${!!lim}, dashboard ${input}, chef ${!!chef}`, x.out.slice(-500));
   reset();
 };
 await limitCase('liste de tests trop longue (4 > 3)', ['Ajoute beaucoup de choses', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '4', ORCH_PIPE_ITEMS: '3' }, 'items');
@@ -224,12 +227,13 @@ ok(seq(r.done) === 'rouge,vert,refactor:skipped,revue,livrer' && runState(run10)
 reset();
 r = await go(['Ajoute la multiplication', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '1', FAKE_PIPE_REVIEW: 'problemes:2', ORCH_PIPE_REVIEW_ROUNDS: '1' });
 const run10b = r.run;
-ok(r.code === 2 && runState(run10b).pausedLimit === 'review', 'tours de revue épuisés : pause « review »');
+// 0.64.0: the item is set aside first, then the run pauses « items_blocked » for it.
+ok(r.code === 2 && (runState(run10b).pausedLimit === 'review' || (runState(run10b).pausedLimit === 'items_blocked' && runState(run10b).aside?.[0]?.limit === 'review')), 'tours de revue épuisés : pause « review » (item mis de côté)');
 // Pause écrite par un moteur antérieur à 0.50.0 : pas de pausedLimit dans l'état.
 const f10 = path.join(T, 'logs', 'runs', run10b, 'run.json');
 const s10 = JSON.parse(fs.readFileSync(f10, 'utf8')); delete s10.pausedLimit; fs.writeFileSync(f10, JSON.stringify(s10));
 r = await go(['continuer'], { ORCH_PIPE_REVIEW_ROUNDS: '1' });
-ok(r.code === 0 && r.run === run10b && r.evs.some(e => e.subtype === 'pipeline_limit_extended' && e.limit === 'review'), `reprise : un tour de revue de plus, puis livraison (${seq(r.done)})`, r.out.slice(-400));
+ok(r.code === 0 && r.run === run10b && r.evs.some(e => e.subtype === 'pipeline_limit_extended' && ['review', 'items_blocked'].includes(e.limit)), `reprise : un tour de revue de plus, puis livraison (${seq(r.done)})`, r.out.slice(-400));
 reset();
 
 // ---------------------------------------------------------------------------

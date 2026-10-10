@@ -11,6 +11,88 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.64.0] - 2026-10-10
+
+Décision de l'utilisateur, « c+d », partie c : « Livraison par item : chaque
+item est relu et livré séparément, dans son propre commit. Un défaut ne bloque
+que son item ». Cette version fait la **tâche 4, la livraison**. Elle termine
+les quatre tâches « c+d » (0.61.0 à 0.64.0).
+
+### Changed
+- (server) **Développement complet : un commit par item**
+  (`scripts/item-delivery.mjs`, moteur).
+  - Dès qu'un item passe sa propre Revue, l'orchestrateur le commite dans son
+    propre commit, avant l'item suivant. L'item est livré avec les cases
+    `(revue item N)` que sa Revue lui a rattachées, une fois cochées. Le
+    message est `feat(item N): <texte de l'item>`. Ce commit est fait par le
+    code, jamais par le model, sans `.claude/` ni les artefacts. Les points
+    d'étape du mode double sont repliés dans ce commit.
+  - **Version, CHANGELOG et ligne d'exigence : un commit de version en fin
+    d'exécution**, posé sur les commits d'items. L'étape Livrer reçoit la
+    liste des items livrés et de leurs commits, et ne refait rien. Ses
+    vérifications portent sur ce seul commit (version incrémentée depuis le
+    dernier item livré).
+  - Pourquoi pas une version par item ?
+    - Un numéro de version identifie une livraison, et une demande de
+      l'utilisateur est l'unité du registre des exigences : une demande
+      verbatim donne une ligne.
+    - Une version par item produirait N numéros, N entrées de CHANGELOG et N
+      lignes identiques pour une seule demande, avec des « versions »
+      intermédiaires qui n'en sont pas.
+    - Les commits d'items restent atomiques et annulables un à un
+      (`git revert <commit de l'item>`). Le commit de version est le seul
+      endroit qui les décrit.
+  - **Un item bloqué ne bloque que lui.** Ses propres limites sont : revue
+    (tours épuisés), tests en trop, ou 4a/4b/4c, ou sa Revue, refusés après
+    tous les essais. Quand l'une est atteinte, l'item est **mis de côté** :
+    - son travail (et celui de ses cases rattachées) est gardé dans
+      `logs/runs/<run>/aside-item-N.patch` ;
+    - seuls ses fichiers sont remis comme au dernier item livré ;
+    - les autres items continuent et sont livrés.
+  - En fin d'exécution, ce qui a été livré reçoit d'abord sa version. Ensuite
+    l'exécution se met en pause `items_blocked`. Le message liste les items
+    livrés (commits, version) et les items mis de côté, avec la raison et
+    l'emplacement de leurs modifications.
+  - **« continuer »** reprend chaque item mis de côté, un à un, là où il
+    s'était arrêté, avec une allocation de plus (un tour de revue pour une
+    limite de revue). Ses modifications sont réappliquées, fusionnées si
+    besoin avec le travail livré depuis. Il est livré à son tour, puis une
+    nouvelle version est faite.
+  - Si la réapplication ne passe plus, l'exécution se met en pause
+    `aside_conflict`, avec le projet laissé intact.
+  - « abandonner » et « simplifier » disent ce qui reste livré et où sont
+    gardées les modifications des items mis de côté.
+  - Les limites globales (nombre d'items, durée, model indisponible) mettent
+    toujours toute l'exécution en pause, comme avant.
+  - Une exécution mise en pause par un moteur antérieur (sans
+    `itemDelivery`) garde son commit unique. La montée léger → complet livre
+    le travail léger dans son propre commit, puis chaque item.
+  - Résultat final : la liste des commits d'items, puis la version.
+    Événements `pipeline_item_delivered`, `pipeline_item_aside` et
+    `pipeline_item_resumed`.
+
+### Tests
+- `scripts/_test_item_delivery.mjs` (28 contrôles, vrai `dispatch.mjs`) :
+  - briques git : commit sans `.claude/`, mise de côté, réapplication,
+    conflit ;
+  - un commit par item, dans l'ordre, chacun aussitôt après la Revue de son
+    item ;
+  - le commit de l'item 2 contient sa case rattachée ;
+  - une seule version ;
+  - item 2 bloqué en revue : items 1 et 4 livrés et versionnés, item 2 gardé
+    hors du projet, puis « continuer », item 2 livré et nouvelle version ;
+  - item refusé en 4a mis de côté, puis « abandonner » ;
+  - montée en complet ;
+  - exécution d'un ancien moteur.
+- `_test_pipeline_gates.mjs`, `_test_item_review.mjs` et le parcours HTTP
+  `pipeline-tdd` suivent le nouveau comportement :
+  - un commit par item, puis la version ;
+  - une limite propre à un item met cet item de côté, puis pause
+    `items_blocked` qui en donne la cause.
+
+  Les contrôles gardent leur intention : la pause est prévenue (log, tableau
+  de bord, chef) et sa cause nommée.
+
 ## [0.63.0] - 2026-10-10
 
 Décision de l'utilisateur, « c+d », partie c : « Livraison par item : chaque

@@ -140,7 +140,7 @@ ok(loop?.pipeline?.item === 2 && loop.pipeline.round === 1 && /rattachée\(s\) �
 ok(r.done.filter(d => d.pipeline.step === 'revue').map(d => d.pipeline.item).join(',') === '1,2,2,4', 'frise : chaque Revue porte le numéro de l’item relu');
 ok(JSON.stringify(runState(r.run).itemReviewRounds) === '{"2":1}', `compteur de tours de revue par item : ${JSON.stringify(runState(r.run).itemReviewRounds)}`);
 ok(r.evs.find(e => e.type === 'user_prompt')?.pipeline?.steps.some(s => s.loop && s.id === 'revue'), 'frise annoncée : la Revue fait partie de la boucle de chaque item');
-ok(g('rev-list', '--count', `${H0}..HEAD`).stdout.trim() === '1', 'livraison inchangée pour l’instant : un seul commit');
+ok(g('rev-list', '--count', `${H0}..HEAD`).stdout.trim() === '4', 'livraison par item (0.64.0) : un commit par item relu (1, 2 avec sa correction, 4), puis la version');
 reset();
 
 // ---------------------------------------------------------------------------
@@ -152,13 +152,15 @@ ok(JSON.stringify(runState(r.run).itemReviewRounds) === '{"1":1,"3":1}', `un tou
 reset();
 r = await go(['Ajoute la multiplication par deux, trois et quatre', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '3', FAKE_PIPE_REVIEW_ITEM: '2', ORCH_PIPE_REVIEW_ROUNDS: '1' });
 const lim = r.evs.find(e => e.type === 'notification' && e.subtype === 'pipeline_limit');
-ok(r.code === 2 && lim?.limit === 'review' && /item 2/.test(lim.why || ''), `l’item 2 garde son défaut après son tour : pause « review » qui nomme l’item (${String(lim?.why).slice(0, 100)})`, r.out.slice(-600));
-ok(r.reviews.map(x => x.item).join(',') === '1,2,2', `l’item 1 n’a été relu qu’une fois ; l’item suivant n’a pas commencé (${r.reviews.map(x => x.item).join(',')})`);
+// 0.64.0 (per-item delivery): item 2 is set aside, the next item goes on, then the pause names item 2.
+const aside3 = r.run ? runState(r.run).aside : [];
+ok(r.code === 2 && lim?.limit === 'items_blocked' && aside3?.length === 1 && aside3[0].group === 2 && aside3[0].limit === 'review' && /item 2/.test(aside3[0].why || ''), `l’item 2 garde son défaut après son tour : mis de côté, pause qui nomme l’item (${String(aside3?.[0]?.why).slice(0, 100)})`, r.out.slice(-600));
+ok(r.reviews.map(x => x.item).join(',') === '1,2,2,4', `l’item 1 n’a été relu qu’une fois ; l’item suivant a continué, relu une fois (${r.reviews.map(x => x.item).join(',')})`);
 const run3 = r.run;
 r = await go(['continuer'], { FAKE_PIPE_ITEMS: '3', ORCH_PIPE_REVIEW_ROUNDS: '1' });
 const ext = r.evs.find(e => e.subtype === 'pipeline_limit_extended');
-ok(r.code === 0 && r.run === run3 && ext?.limit === 'review' && /pour l’item 2/.test(ext.text), `« continuer » : un tour de plus pour l’item 2 seulement (« ${ext?.text} »), puis la suite`, r.out.slice(-600));
-ok(r.reviews.map(x => x.item).join(',') === '2,4', `après la reprise : l’item 2 relu, puis l’item suivant (${r.reviews.map(x => x.item).join(',')})`);
+ok(r.code === 0 && r.run === run3 && ext?.limit === 'items_blocked' && JSON.stringify(runState(run3).itemReviewBudgets) === '{"2":2}', `« continuer » : un tour de plus pour l’item 2 seulement (« ${ext?.text} »), puis la suite`, r.out.slice(-600));
+ok(r.reviews.map(x => x.item).join(',') === '2', `après la reprise : seul l’item 2 est relu, l’item suivant est déjà livré (${r.reviews.map(x => x.item).join(',')})`);
 reset();
 
 // ---------------------------------------------------------------------------

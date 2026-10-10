@@ -808,7 +808,9 @@ async function apiChecks(sb) {
     const rouges = evs.filter(e => e.subtype === 'pipeline_step_done' && e.pipeline.step === 'rouge');
     assert(rouges.every(e => e.test?.ok === false && e.pipeline.item), '4a doit échouer réellement, item par item');
     assert(evs.filter(e => e.subtype === 'pipeline_item_done').length === 2, 'items non cochés un par un');
-    assert(g('rev-list', '--count', `${h0}..HEAD`).stdout.trim() === '1', 'un seul commit attendu');
+    // 0.64.0 (« c+d », part c): one commit per item, then the release commit.
+    const wantCommits = fs.existsSync(path.join(sb.root, 'scripts', 'item-delivery.mjs')) ? '3' : '1';
+    assert(g('rev-list', '--count', `${h0}..HEAD`).stdout.trim() === wantCommits, `${wantCommits} commit(s) attendu(s)`);
     const t0 = (await json('/api/project/omega/journal?n=3')).turns[0];
     assert(t0?.pipeline?.mode === 'complet' && t0.pipeline.items === 2 && t0.pipeline.steps.some(s => s.status === 'skipped' && s.item), `journal : ${JSON.stringify(t0?.pipeline && { m: t0.pipeline.mode, i: t0.pipeline.items })}`);
     omegaFresh();

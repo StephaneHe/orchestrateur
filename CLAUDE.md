@@ -1492,8 +1492,30 @@ probleme pour le model utilise ».
     `@loop` (`pendingGroupReview`).
   - Une exécution en pause sans `itemReview` garde l'ancienne Revue globale.
   - En léger : retour à 4b, comme en 0.48.0.
-  - Recette : `_test_item_review.mjs`. La livraison par item (un commit par
-    item) est la tâche suivante.
+  - Recette : `_test_item_review.mjs`.
+- **Livraison par item** (0.64.0, « c+d », partie c ; `scripts/item-delivery.mjs`).
+  Drapeau `state.itemDelivery`, posé sur les nouvelles exécutions complètes
+  et à la montée en complet. Le marqueur `@aside` est placé avant `livrer`.
+  - Revue d'un groupe sans défaut : `deliverGroup` fait un commit du code
+    (`commitWork`, sans `.claude/` ni artefacts, identité de repli), avec
+    `state.lastDelivered`, `delivered[]` et `releasePending`.
+  - Livrer = commit de version seulement (version, CHANGELOG, exigence),
+    vérifié contre `ctx.releaseBase` (= dernier item livré). Il est sauté
+    s'il n'y a rien de nouveau. Le repli des commits se fait vers
+    `lastDelivered`, jamais vers `base`.
+  - Limite propre à un item (revue, `item_tests`, green / criteria de
+    4a/4b/4c ou de sa Revue) : `setAside`. Le préfixe du plan jusqu'à
+    `@loop` est gardé, le correctif va dans `logs/runs/<run>/aside-item-N.patch`
+    (`setAsideWork`), et seuls les fichiers de l'item sont remis. `@loop`
+    saute ses cases.
+  - `@aside` :
+    - `restoreQueue` (posée par « continuer » après `items_blocked`) :
+      `reapplyWork` (apply, puis `--3way` ; conflit → `aside_conflict`),
+      remise du contexte, une allocation de plus ;
+    - sinon, s'il reste des items de côté : la version de ce qui est livré,
+      puis la pause `items_blocked`.
+  - Une exécution en pause sans `itemDelivery` garde son commit unique.
+  - Recette : `_test_item_delivery.mjs`.
 - **Montée léger → complet** : après 4b en léger, `lightScope` mesure le
   changement (plus de 3 fichiers, plus de 150 lignes, ou un nouveau fichier de
   code, hors tests). Au-delà :

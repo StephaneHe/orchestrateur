@@ -46,12 +46,18 @@ import { PIPELINES } from './model-pipelines.mjs';
 import { checkMediaFiles, listedFiles, wordErrorRate } from './media-check.mjs';
 import { countTests, addedTests, itemTestsVerdict } from './item-tests.mjs';
 import { groupOf, groupCases, groupReady, insertAttachedCases, worktreeTree, treeDiff } from './item-review.mjs';
+import { foldTo, commitWork, itemCommitMessage, setAsideWork, reapplyWork, head as headOf } from './item-delivery.mjs';
 
 export const RUN_RE = /^p-\d{8}T\d{6}-[a-z0-9]{4,8}$/;
 export const STEP_KEY_RE = /^\d{2}-[a-z0-9-]{1,40}$/;
 export const SESSION_GROUP_RE = /^[a-z0-9-]{1,40}$/;
 
 // Limites (décision n° 5, plan §2.5). ORCH_PIPE_* pour les tests.
+// Why an item was set aside (per-item delivery, 0.64.0), in the user's words.
+const ASIDE_WORDS = {
+  review: 'la relecture trouve encore des défauts', item_tests: 'plus de tests écrits que prévu',
+  green: 'le code ne fait pas passer le test', criteria: 'refusé par les vérifications automatiques',
+};
 export const LIMITS = {
   criteriaAttempts: 2,     // essais d'une étape dont le critère échoue
   greenAttempts: 3,        // essais de 4b pour un même test
@@ -238,6 +244,7 @@ export function devCatalog({ mode = 'leger', kind = 'simple' } = {}) {
     'liste-tests': { id: 'liste-tests', title: '3 Liste de tests', chain: ['dev.liste-tests'], group: 'tests', artefact: 'tests.md', judge: true },
     '@loop': { id: '@loop', title: '4 Boucle TDD (un test à la fois)', chain: ['dev.rouge'], marker: true },
     '@check': { id: '@check', title: 'item coché', chain: [], marker: true },
+    '@aside': { id: '@aside', title: 'items mis de côté', chain: [], marker: true },
     rouge: { id: 'rouge', title: `4a Rouge${kind === 'bugfix' ? ' (reproduire le bug)' : ''}`, chain: [`dev.rouge.${v}`, 'dev.rouge'], group: 'tests', artefact: 'rouge.md' },
     vert: { id: 'vert', title: '4b Vert', chain: [`dev.vert.${vv}`, 'dev.vert'], group: 'code', artefact: 'vert.md' },
     refactor: { id: 'refactor', title: '4c Refactor', chain: ['dev.refactor'], group: 'code', artefact: 'refactor.md', optional: true },
@@ -568,7 +575,13 @@ function stepPrompt(ctx, step, extra) {
       L.push(`1. incrémente la version (patch pour une correction, minor pour une fonctionnalité) dans : ${(cfg.versionFiles || []).join(', ') || '(fichier de version du projet)'} ;`);
       L.push(`2. ajoute l'entrée « ## [X.Y.Z] - AAAA-MM-JJ » correspondante dans ${cfg.changelog || 'CHANGELOG.md'} ;`);
       if (cfg.requirements) L.push(`3. ajoute D'OFFICE la ligne de la demande dans ${cfg.requirements} (date, demande verbatim, tests associés, version) — c'est obligatoire à chaque livraison, personne d'autre ne le fera ;`);
-      L.push(`${cfg.requirements ? 4 : 3}. un SEUL commit avec tout le changement (git add -A puis git commit) — l'arbre doit être propre ensuite ;`);
+      if (ctx.release) {
+        // Per-item delivery (0.64.0): the items are already committed; this is the release commit.
+        const it = (d) => (d.group === 0 ? 'travail d’avant la montée en complet' : `item ${d.group} « ${d.text} »`);
+        L.splice(L.length - (cfg.requirements ? 3 : 2), 0, `Les items sont DÉJÀ livrés par l'orchestrateur, chacun dans son propre commit — ne les refais pas : ${ctx.release.delivered.map(d => `${it(d)} (${d.commit.slice(0, 7)})`).join(' ; ')}. Cette livraison est la VERSION qui les regroupe : l'entrée CHANGELOG et la ligne d'exigence décrivent ces items.`);
+        if (ctx.release.aside.length) L.push(`Items MIS DE CÔTÉ, non livrés (ne les mentionne que comme « restant à faire ») : ${ctx.release.aside.map(a => it(a)).join(' ; ')}.`);
+        L.push(`${cfg.requirements ? 4 : 3}. un commit de version avec ces seuls changements (git add -A puis git commit) — l'arbre doit être propre ensuite ;`);
+      } else L.push(`${cfg.requirements ? 4 : 3}. un SEUL commit avec tout le changement (git add -A puis git commit) — l'arbre doit être propre ensuite ;`);
       L.push('Pas de git push (il reste soumis à autorisation). Hormis les corrections de documentation ci-dessus, aucune nouvelle modification de code ni de test.');
       L.push(`Écris ${art('livraison.md')} : version, commit, ce qui a été livré.`);
       L.push(`L'orchestrateur vérifie ensuite : commit créé, arbre propre, version incrémentée, entrée CHANGELOG${cfg.requirements ? ', ligne d’exigence' : ''}, ${T} vert${cfg.buildCommand ? `, build (« ${cfg.buildCommand} »)` : ''}.`);
@@ -1171,16 +1184,18 @@ function checkCriteria(ctx, step, before, after) {
     return { ok: true, changed, test: t };
   }
   if (step.id === 'livrer') {
+    // Per-item delivery: the release is checked against the last delivered item.
+    const relBase = ctx.releaseBase || ctx.base;
     const head = git(cwd, ['rev-parse', 'HEAD']).out;
-    if (!head || head === ctx.base) return { ok: false, why: 'aucun commit créé', changed };
+    if (!head || head === relBase) return { ok: false, why: 'aucun commit créé', changed };
     const dirty = git(cwd, ['status', '--porcelain']).out.split('\n').filter(l => l && !isLocalOnly(l.slice(3)));
     if (dirty.length) return { ok: false, why: `arbre non propre après le commit : ${dirty.slice(0, 6).join(' ; ')}`, changed };
-    const diffNames = git(cwd, ['diff', '--name-only', `${ctx.base}..HEAD`]).out.split('\n').filter(Boolean);
+    const diffNames = git(cwd, ['diff', '--name-only', `${relBase}..HEAD`]).out.split('\n').filter(Boolean);
     let version = null;
     for (const vf of cfg.versionFiles || []) {
       if (!diffNames.includes(vf)) return { ok: false, why: `version non incrémentée : ${vf} inchangé`, changed };
       let txt = ''; try { txt = fs.readFileSync(path.join(cwd, vf), 'utf8'); } catch {}
-      const prev = git(cwd, ['show', `${ctx.base}:${vf}`]).out;
+      const prev = git(cwd, ['show', `${relBase}:${vf}`]).out;
       const v = readVersion(vf, txt), pv = readVersion(vf, prev);
       if (v && pv && v === pv) return { ok: false, why: `version inchangée dans ${vf} (${v})`, changed };
       version = version || v;
@@ -1306,11 +1321,15 @@ export async function runPipeline(o) {
       run, project: projectName, pipeline, mode, kind, base, status: 'running',
       createdAt: new Date().toISOString(), request: prompt.slice(0, 20_000),
       plan: planSteps(pipeline, { mode, kind }).map(s => s.id), index: 0, reviewRounds: 0, steps: [],
-      // Runs paused by an older engine keep their whole-run Review (no flag).
-      ...(pipeline === 'dev' && mode === 'complet' ? { itemReview: true } : {}),
+      // Runs paused by an older engine keep their whole-run Review / single
+      // commit (no flag): per-item Review (0.63.0), per-item delivery (0.64.0).
+      ...(pipeline === 'dev' && mode === 'complet' ? { itemReview: true, itemDelivery: true, lastDelivered: base, delivered: [], aside: [] } : {}),
       ...(classification ? { classification } : {}), ...(o.modeNote ? { modeNote: o.modeNote } : {}),
       callback: callbackProject || null, source: sourceProject || null,
     };
+    // Per-item delivery: set-aside items are put back (or the run paused for
+    // them) at « @aside », just before the release step.
+    if (state.itemDelivery) state.plan.splice(state.plan.lastIndexOf('livrer'), 0, '@aside');
     fs.writeFileSync(path.join(artDir, 'demande.md'), `# Demande\n\n${prompt}\n`);
   }
   const saveState = () => {
@@ -1353,6 +1372,12 @@ export async function runPipeline(o) {
       extended = { limit: L, to: state.budgets[L] };
     }
   }
+  // « continuer » after a pause for set-aside items: each one is put back in
+  // turn (one more allocation of its own limit), then a release.
+  if (resumed && state.pausedLimit === 'items_blocked' && state.aside?.length) {
+    state.restoreQueue = state.aside.map(a => a.group);
+    extended = { limit: 'items_blocked', to: state.restoreQueue.length };
+  }
   state.status = 'running';
   state.pid = process.pid;
   saveState();
@@ -1371,7 +1396,7 @@ export async function runPipeline(o) {
   }
   // Frise annoncée : la boucle TDD se lit 4a → 4b → 4c (→ 5 Revue de l'item), répétée par item.
   const loopIds = ['rouge', 'vert', 'refactor', ...(state.itemReview ? ['revue'] : [])];
-  const planned = state.plan.flatMap(id => (id === '@loop' ? loopIds.map(x => ({ id: x, loop: true })) : id === '@check' ? [] : [{ id }]))
+  const planned = state.plan.flatMap(id => (id === '@loop' ? loopIds.map(x => ({ id: x, loop: true })) : id === '@check' || id === '@aside' ? [] : [{ id }]))
     .map(p => ({ ...p, title: stepDefs[p.id].title, slot: stepDefs[p.id].kind === 'code' ? { slot: stepDefs[p.id].chain[0], model: null, provider: null, second: null, source: 'code' } : resolveCase(assignments, stepDefs[p.id].chain) }));
   writeEvent({
     type: 'user_prompt', text: o.promptForLog ?? prompt,
@@ -1382,10 +1407,11 @@ export async function runPipeline(o) {
     ...(o.testLabel ? { test: { label: o.testLabel } } : {}),
   });
   writeEvent({ type: 'system', subtype: 'pipeline_start', pipeline: { run, pipeline, mode: state.mode, kind, base },
-    text: `${resumed ? 'reprise de l’exécution' : 'exécution'} ${run} : pipeline ${pipelineLabel(pipeline, state.mode)} — ${state.plan.filter(id => id !== '@check').map(id => stepDefs[id].title).join(' → ')}`,
+    text: `${resumed ? 'reprise de l’exécution' : 'exécution'} ${run} : pipeline ${pipelineLabel(pipeline, state.mode)} — ${state.plan.filter(id => id !== '@check' && id !== '@aside').map(id => stepDefs[id].title).join(' → ')}`,
     ...(o.modeNote ? { note: o.modeNote } : {}) });
   if (extended) {
-    const what = { items: `${extended.to} items au total`, duration: `${fmtDur(extended.to)} de temps actif`, review: `${extended.to} tours de revue${extended.item != null ? ` pour l’item ${extended.item}` : ''}` }[extended.limit];
+    const what = { items: `${extended.to} items au total`, duration: `${fmtDur(extended.to)} de temps actif`, review: `${extended.to} tours de revue${extended.item != null ? ` pour l’item ${extended.item}` : ''}`,
+      items_blocked: `${extended.to} item(s) mis de côté repris un à un, chacun avec une allocation de plus` }[extended.limit];
     writeEvent({ type: 'system', subtype: 'pipeline_limit_extended', pipeline: { run }, limit: extended.limit, to: extended.to,
       text: `↻ « continuer » après la limite « ${extended.limit} » : une allocation de plus accordée pour cette exécution (${what})` });
   }
@@ -1499,6 +1525,12 @@ export async function runPipeline(o) {
   ].join('\n');
   const commonChoices = (step) => {
     const slot = step && stepDefs[step.id]?.chain?.length ? resolveCase(readAssignments(root), stepDefs[step.id].chain).slot : null;
+    // Per-item delivery: what is delivered stays delivered, whatever the answer.
+    if ((state.delivered || []).length) return {
+      simplifier: ['simplifier', 'j’arrête cette exécution : les items déjà livrés restent dans leurs commits ; le reste n’est pas livré (ses modifications restent dans le projet ou dans les correctifs des items mis de côté) ; vous m’envoyez ensuite une demande plus petite pour la suite.'],
+      model: ['changer le model', `choisissez un autre model pour l’étape « ${plainStep(step?.id)} » dans la page Models${slot ? ` (case « ${slot} »)` : ''}, puis répondez « continuer » : je reprends là où je me suis arrêté, avec ce model.`],
+      abandonner: ['abandonner', 'j’arrête : les items déjà livrés restent dans leurs commits, le reste n’est pas livré (ses modifications restent dans le projet ou dans les correctifs des items mis de côté).'],
+    };
     return {
       simplifier: ['simplifier', 'j’arrête cette exécution sans rien livrer. Le travail déjà fait reste dans le projet (non enregistré dans git) ; vous m’envoyez ensuite une demande plus petite pour la suite.'],
       model: ['changer le model', `choisissez un autre model pour l’étape « ${plainStep(step?.id)} » dans la page Models${slot ? ` (case « ${slot} »)` : ''}, puis répondez « continuer » : je reprends là où je me suis arrêté, avec ce model.`],
@@ -1547,6 +1579,24 @@ export async function runPipeline(o) {
         what: `la relecture trouve encore des défauts après ${value} tour(s) de corrections : ${plainWhy(why).replace(/^la revue relève encore : /, '')}.`,
         cont: `encore ${limits.reviewRounds} tour(s) de corrections et de relecture.`,
         rec: ['continuer', 'les défauts restants sont précis : un tour de plus suffit en général.'],
+      },
+      items_blocked: (() => {
+        const ds = state.delivered || [], as = state.aside || [];
+        const it = (x) => (x.group === 0 ? 'le travail d’avant la montée en complet' : `l’item ${x.group} « ${String(x.text).replace(/\(\s*tests?\s*:\s*\d+\s*\)\s*/i, '')} »`);
+        const rel = (state.releases || []).at(-1);
+        return {
+          short: `${as.length} item(s) mis de côté, ${ds.length} livré(s)`,
+          what: `chaque item est livré séparément. ${ds.length ? `Déjà livré(s), chacun dans son propre commit : ${ds.map(d => `${it(d)} (${d.commit.slice(0, 7)})`).join(' ; ')}${rel?.version ? ` — version ${rel.version}` : ''}.` : 'Aucun item n’a encore pu être livré.'} `
+            + `Mis de côté, sans bloquer les autres : ${as.map(a => `${it(a)} — ${ASIDE_WORDS[a.limit] || a.limit} (${plainWhy(a.why)}) ; ses modifications sont gardées dans \`${a.patch}\``).join(' ; ')}.`,
+          cont: `je reprends les item(s) mis de côté, un à un, là où ils se sont arrêtés, avec une allocation de plus chacun ; ceux qui aboutissent sont livrés à leur tour, puis une nouvelle version.`,
+          rec: as.some(a => a.limit === 'item_tests') ? ['simplifier', 'un point qui demande plus de tests que prévu est trop large : mieux vaut le redécouper dans une nouvelle demande.'] : ['continuer', 'les items mis de côté ont un défaut précis : un tour de plus suffit en général.'],
+        };
+      })(),
+      aside_conflict: {
+        short: `un item mis de côté ne s’applique plus sur le travail livré depuis`,
+        what: `${plainWhy(why)}. Le projet est resté tel qu’il était après la dernière livraison.`,
+        cont: 'je réessaie de réappliquer ses modifications (utile si vous avez ajusté le projet ou le correctif entre-temps).',
+        rec: ['simplifier', 'cet item a été dépassé par les suivants : mieux vaut le redemander dans une nouvelle demande.'],
       },
       duration: {
         short: 'durée maximale de travail atteinte',
@@ -1792,7 +1842,45 @@ export async function runPipeline(o) {
 
   // ── Boucle des étapes ─────────────────────────────────────────────────────
   const readItems = () => parseItems(readArtefact(ctx, 'tests.md') || '');
-  while (state.index < state.plan.length) {
+  // ── Per-item delivery (0.64.0, « c+d » part c) ─────────────────────────
+  const asideGroups = () => new Set((state.aside || []).map(a => a.group));
+  const groupText = (g) => (g === 0 ? 'travail d’avant la montée en complet' : readItems().find(i => i.n === g)?.text || '');
+  const groupLabel = (g) => (g === 0 ? 'le travail d’avant la montée en complet' : `l’item ${g}`);
+  const deliverGroup = (g) => {
+    foldTo(cwd, state.lastDelivered || base);
+    state.checkpoints = 0;
+    const c = commitWork(cwd, itemCommitMessage({ group: g, text: groupText(g), run, cases: groupCases(readItems(), g).length }));
+    if (!c.ok || c.empty) return c;
+    state.lastDelivered = c.commit;
+    state.delivered = [...(state.delivered || []), { group: g, text: groupText(g).slice(0, 300), commit: c.commit }];
+    state.releasePending = true;
+    writeEvent({ type: 'system', subtype: 'pipeline_item_delivered', pipeline: { run, item: g }, commit: c.commit,
+      text: `📦 ${groupLabel(g)} livré dans son propre commit ${c.commit.slice(0, 7)}` });
+    return c;
+  };
+  // An item stopped by one of ITS limits is set aside — its work saved as a
+  // patch and taken out of the work tree — and the other items go on.
+  const setAside = (g, limit, why) => {
+    const end = state.plan.indexOf('@loop', state.index);
+    if (end < 0) return false;
+    const prefix = state.plan.splice(state.index, end - state.index);
+    const patchFile = path.join(runDir, `aside-item-${g}.patch`);
+    const r = setAsideWork(cwd, { from: state.lastDelivered || base, indexFile: path.join(runDir, 'item-review.idx'), patchFile });
+    if (!r.ok) { state.plan.splice(state.index, 0, ...prefix); return false; }
+    const patch = path.relative(root, patchFile).split(path.sep).join('/');
+    state.aside = [...(state.aside || []), { group: g, text: groupText(g).slice(0, 300), limit, why: String(why || '').slice(0, 2000), prefix,
+      item: state.item, itemTestBase: state.itemTestBase, reviewGroup: state.reviewGroup, lastGreenLines: state.lastGreenLines ?? null, patch, files: r.files }];
+    state.item = ctx.item = null;
+    state.itemTestBase = ctx.itemTestBase = null;
+    state.reviewGroup = null; ctx.reviewScope = null;
+    state.checkpoints = 0;
+    ctx.testPrint = testsNow();
+    writeEvent({ type: 'system', subtype: 'pipeline_item_aside', pipeline: { run, item: g }, limit, why: String(why || '').slice(0, 2000), patch, files: r.files,
+      text: `⏸ ${groupLabel(g)} mis de côté (${ASIDE_WORDS[limit] || limit}) : ses modifications sont gardées dans ${patch} — les autres items continuent` });
+    saveState();
+    return true;
+  };
+  steps: while (state.index < state.plan.length) {
     const id = state.plan[state.index];
     if (elapsed() > (state.budgets?.duration || limits.runMs)) return pauseForLimit({ limit: 'duration', value: state.budgets?.duration || limits.runMs, step: stepDefs[id] });
     // ── Boucle TDD (0.49.0) : UN item de tests.md à la fois, 4a → 4b → 4c,
@@ -1807,7 +1895,8 @@ export async function runPipeline(o) {
         saveState();
         continue;
       }
-      const next = readItems().find(i => !i.done);
+      const aside = asideGroups();
+      const next = readItems().find(i => !i.done && !aside.has(groupOf(i)));
       if (!next) { state.plan.splice(state.index, 1); state.item = ctx.item = null; saveState(); continue; }
       if ((state.itemsDone || 0) >= (state.budgets?.items || limits.items)) {
         return pauseForLimit({ limit: 'items', value: limits.items, step: stepDefs['@loop'], why: `la liste n'est pas vide après ${limits.items} items (suivant : « ${next.text} ») — découper la demande` });
@@ -1833,7 +1922,10 @@ export async function runPipeline(o) {
       let tests;
       if (state.itemTestBase) {
         const v = checkItemTests({ cwd, files: [...testsNow().keys()], base: state.itemTestBase, item: state.item });
-        if (!v.ok) return pauseForLimit({ limit: 'item_tests', value: v.written, step: stepDefs.rouge, why: v.why });
+        if (!v.ok) {
+          if (state.itemDelivery && setAside(groupOf(state.item), 'item_tests', v.why)) continue;
+          return pauseForLimit({ limit: 'item_tests', value: v.written, step: stepDefs.rouge, why: v.why });
+        }
         tests = v.checked ? { declared: v.declared, written: v.written } : { written: v.written, unchecked: v.note };
       } else tests = { unchecked: 'item commencé avant 0.62.0 : nombre de tests non vérifié' };
       fs.writeFileSync(path.join(artDir, 'tests.md'), checkItem(readArtefact(ctx, 'tests.md') || '', state.item.n));
@@ -1850,6 +1942,48 @@ export async function runPipeline(o) {
       state.itemTestBase = ctx.itemTestBase = null;
       saveState();
       continue;
+    }
+    if (id === '@aside') {
+      // « continuer » granted: put the next set-aside item back, where it stopped.
+      if (state.restoreQueue?.length) {
+        const g = state.restoreQueue.shift();
+        const a = (state.aside || []).find(x => x.group === g);
+        if (!a) { saveState(); continue; }
+        const from = state.lastDelivered || base;
+        foldTo(cwd, from);
+        const r = reapplyWork(cwd, path.join(root, a.patch));
+        if (!r.ok) {
+          state.restoreQueue = [];
+          saveState();
+          return pauseForLimit({ limit: 'aside_conflict', value: g, step: stepDefs.vert,
+            why: `les modifications de ${groupLabel(g)} (« ${a.text} »), gardées dans ${a.patch}, ne s’appliquent plus sur le travail livré depuis : ${String(r.err).split('\n')[0]}` });
+        }
+        state.aside = state.aside.filter(x => x !== a);
+        // Its Review diff starts from what was delivered, not from its old start.
+        state.groupTrees = { ...(state.groupTrees || {}), [g]: git(cwd, ['rev-parse', `${from}^{tree}`]).out };
+        state.item = ctx.item = a.item || null;
+        state.itemTestBase = ctx.itemTestBase = a.itemTestBase || null;
+        state.reviewGroup = a.reviewGroup ?? null;
+        state.lastGreenLines = a.lastGreenLines;
+        if (a.limit === 'review') state.itemReviewBudgets = { ...(state.itemReviewBudgets || {}), [g]: (state.itemReviewRounds?.[g] || 0) + limits.reviewRounds };
+        ctx.testPrint = testsNow();
+        state.plan.splice(state.index, 0, ...a.prefix, '@loop');
+        if (state.plan.indexOf('livrer', state.index) < 0) state.plan.push('livrer');
+        writeEvent({ type: 'system', subtype: 'pipeline_item_resumed', pipeline: { run, item: g },
+          text: `↻ ${groupLabel(g)} repris là où il s’était arrêté (${ASIDE_WORDS[a.limit] || a.limit})${r.merged ? ', fusionné avec le travail livré depuis' : ''}` });
+        saveState();
+        continue;
+      }
+      if (!state.aside?.length) { state.plan.splice(state.index, 1); saveState(); continue; }
+      // Items remain set aside: what was delivered is released first, then the pause.
+      const li = state.plan.indexOf('livrer', state.index);
+      if (state.releasePending && li > state.index) {
+        state.plan.splice(state.index, 1);
+        state.plan.splice(li, 0, '@aside');
+        saveState();
+        continue;
+      }
+      return pauseForLimit({ limit: 'items_blocked', value: state.aside.length, step: null });
     }
     let step = stepDefs[id];
     if (id === 'revue' && state.reviewGroup != null) {
@@ -1874,8 +2008,20 @@ export async function runPipeline(o) {
     // Un seul commit à la livraison : points d'étape du mode double, commits de
     // sa relecture… tout ce qui a été commité depuis le départ est replié.
     const delivering = step.id === 'livrer' || step.kind === 'deliver';
-    if (delivering && git(cwd, ['rev-parse', 'HEAD']).out !== base) {
-      git(cwd, ['reset', '--soft', base]);
+    // Per-item delivery: the items are already committed one by one; Livrer
+    // only makes the release commit on top of the last delivered item.
+    const foldBase = state.itemDelivery && step.id === 'livrer' ? (state.lastDelivered || base) : base;
+    ctx.releaseBase = state.itemDelivery && step.id === 'livrer' ? foldBase : null;
+    ctx.release = ctx.releaseBase ? { delivered: (state.delivered || []).filter(d => !d.released), aside: state.aside || [] } : null;
+    if (state.itemDelivery && step.id === 'livrer' && !state.releasePending) {
+      const why = (state.delivered || []).length ? 'tous les items livrés sont déjà dans une version' : 'aucun item livré';
+      const key = `${String(state.steps.length + 1).padStart(2, '0')}-${id}`;
+      state.steps.push({ id, key, title: step.title, status: 'skipped', why, attempt: 1, durationMs: 0 });
+      writeEvent({ type: 'system', subtype: 'pipeline_step_done', pipeline: { run, step: id, key, attempt: 1 }, status: 'skipped', why, durationMs: 0, text: `étape ${step.title} : sautée — ${why}` });
+      state.index++; saveState(); continue;
+    }
+    if (delivering && git(cwd, ['rev-parse', 'HEAD']).out !== foldBase) {
+      git(cwd, ['reset', '--soft', foldBase]);
       state.checkpoints = 0; saveState();
     }
     // Livraison « seulement s'il y a quelque chose » (audit, maintenance…) : rien
@@ -1972,7 +2118,7 @@ export async function runPipeline(o) {
       // Launch failure (0.60.0): not a try of the step — back-off on the SAME
       // case, then pause with the user's choices once the tiers are spent.
       if (r.launchFailed) {
-        if (r.before && r.after) restoreFiles(cwd, r.before, r.after, step.judge ? null : (delivering ? base : null));
+        if (r.before && r.after) restoreFiles(cwd, r.before, r.after, step.judge ? null : (delivering ? foldBase : null));
         attempt--;
         launchFails++;
         const tier = tierAfter(launchFails, BO);
@@ -1984,7 +2130,7 @@ export async function runPipeline(o) {
       last = r;
       if (r.rec.status === 'ok') break;
       // Un essai refusé n'est pas gardé : retour à l'état d'avant l'essai.
-      if (!step.judge && r.before && r.after) restoreFiles(cwd, r.before, r.after, delivering ? base : null);
+      if (!step.judge && r.before && r.after) restoreFiles(cwd, r.before, r.after, delivering ? foldBase : null);
       if (step.judge && r.before && r.after) restoreFiles(cwd, r.before, r.after, null);
       retryWhy = r.rec.why;
       if (r.crit?.claimedCovered && graceLeft > 0) {
@@ -1994,10 +2140,21 @@ export async function runPipeline(o) {
           text: `essai ${attempt} de « ${step.title} » non compté : « déjà couvert » déclaré, à compléter (${plainWhy(r.rec.why)})` });
       }
       if (attempt >= maxAttempts) {
-        return pauseForLimit({ limit: step.id === 'vert' ? 'green' : 'criteria', value: attempt, step, why: r.rec.why, lastOutput: r.crit?.test?.out });
+        const limit = step.id === 'vert' ? 'green' : 'criteria';
+        // An item's own step (4a/4b/4c, its Review) stops only that item.
+        const g = ctx.reviewScope ? ctx.reviewScope.group : ctx.item && ['rouge', 'vert', 'refactor'].includes(step.id) ? groupOf(ctx.item) : null;
+        if (state.itemDelivery && g != null && setAside(g, limit, r.rec.why)) continue steps;
+        return pauseForLimit({ limit, value: attempt, step, why: r.rec.why, lastOutput: r.crit?.test?.out });
       }
     }
     if (step.id === 'rouge' || step.crit === 'rouge') ctx.testPrint = testsNow();
+    if (step.id === 'livrer' && state.itemDelivery) {
+      // The release covers every item delivered since the previous one.
+      state.releasePending = false;
+      state.lastDelivered = headOf(cwd);
+      state.releases = [...(state.releases || []), { commit: state.lastDelivered, version: last.crit?.version || null, items: (state.delivered || []).filter(d => !d.released).map(d => d.group) }];
+      state.delivered = (state.delivered || []).map(d => ({ ...d, released: true }));
+    }
     if (step.crit === 'vert') ctx.suiteRedAtStart = state.suiteRedAtStart = false;
     if (last.crit?.media?.length) { ctx.lastMedia = state.lastMedia = last.crit.media.map(f => f.path); state.media = [...new Set([...(state.media || []), ...ctx.lastMedia])]; }
     // Boucle déclarée (audit : re-vérifier → corriger tant qu'il reste des failles),
@@ -2062,6 +2219,8 @@ export async function runPipeline(o) {
           if (lightReview >= 0) state.plan.splice(lightReview, 1);
           state.itemReview = true;
           state.pendingGroupReview = 0;
+          Object.assign(state, { itemDelivery: true, lastDelivered: state.lastDelivered || base, delivered: state.delivered || [], aside: state.aside || [] });
+          state.plan.splice(state.plan.lastIndexOf('livrer'), 0, '@aside');
           writeEvent({ type: 'system', subtype: 'pipeline_escalate', pipeline: { run, from: 'leger', to: 'complet' }, scope,
             text: `⇧ périmètre dépassé (${scope.why}) : l'exécution monte en Développement complet — liste de tests, puis un test à la fois, chaque item relu juste après sa boucle` });
         }
@@ -2083,7 +2242,9 @@ export async function runPipeline(o) {
       const budget = state.itemReviewBudgets?.[g] || limits.reviewRounds;
       if (defects.length) {
         if (rounds >= budget) {
-          return pauseForLimit({ limit: 'review', value: rounds, step, why: `la revue de ${label}${g ? ` (« ${ctx.reviewScope.text} »)` : ''} relève encore : ${defects.slice(0, 5).join(' ; ')}` });
+          const why = `la revue de ${label}${g ? ` (« ${ctx.reviewScope.text} »)` : ''} relève encore : ${defects.slice(0, 5).join(' ; ')}`;
+          if (state.itemDelivery && setAside(g, 'review', why)) continue;
+          return pauseForLimit({ limit: 'review', value: rounds, step, why });
         }
         state.itemReviewRounds = { ...(state.itemReviewRounds || {}), [g]: rounds + 1 };
         fs.writeFileSync(path.join(artDir, 'tests.md'), insertAttachedCases(readArtefact(ctx, 'tests.md') || '', g, defects));
@@ -2091,6 +2252,11 @@ export async function runPipeline(o) {
           text: `revue de ${label} : ${defects.length} problème(s) → case(s) rattachée(s) à cet item seulement (tour de revue ${rounds + 1}/${budget} de cet item)` });
       } else {
         writeEvent({ type: 'system', subtype: 'pipeline_item_reviewed', pipeline: { run, item: g }, text: `✓ revue de ${label} : rien à corriger` });
+        // Per-item delivery: validated by its own Review → its own commit, now.
+        if (state.itemDelivery) {
+          const c = deliverGroup(g);
+          if (!c.ok) return pauseForLimit({ limit: 'item_commit', value: g, step: stepDefs.livrer, why: `le commit de ${label} a échoué : ${String(c.err).split('\n')[0]}` });
+        }
       }
       state.reviewGroup = null;
       state.item = ctx.item = null;
@@ -2166,6 +2332,7 @@ export async function runPipeline(o) {
       `- Commit : ${head}\n` +
       `- Étapes : ${state.steps.filter(s => s.status === 'ok').map(s => `${s.title.split(' ')[0]} ${s.model || 'défaut'}`).join(' → ')}\n` +
       (state.mode === 'complet' ? `- TDD : ${state.itemsDone || 0} item(s) de la liste de tests, un à la fois (4a → 4b → 4c)\n` : '') +
+      ((state.delivered || []).length ? `- Livraison par item : ${state.delivered.map(d => `${d.group === 0 ? 'travail d’avant la montée en complet' : `item ${d.group}`} → ${d.commit.slice(0, 7)}`).join(' ; ')}, puis la version (${(state.releases || []).map(r => `${r.version || '?'} ${r.commit.slice(0, 7)}`).join(', ')})\n` : '') +
       (state.escalated ? '- ⇧ Monté de léger en complet : la demande dépassait le périmètre du mode léger\n' : '') +
       ((state.coveredItems || []).length ? `- ↺ Déjà assuré par le code existant (test ajouté comme documentation, sans nouveau code) : ${state.coveredItems.map(coveredLabel).join(' ; ')}\n` : '') +
       `- Critères vérifiés par l'orchestrateur : test rouge puis vert, tests inchangés en 4b, revue, version, CHANGELOG${cfg.requirements ? ', exigence' : ''}, suite verte\n` +
@@ -2212,8 +2379,12 @@ export async function answerPausedRun({ logsDir, project, projectName, run, answ
     state.status = 'abandoned'; state.abandonedBy = answer; state.endedAt = new Date().toISOString();
     save();
     writeEvent({ type: 'system', subtype: 'pipeline_summary', pipeline: { run, pipeline: state.pipeline, mode: state.mode, status: 'abandoned' },
-      text: `exécution ${run} arrêtée à la demande de l’utilisateur (« ${answer} ») — rien n’est livré` });
-    text = `■ Exécution arrêtée à votre demande (« ${answer} »). Rien n’est livré, aucun commit n’a été fait.\n\n` +
+      text: `exécution ${run} arrêtée à la demande de l’utilisateur (« ${answer} ») — ${(state.delivered || []).length ? `${state.delivered.length} item(s) déjà livré(s), le reste non livré` : 'rien n’est livré'}` });
+    const ds = state.delivered || [], as = state.aside || [];
+    text = (ds.length
+      ? `■ Exécution arrêtée à votre demande (« ${answer} »). Les items déjà livrés restent dans leurs commits : ${ds.map(d => `${d.group === 0 ? 'travail d’avant la montée en complet' : `item ${d.group}`} (${d.commit.slice(0, 7)})`).join(' ; ')}. Le reste n’est pas livré.\n\n`
+      : `■ Exécution arrêtée à votre demande (« ${answer} »). Rien n’est livré, aucun commit n’a été fait.\n\n`) +
+      (as.length ? `Items mis de côté, non livrés — leurs modifications sont gardées hors du projet (à réappliquer avec « git apply » si vous voulez les reprendre) :\n${as.map(a => `- ${a.group === 0 ? 'travail d’avant la montée en complet' : `item ${a.group}`} : \`${a.patch}\` (${(a.files || []).slice(0, 10).join(', ')})`).join('\n')}\n\n` : '') +
       (changed.length
         ? `Les modifications déjà faites restent dans le projet, non enregistrées dans git (vous pouvez les examiner, les garder ou les annuler) :\n${changed.slice(0, 30).map(c => `- ${c}`).join('\n')}${changed.length > 30 ? `\n- … et ${changed.length - 30} autre(s)` : ''}`
         : 'Aucune modification n’est restée dans le projet.') +
