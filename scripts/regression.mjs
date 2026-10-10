@@ -737,7 +737,7 @@ async function apiChecks(sb) {
     return `Recherche 5/5 par l’API (choisie par préfixe explicite), Maintenance livrée (commit ${g('log', '-1', '--format=%h').stdout.trim()}), frises au journal`;
   });
   // 0.54.0 — phase 6, lot B : le tour du chef est lui-même un pipeline (Routage).
-  await check(S, 'pipeline-routage', 'Pipelines, phase 6 (lot B) : avec « chef » en service, un message au chef passe par le pool et devient une exécution Routage (Lire → Classifier → … → Rapporter, étapes sur leurs cases) ; la réponse arrive dans le fil du chef ; interrupteur coupé = tour ordinaire', async () => {
+  await check(S, 'pipeline-routage', 'Pipelines, phase 6 (lot B) : avec « chef » en service, un message au chef passe par le pool et devient une exécution Routage (Lire → Comprendre → Découper → Classer chaque tâche → … → Rapporter, étapes sur leurs cases) ; la réponse arrive dans le fil du chef ; interrupteur coupé = tour ordinaire', async () => {
     if (!fs.existsSync(path.join(sb.root, 'scripts', 'pipeline-catalog.mjs')) || !/routage/.test(fs.readFileSync(path.join(sb.root, 'scripts', 'pipeline-catalog.mjs'), 'utf8'))) NA('Routage absent de cet état du code');
     const { ENGINE_PIPELINES } = await import(pathToFileURL(path.join(sb.root, 'scripts', 'pipeline-engine.mjs')).href);
     // Cases vides : la doublure de claude n'annonce pas le model demandé (un model
@@ -751,7 +751,7 @@ async function apiChecks(sb) {
       const run = await until(async () => (await chefRuns()).find(x => !before.has(x.run) && x.status !== 'running') || null, 150_000, 500);
       assert(run?.pipeline === 'routage' && run.status === 'done', `Routage : ${JSON.stringify(run && { s: run.status, st: run.steps.map(x => `${x.id}:${x.status}:${x.why || ''}`) })}`);
       const ids = run.steps.map(s => `${s.id}:${s.status}`).join(' ');
-      assert(/lire:ok classifier:ok decomposer:skipped affecter:skipped dispatcher:skipped rapporter:ok/.test(ids), `étapes : ${ids}`);
+      assert(/lire:ok (comprendre:ok decomposer:skipped classifier:skipped|classifier:ok decomposer:skipped) affecter:skipped dispatcher:skipped rapporter:ok/.test(ids), `étapes : ${ids}`);
       const chat = await json('/api/conductor-chat');
       const last = chat.filter(m => m.role === 'conductor').pop();
       assert(last && /Rapport simulé/.test(last.text), `réponse du chef absente du fil : ${JSON.stringify(last)}`);

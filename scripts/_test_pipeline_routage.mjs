@@ -70,9 +70,9 @@ const statusOf = (st) => st.steps.map(s => `${s.id}:${s.status}`).join(' ');
 
 // ---------------------------------------------------------------------------
 section('1. Une question : Lire → Classifier « réponse » → Rapporter (les étapes de tâches sont sautées, dites)');
-let x = chefTurn('Pourquoi le projet P a-t-il un seul commit ?', { FAKE_PIPE_JSON: JSON.stringify({ classifier: { nature: 'reponse', raison: 'question sur le dépôt' } }) });
+let x = chefTurn('Pourquoi le projet P a-t-il un seul commit ?', { FAKE_PIPE_JSON: JSON.stringify({ comprendre: { sens: 'sens simulé', nature: 'reponse', raison: 'question sur le dépôt' } }) });
 ok(x.r.code === 0 && x.st?.pipeline === 'routage' && x.st.mode === 'demande', `tour du chef = exécution Routage (code ${x.r.code})`, x.r.out.slice(-800));
-ok(statusOf(x.st) === 'lire:ok classifier:ok decomposer:skipped affecter:skipped dispatcher:skipped rapporter:ok', statusOf(x.st));
+ok(statusOf(x.st) === 'lire:ok comprendre:ok decomposer:skipped classifier:skipped affecter:skipped dispatcher:skipped rapporter:ok', statusOf(x.st));
 ok(x.st.steps.find(s => s.id === 'rapporter')?.served === 'claude-opus-5-5' && x.st.steps.find(s => s.id === 'lire')?.served === 'claude-haiku-5-5', 'chaque étape sur le model de SA case routage.*');
 const asst = x.evs.filter(e => e.type === 'assistant').pop();
 ok(asst && x.evs.filter(e => e.type === 'result').length === 1 && /rapporter/.test(asst.message.content[0].text), 'le rapport apparaît comme réponse du chef dans son fil (message + un result)');
@@ -86,8 +86,8 @@ const tasks = [
   { projet: 'Q', pipeline: 'dev', mode: 'leger', demande: 'Ajoute une fonction double qui multiplie par deux.' },
 ];
 const nP = logOf('P').length, nQ = logOf('Q').length;
-x = chefTurn('Demande à P d’expliquer ses tests et ajoute double() à Q', { FAKE_PIPE_JSON: JSON.stringify({ classifier: { nature: 'taches', raison: 'deux projets' }, decomposer: { taches: tasks } }) });
-ok(x.r.code === 0 && statusOf(x.st) === 'lire:ok classifier:ok decomposer:ok affecter:ok dispatcher:ok rapporter:ok', statusOf(x.st || { steps: [] }), x.r.out.slice(-800));
+x = chefTurn('Demande à P d’expliquer ses tests et ajoute double() à Q', { FAKE_PIPE_JSON: JSON.stringify({ comprendre: { sens: 'sens simulé', nature: 'taches', raison: 'deux projets' }, decomposer: { taches: tasks } }) });
+ok(x.r.code === 0 && statusOf(x.st) === 'lire:ok comprendre:ok decomposer:ok classifier:ok affecter:ok dispatcher:ok rapporter:ok', statusOf(x.st || { steps: [] }), x.r.out.slice(-800));
 ok(x.st.steps.find(s => s.id === 'affecter')?.source === 'code' && x.st.steps.find(s => s.id === 'dispatcher')?.source === 'code', 'Affecter et Dispatcher : exécutés par le code (aucun tour de model)');
 const aff = fs.readFileSync(path.join(T, 'chef', '.orchestrateur', 'runs', x.run, 'affectation.md'), 'utf8');
 ok(/\| P \| Discussion/.test(aff) && /projet hors service : tour ordinaire/.test(aff), 'affectation : P en service (pipeline), Q hors service (tour ordinaire)');
@@ -103,37 +103,37 @@ for (let i = 0; i < 60 && ['P', 'Q'].some(n => fs.existsSync(path.join(T, 'logs'
 
 // ---------------------------------------------------------------------------
 section('3. Tâches invalides refusées par le code, puis refaites');
-x = chefTurn('Travaille sur Z', { FAKE_PIPE_JSON: JSON.stringify({ classifier: { nature: 'taches', raison: 'x' }, decomposer: { taches: [{ projet: 'chef', pipeline: 'dev', demande: 'délègue-toi ceci' }] } }) });
+x = chefTurn('Travaille sur Z', { FAKE_PIPE_JSON: JSON.stringify({ comprendre: { sens: 'sens simulé', nature: 'taches', raison: 'x' }, decomposer: { taches: [{ projet: 'chef', pipeline: 'dev', demande: 'délègue-toi ceci' }] } }) });
 const dec = x.st.steps.filter(s => s.id === 'decomposer');
 ok(dec.every(s => s.status === 'refused') && /le chef ne se délègue pas/.test(dec[0].why) && x.st.status === 'paused', 'tâche confiée au chef : refusée à chaque essai, puis pause expliquée');
 ok(E.validateTasks(T, [{ projet: 'X', pipeline: 'dev', demande: 'quelque chose' }]).includes('projet inconnu') && E.validateTasks(T, [{ projet: 'P', pipeline: 'routage', demande: 'quelque chose' }]).includes('pipeline inconnu') && E.validateTasks(T, Array(7).fill({ projet: 'P', pipeline: 'dev', demande: 'quelque chose' })).includes('au plus 6'), 'projet hors liste blanche, Routage délégué, plus de 6 tâches : refusés');
-x = chefTurn('Fais ceci', { FAKE_PIPE_BAD: 'decomposer:1', FAKE_PIPE_JSON: JSON.stringify({ classifier: { nature: 'taches', raison: 'x' }, decomposer: { taches: [tasks[0]] } }) });
+x = chefTurn('Fais ceci', { FAKE_PIPE_BAD: 'decomposer:1', FAKE_PIPE_JSON: JSON.stringify({ comprendre: { sens: 'sens simulé', nature: 'taches', raison: 'x' }, decomposer: { taches: [tasks[0]] } }) });
 const d2 = x.st.steps.filter(s => s.id === 'decomposer');
 ok(d2[0]?.status === 'refused' && /JSON/.test(d2[0].why) && d2[1]?.status === 'ok', 'JSON illisible : refusé, refait');
 for (let i = 0; i < 60 && fs.existsSync(path.join(T, 'logs', 'P.pid')); i++) await sleep(500);
 
 // ---------------------------------------------------------------------------
 section('4. Demande ambiguë : la question part à l’utilisateur, jamais deviner');
-x = chefTurn('Réponds-lui oui', { FAKE_PIPE_JSON: JSON.stringify({ classifier: { nature: 'question', raison: 'deux projets attendent', question: 'À quel projet répondez-vous : P ou Q ?' } }) });
+x = chefTurn('Réponds-lui oui', { FAKE_PIPE_JSON: JSON.stringify({ comprendre: { sens: 'sens simulé', nature: 'question', raison: 'deux projets attendent', question: 'À quel projet répondez-vous : P ou Q ?' } }) });
 const res = x.evs.filter(e => e.type === 'result').pop();
 ok(x.r.code === 0 && /NEEDS_USER_INPUT: À quel projet répondez-vous/.test(res?.result || ''), 'le résultat finit par NEEDS_USER_INPUT (le fil passe en question)');
-x = chefTurn('Réponds', { FAKE_PIPE_JSON: JSON.stringify({ classifier: { nature: 'question', raison: 'x' } }) });
-ok(x.st.steps.find(s => s.id === 'classifier' && s.status === 'refused')?.why?.includes('aucune question'), '« question » sans question : refusé');
+x = chefTurn('Réponds', { FAKE_PIPE_JSON: JSON.stringify({ comprendre: { sens: 'sens simulé', nature: 'question', raison: 'x' } }) });
+ok(x.st.steps.find(s => s.id === 'comprendre' && s.status === 'refused')?.why?.includes('aucune question'), '« question » sans question : refusé');
 
 // ---------------------------------------------------------------------------
 section('5. Réveil (résultats de musiciens) : Lire → Relancer → Callback → Rapporter ; question d’un musicien : [ANSWER]');
 x = chefTurn('[CALLBACK_WAKE lot=1 gen=1]\n[P] Tour terminé. La suite passe.', {}, ['--source', 'wake']);
 ok(x.r.code === 0 && x.st.mode === 'callback' && statusOf(x.st) === 'lire:ok relancer:ok callback:ok rapporter:ok', `réveil : ${statusOf(x.st || { steps: [] })}`, x.r.out.slice(-600));
 const dump = path.join(T, 'prompts.ndjson');
-x = chefTurn('[NEEDS_CHEF_INPUT_FROM:P] Faut-il suivre la convention de nommage de Q ?', { FAKE_CLAUDE_DUMP_PROMPT: dump, FAKE_PIPE_JSON: JSON.stringify({ classifier: { nature: 'reponse', raison: 'convention transverse' } }) });
+x = chefTurn('[NEEDS_CHEF_INPUT_FROM:P] Faut-il suivre la convention de nommage de Q ?', { FAKE_CLAUDE_DUMP_PROMPT: dump, FAKE_PIPE_JSON: JSON.stringify({ comprendre: { sens: 'sens simulé', nature: 'reponse', raison: 'convention transverse' } }) });
 const prompts = fs.readFileSync(dump, 'utf8').trim().split('\n').map(l => JSON.parse(l));
 ok(prompts.some(p => /PIPELINE_STEP=rapporter/.test(p.prompt) && /commencer par « \[ANSWER\] »/.test(p.prompt)), 'question d’un musicien : le rapport doit commencer par [ANSWER] (relais)');
 
 // ---------------------------------------------------------------------------
 section('6. Pool : ticket et slot du chef tracés ; rapport seul : aucun dispatch');
-x = chefTurn('Pourquoi ?', { DISPATCH_SLOT: '1', DISPATCH_TICKET: 't-test-1', FAKE_PIPE_JSON: JSON.stringify({ classifier: { nature: 'reponse', raison: 'x' } }) }, ['--pool-assign']);
+x = chefTurn('Pourquoi ?', { DISPATCH_SLOT: '1', DISPATCH_TICKET: 't-test-1', FAKE_PIPE_JSON: JSON.stringify({ comprendre: { sens: 'sens simulé', nature: 'reponse', raison: 'x' } }) }, ['--pool-assign']);
 ok(x.up?.ticket === 't-test-1' && x.up.slot === 1, 'user_prompt du Routage : ticket et slot (le pool clôt le bon ticket)');
-x = chefTurn('Relance P', { DISPATCH_REPORT_ONLY: '1', DISPATCH_SLOT: '1', DISPATCH_TICKET: 't-test-2', FAKE_PIPE_JSON: JSON.stringify({ classifier: { nature: 'taches', raison: 'x' }, decomposer: { taches: [tasks[0]] } }) }, ['--pool-assign']);
+x = chefTurn('Relance P', { DISPATCH_REPORT_ONLY: '1', DISPATCH_SLOT: '1', DISPATCH_TICKET: 't-test-2', FAKE_PIPE_JSON: JSON.stringify({ comprendre: { sens: 'sens simulé', nature: 'taches', raison: 'x' }, decomposer: { taches: [tasks[0]] } }) }, ['--pool-assign']);
 ok(x.st.steps.find(s => s.id === 'dispatcher')?.status === 'refused' && /rapport seul/.test(x.st.steps.find(s => s.id === 'dispatcher').why), 'réveil en rapport seul : le Dispatcher refuse (aucun lancement)', statusOf(x.st) + ' ' + x.r.out.slice(-500));
 
 // ---------------------------------------------------------------------------
@@ -157,8 +157,8 @@ const suiteTasks = [
   { projet: 'Q', pipeline: 'dev', mode: 'leger', demande: 'Reprends la demande en attente : ajouter l’export CSV demandé par l’utilisateur.', rattache: 'question 4 du chef (la suite)', apres: 1 },
 ];
 const nObs = obsCount().length, nQ8 = logOf('Q').length;
-x = chefTurn(reply, { FAKE_PIPE_JSON: JSON.stringify({ classifier: { nature: 'suite', raison: 'répond aux questions 1 à 4 du chef', rattache: ['phase 7', 'Routage', 'models', 'la suite'] }, decomposer: { taches: suiteTasks } }) });
-ok(x.r.code === 0 && statusOf(x.st) === 'lire:ok classifier:ok decomposer:ok affecter:ok dispatcher:ok rapporter:ok', `réponse reconnue comme « suite » et décomposée : ${statusOf(x.st || { steps: [] })}`, x.r.out.slice(-800));
+x = chefTurn(reply, { FAKE_PIPE_JSON: JSON.stringify({ comprendre: { sens: 'sens simulé', nature: 'suite', raison: 'répond aux questions 1 à 4 du chef', rattache: ['phase 7', 'Routage', 'models', 'la suite'] }, decomposer: { taches: suiteTasks } }) });
+ok(x.r.code === 0 && statusOf(x.st) === 'lire:ok comprendre:ok decomposer:ok classifier:ok affecter:ok dispatcher:ok rapporter:ok', `réponse reconnue comme « suite » et décomposée : ${statusOf(x.st || { steps: [] })}`, x.r.out.slice(-800));
 const art8 = path.join(T, 'chef', '.orchestrateur', 'runs', x.run);
 const ctx8 = fs.readFileSync(path.join(art8, 'contexte.md'), 'utf8');
 ok(/Lance-t-on la phase 7/.test(ctx8) && /Ensuite, je reprends la demande en attente sur Q/.test(ctx8), 'contexte : dernière réponse du chef et ses questions ouvertes');
@@ -177,12 +177,20 @@ ok(qUp8 && /export CSV/.test(qUp8.text) && /Rattachée à : question 4/.test(qUp
 for (let i = 0; i < 60 && fs.existsSync(path.join(T, 'logs', 'Q.pid')); i++) await sleep(500);
 ok(E.validateTasks(T, [{ projet: 'P', pipeline: 'dev', demande: 'quelque chose', apres: 1 }]).includes('apres'), '« apres » qui ne désigne pas une tâche précédente : refusé');
 
-section('9. Vrai message inclassable, sans aucun contexte qui le rattache : toujours une lacune');
+// 0.69.0: a gap is raised only about ONE unit task, after the message was
+// understood and split — the whole message can no longer be a « lacune ».
+section('9. Tâche qu’aucun pipeline ne couvre : lacune sur CETTE tâche seulement, après compréhension et découpage');
 const nObs9 = obsCount().length;
-x = chefTurn('planifie mes vacances en Italie avec un budget serré', { FAKE_PIPE_JSON: JSON.stringify({ classifier: { nature: 'lacune', raison: 'aucun pipeline ni aucune question ouverte ne correspond' } }) });
+const vac = 'Planifie des vacances en Italie avec un budget serré.';
+x = chefTurn('planifie mes vacances en Italie avec un budget serré', {
+  FAKE_PIPE_JSON: JSON.stringify({ comprendre: { sens: 'organiser des vacances', nature: 'taches', raison: 'nouvelle demande' }, decomposer: { taches: [{ projet: 'P', demande: vac }] } }),
+  FAKE_CLAUDE_CLASSIFY_MAP: JSON.stringify({ Italie: { pipeline: 'discussion', mode: 'leger', raison: 'hors des pipelines', lacune: 'ajouter un pipeline « voyages »' } }) });
 const gap9 = obsCount().slice(nObs9).find(o => o.gap);
-ok(x.r.code === 0 && gap9?.entry === 'signalement' && gap9.caller === 'routage' && gap9.gap.proposal && /aucune question ouverte/.test(gap9.gap.why), `lacune signalée APRÈS lecture du contexte, avec proposition (${gap9?.gap?.key})`);
-ok(x.evs.some(e => e.subtype === 'pipeline_gap'), 'le fil du chef le dit (⚑ lacune signalée)');
+ok(x.r.code === 0 && gap9?.entry === 'signalement' && gap9.caller === 'routage' && gap9.gap.proposal && /la tâche 1 \(P\) ne correspond à aucun pipeline/.test(gap9.gap.why) && gap9.head === vac, `lacune signalée sur la tâche, avec proposition (${gap9?.gap?.key})`, JSON.stringify(gap9));
+ok(x.evs.some(e => e.subtype === 'pipeline_gap' && e.task === 1), 'le fil du chef le dit (⚑ lacune signalée pour la tâche 1)');
+ok(JSON.parse(fs.readFileSync(path.join(T, 'chef', '.orchestrateur', 'runs', x.run, 'dispatch.json'), 'utf8')).dispatched.length === 0, 'la tâche en lacune n’est pas lancée');
+x = chefTurn('planifie mes vacances', { FAKE_PIPE_JSON: JSON.stringify({ comprendre: { sens: 's', nature: 'lacune', raison: 'x' } }) });
+ok(x.st.steps.find(s => s.id === 'comprendre')?.status === 'refused' && /nature/.test(x.st.steps.find(s => s.id === 'comprendre').why), '« lacune » pour le message entier : refusée (seule une tâche peut être une lacune)');
 const O = await import('./pipeline-observe.mjs');
 const ob = O.createObserver({ logsDir: path.join(T, 'obs-unit') });
 // 0.66.0: a gap is never detected on words at the observation, deferred or not —

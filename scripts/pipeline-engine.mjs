@@ -682,6 +682,22 @@ export function validateTasks(root, tasks) {
   return null;
 }
 
+/**
+ * Unit tasks of the Decomposer (0.69.0): same rules as validateTasks, but NO
+ * pipeline yet — each task is classified on its own afterwards. A pipeline may
+ * only come from the user's explicit prefix (« impose »).
+ */
+export function validateUnitTasks(root, tasks) {
+  if (!Array.isArray(tasks) || !tasks.length) return 'aucune tâche';
+  const probe = tasks.map((t) => {
+    if (!t || typeof t !== 'object') return t;
+    const imp = t.impose && typeof t.impose === 'object' ? t.impose : {};
+    if (imp.pipeline != null && (!ENGINE_PIPELINES.includes(imp.pipeline) || imp.pipeline === 'routage')) return { ...t, pipeline: `imposé « ${imp.pipeline} »` };
+    return { ...t, pipeline: imp.pipeline || 'discussion', mode: imp.mode ?? null };
+  });
+  return validateTasks(root, probe);
+}
+
 /** Les derniers échanges du fil (demandes, réponses du chef, résultats), pour l'étape Lire. */
 export function conversationExcerpt(logFile, { max = 30, maxChars = 30_000 } = {}) {
   let lines = [];
@@ -711,18 +727,84 @@ export function conversationExcerpt(logFile, { max = 30, maxChars = 30_000 } = {
 }
 
 const CODE_STEPS = {
+  /**
+   * Split before classify (0.69.0): every unit task of taches.json is
+   * classified ON ITS OWN — one call to the routage.classifier model per task,
+   * which sees only that task. A task the model finds ambiguous, or that it
+   * cannot classify, becomes a question to the user (never a guess); a task no
+   * pipeline covers raises a gap about THAT task, never about the whole message.
+   */
+  async classer({ root, logsDir, ctx, state, artDir, projectName, writeEvent, run }) {
+    const j = parseJsonArtefact(readArtefact(ctx, 'taches.json') || '') || {};
+    const units = Array.isArray(j.taches) ? j.taches : [];
+    const questions = [];
+    if (!units.length) {
+      if (String(j.question || '').trim()) questions.push(String(j.question).replace(/\s+/g, ' ').trim());
+      state.tasks = [];
+      fs.writeFileSync(path.join(artDir, 'classement.json'), JSON.stringify({ taches: [], questions }, null, 2));
+      return { ok: true };
+    }
+    const { classifyTask } = await import('./pipeline-classify.mjs');
+    const out = [];
+    const models = new Set();
+    for (const [i, t] of units.entries()) {
+      const n = i + 1;
+      const imp = t.impose && typeof t.impose === 'object' ? t.impose : {};
+      const base = { n, projet: t.projet, demande: t.demande, ...(t.rattache ? { rattache: t.rattache } : {}), ...(t.apres ? { apres: t.apres } : {}), ...(t.reprise ? { reprise: t.reprise } : {}) };
+      // Resuming a paused run keeps that run's own pipeline: nothing to classify.
+      if (t.reprise) { out.push({ ...base, route: true, pipeline: imp.pipeline || null, mode: imp.mode || null, kind: null, classifier: 'reprise', raison: `reprise de l’exécution ${t.reprise}` }); continue; }
+      const c = await classifyTask({ root, logsDir, task: t, fixed: { pipeline: imp.pipeline || null, mode: imp.mode || null } });
+      if (c.model) models.add(c.model);
+      if (c.failed) {
+        const q = `Tâche ${n} (${t.projet}) : le classement par le model a échoué (${c.why}). Quel pipeline voulez-vous pour : « ${String(t.demande).slice(0, 200)} » ?`;
+        questions.push(q);
+        out.push({ ...base, route: false, failed: true, why: c.why, question: q });
+      } else if (c.question) {
+        questions.push(`Tâche ${n} (${t.projet}) : ${c.question}`);
+        out.push({ ...base, route: false, question: c.question, raison: c.raison || null, classifier: c.classifier });
+      } else if (c.lacune) {
+        const g = await emitRoutingGap(logsDir, projectName, t.demande, c.lacune, { task: n, projet: t.projet });
+        writeEvent?.({ type: 'system', subtype: 'pipeline_gap', pipeline: { run }, gap: g?.key || null, task: n,
+          text: `⚑ lacune signalée pour la tâche ${n} (${t.projet}) seulement : ${String(c.lacune).slice(0, 200)}` });
+        out.push({ ...base, route: false, lacune: c.lacune, gap: g?.key || null, classifier: c.classifier });
+      } else {
+        out.push({ ...base, route: true, pipeline: c.pipeline, mode: c.mode, kind: c.kind || null, raison: c.raison || null, classifier: c.classifier });
+      }
+    }
+    // A task waiting (« apres ») for a task that is not launched cannot start.
+    for (const t of out) {
+      const dep = t.apres ? out[t.apres - 1] : null;
+      if (t.route && dep && !dep.route) {
+        t.route = false;
+        t.blocked = dep.n;
+        questions.push(`Tâche ${t.n} (${t.projet}) : elle devait suivre la tâche ${dep.n}, qui n’est pas lancée — la lancer quand même, ou attendre votre réponse sur la tâche ${dep.n} ?`);
+      }
+    }
+    state.tasks = out;
+    fs.writeFileSync(path.join(artDir, 'classement.json'), JSON.stringify({ taches: out, questions }, null, 2));
+    return { ok: true, model: [...models].join(', ') || null };
+  },
   /** Les models viennent de la page Models : le code les relève, tâche par tâche. */
   async affecter({ root, ctx, state, artDir }) {
-    const j = parseJsonArtefact(readArtefact(ctx, 'taches.json') || '') || {};
-    const why = validateTasks(root, j.taches);
-    if (why) return { ok: false, why };
+    // Runs paused before 0.69.0 have no per-task classification: the old
+    // Decomposer output (with a pipeline per task) is used as it was.
+    if (!Array.isArray(state.tasks)) {
+      const j = parseJsonArtefact(readArtefact(ctx, 'taches.json') || '') || {};
+      const why = validateTasks(root, j.taches);
+      if (why) return { ok: false, why };
+      state.tasks = j.taches.map((t, i) => ({ ...t, n: i + 1, route: true }));
+    }
     const enf = readEnforcement(root);
     const assignments = readAssignments(root);
     const rows = [];
-    state.tasks = j.taches.map((t) => {
-      const served = isEnforced(enf, t.projet) && enf.pipelines.includes(t.pipeline);
+    state.tasks = state.tasks.map((t) => {
+      if (!t.route) {
+        rows.push(`| ${t.projet} | non lancée — ${t.lacune ? `lacune : ${t.lacune}` : t.blocked ? `attend la tâche ${t.blocked}, non lancée` : `question : ${t.question || t.why || '?'}`} | — |`);
+        return t;
+      }
+      const served = !!t.pipeline && isEnforced(enf, t.projet) && enf.pipelines.includes(t.pipeline);
       const steps = served ? planSteps(t.pipeline, { mode: t.mode || 'leger' }).filter(s => s.chain?.length && s.kind !== 'code').map(s => ({ id: s.id, ...resolveCase(assignments, s.chain) })) : [];
-      rows.push(`| ${t.projet} | ${served ? `${pipelineLabel(t.pipeline, t.mode)}` : `${t.pipeline} — projet hors service : tour ordinaire`} | ${steps.map(s => `${s.id}: ${s.model || 'défaut du projet'}`).join(', ') || '—'} |`);
+      rows.push(`| ${t.projet} | ${served ? `${pipelineLabel(t.pipeline, t.mode)}` : t.reprise ? `reprise de ${t.reprise}` : `${t.pipeline} — projet hors service : tour ordinaire`} | ${steps.map(s => `${s.id}: ${s.model || 'défaut du projet'}`).join(', ') || '—'} |`);
       return { ...t, served };
     });
     fs.writeFileSync(path.join(artDir, 'affectation.md'), `# Affectation (page Models)\n\n| projet | pipeline | models par étape |\n|---|---|---|\n${rows.join('\n')}\n`);
@@ -736,6 +818,8 @@ const CODE_STEPS = {
     // Decomposer forgot the « reprise » field: never a second, new run.
     const tasks = (state.tasks || []).map(t => ({ ...t, reprise: detectReprise(logsDir, t) }));
     tasks.forEach((t, i) => {
+      // Not launched (question, gap, failed classification): said in the report.
+      if (t.route === false) return;
       // « puis » : une tâche qui attend la fin d'une autre part quand ce résultat
       // arrive (libération mécanique en fin de tour, 0.58.0), jamais avant.
       if (t.apres) { waiting.push({ ...t, n: i + 1, after: tasks[t.apres - 1].projet }); return; }
@@ -750,7 +834,7 @@ const CODE_STEPS = {
         // (or now, if it is itself still waiting) plus the fingerprint of its
         // WHOLE text (0.67.x: a shared opening sentence no longer matches).
         // `n` + `run` identify this Routage task (deduplication, 0.68.0).
-        return { run, n: w.n, projet: w.projet, pipeline: w.pipeline, mode: w.mode || null, served: w.served, demande: w.demande, rattache: w.rattache || null,
+        return { run, n: w.n, projet: w.projet, pipeline: w.pipeline, mode: w.mode || null, ...(w.kind ? { kind: w.kind } : {}), served: w.served, demande: w.demande, rattache: w.rattache || null,
           ...(w.reprise ? { reprise: w.reprise } : {}),
           after: { projet: w.after, offset: dep ? dep.offset : logOffset(logsDir, w.after), key: taskKey(depTask.demande), hash: textHash(depTask.demande), since: dep?.at || new Date().toISOString() } };
       });
@@ -782,15 +866,18 @@ const CODE_STEPS = {
   },
 };
 
-/** Signalement de lacune émis par le Routage (classement « lacune »). */
-async function emitRoutingGap(logsDir, project, text, why) {
+/**
+ * Gap raised by the Routage. Since 0.69.0 only about ONE unit task (its own
+ * text), after the message was understood and split — never the whole message.
+ */
+async function emitRoutingGap(logsDir, project, text, why, { task = null, projet = null } = {}) {
   const obs = await import('./pipeline-observe.mjs');
   // The gap and its proposal come from the Classifier model's reasoning only —
   // no keyword detection, no « recognised by the words … » proposal (0.66.0).
   const key = `routage:${crypto.createHash('sha1').update(String(text)).digest('hex').slice(0, 16)}`;
   const gap = {
-    key, reason: 'aucun-pipeline',
-    why: `Routage : aucune question ouverte ni aucun contexte ne rattache ce message${why ? ` (${String(why).slice(0, 200)})` : ''}`,
+    key, reason: 'aucun-pipeline', ...(task ? { task, projet } : {}),
+    why: `Routage : ${task ? `la tâche ${task}${projet ? ` (${projet})` : ''} ne correspond à aucun pipeline` : 'aucune question ouverte ni aucun contexte ne rattache ce message'}${why ? ` (${String(why).slice(0, 200)})` : ''}`,
     proposal: { kind: 'pipeline', text: why ? `proposition du model de classement : ${String(why).slice(0, 300)}` : 'ajouter un pipeline ou une étape qui couvre ce besoin (à décrire dans la page Models)' },
   };
   try { obs.createObserver({ logsDir }).record({ entry: 'signalement', project, text, caller: 'routage', gap }); } catch { /* jamais bloquant */ }
@@ -988,6 +1075,12 @@ function checkCatalogCriteria(ctx, step, before, after) {
     if (json.nature === 'question' && !String(json.question || '').trim()) return fail(`${step.artefact} : « question » choisie, mais aucune question à poser`);
     if (c.tasks) {
       const why = validateTasks(ctx.root, json.taches);
+      if (why) return fail(`${step.artefact} : ${why}`);
+    }
+    // A message that cannot be split with certainty ends as a question to the
+    // user (never guess): no task and a question is a valid answer.
+    if (c.unitTasks && !(Array.isArray(json.taches) && !json.taches.length && String(json.question || '').trim())) {
+      const why = validateUnitTasks(ctx.root, json.taches);
       if (why) return fail(`${step.artefact} : ${why}`);
     }
   }
@@ -2148,9 +2241,10 @@ export async function runPipeline(o) {
       const key = `${String(state.steps.length + 1).padStart(2, '0')}-${id}`;
       const t0 = Date.now();
       let out;
-      try { out = await CODE_STEPS[step.handler]({ root, logsDir, ctx, state, artDir, projectName, dispatchScript, run }); }
+      try { out = await CODE_STEPS[step.handler]({ root, logsDir, ctx, state, artDir, projectName, dispatchScript, run, writeEvent }); }
       catch (e) { out = { ok: false, why: e.message }; }
-      const rec = { id, key, title: step.title, slot: null, model: null, source: 'code', status: out.ok ? 'ok' : 'refused', why: out.ok ? null : out.why, attempt: 1, durationMs: Date.now() - t0 };
+      // A code step may call a model itself (« classer »: one classifier call per task).
+      const rec = { id, key, title: step.title, slot: out.model ? step.chain[0] : null, model: out.model || null, ...(out.model ? { served: out.model } : {}), source: 'code', status: out.ok ? 'ok' : 'refused', why: out.ok ? null : out.why, attempt: 1, durationMs: Date.now() - t0 };
       record({ rec });
       if (!out.ok) return finish({ code: 1, isError: true, result: `✕ ${projectName} — étape « ${step.title} » : ${out.why}` });
       state.index++; saveState(); continue;
@@ -2253,12 +2347,8 @@ export async function runPipeline(o) {
     if (last.crit?.media?.length) { ctx.lastMedia = state.lastMedia = last.crit.media.map(f => f.path); state.media = [...new Set([...(state.media || []), ...ctx.lastMedia])]; }
     // Boucle déclarée (audit : re-vérifier → corriger tant qu'il reste des failles),
     // bornée par le budget des tours de revue — comme la revue du Développement.
-    // Routage : une lacune n'est signalée qu'ICI, après lecture du contexte et
-    // essai de rattachement (0.57.0) — jamais au simple vu du texte.
-    if (pipeline === 'routage' && step.id === 'classifier' && last.crit?.json?.nature === 'lacune') {
-      const g = await emitRoutingGap(logsDir, projectName, state.request, last.crit.json.raison);
-      writeEvent({ type: 'system', subtype: 'pipeline_gap', pipeline: { run }, gap: g?.key || null, text: `⚑ lacune signalée après lecture du contexte : ${String(last.crit.json.raison || '').slice(0, 200)}` });
-    }
+    // Routage: since 0.69.0 a gap is raised only by the « classer » code step,
+    // about one unit task — never about the whole message.
     // Security findings of the audit (manual review, independent second opinion):
     // every severity is a defect, reported at once (0.65.0).
     if (Array.isArray(last.crit?.json?.findings) && last.crit.json.findings.length) await reportDefects(step, last.crit.json.findings, 'faille');
@@ -2435,9 +2525,18 @@ export async function runPipeline(o) {
     // Routage : le rapport EST la réponse du chef ; une demande ambiguë finit
     // par la question à l'utilisateur (règle : ne jamais deviner).
     if (pipeline === 'routage') {
+      // Questions come from the global meaning (ambiguous message), the split
+      // (impossible to split) or the per-task classification (0.69.0).
+      const sens = parseJsonArtefact(readArtefact(ctx, 'sens.json') || '') || {};
       const cls = parseJsonArtefact(readArtefact(ctx, 'classement.json') || '') || {};
-      const q = cls.nature === 'question' && String(cls.question || '').trim();
-      return `${body || '(rapport vide)'}${q && !/NEEDS_USER_INPUT:/.test(body) ? `\n\nNEEDS_USER_INPUT: ${q.replace(/\s+/g, ' ')}` : ''}`;
+      const qs = [
+        sens.nature === 'question' && String(sens.question || '').trim(),
+        // Runs started before 0.69.0 kept the nature in classement.json.
+        cls.nature === 'question' && String(cls.question || '').trim(),
+        ...(Array.isArray(cls.questions) ? cls.questions : []),
+      ].filter(Boolean).map(q => String(q).replace(/\s+/g, ' ').trim());
+      const q = qs.length > 1 ? qs.map((x, i) => `(${i + 1}) ${x}`).join(' ') : qs[0];
+      return `${body || '(rapport vide)'}${q && !/NEEDS_USER_INPUT:/.test(body) ? `\n\nNEEDS_USER_INPUT: ${q}` : ''}`;
     }
     const head = git(cwd, ['rev-parse', 'HEAD']).out;
     const delivered = head && head !== base ? git(cwd, ['log', '-1', '--format=%h %s']).out : null;

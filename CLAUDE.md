@@ -1263,8 +1263,9 @@ par le model de la case `routage.classifier`.**
 ## Pipelines obligatoires — phase 6, lot B : Routage, le tour du chef (0.54.0)
 
 - `S.routage` dans `pipeline-catalog.mjs`, avec deux modes : `demande`
-  (`lire, classifier, decomposer, affecter, dispatcher, rapporter`) et
-  `callback` (`lire, callback, rapporter`). Pas de git : `needs.git:false`,
+  (`lire, comprendre, decomposer, classifier, affecter, dispatcher,
+  rapporter` depuis 0.69.0, voir plus bas) et `callback` (`lire, callback,
+  rapporter`). Pas de git : `needs.git:false`,
   donc empreinte `walkSnapshot` et restauration à partir du contenu gardé.
 - **Branchement** (`dispatch.mjs`, `CHEF_ROUTED`) : un tour du chef ou d'un
   slot, avec `enforcement.chef === true`, sans `--hors-pipeline`, part dans
@@ -1368,6 +1369,39 @@ par le model de la case `routage.classifier`.**
   signale quand le model de classement renvoie `lacune`.
 - Rejet avec motif : `decideGap(…, {reason})`.
 - Recette : `_test_pipeline_routage.mjs`, sections 8 et 9.
+
+## Routage : comprendre, découper, PUIS classer chaque tâche (0.69.0)
+
+Demande utilisateur (2026-10-10) : « le routeur ne doit pas classer une demande
+entiere alors qu'elle est deja decoupee […] le model essaie de trouver le sens
+global - si besoin decouper en taches plus petites - trouver un sens et router
+les taches ainsi trouvees une par une ».
+
+- **Comprendre** (`sens.json`, case `routage.lire`) : `suite | taches |
+  reponse | question` et le sens global. Aucun pipeline n'est choisi, et la
+  « lacune » sur le message entier n'existe plus (refusée par `jsonEnum`).
+- **Découper** (`taches.json`, `validateUnitTasks`) : des tâches unitaires,
+  chacune avec un projet et une seule nature de travail, sans pipeline. Seul un
+  préfixe de l'utilisateur s'impose (`impose: {pipeline, mode}`). Si le
+  découpage est impossible : `taches: []` et une `question`.
+- **Classer** : étape de **code** `classer`, qui appelle `classifyTask` de
+  `pipeline-classify.mjs` une fois par tâche. Chaque appel ne voit que sa
+  tâche (`routingTaskPrompt`, `[CLASSIFY] ROUTING TASK`). Résultat par tâche
+  dans `classement.json`, avec `route` à true ou false.
+  - Une tâche ambiguë (`question`) ou dont le classement échoue (`failed`)
+    n'est pas lancée : sa question finit le tour (`NEEDS_USER_INPUT`, plusieurs
+    questions numérotées).
+  - Une lacune porte sur une tâche seulement (`emitRoutingGap(…, {task,
+    projet})`, texte de la tâche).
+  - Une tâche « apres » une tâche non lancée ne part pas.
+  - La nature d'un développement part en `--kind` (`launchTask`).
+- Affecter et Dispatcher ne lancent que les tâches `route`. Une exécution en
+  pause d'un moteur antérieur (sans `state.tasks`) relit l'ancien
+  `taches.json`.
+- Faux claude : `FAKE_CLAUDE_CLASSIFY_MAP` (`{"<extrait de la tâche>":
+  <réponse>}`).
+- Recettes : `_test_routage_split.mjs` (permanente, exigence utilisateur) et
+  `_test_pipeline_routage.mjs` (section 9 réécrite).
 
 ## Tâches du Routage en attente : jamais bloquées (0.58.0)
 

@@ -206,6 +206,66 @@ export async function classifyEntry({ root, logsDir, text, project = null, entry
 }
 
 /**
+ * Routage, split before classify (0.69.0). User request (2026-10-10): « le
+ * routeur ne doit pas classer une demande entiere alors qu'elle est deja
+ * decoupee » — first the global meaning, then the split into unit tasks, then
+ * each task is classified ON ITS OWN. This prompt therefore only ever holds ONE
+ * task (never the whole message). Besides a pipeline, a task may be answered
+ * with "question" (ambiguous: ask the user, never guess) or "lacune" (an action
+ * no pipeline covers — a gap about THIS task only).
+ */
+export function routingTaskPrompt(task, fixed = {}, choices = CHOICES) {
+  const list = choices.map(p => `- ${p.id}: ${p.label} — ${p.when || p.purpose || ''}`).join('\n');
+  const imposed = [fixed.pipeline && `pipeline "${fixed.pipeline}"`, fixed.mode && `mode "${fixed.mode}"`].filter(Boolean);
+  return '[CLASSIFY] ROUTING TASK. A message to the conductor was already understood and split into unit tasks; you route ONE of them, by its MEANING. ' +
+    'Pick the ONE pipeline that fits this task alone.\n' +
+    `Pipelines:\n${list}\n\n` +
+    (imposed.length ? `The user already chose ${imposed.join(' and ')}: keep it as is and decide only the rest.\n` : '') +
+    'Rules: a question, a remark or a reflection that does not ask for a change → discussion. ' +
+    'For dev: mode "complet" for a new feature or behaviour, "leger" for a small fix or a mechanical edit; if unsure between the two → "leger"; ' +
+    'and the nature: "bugfix", "mecanique" (no behaviour change) or "comportement". Other pipelines: mode "complet" unless the task is clearly small.\n' +
+    'If the task is ambiguous (you cannot tell what is wanted, or which of two pipelines), do NOT guess: set "question" to the question to ask the user. ' +
+    'If the task asks for an ACTION that no pipeline covers, set "lacune" to one sentence proposing the missing pipeline or step.\n' +
+    'Answer with ONE JSON object and nothing else: {"pipeline":"<id>","mode":"leger"|"complet","nature":"comportement"|"bugfix"|"mecanique","raison":"<one short sentence in French>","question":"<optional, French>","lacune":"<optional, French>"}\n\n' +
+    `Project: ${task.projet || '?'}\n` +
+    `Request:\n<<<\n${normalizeText(task.demande).slice(0, 6000)}\n>>>`;
+}
+
+/** {question} | {lacune, raison} | {pipeline, mode, kind, raison} from the model's answer, or null. */
+export function parseTaskClassification(answer, fixed = {}, choices = CHOICES) {
+  const m = /\{[\s\S]*\}/.exec(String(answer || ''));
+  if (!m) return null;
+  let j; try { j = JSON.parse(m[0]); } catch { return null; }
+  const text = (v, n) => (typeof v === 'string' && v.trim() ? v.replace(/\s+/g, ' ').trim().slice(0, n) : null);
+  const raison = text(j.raison, 300) || '';
+  const question = text(j.question, 600);
+  if (question) return { question, raison };
+  const lacune = text(j.lacune, 400);
+  if (lacune) return { lacune, raison };
+  const v = parseClassification(answer, fixed, choices);
+  return v ? { ...v, lacune: null } : null;
+}
+
+/**
+ * Classifies ONE unit task of a Routage run (one model call per task, slot
+ * routage.classifier, one retry). A complete explicit choice skips the model.
+ * → { pipeline, mode, kind, raison, classifier } | { question } | { lacune } | { failed, why }
+ */
+export async function classifyTask({ root, logsDir, task, fixed = {}, oneShot = null, keys, fetchImpl, timeoutMs = 60_000, env = process.env } = {}) {
+  const want = { pipeline: fixed.pipeline || null, mode: fixed.mode || null, kind: fixed.kind || null };
+  if (want.pipeline && want.pipeline !== 'dev') {
+    return { pipeline: want.pipeline, mode: want.mode || (want.pipeline === 'discussion' ? 'leger' : 'complet'), kind: null, classifier: 'explicite', raison: `choix explicite → ${want.pipeline}` };
+  }
+  if (want.pipeline === 'dev' && want.mode && want.kind) return { pipeline: 'dev', mode: want.mode, kind: want.kind, classifier: 'explicite', raison: 'choix explicite → dev' };
+  const fixedForModel = { ...(want.pipeline ? { pipeline: want.pipeline } : {}), ...(want.mode ? { mode: want.mode } : {}) };
+  const choices = classifierChoices(root);
+  const r = await askClassifier({ root, prompt: routingTaskPrompt(task, fixedForModel, choices), parse: (t) => parseTaskClassification(t, fixedForModel, choices), oneShot, keys, fetchImpl, timeoutMs, env });
+  record(logsDir, { project: task.projet || null, entry: 'routage-tache', provider: r.provider || null, model: r.model || null, ok: r.ok, ...(r.ok ? { model_result: r.value } : { why: r.why }), fixed: fixedForModel });
+  if (!r.ok) return { failed: true, why: r.why, model: r.model || null };
+  return { ...r.value, classifier: `model:${r.model}`, model: r.model };
+}
+
+/**
  * One choice among named options, by the classifier model (e.g. the variant
  * of a media step). options: [{ id, what }]. → { ok, id } | { ok:false, why }
  */

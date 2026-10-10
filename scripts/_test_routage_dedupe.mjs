@@ -143,7 +143,7 @@ section('5. De bout en bout (vrai dispatch.mjs, Routage du chef) : tâches 3 et 
     { projet: 'O', pipeline: 'discussion', demande: TASK3, apres: 1 },
     { projet: 'O', pipeline: 'discussion', demande: TASK4, apres: 1 },
   ];
-  const fakeJson = JSON.stringify({ classifier: { nature: 'taches', raison: 'enchaînement' }, decomposer: { taches: tasks } });
+  const fakeJson = JSON.stringify({ comprendre: { nature: 'taches', sens: 'enchaînement de tâches', raison: 'enchaînement' }, decomposer: { taches: tasks } });
   // Async: the notification listener lives in THIS process (spawnSync would block it).
   const chefTurn = async () => {
     const r = await new Promise((resolve) => {

@@ -216,7 +216,12 @@ export function launchTask(root, t, dispatchScript) {
   const offset = logOffset(logsDir, t.projet);
   const args = [dispatchScript, t.projet, '--prompt-stdin', '--callback', conductor, '--source', conductor, '--queue-if-busy'];
   if (t.reprise) args.push('--pipeline-resume', t.reprise);
-  else if (t.served) { args.push('--pipeline', t.pipeline); if (t.pipeline === 'dev' && t.mode) args.push('--mode', t.mode); }
+  else if (t.served) {
+    args.push('--pipeline', t.pipeline);
+    if (t.pipeline === 'dev' && t.mode) args.push('--mode', t.mode);
+    // The nature found when the task was classified on its own (0.69.0).
+    if (t.pipeline === 'dev' && ['simple', 'bugfix', 'mecanique'].includes(t.kind)) args.push('--kind', t.kind);
+  }
   const env = { ...process.env };
   for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'ORCH_TURN_PROJECT', 'ORCH_TURN_STEP', 'ORCH_STEP_TOKEN', 'ORCH_OBS_ID']) delete env[k];
   let pid = null;

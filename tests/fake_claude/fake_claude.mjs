@@ -139,6 +139,13 @@ async function run() {
   const classifyReply = () => {
     if (process.env.FAKE_CLAUDE_CLASSIFY) return process.env.FAKE_CLAUDE_CLASSIFY;
     const req = (/Request:\n<<<\n([\s\S]*)\n>>>/.exec(userText) || [])[1] || '';
+    // FAKE_CLAUDE_CLASSIFY_MAP='{"<substring of the request>": <answer>}' (0.69.0):
+    // a scripted answer per routed task; the first key found in the request wins.
+    try {
+      for (const [k, v] of Object.entries(JSON.parse(process.env.FAKE_CLAUDE_CLASSIFY_MAP || '{}'))) {
+        if (req.includes(k)) return typeof v === 'string' ? v : JSON.stringify(v);
+      }
+    } catch { /* ignored */ }
     // A variant choice (chooseOption): the first option, unless FAKE_CLAUDE_CHOICE names one.
     if (/^Options:$/m.test(userText) && !/^Pipelines:$/m.test(userText)) {
       // FAKE_CLAUDE_CHOICE=<id>[,<id>…]: the first offered option in that list (several steps, one env).
@@ -505,7 +512,7 @@ function catalogStep(text, step, artefact, bad, w, once) {
   if (jsonKeys.length) {
     const j = {};
     const enums = Object.fromEntries(line('ATTENDU_ENUM').split(';').filter(Boolean).map(p => { const [k, v] = p.split(':'); return [k, v.split('|')]; }));
-    for (const k of jsonKeys) j[k] = enums[k] ? enums[k][0] : k === 'final' ? 'Texte final relu : tout est clair.' : k === 'raison' ? 'raison simulée' : [];
+    for (const k of jsonKeys) j[k] = enums[k] ? enums[k][0] : k === 'final' ? 'Texte final relu : tout est clair.' : k === 'raison' ? 'raison simulée' : k === 'sens' ? 'sens global simulé' : [];
     // FAKE_PIPE_JSON='{"<step>": {…}}' : réponse imposée pour une étape (Routage).
     try { Object.assign(j, JSON.parse(process.env.FAKE_PIPE_JSON || '{}')[step] || {}); } catch { /* ignoré */ }
     if (jsonKeys.includes('remaining') && Number(process.env.FAKE_PIPE_REMAINING || 0) > 0) {

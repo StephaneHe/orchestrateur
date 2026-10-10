@@ -11,6 +11,50 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.69.0] - 2026-10-10
+
+Demande de l'utilisateur : « Je maintiens que le routeur ne doit pas classer
+une demande entiere alors qu'elle est deja decoupee. De toutes facons, il faut
+commencer par : - le model essaie de trouver le sens global - si besoin
+decouper en taches plus petites - trouver un sens et router les taches ainsi
+trouvees une par une ». Développé sur la dev (« Mais ce dev devra etre fait sur
+dev »).
+
+### Changed
+- (server) **Routage du chef : comprendre, découper, puis classer chaque
+  tâche.** Le mode « demande » devient Lire → **Comprendre le sens global** →
+  **Découper en tâches** → **Classer chaque tâche** → Affecter → Dispatcher →
+  Rapporter. Avant, le message entier était classé avant d'être découpé : un
+  message qui mêlait plusieurs tâches de natures différentes, ou une réponse
+  courte à une offre du chef, pouvait finir en « lacune de pipeline ».
+  - **Comprendre** (`sens.json`, case `routage.lire`) : `suite | taches |
+    reponse | question`, avec le sens global. Aucun pipeline, et plus de
+    « lacune » sur le message entier (refusée par le critère).
+  - **Découper** (`taches.json`) : des tâches unitaires, un projet et une seule
+    nature de travail chacune, sans pipeline. Seul un préfixe de l'utilisateur
+    s'impose (champ `impose`). Un message impossible à découper avec certitude
+    rend `"taches": []` et une `question`.
+  - **Classer chaque tâche** (`classement.json`, étape de code `classer`) : un
+    appel au model de la case `routage.classifier` **par tâche**, qui ne voit
+    que sa tâche (`classifyTask`, `routingTaskPrompt` de
+    `scripts/pipeline-classify.mjs`). Il rend le pipeline, le mode et la nature
+    d'un développement (passée en `--kind` au lancement).
+  - Une tâche ambiguë, ou dont le classement échoue, devient une question à
+    l'utilisateur (`NEEDS_USER_INPUT`, jamais deviner). Une tâche qu'aucun
+    pipeline ne couvre lève une lacune **sur cette tâche seulement** (son texte,
+    son numéro). Les autres tâches partent. Une tâche qui attendait (« puis »)
+    une tâche non lancée ne part pas, et la question le dit.
+  - Les cases de la page Models ne changent pas. Une exécution Routage mise en
+    pause par un moteur antérieur garde son ancien classement.
+
+### Added
+- (server) `scripts/_test_routage_split.mjs` : ordre des étapes ; message mixte
+  (développement + opération git/version) → deux tâches classées séparément,
+  aucune lacune ; suite courte qui répond à une offre du chef → aucune lacune ;
+  tâche ambiguë, classement impossible, message impossible à découper → question.
+- (server) Faux claude : `FAKE_CLAUDE_CLASSIFY_MAP` (réponse de classement par
+  tâche) ; réponse par défaut de l'étape Comprendre (champ `sens`).
+
 ## [0.68.0] - 2026-10-10
 
 Accord de l'utilisateur : « je te donne mon accord pour creer

@@ -199,33 +199,42 @@ S.routage = {
   final: 'rapporter',
   assistantFinal: true,
   modes: {
-    demande: ['lire', 'classifier', 'decomposer', 'affecter', 'dispatcher', 'rapporter'],
+    // 0.69.0 (user request 2026-10-10): understand the global meaning, then
+    // split into unit tasks, then classify and route EACH task on its own —
+    // the whole message is never classified into a pipeline (nor a gap).
+    demande: ['lire', 'comprendre', 'decomposer', 'classifier', 'affecter', 'dispatcher', 'rapporter'],
     callback: ['lire', 'relancer', 'callback', 'rapporter'],
   },
   steps: [
     { id: 'lire', title: '1 Lire la demande', chain: ['routage.lire'], group: 'routage', artefact: 'lecture.md', kind: 'judge', prerun: 'conversation',
       role: 'LIRE la demande (demande.md) dans son CONTEXTE, fourni par l’orchestrateur : contexte.md (ta dernière réponse et les questions que tu as posées, les questions en attente des musiciens, les demandes mises en attente) et conversation.md (les derniers échanges). Dis ce qui est réellement demandé, à quelles questions ou demandes en attente le message répond, et quels projets sont concernés.',
       checks: { sections: ['Demande', 'Contexte'] } },
-    { id: 'classifier', title: '2 Classifier', chain: ['routage.classifier'], group: 'routage', artefact: 'classement.json', kind: 'judge',
-      role: 'CLASSIFIER, en t’appuyant sur contexte.md : « suite » si le message RÉPOND à une question ouverte (la tienne ou celle d’un musicien) ou relance une demande en attente — c’est le cas d’une réponse courte qui n’a de sens qu’avec le contexte ; « taches » pour une nouvelle demande de travail dans un ou plusieurs projets ; « reponse » si tu réponds toi-même sans travail dans un projet ; « question » si la demande reste ambiguë même avec le contexte (ne devine jamais) ; « lacune » seulement pour une demande d’action qu’aucun pipeline ni aucun contexte ne permet de rattacher.',
-      checks: { json: { nature: 'string', raison: 'string' }, jsonEnum: { nature: ['reponse', 'suite', 'taches', 'question', 'lacune'] } },
-      jsonExample: '{"nature": "suite|taches|reponse|question|lacune", "raison": "une phrase", "rattache": ["questions ou demandes en attente auxquelles le message répond"], "question": "la question à poser si nature = question"}' },
-    { id: 'decomposer', title: '3 Décomposer en tâches', chain: ['routage.decomposer'], group: 'routage', artefact: 'taches.json', kind: 'judge',
-      skipIf: { artefact: 'classement.json', field: 'nature', unless: ['taches', 'suite'] },
-      role: 'DÉCOMPOSER en tâches : identifie TOUS les projets concernés (pour une « suite », chaque question ou demande en attente à laquelle le message répond, voir contexte.md), une tâche par projet, avec le pipeline qui convient et une demande AUTONOME (le musicien ne voit pas la conversation : recopie la question et la réponse). « puis », « ensuite », « après » = une dépendance : indique « apres » (numéro de la tâche à attendre). Un préfixe choisi par l’utilisateur (/dev, /complet…) s’impose. Reprendre une exécution EN PAUSE (liste dans contexte.md, réponse « continuer » ou réparation faite) = une tâche avec « reprise »: "<identifiant de l’exécution>" : elle reprend cette exécution là où elle s’est arrêtée, jamais une nouvelle.',
-      checks: { json: { taches: 'array' }, tasks: true },
-      jsonExample: '{"taches": [{"projet": "nom exact du projet", "pipeline": "dev|discussion|incident|recherche|audit|maintenance|nouveau|donnees|redaction", "mode": "leger|complet", "demande": "la demande complète pour ce projet", "rattache": "la question ou la demande en attente concernée", "apres": 1, "reprise": "p-AAAAMMJJTHHMMSS-xxxxxx (seulement pour reprendre une exécution en pause)"}]}' },
-    { id: 'affecter', title: '4 Affecter (page Models)', chain: ['routage.affecter'], group: 'routage', artefact: 'affectation.md', kind: 'code', handler: 'affecter',
-      skipIf: { artefact: 'classement.json', field: 'nature', unless: ['taches', 'suite'] } },
-    { id: 'dispatcher', title: '5 Dispatcher', chain: ['routage.dispatcher'], group: 'routage', artefact: 'dispatch.json', kind: 'code', handler: 'dispatcher',
-      skipIf: { artefact: 'classement.json', field: 'nature', unless: ['taches', 'suite'] } },
+    // Same slot as Lire (the Models page keeps its cases): understanding the
+    // message is part of reading it.
+    { id: 'comprendre', title: '2 Comprendre le sens global', chain: ['routage.lire'], group: 'routage', artefact: 'sens.json', kind: 'judge',
+      role: 'COMPRENDRE le SENS GLOBAL du message, en t’appuyant sur lecture.md et contexte.md — sans choisir de pipeline (chaque tâche sera classée à part, après le découpage) : « suite » si le message RÉPOND à une question ou à une offre ouverte (la tienne ou celle d’un musicien) ou relance une demande en attente — c’est le cas d’une réponse courte qui n’a de sens qu’avec le contexte ; « taches » pour une nouvelle demande de travail, même si elle mélange plusieurs projets ou plusieurs natures de travail ; « reponse » si tu réponds toi-même sans travail dans un projet ; « question » si le sens reste ambigu même avec le contexte (ne devine jamais).',
+      checks: { json: { nature: 'string', sens: 'string', raison: 'string' }, jsonEnum: { nature: ['reponse', 'suite', 'taches', 'question'] } },
+      jsonExample: '{"nature": "suite|taches|reponse|question", "sens": "le sens global du message en une ou deux phrases", "raison": "une phrase", "rattache": ["questions, offres ou demandes en attente auxquelles le message répond"], "question": "la question à poser si nature = question"}' },
+    { id: 'decomposer', title: '3 Découper en tâches', chain: ['routage.decomposer'], group: 'routage', artefact: 'taches.json', kind: 'judge',
+      skipIf: { artefact: 'sens.json', field: 'nature', unless: ['taches', 'suite'] },
+      role: 'DÉCOUPER le message en tâches UNITAIRES, d’après sens.json : une tâche = un projet et UNE seule nature de travail (un message qui demande du code puis une opération git/de version donne deux tâches, même sur un seul projet). Pour une « suite », chaque question, offre ou demande en attente à laquelle le message répond (voir contexte.md). Chaque demande est AUTONOME (le musicien ne voit pas la conversation : recopie la question et la réponse). Ne choisis PAS de pipeline : chaque tâche sera classée à part ensuite. Seule exception : un préfixe choisi par l’utilisateur (/dev, /complet…) s’impose, dans « impose ». « puis », « ensuite », « après » = une dépendance : indique « apres » (numéro de la tâche à attendre). Reprendre une exécution EN PAUSE (liste dans contexte.md, réponse « continuer » ou réparation faite) = une tâche avec « reprise »: "<identifiant de l’exécution>" : elle reprend cette exécution là où elle s’est arrêtée, jamais une nouvelle. Si le message ne peut pas être découpé avec certitude, ne devine pas : « taches »: [] et « question »: la question à poser.',
+      checks: { json: { taches: 'array' }, unitTasks: true },
+      jsonExample: '{"taches": [{"projet": "nom exact du projet", "demande": "la demande complète et autonome pour cette tâche", "rattache": "la question ou la demande en attente concernée", "apres": 1, "impose": {"pipeline": "seulement si l’utilisateur l’a choisi par préfixe", "mode": "leger|complet"}, "reprise": "p-AAAAMMJJTHHMMSS-xxxxxx (seulement pour reprendre une exécution en pause)"}], "question": "seulement si le découpage est impossible"}' },
+    // Executed by the code: ONE classifier-model call per task (slot
+    // routage.classifier), each seeing only its own task.
+    { id: 'classifier', title: '4 Classer chaque tâche', chain: ['routage.classifier'], group: 'routage', artefact: 'classement.json', kind: 'code', handler: 'classer',
+      skipIf: { artefact: 'sens.json', field: 'nature', unless: ['taches', 'suite'] } },
+    { id: 'affecter', title: '5 Affecter (page Models)', chain: ['routage.affecter'], group: 'routage', artefact: 'affectation.md', kind: 'code', handler: 'affecter',
+      skipIf: { artefact: 'sens.json', field: 'nature', unless: ['taches', 'suite'] } },
+    { id: 'dispatcher', title: '6 Dispatcher', chain: ['routage.dispatcher'], group: 'routage', artefact: 'dispatch.json', kind: 'code', handler: 'dispatcher',
+      skipIf: { artefact: 'sens.json', field: 'nature', unless: ['taches', 'suite'] } },
     // Réveil : les tâches qui attendaient la fin d'une autre (« puis ») partent ici.
     { id: 'relancer', title: '2 Relancer les tâches en attente', chain: ['routage.dispatcher'], group: 'routage', artefact: 'relance.json', kind: 'code', handler: 'relancer' },
     { id: 'callback', title: '2 Callback', chain: ['routage.callback'], group: 'routage', artefact: 'callback.md', kind: 'judge',
       role: 'CALLBACK : des musiciens ont rendu leurs résultats (dans demande.md). Pour chacun : ce qui a été fait, vérifié ou non, ce qui reste ; puis la suite à proposer à l’utilisateur. Ne relance aucun travail toi-même.',
       checks: { sections: ['Résultats', 'Suite'] } },
-    { id: 'rapporter', title: '6 Rapporter', chain: ['routage.rapporter'], group: 'routage', artefact: 'rapport.md', kind: 'judge',
-      role: 'RAPPORTER à l’utilisateur, à partir des artefacts de cette exécution : la réponse directe, ou ce qui a été lancé (projet, pipeline, models) et ce qu’il en attend, ou la synthèse des résultats. En nommant toujours le projet concerné. Clair et bref.',
+    { id: 'rapporter', title: '7 Rapporter', chain: ['routage.rapporter'], group: 'routage', artefact: 'rapport.md', kind: 'judge',
+      role: 'RAPPORTER à l’utilisateur, à partir des artefacts de cette exécution : la réponse directe, ou ce qui a été lancé (projet, pipeline, models — tâche par tâche, voir classement.json) et ce qu’il en attend, ou la synthèse des résultats. Une tâche non lancée (question, lacune, classement impossible) est dite comme telle. En nommant toujours le projet concerné. Clair et bref.',
       checks: {} },
   ],
 };
