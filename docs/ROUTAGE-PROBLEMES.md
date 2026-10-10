@@ -42,6 +42,7 @@ Les fichiers de code cités sont des **pistes**, pas un diagnostic établi.
 | 15 | Exécutions en pause à vérifier après redémarrage | ouvert (à reprendre ; chef à vérifier) | — (`--pipeline-resume`) |
 | 16 | Lignes `NEEDS_USER_INPUT` coupées dans la conversation du routeur | ouvert (à confirmer) | `pipeline-engine.mjs` (`conversationExcerpt`, `routingContext`) |
 | 17 | Anciennes erreurs (`[projet C]`, prompts « ?? ») | corrigé | — |
+| 18 | Écriture dans le dossier du chef effacée pendant une étape du Routage | ouvert | `pipeline-engine.mjs` (`walkSnapshot`, `restoreFiles`) |
 
 ---
 
@@ -284,6 +285,27 @@ défaut de capture ou un simple affichage.
 
 - **Statut : corrigé.**
 
+### 18. Une écriture dans le dossier du chef pendant une étape de son Routage est effacée
+Ajouté le 2026-10-11, constaté en écrivant ce document. La première copie de
+`I:\Dev\Chef\docs\ROUTAGE-PROBLEMES.md` a été supprimée quelques secondes
+après son écriture. L'exécution Routage du chef `p-20261010T210614-034d0d`
+(mode réveil) était en cours. Son étape Lire a été refusée avec « étape en
+lecture seule, mais des fichiers du projet ont changé :
+docs/ROUTAGE-PROBLEMES.md », puis le dossier a été restauré à son empreinte
+d'avant l'étape, ce qui a effacé le fichier. Réécrit après la fin de
+l'exécution, il est resté.
+
+- **Risque** : toute modification faite dans `I:\Dev\Chef` pendant une étape
+  de jugement du Routage est annulée, y compris une modification faite à la
+  main par l'utilisateur (`TODO_LIST.md`, `CLAUDE.md`…). Elle est aussi
+  comptée à tort comme une faute de l'étape (essai refusé, défaut signalé).
+- **Statut : ouvert.**
+- Code : `pipeline-engine.mjs` (`walkSnapshot`, `restoreFiles`, critère
+  « lecture seule » des étapes de jugement quand `needs.git:false`). Piste :
+  ne restaurer que les fichiers modifiés par le processus de l'étape, ou
+  tolérer les changements extérieurs dans le dossier du chef en les signalant
+  sans les annuler.
+
 ---
 
 ## Décisions de l'utilisateur
@@ -319,7 +341,8 @@ défaut de capture ou un simple affichage.
 
 Le n° 15 est un suivi d'exploitation (reprise des exécutions en pause), à
 faire dès que possible et indépendamment du code. Le n° 16 est à confirmer
-avant d'être corrigé.
+avant d'être corrigé. Le n° 18, ajouté après l'inventaire, est un risque de
+perte de modifications : à traiter juste après le groupe B.
 
 Toute correction suit la règle du projet : un test de non-régression par
 demande, une ligne dans `docs/USER_REQUIREMENTS.md`, un commit sur `dev`.

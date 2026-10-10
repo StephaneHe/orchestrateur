@@ -17,6 +17,9 @@ server/dashboard and the Android companion app. Entries are prefixed
   du 2026-10-10), dont le dépôt garde une copie identique. Ajout d'une section
   « Décisions de l'utilisateur » : le réseau local 10.0.0.x bloqué (403) est
   accepté, sans changement de la garde réseau ; `8202dc8` est abandonné.
+  Nouveau problème n° 18, ouvert : une écriture dans le dossier du chef
+  pendant une étape de son Routage est effacée par la restauration de
+  l'étape (constaté avec l'exécution `p-20261010T210614-034d0d`).
 
 ## [0.70.0] - 2026-10-10
 
