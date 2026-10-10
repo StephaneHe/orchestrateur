@@ -1,5 +1,7 @@
 # Routage (chef) — suivi des problèmes (9 et 10 octobre 2026)
 
+> **Référence : `I:\Dev\Chef\docs\ROUTAGE-PROBLEMES.md`** (décision de l'utilisateur du 2026-10-10 : « Faut-il écrire I:\Dev\Chef\docs\ROUTAGE-PROBLEMES.md ? » → « Oui »). Une copie identique est tenue dans le dépôt de l'orchestrateur (`docs/ROUTAGE-PROBLEMES.md`, branche `dev`) ; les deux sont mises à jour ensemble par `orchestrateur-dev`, le chef ne pouvant pas écrire de fichier depuis son Routage.
+
 Source : inventaire du chef, exécution `p-20261010T194702-b47305`
 (`I:\Dev\Chef\.orchestrateur\runs\p-20261010T194702-b47305\rapport.md`), tiré de
 ses exécutions de routage (`I:\Dev\Chef\.orchestrateur\runs\`), des
@@ -7,9 +9,8 @@ signalements « lacune » et « défaut » reçus, et de son `TODO_LIST.md`.
 
 Décision de l'utilisateur (2026-10-10, verbatim) : « Document
 I:\Dev\Chef\docs\ROUTAGE-PROBLEMES.md : vas, et on commence par s'attaquer a
-ca ». Le document vit dans le dépôt de l'orchestrateur, parce que le code qui
-corrige ces problèmes est le sien et que le pipeline Routage du chef ne peut
-pas écrire de fichier.
+ca ». La référence est côté chef ; la copie du dépôt de l'orchestrateur suit, parce
+que le code qui corrige ces problèmes est le sien.
 
 Le dépôt est public : les noms de projets privés sont remplacés par « [projet A] », « [projet B] »… La correspondance est dans le rapport du chef cité ci-dessus (local, non versionné).
 
@@ -284,6 +285,20 @@ défaut de capture ou un simple affichage.
 - **Statut : corrigé.**
 
 ---
+
+## Décisions de l'utilisateur
+
+- **2026-10-10 — réseau local bloqué, accepté.** Le réseau local 10.0.0.x
+  reçoit 403 : sans jeton, le serveur n'est accessible que par Tailscale ou
+  depuis la machine elle-même. Réponse de l'utilisateur à « Le réseau local
+  10.0.0.x est bloqué … Cela vous convient-il ? » : « OK ». Rien à changer sur
+  la garde réseau (0.59.0, `scripts/network-guard.mjs`).
+- **2026-10-10 — `8202dc8` abandonné** (voir n° 14) : « Le redemarrage
+  s'est bien deroule, on peut oublier le retour, et le supprimer completement,
+  meme de tout historique git ».
+- **2026-10-10 — document de suivi** : « Document
+  I:\Dev\Chef\docs\ROUTAGE-PROBLEMES.md : vas, et on commence par
+  s'attaquer a ca », puis « Oui » à son écriture à cet emplacement.
 
 ## Ordre de traitement
 

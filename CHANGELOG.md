@@ -11,6 +11,13 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+### Changed
+- (docs) `docs/ROUTAGE-PROBLEMES.md` : la référence devient
+  `I:\Dev\Chef\docs\ROUTAGE-PROBLEMES.md` (réponse « Oui » de l'utilisateur
+  du 2026-10-10), dont le dépôt garde une copie identique. Ajout d'une section
+  « Décisions de l'utilisateur » : le réseau local 10.0.0.x bloqué (403) est
+  accepté, sans changement de la garde réseau ; `8202dc8` est abandonné.
+
 ## [0.70.0] - 2026-10-10
 
 Demande de l'utilisateur : « on commence par s'attaquer a ca » (suivi
