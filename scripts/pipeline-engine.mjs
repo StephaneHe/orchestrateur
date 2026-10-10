@@ -44,6 +44,7 @@ import { backoffConfig, isLaunchFailure, dispatchRefusal, tierAfter, delayFor, w
 import { runModelTest } from './model-test.mjs';
 import { PIPELINES } from './model-pipelines.mjs';
 import { checkMediaFiles, listedFiles, wordErrorRate } from './media-check.mjs';
+import { countTests, addedTests, itemTestsVerdict } from './item-tests.mjs';
 
 export const RUN_RE = /^p-\d{8}T\d{6}-[a-z0-9]{4,8}$/;
 export const STEP_KEY_RE = /^\d{2}-[a-z0-9-]{1,40}$/;
@@ -1021,6 +1022,16 @@ function coveredLabel(i) {
 }
 const COVERED_HINT ='si le comportement existe déjà dans le code, garde ce test fidèle (il passe), écris DEJA_COUVERT en tête de rouge.md avec la preuve : le commit et/ou le fichier:ligne du code de production qui l’implémente déjà';
 
+/**
+ * Décision « c+d », partie 2 (0.62.0) : les tests réellement écrits pour un
+ * item (hausse du nombre de cas de test par fichier depuis le début de l'item,
+ * voir item-tests.mjs) ne dépassent pas sa déclaration « (tests: N) ».
+ */
+export function checkItemTests({ cwd, files, base, item }) {
+  const added = addedTests(base || {}, countTests(cwd, files));
+  return { ...itemTestsVerdict({ declared: item?.declared, added, itemN: item?.n }), added };
+}
+
 function checkCriteria(ctx, step, before, after) {
   // Catalogue (phase 6) : critères génériques, ou critère du Développement réutilisé.
   if (!step.crit && (step.checks || step.kind)) return checkCatalogCriteria(ctx, step, before, after);
@@ -1090,6 +1101,12 @@ function checkCriteria(ctx, step, before, after) {
     }
     const notTests = changed.filter(f => !isTestFile(f, cfg.testGlobs));
     if (notTests.length) return { ok: false, why: `l’étape Rouge ne touche que des tests ; modifiés hors tests : ${notTests.slice(0, 8).join(', ')}`, changed };
+    // Seule 4a écrit des tests (4b et 4c ne peuvent pas y toucher) : le compte
+    // de l'item se vérifie ici, DEJA_COUVERT compris.
+    if (devRouge && ctx.item && ctx.itemTestBase) {
+      const v = checkItemTests({ cwd, files: [...after.keys()].filter(f => isTestFile(f, cfg.testGlobs)), base: ctx.itemTestBase, item: ctx.item });
+      if (!v.ok) return { ok: false, why: v.why, changed, itemTests: v };
+    }
     const t = runCommand(cwd, cfg.testCommand, ctx.testEnv);
     if (t.ok) {
       // Décision utilisateur Q10 (« A », 2026-10-09) : un comportement DÉJÀ
@@ -1366,7 +1383,7 @@ export async function runPipeline(o) {
   const testEnv = { ...childEnv };
   delete testEnv.ORCH_OBS_ID;
   const ctx = { root, request: state.request || prompt, run, pipeline, kind, mode: state.mode, cwd, cfg, artDir, base, testEnv, reviewItems: null, testPrint: null, limits,
-    item: state.item || null, escalated: !!state.escalated, coveredItems: state.coveredItems || [], deliveryFixes: state.deliveryFixes || [], suiteRedAtStart: !!state.suiteRedAtStart, lastMedia: state.lastMedia || null };
+    item: state.item || null, itemTestBase: state.itemTestBase || null, escalated: !!state.escalated, coveredItems: state.coveredItems || [], deliveryFixes: state.deliveryFixes || [], suiteRedAtStart: !!state.suiteRedAtStart, lastMedia: state.lastMedia || null };
   // Durée ACTIVE : le temps passé en pause à attendre l'utilisateur ne compte
   // pas dans la limite de 90 min (une reprise repart du temps déjà consommé).
   const sessionStart = Date.now();
@@ -1490,6 +1507,12 @@ export async function runPipeline(o) {
         what: `l’étape « ${plainStep(step?.id)} »${itemTxt} a été refusée ${value} fois par les vérifications automatiques de l’orchestrateur. Dernière raison : ${plainWhy(why)}.`,
         cont: `je refais ${limits.criteriaAttempts} essais de cette étape.`,
         rec: ['continuer', 'un nouvel essai règle souvent ce genre de refus ; si cela se reproduit, simplifiez la demande.'],
+      },
+      item_tests: {
+        short: `${value} tests écrits pour un seul point de la liste, plus que prévu`,
+        what: `${plainWhy(why).replace(/\.$/, '')}.`,
+        cont: 'je recompte les tests de ce point (une fois que vous les avez réduits au nombre annoncé) et je le coche s’il le respecte ; sinon je m’arrête de nouveau.',
+        rec: ['simplifier', 'un point qui demande plus de tests que prévu est trop large : mieux vaut le redécouper.'],
       },
       review: {
         short: `la relecture trouve encore des défauts après ${value} tour(s) de corrections`,
@@ -1753,17 +1776,30 @@ export async function runPipeline(o) {
         return pauseForLimit({ limit: 'items', value: limits.items, step: stepDefs['@loop'], why: `la liste n'est pas vide après ${limits.items} items (suivant : « ${next.text} ») — découper la demande` });
       }
       state.item = ctx.item = next;
+      // Point de départ du compte des tests de cet item (vérifié en 4a et en le cochant).
+      state.itemTestBase = ctx.itemTestBase = countTests(cwd, [...testsNow().keys()]);
       state.plan.splice(state.index, 0, 'rouge', 'vert', 'refactor', '@check');
       writeEvent({ type: 'system', subtype: 'pipeline_item_start', pipeline: { run, item: next.n }, text: `item ${next.n} : ${next.text}` });
       saveState();
       continue;
     }
     if (id === '@check') {
+      // Vérification finale avant de cocher (décision « c+d », 0.62.0) : jamais
+      // de dépassement accepté en silence. Item d'une exécution antérieure à
+      // 0.62.0 (pas de point de départ) : non vérifiable, dit.
+      let tests;
+      if (state.itemTestBase) {
+        const v = checkItemTests({ cwd, files: [...testsNow().keys()], base: state.itemTestBase, item: state.item });
+        if (!v.ok) return pauseForLimit({ limit: 'item_tests', value: v.written, step: stepDefs.rouge, why: v.why });
+        tests = v.checked ? { declared: v.declared, written: v.written } : { written: v.written, unchecked: v.note };
+      } else tests = { unchecked: 'item commencé avant 0.62.0 : nombre de tests non vérifié' };
       fs.writeFileSync(path.join(artDir, 'tests.md'), checkItem(readArtefact(ctx, 'tests.md') || '', state.item.n));
       state.itemsDone = (state.itemsDone || 0) + 1;
-      writeEvent({ type: 'system', subtype: 'pipeline_item_done', pipeline: { run, item: state.item.n }, text: `✓ item ${state.item.n} coché : ${state.item.text}` });
+      writeEvent({ type: 'system', subtype: 'pipeline_item_done', pipeline: { run, item: state.item.n }, tests,
+        text: `✓ item ${state.item.n} coché : ${state.item.text}${tests.declared != null ? ` (${tests.written}/${tests.declared} test(s))` : tests.unchecked ? ` — ${tests.unchecked}` : ''}` });
       state.plan.splice(state.index, 1);
       state.item = ctx.item = null;
+      state.itemTestBase = ctx.itemTestBase = null;
       saveState();
       continue;
     }

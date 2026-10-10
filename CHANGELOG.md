@@ -11,6 +11,39 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.62.0] - 2026-10-10
+
+Décision de l'utilisateur, « c+d », partie d, étape 2 : « le code vérifie
+ensuite que ce nombre est respecté ». Depuis 0.61.0, chaque case de `tests.md`
+annonce `(tests: N)`. Le moteur compte maintenant les tests réellement écrits
+pour chaque item.
+
+### Added
+- (server) **Tests écrits par item ≤ tests annoncés** (`scripts/item-tests.mjs`,
+  `checkItemTests` dans `scripts/pipeline-engine.mjs`).
+  - Méthode de comptage : un test = une déclaration de cas de test dans un
+    fichier de test du projet. JS/TS : `test(…)` et `it(…)`, avec `.only`,
+    `.skip`, `.each`. Python : `def test_…`. Kotlin/Java : `@Test`. Go :
+    `func TestXxx(`. Le compte par fichier est pris au début de l'item. Les
+    tests de l'item sont la somme des hausses par fichier : un test retiré
+    ailleurs ne compense pas.
+  - Contrôle à l'étape 4a, la seule qui écrit des tests (4b et 4c ne peuvent
+    pas toucher aux tests). Un dépassement refuse l'essai avec « l’item n° k
+    annonçait N test(s), mais M ont été écrits : … doit être redécoupé en
+    items plus petits ». Après la limite d'essais : pause, item non coché.
+  - Contrôle de nouveau avant de cocher l'item (`@check`) : un dépassement
+    met en pause (`item_tests`, recommandation « simplifier »). Il n'y a
+    jamais d'acceptation silencieuse.
+  - Un item DEJA_COUVERT reste accepté sans nouveau test, dans la limite
+    annoncée.
+  - Un item sans déclaration (liste antérieure à 0.61.0) ou commencé avant
+    0.62.0 n'est pas vérifiable : c'est signalé dans l'événement, jamais
+    refusé.
+  - `pipeline_item_done` porte `tests: {declared, written}`.
+  - Actif dès le prochain dispatch, sans redémarrage.
+  - Faux claude : `FAKE_PIPE_ITEM_EXTRA_TESTS=<e>[:n]`, `FAKE_PIPE_DECL=two`.
+  - Recette : `scripts/_test_item_tests.mjs`.
+
 ## [0.61.1] - 2026-10-10
 
 Signalement de l'utilisateur : « Tu dis que le model n'a rien produit, mais tu

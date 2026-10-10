@@ -298,6 +298,8 @@ async function run() {
 //   FAKE_PIPE_REFACTOR=1        4c modifie vraiment le code (sinon RIEN_A_REFACTORER)
 //   FAKE_PIPE_COVERED=<k>[,…]   l'item k est déjà couvert : test qui passe + DEJA_COUVERT
 //   FAKE_PIPE_NOCLAIM=1         … mais sans écrire DEJA_COUVERT
+//   FAKE_PIPE_ITEM_EXTRA_TESTS=<e>[:n]  4a d'un item écrit e tests de plus (n fois)
+//   FAKE_PIPE_DECL=two          chaque case de tests.md déclare « (tests: 2) »
 //   FAKE_CLAUDE_DUMP_PROMPT=<f>  ajoute chaque prompt reçu à ce fichier (JSON par ligne)
 //   FAKE_CLAUDE_REPLY=<texte>    réponse finale imposée (ex. un paragraphe en anglais)
 //   FAKE_CLAUDE_TRANSLATION=<t>  réponse d'une demande « [REFORMULATION] » (défaut : un texte français)
@@ -340,7 +342,9 @@ function pipelineStep(text) {
       // omits it on case 1, over[:n] declares one test more than the cap.
       const cap = Number(process.env.ORCH_PIPE_TESTS_PER_ITEM) || 2;
       const noDecl = once(process.env.FAKE_PIPE_DECL, 'none'), over = once(process.env.FAKE_PIPE_DECL, 'over');
-      const decl = (i) => (i === 0 && noDecl ? '' : `(tests: ${i === 0 && over ? cap + 1 : 1}) `);
+      // FAKE_PIPE_DECL=two declares 2 tests on every case (0.62.0).
+      const two = process.env.FAKE_PIPE_DECL === 'two';
+      const decl = (i) => (i === 0 && noDecl ? '' : `(tests: ${i === 0 && over ? cap + 1 : two ? 2 : 1}) `);
       w(artefact, `# Liste de tests\n\n${head}${Array.from({ length: n }, (_, i) => `- [ ] ${decl(i)}multiplier par ${i + 2}`).join('\n')}\n`);
       break;
     }
@@ -362,7 +366,12 @@ function pipelineStep(text) {
         break;
       }
       if (k) {
-        w(`test/pipe-${k}.test.mjs`, `import { test } from 'node:test';\nimport assert from 'node:assert';\ntest('pipe item ${k}', async () => {\n  const m = await import('../src/pipe-${k}.mjs');\n  assert.equal(m.f(2), ${2 * k});\n});\n`);
+        // 0.62.0: FAKE_PIPE_ITEM_EXTRA_TESTS=<e>[:n] writes e more tests for the
+        // item than the one expected (the n first times, default: always).
+        const [e, en] = String(process.env.FAKE_PIPE_ITEM_EXTRA_TESTS || '').split(':');
+        const extra = Number(e) > 0 && once(`extra${en ? `:${en}` : ''}`, 'extra') ? Number(e) : 0;
+        const one = (j) => `test('pipe item ${k}${j ? ` extra ${j}` : ''}', async () => {\n  const m = await import('../src/pipe-${k}.mjs');\n  assert.equal(m.f(2), ${2 * k});\n});\n`;
+        w(`test/pipe-${k}.test.mjs`, `import { test } from 'node:test';\nimport assert from 'node:assert';\n${Array.from({ length: extra + 1 }, (_, j) => one(j)).join('')}`);
         if (bad) w(`src/pipe-${k}.mjs`, `export const f = (x) => x * ${k};\n`);
         w(artefact, `# Rouge\n\nTest « pipe item ${k} » : échoue, src/pipe-${k}.mjs n’existe pas.\n`);
         break;

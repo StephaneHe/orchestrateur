@@ -1399,8 +1399,20 @@ probleme pour le model utilise ».
     - Même règle pour les entrées de `revue.json` en mode complet, qui
       deviennent des cases `(revue)`.
     - Recette : `_test_tests_per_item.mjs`.
-    - La vérification après coup (tests réellement écrits) et la livraison
-      par item (c) viendront dans les étapes suivantes.
+    - **0.62.0, vérification après coup** (`scripts/item-tests.mjs`,
+      `checkItemTests`) : un test = une déclaration de cas de test (JS
+      `test(`/`it(`, Python `def test_`, Kotlin/Java `@Test`, Go
+      `func Test`). Le compte par fichier de test est pris au début de
+      l'item (`state.itemTestBase`). Les tests de l'item sont la somme des
+      hausses par fichier. Contrôle en 4a (seule étape qui écrit des tests),
+      DEJA_COUVERT compris : un dépassement refuse l'essai avec « … doit être
+      redécoupé ». Contrôle de nouveau avant de cocher (`@check`) : un
+      dépassement met en pause (`item_tests`), sans jamais cocher. Un item
+      sans déclaration ou commencé avant 0.62.0 est signalé, pas refusé.
+      `pipeline_item_done.tests` porte `{declared, written}`. Recette :
+      `_test_item_tests.mjs` (faux claude `FAKE_PIPE_ITEM_EXTRA_TESTS`,
+      `FAKE_PIPE_DECL=two`).
+    - La livraison par item (c) viendra dans une étape suivante.
   - 4c : tests inchangés et suite verte. Avec `RIEN_A_REFACTORER`, aucune
     modification n'est permise. 4c est sautée (`skipped`, motif écrit) si 4b
     a changé moins de `refactorMinLines` (10) lignes (`lineDelta`).
