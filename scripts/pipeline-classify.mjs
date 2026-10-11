@@ -226,18 +226,22 @@ export function routingTaskPrompt(task, fixed = {}, choices = CHOICES) {
     'and the nature: "bugfix", "mecanique" (no behaviour change) or "comportement". Other pipelines: mode "complet" unless the task is clearly small.\n' +
     'If the task is ambiguous (you cannot tell what is wanted, or which of two pipelines), do NOT guess: set "question" to the question to ask the user. ' +
     'If the task asks for an ACTION that no pipeline covers, set "lacune" to one sentence proposing the missing pipeline or step.\n' +
-    'Answer with ONE JSON object and nothing else: {"pipeline":"<id>","mode":"leger"|"complet","nature":"comportement"|"bugfix"|"mecanique","raison":"<one short sentence in French>","question":"<optional, French>","lacune":"<optional, French>"}\n\n' +
+    'If the task is NOT work for the project\'s agent but something the CONDUCTOR (chef) must do itself — restart the orchestrator server, stop a running or stalled turn, mark a question as answered, publish an APK, or any other direct supervision action — do NOT pick a pipeline: set "chef" to "restart-orchestrateur", "kill-stalled", "resolve-question", "copy-build", or "autre" if none of them fits. Such a task is never sent to a project agent.\n' +
+    'Answer with ONE JSON object and nothing else: {"pipeline":"<id>","mode":"leger"|"complet","nature":"comportement"|"bugfix"|"mecanique","raison":"<one short sentence in French>","question":"<optional, French>","lacune":"<optional, French>","chef":"<optional>"}\n\n' +
     `Project: ${task.projet || '?'}\n` +
     `Request:\n<<<\n${normalizeText(task.demande).slice(0, 6000)}\n>>>`;
 }
 
-/** {question} | {lacune, raison} | {pipeline, mode, kind, raison} from the model's answer, or null. */
+/** {chef, raison} | {question} | {lacune, raison} | {pipeline, mode, kind, raison} from the model's answer, or null. */
 export function parseTaskClassification(answer, fixed = {}, choices = CHOICES) {
   const m = /\{[\s\S]*\}/.exec(String(answer || ''));
   if (!m) return null;
   let j; try { j = JSON.parse(m[0]); } catch { return null; }
   const text = (v, n) => (typeof v === 'string' && v.trim() ? v.replace(/\s+/g, ' ').trim().slice(0, n) : null);
   const raison = text(j.raison, 300) || '';
+  // A chef's own action (0.71.0, ROUTAGE-PROBLEMES n° 8) wins over anything else.
+  const chef = text(j.chef, 40);
+  if (chef) return { chef, raison };
   const question = text(j.question, 600);
   if (question) return { question, raison };
   const lacune = text(j.lacune, 400);

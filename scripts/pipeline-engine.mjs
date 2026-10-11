@@ -828,15 +828,42 @@ const CODE_STEPS = {
     const { classifyTask } = await import('./pipeline-classify.mjs');
     const out = [];
     const models = new Set();
+    // Chef actions found while classifying tasks (0.71.0, n° 8): run by the
+    // Dispatcher's code like the Decomposer's own « actions », never dispatched.
+    const extraActions = [];
     for (const [i, t] of units.entries()) {
       const n = i + 1;
       const imp = t.impose && typeof t.impose === 'object' ? t.impose : {};
-      const base = { n, projet: t.projet, demande: t.demande, ...(t.rattache ? { rattache: t.rattache } : {}), ...(t.apres ? { apres: t.apres } : {}), ...(t.reprise ? { reprise: t.reprise } : {}) };
+      const base = { n, projet: t.projet, demande: t.demande, ...(t.rattache ? { rattache: t.rattache } : {}), ...(t.apres ? { apres: t.apres } : {}), ...(t.reprise ? { reprise: t.reprise } : {}), ...(t.ne_pas_dispatcher ? { ne_pas_dispatcher: true } : {}) };
+      // Explicitly marked « not for a musician » (0.71.0, n° 8): never dispatched,
+      // not even classified — the user says what it is (never guess).
+      if (t.ne_pas_dispatcher) {
+        const q = `Tâche ${n} (${t.projet}) marquée « ne pas dispatcher » : elle n’est confiée à aucun musicien. Est-ce une action du chef (redémarrer le serveur, arrêter un tour, marquer une question répondue, publier un APK) ? Laquelle ?`;
+        questions.push(q);
+        out.push({ ...base, route: false, noDispatch: true, question: q });
+        continue;
+      }
       // Resuming a paused run keeps that run's own pipeline: nothing to classify.
       if (t.reprise) { out.push({ ...base, route: true, pipeline: imp.pipeline || null, mode: imp.mode || null, kind: null, classifier: 'reprise', raison: `reprise de l’exécution ${t.reprise}` }); continue; }
       const c = await classifyTask({ root, logsDir, task: t, fixed: { pipeline: imp.pipeline || null, mode: imp.mode || null } });
       if (c.model) models.add(c.model);
-      if (c.failed) {
+      if (c.chef) {
+        const def = CHEF_ACTIONS[c.chef];
+        const cand = def ? { action: c.chef, ...(def.project ? { projet: t.projet } : {}), ...(def.needs ? { [def.needs]: String(c.raison || t.demande).slice(0, 300) } : {}), ...(c.chef === 'resolve-question' && c.raison ? { note: String(c.raison).slice(0, 300) } : {}) } : null;
+        // A chef action that must wait for another task (« apres ») cannot run at
+        // the end of this turn: a restart would kill the awaited musician's turn.
+        const why = !cand ? 'hors liste blanche'
+          : t.apres ? `elle doit attendre la fin de la tâche ${t.apres}, et une action du chef part à la fin de ce tour — à redemander quand la tâche ${t.apres} sera finie`
+          : validateChefActions(root, [...(Array.isArray(j.actions) ? j.actions : []), ...extraActions, cand]);
+        if (cand && !why) {
+          extraActions.push(cand);
+          out.push({ ...base, route: false, chefAction: cand.action, raison: c.raison || null, classifier: c.classifier });
+        } else {
+          const q = `Tâche ${n} (${t.projet}) : c’est une action du chef (« ${c.chef} »), qui n’est confiée à aucun musicien, mais elle ne peut pas être faite automatiquement (${why}). Que faut-il faire ?`;
+          questions.push(q);
+          out.push({ ...base, route: false, chefAction: c.chef, refused: why, question: q, classifier: c.classifier });
+        }
+      } else if (c.failed) {
         const q = `Tâche ${n} (${t.projet}) : le classement par le model a échoué (${c.why}). Quel pipeline voulez-vous pour : « ${String(t.demande).slice(0, 200)} » ?`;
         questions.push(q);
         out.push({ ...base, route: false, failed: true, why: c.why, question: q });
@@ -862,7 +889,8 @@ const CODE_STEPS = {
       }
     }
     state.tasks = out;
-    fs.writeFileSync(path.join(artDir, 'classement.json'), JSON.stringify({ taches: out, questions }, null, 2));
+    state.extraActions = extraActions;
+    fs.writeFileSync(path.join(artDir, 'classement.json'), JSON.stringify({ taches: out, questions, ...(extraActions.length ? { actions: extraActions } : {}) }, null, 2));
     return { ok: true, model: [...models].join(', ') || null };
   },
   /** Les models viennent de la page Models : le code les relève, tâche par tâche. */
@@ -880,7 +908,7 @@ const CODE_STEPS = {
     const rows = [];
     state.tasks = state.tasks.map((t) => {
       if (!t.route) {
-        rows.push(`| ${t.projet} | non lancée — ${t.lacune ? `lacune : ${t.lacune}` : t.blocked ? `attend la tâche ${t.blocked}, non lancée` : `question : ${t.question || t.why || '?'}`} | — |`);
+        rows.push(`| ${t.projet} | non lancée — ${t.chefAction && !t.refused ? `action du chef « ${t.chefAction} », exécutée par le code` : t.lacune ? `lacune : ${t.lacune}` : t.blocked ? `attend la tâche ${t.blocked}, non lancée` : `question : ${t.question || t.why || '?'}`} | — |`);
         return t;
       }
       const served = !!t.pipeline && isEnforced(enf, t.projet) && enf.pipelines.includes(t.pipeline);
@@ -900,7 +928,9 @@ const CODE_STEPS = {
     const tasks = (state.tasks || []).map(t => ({ ...t, reprise: detectReprise(logsDir, t) }));
     tasks.forEach((t, i) => {
       // Not launched (question, gap, failed classification): said in the report.
-      if (t.route === false) return;
+      // A chef action or a task marked « ne pas dispatcher » never reaches a
+      // musician, whatever the classification said (0.71.0, n° 8).
+      if (t.route === false || t.ne_pas_dispatcher || t.chefAction || t.noDispatch) return;
       // « puis » : une tâche qui attend la fin d'une autre part quand ce résultat
       // arrive (libération mécanique en fin de tour, 0.58.0), jamais avant.
       if (t.apres) { waiting.push({ ...t, n: i + 1, after: tasks[t.apres - 1].projet }); return; }
@@ -926,10 +956,11 @@ const CODE_STEPS = {
     // The chef's own actions (0.70.0): run by the code, never sent to a musician.
     const tj = parseJsonArtefact(readArtefact(ctx, 'taches.json') || '') || {};
     let actions = [];
-    if (Array.isArray(tj.actions) && tj.actions.length) {
-      const why = validateChefActions(root, tj.actions);
+    const allActions = [...(Array.isArray(tj.actions) ? tj.actions : []), ...(state.extraActions || [])];
+    if (allActions.length) {
+      const why = validateChefActions(root, allActions);
       if (why) return { ok: false, why };
-      actions = runChefActions({ actions: tj.actions, scriptsDir: path.dirname(dispatchScript), logsDir, waitPid: process.pid });
+      actions = runChefActions({ actions: allActions, scriptsDir: path.dirname(dispatchScript), logsDir, waitPid: process.pid });
       for (const a of actions) {
         writeEvent?.({ type: 'system', subtype: 'chef_action', pipeline: { run }, action: a.action, projet: a.projet || null, status: a.status,
           text: `⚙ action du chef ${a.action}${a.projet ? ` (${a.projet})` : ''} : ${{ done: 'faite', scheduled: 'programmée après la fin de ce tour', failed: `échec (code ${a.code})`, refused: `refusée — ${a.why}` }[a.status] || a.status}` });

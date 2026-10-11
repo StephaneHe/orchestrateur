@@ -1428,6 +1428,26 @@ ca »).
   test ne redémarre jamais la prod.
 - Recette : `_test_chef_actions.mjs`.
 
+## Routage : une action du chef n'est jamais dispatchée (0.71.0)
+
+Suivi `docs/ROUTAGE-PROBLEMES.md`, n° 8. Feu vert : « 3. J'ai lu et
+j'accepte ».
+
+- `classifyTask` peut rendre `{chef: <action>|"autre"}`
+  (`parseTaskClassification`). Dans `CODE_STEPS.classer` :
+  - une action de la liste blanche passe dans `state.extraActions` (même
+    validation que `actions`), puis est exécutée par le Dispatcher avec les
+    `actions` de `taches.json` ;
+  - sinon, la tâche devient une question.
+
+  La tâche porte `chefAction`, `route: false`.
+- `ne_pas_dispatcher: true` (étape Découper) : la tâche n'est pas classée et
+  devient une question (`noDispatch`).
+- Une action du chef avec `apres` n'est pas exécutée : une question est posée.
+- Le Dispatcher saute `route === false`, `ne_pas_dispatcher`, `chefAction`
+  et `noDispatch`.
+- Recette : `_test_no_dispatch_chef.mjs`.
+
 ## Tâches du Routage en attente : jamais bloquées (0.58.0)
 
 Signalement utilisateur : « A nouveau, orchestrateur est termine, et plus rien

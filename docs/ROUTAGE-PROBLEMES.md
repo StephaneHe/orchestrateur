@@ -32,7 +32,7 @@ Les fichiers de code cités sont des **pistes**, pas un diagnostic établi.
 | 5 | 9 % de lacunes ; pas de pipeline « navigation web / achats » | ouvert (décision de l'utilisateur) | `pipeline-catalog.mjs`, `model-pipelines.mjs` |
 | 6 | Pas de pipeline devops / versionnage git | ouvert (décision de l'utilisateur) | `pipeline-catalog.mjs`, `model-pipelines.mjs` |
 | 7 | Action directe du chef non exprimable | corrigé en dev, non promu en prod (0.70.0) | `pipeline-catalog.mjs` (`S.routage`), `pipeline-engine.mjs` (`CODE_STEPS`) |
-| 8 | Tâche « action directe, ne pas dispatcher » dispatchée quand même | ouvert | `pipeline-engine.mjs` (`dispatcher`), `routage-pending.mjs` (`launchTask`) |
+| 8 | Tâche « action directe, ne pas dispatcher » dispatchée quand même | corrigé en dev, non promu en prod (0.71.0) | `pipeline-engine.mjs` (`dispatcher`), `routage-pending.mjs` (`launchTask`) |
 | 9 | Défaut « `taches.json` : aucune tâche » bloquant | corrigé en dev, non promu en prod (0.70.0) | `pipeline-engine.mjs` (`validateUnitTasks`, `validateTasks`, `checkCatalogCriteria`, `reportDefects`) |
 | 10 | Tâche « hors pipeline » autorisée non dispatchée | ouvert | `routage-pending.mjs` (`launchTask`), `pipeline-engine.mjs` (`classer`, `emitRoutingGap`), `pipeline-catalog.mjs` |
 | 11 | Préfixe contraire à l'intention (« /discussion Corrige… ») | ouvert | `pipeline-observe.mjs` (`explicitChoice`), `pipeline-classify.mjs` |
@@ -169,8 +169,16 @@ consigne de l'utilisateur, « rien d'autre », et à la règle « jamais de
 redémarrage par un musicien ». Le musicien a refusé de lui-même et n'a rien
 fait.
 
-- **Statut : ouvert.** Le Dispatcher lance toute tâche validée, et aucun
-  champ ne marque une tâche « à ne pas dispatcher ».
+- **Statut : corrigé en dev, non promu en prod (0.71.0).** Feu vert de
+  l'utilisateur du 2026-10-11 (« J'ai lu et j'accepte », ordre 8, 18, 10).
+  Le classement de chaque tâche peut répondre « action du chef »
+  (`chef`) : la tâche n'est jamais dispatchée. Une action de la liste
+  blanche est faite par le code, comme en 0.70.0 ; une autre action devient
+  une question. Une tâche marquée `ne_pas_dispatcher` n'est ni classée ni
+  dispatchée, et devient une question. Une action du chef qui doit attendre
+  une autre tâche (« puis ») n'est pas exécutée en fin de tour : une
+  question est posée. Le Dispatcher saute ces tâches quoi qu'en dise le
+  classement. Test permanent : `scripts/_test_no_dispatch_chef.mjs`.
 - Code : `pipeline-engine.mjs` (`CODE_STEPS.dispatcher`, `validateTasks`),
   `routage-pending.mjs` (`launchTask`).
 

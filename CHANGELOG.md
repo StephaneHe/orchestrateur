@@ -11,7 +11,37 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.71.0] - 2026-10-11
+
+Feu vert de l'utilisateur : « 3. J'ai lu et j'accepte » (page
+`correctifs-suite.html`, ordre 8, puis 18, puis 10). Ce lot traite le n° 8 de
+`docs/ROUTAGE-PROBLEMES.md`.
+
+### Fixed
+- (server) **Une action du chef n'est jamais confiée à un musicien**
+  (ROUTAGE-PROBLEMES n° 8 : le redémarrage de la prod était parti en tour
+  ordinaire chez `orchestrateur`, `p-20261010T193435`).
+  - Le classement de chaque tâche (`classifyTask`, `routingTaskPrompt`) peut
+    répondre `chef` : `restart-orchestrateur`, `kill-stalled`,
+    `resolve-question`, `copy-build` ou `autre`. Une telle tâche n'est jamais
+    dispatchée. Une action de la liste blanche est exécutée par le code avec
+    le projet de la tâche, comme les `actions` de la 0.70.0 (même validation
+    `validateChefActions`). `autre`, ou une action invalide, devient une
+    question.
+  - Une tâche marquée `ne_pas_dispatcher` par l'étape Découper n'est ni
+    classée ni dispatchée, et devient une question.
+  - Une action du chef qui doit attendre une autre tâche (`apres`) n'est pas
+    exécutée en fin de tour (un redémarrage couperait le tour attendu) : une
+    question est posée.
+  - Le Dispatcher saute toute tâche `ne_pas_dispatcher` ou action du chef,
+    quoi qu'en dise le classement. Les autres tâches du message partent
+    normalement.
+
+### Added
+- (server) `scripts/_test_no_dispatch_chef.mjs` (13 contrôles).
+
 ### Changed
+- (docs) `docs/ROUTAGE-PROBLEMES.md` : n° 8 corrigé en dev, non promu en prod.
 - (docs) `docs/ROUTAGE-PROBLEMES.md` (2026-10-11) : **ce document fait foi**
   (décision de l'utilisateur, « ok »). La ligne « Référence : » le désigne,
   et `I:\Dev\Chef\docs\ROUTAGE-PROBLEMES.md` en est une copie identique,
