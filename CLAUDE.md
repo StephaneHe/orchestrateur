@@ -1463,6 +1463,26 @@ Suivi `docs/ROUTAGE-PROBLEMES.md`, n° 18.
   du chef.
 - Recette : `_test_chef_folder_writes.mjs`.
 
+## Routage : tâche hors pipeline autorisée par l'utilisateur (0.71.2)
+
+Suivi `docs/ROUTAGE-PROBLEMES.md`, n° 10.
+
+- Une tâche de l'étape Découper peut porter `hors_pipeline: {raison,
+  autorisation}` (`validateUnitTasks` : exclusif avec `impose`).
+- **Vérification de l'autorisation** (`userSaid` du moteur) : les mots cités
+  doivent figurer dans `demande.md` ou dans une ligne `**utilisateur**` de
+  `conversation.md`. Une demande ou une ligne relayée (`[NEEDS_CHEF_INPUT_FROM:`,
+  `[CALLBACK_WAKE`) ne compte jamais : un musicien ne s'autorise pas
+  lui-même.
+- Si l'autorisation est retrouvée :
+  - la tâche n'est pas classée (`horsPipeline`, `classifier: 'hors-pipeline'`) ;
+  - `launchTask` passe `--hors-pipeline <raison>` ;
+  - le tour est signalé par `system/pipeline_hors_pipeline` et dans le
+    rapport ;
+  - les tâches en attente (`addPending`) gardent `horsPipeline`.
+- Si elle est introuvable : la tâche devient une question.
+- Recette : `_test_hors_pipeline_task.mjs`.
+
 ## Tâches du Routage en attente : jamais bloquées (0.58.0)
 
 Signalement utilisateur : « A nouveau, orchestrateur est termine, et plus rien

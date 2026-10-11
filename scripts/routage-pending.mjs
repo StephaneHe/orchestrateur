@@ -216,6 +216,9 @@ export function launchTask(root, t, dispatchScript) {
   const offset = logOffset(logsDir, t.projet);
   const args = [dispatchScript, t.projet, '--prompt-stdin', '--callback', conductor, '--source', conductor, '--queue-if-busy'];
   if (t.reprise) args.push('--pipeline-resume', t.reprise);
+  // Off-pipeline task authorized by the user (0.71.2, ROUTAGE-PROBLEMES n° 10):
+  // ordinary turn, traced as such by dispatch.mjs (pipelineBypass).
+  else if (t.horsPipeline) args.push('--hors-pipeline', String(t.horsPipeline).slice(0, 300));
   else if (t.served) {
     args.push('--pipeline', t.pipeline);
     if (t.pipeline === 'dev' && t.mode) args.push('--mode', t.mode);
@@ -233,7 +236,7 @@ export function launchTask(root, t, dispatchScript) {
     c.unref();
     pid = c.pid || null;
   } catch { pid = null; }
-  return { projet: t.projet, pipeline: t.reprise ? t.pipeline || null : t.served ? t.pipeline : null, mode: t.mode || null,
+  return { projet: t.projet, pipeline: t.reprise ? t.pipeline || null : t.served ? t.pipeline : null, mode: t.mode || null, ...(t.horsPipeline ? { horsPipeline: t.horsPipeline } : {}),
     reprise: t.reprise || null, pid, at: new Date().toISOString(), offset, key: taskKey(t.demande), hash: textHash(t.demande) };
 }
 

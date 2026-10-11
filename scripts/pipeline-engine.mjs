@@ -689,6 +689,15 @@ export function validateTasks(root, tasks) {
  */
 export function validateUnitTasks(root, tasks) {
   if (!Array.isArray(tasks) || !tasks.length) return 'aucune tâche';
+  for (const [i, t] of tasks.entries()) {
+    if (t?.hors_pipeline == null) continue;
+    const h = t.hors_pipeline;
+    // 0.71.2 (n° 10): an off-pipeline task must quote the user's authorization.
+    if (typeof h !== 'object' || typeof h.raison !== 'string' || h.raison.trim().length < 8 || typeof h.autorisation !== 'string' || h.autorisation.trim().length < 3) {
+      return `tâche ${i + 1} : « hors_pipeline » doit être {"raison": "…", "autorisation": "les mots exacts de l’utilisateur qui l’autorisent"}`;
+    }
+    if (t.impose) return `tâche ${i + 1} : « hors_pipeline » et « impose » s’excluent`;
+  }
   const probe = tasks.map((t) => {
     if (!t || typeof t !== 'object') return t;
     const imp = t.impose && typeof t.impose === 'object' ? t.impose : {};
@@ -779,6 +788,26 @@ function runChefActions({ actions, scriptsDir, logsDir, waitPid, env = process.e
   return out;
 }
 
+/**
+ * True when `quote` appears in the user's own words: the current message
+ * (demande.md) or a user line of the recent conversation (conversation.md),
+ * never a line of the chef. Compared case-, accent- and spacing-insensitively.
+ */
+function userSaid(ctx, quote) {
+  const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[«»"“”'’]/g, ' ').replace(/\s+/g, ' ').trim();
+  const q = norm(quote);
+  if (q.length < 3) return false;
+  // A musician's relayed question or a wake-up is not the user speaking: a
+  // musician must never authorize itself.
+  const relayed = (s) => /\[(NEEDS_CHEF_INPUT_FROM:|CALLBACK_WAKE)/.test(s);
+  const demande = readArtefact(ctx, 'demande.md') || '';
+  const userText = [
+    relayed(demande) ? '' : demande,
+    ...String(readArtefact(ctx, 'conversation.md') || '').split(/\n\n+/).filter(l => /^\*\*utilisateur\*\*/.test(l) && !relayed(l)),
+  ].join('\n');
+  return norm(userText).includes(q);
+}
+
 /** Les derniers échanges du fil (demandes, réponses du chef, résultats), pour l'étape Lire. */
 export function conversationExcerpt(logFile, { max = 30, maxChars = 30_000 } = {}) {
   let lines = [];
@@ -841,6 +870,24 @@ const CODE_STEPS = {
         const q = `Tâche ${n} (${t.projet}) marquée « ne pas dispatcher » : elle n’est confiée à aucun musicien. Est-ce une action du chef (redémarrer le serveur, arrêter un tour, marquer une question répondue, publier un APK) ? Laquelle ?`;
         questions.push(q);
         out.push({ ...base, route: false, noDispatch: true, question: q });
+        continue;
+      }
+      // Off-pipeline task authorized by the user (0.71.2, n° 10): not classified
+      // (it can no longer fall into a gap) and launched with --hors-pipeline —
+      // only if the quoted authorization really is the user's own words, in
+      // this message or in the recent conversation (never the chef's).
+      if (t.hors_pipeline) {
+        const h = t.hors_pipeline;
+        const raison = String(h.raison).replace(/\s+/g, ' ').trim().slice(0, 300);
+        if (userSaid(ctx, h.autorisation)) {
+          out.push({ ...base, route: true, pipeline: null, mode: null, kind: null, horsPipeline: raison, autorisation: String(h.autorisation).trim().slice(0, 300), classifier: 'hors-pipeline', raison });
+          writeEvent?.({ type: 'system', subtype: 'pipeline_hors_pipeline', pipeline: { run }, task: n, projet: t.projet, reason: raison,
+            text: `↷ tâche ${n} (${t.projet}) lancée hors pipeline, autorisée par l’utilisateur (« ${String(h.autorisation).trim().slice(0, 120)} ») : ${raison}` });
+        } else {
+          const q = `Tâche ${n} (${t.projet}) : elle devait partir hors pipeline (« ${raison} »), mais l’autorisation citée (« ${String(h.autorisation).trim().slice(0, 120)} ») ne figure pas dans vos messages. L’autorisez-vous hors pipeline ?`;
+          questions.push(q);
+          out.push({ ...base, route: false, question: q, refused: 'autorisation hors pipeline introuvable' });
+        }
         continue;
       }
       // Resuming a paused run keeps that run's own pipeline: nothing to classify.
@@ -913,7 +960,7 @@ const CODE_STEPS = {
       }
       const served = !!t.pipeline && isEnforced(enf, t.projet) && enf.pipelines.includes(t.pipeline);
       const steps = served ? planSteps(t.pipeline, { mode: t.mode || 'leger' }).filter(s => s.chain?.length && s.kind !== 'code').map(s => ({ id: s.id, ...resolveCase(assignments, s.chain) })) : [];
-      rows.push(`| ${t.projet} | ${served ? `${pipelineLabel(t.pipeline, t.mode)}` : t.reprise ? `reprise de ${t.reprise}` : `${t.pipeline} — projet hors service : tour ordinaire`} | ${steps.map(s => `${s.id}: ${s.model || 'défaut du projet'}`).join(', ') || '—'} |`);
+      rows.push(`| ${t.projet} | ${t.horsPipeline ? `hors pipeline, autorisé par l’utilisateur (« ${t.autorisation || '?'} ») : ${t.horsPipeline}` : served ? `${pipelineLabel(t.pipeline, t.mode)}` : t.reprise ? `reprise de ${t.reprise}` : `${t.pipeline} — projet hors service : tour ordinaire`} | ${steps.map(s => `${s.id}: ${s.model || 'défaut du projet'}`).join(', ') || '—'} |`);
       return { ...t, served };
     });
     fs.writeFileSync(path.join(artDir, 'affectation.md'), `# Affectation (page Models)\n\n| projet | pipeline | models par étape |\n|---|---|---|\n${rows.join('\n')}\n`);
@@ -945,7 +992,7 @@ const CODE_STEPS = {
         // (or now, if it is itself still waiting) plus the fingerprint of its
         // WHOLE text (0.67.x: a shared opening sentence no longer matches).
         // `n` + `run` identify this Routage task (deduplication, 0.68.0).
-        return { run, n: w.n, projet: w.projet, pipeline: w.pipeline, mode: w.mode || null, ...(w.kind ? { kind: w.kind } : {}), served: w.served, demande: w.demande, rattache: w.rattache || null,
+        return { run, n: w.n, projet: w.projet, pipeline: w.pipeline, mode: w.mode || null, ...(w.kind ? { kind: w.kind } : {}), ...(w.horsPipeline ? { horsPipeline: w.horsPipeline } : {}), served: w.served, demande: w.demande, rattache: w.rattache || null,
           ...(w.reprise ? { reprise: w.reprise } : {}),
           after: { projet: w.after, offset: dep ? dep.offset : logOffset(logsDir, w.after), key: taskKey(depTask.demande), hash: textHash(depTask.demande), since: dep?.at || new Date().toISOString() } };
       });
@@ -2688,10 +2735,12 @@ export async function runPipeline(o) {
       const acts = Array.isArray(disp.actions) && disp.actions.length
         ? `\n\n**Actions du chef (exécutées par l’orchestrateur)** :\n${disp.actions.map(a => `- ${a.action}${a.projet ? ` ${a.projet}` : ''} : ${{ done: 'faite', scheduled: 'programmée après la fin de ce tour', failed: `échec (code ${a.code})`, refused: `refusée — ${a.why}` }[a.status] || a.status}`).join('\n')}`
         : '';
+      const hors = (state.tasks || []).filter(t => t.horsPipeline && t.route);
+      const horsTxt = hors.length ? `\n\n**Tâches lancées hors pipeline, sur votre autorisation** : ${hors.map(t => `tâche ${t.n} (${t.projet}) — « ${t.autorisation} » — ${t.horsPipeline}`).join(' ; ')}` : '';
       const ext = (state.externalChanges || []).length
         ? `\n\n**Fichiers du dossier du chef modifiés pendant cette exécution** (par vous ou un musicien, conservés, rien n’a été annulé) : ${state.externalChanges.slice(0, 12).map(f => `\`${f}\``).join(', ')}`
         : '';
-      return `${body || '(rapport vide)'}${acts}${ext}${q && !/NEEDS_USER_INPUT:/.test(body) ? `\n\nNEEDS_USER_INPUT: ${q}` : ''}`;
+      return `${body || '(rapport vide)'}${acts}${horsTxt}${ext}${q && !/NEEDS_USER_INPUT:/.test(body) ? `\n\nNEEDS_USER_INPUT: ${q}` : ''}`;
     }
     const head = git(cwd, ['rev-parse', 'HEAD']).out;
     const delivered = head && head !== base ? git(cwd, ['log', '-1', '--format=%h %s']).out : null;

@@ -11,6 +11,37 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.71.2] - 2026-10-11
+
+Feu vert de l'utilisateur : « 3. J'ai lu et j'accepte » (ordre 8, puis 18,
+puis 10). Ce lot traite le n° 10 de `docs/ROUTAGE-PROBLEMES.md`.
+
+### Fixed
+- (server) **Une tâche « hors pipeline » autorisée par l'utilisateur part
+  enfin.** Le nettoyage git de la prod avait été classé trois fois en
+  lacune, malgré « oui, hors pipeline » puis « oui vas y ».
+  - L'étape Découper peut poser `hors_pipeline: {raison, autorisation}` sur
+    une tâche, avec les mots exacts de l'utilisateur dans `autorisation`.
+  - Le code vérifie ces mots (`userSaid`) : ils doivent figurer dans le
+    message (`demande.md`) ou dans une ligne « utilisateur » de
+    `conversation.md`. Les mots du chef et une question relayée d'un musicien
+    (`[NEEDS_CHEF_INPUT_FROM:`, `[CALLBACK_WAKE`) ne comptent jamais.
+  - Une tâche ainsi autorisée n'est pas classée, donc ne peut plus devenir
+    une lacune. `launchTask` lui passe `--hors-pipeline` avec la raison
+    complète (300 caractères). Le tour ordinaire est tracé
+    (`pipelineBypass`), signalé dans le fil (`system/pipeline_hors_pipeline`)
+    et dans le rapport du chef. La raison suit aussi une tâche en attente
+    (`apres`).
+  - Si l'autorisation est introuvable, une question est posée et rien n'est
+    lancé.
+
+### Added
+- (server) `scripts/_test_hors_pipeline_task.mjs` (11 contrôles).
+
+### Changed
+- (docs) `docs/ROUTAGE-PROBLEMES.md` : n° 10 corrigé en dev, non promu en
+  prod.
+
 ## [0.71.1] - 2026-10-11
 
 Feu vert de l'utilisateur : « 3. J'ai lu et j'accepte » (ordre 8, puis 18,

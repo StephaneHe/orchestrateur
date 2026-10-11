@@ -34,7 +34,7 @@ Les fichiers de code cités sont des **pistes**, pas un diagnostic établi.
 | 7 | Action directe du chef non exprimable | corrigé en dev, non promu en prod (0.70.0) | `pipeline-catalog.mjs` (`S.routage`), `pipeline-engine.mjs` (`CODE_STEPS`) |
 | 8 | Tâche « action directe, ne pas dispatcher » dispatchée quand même | corrigé en dev, non promu en prod (0.71.0) | `pipeline-engine.mjs` (`dispatcher`), `routage-pending.mjs` (`launchTask`) |
 | 9 | Défaut « `taches.json` : aucune tâche » bloquant | corrigé en dev, non promu en prod (0.70.0) | `pipeline-engine.mjs` (`validateUnitTasks`, `validateTasks`, `checkCatalogCriteria`, `reportDefects`) |
-| 10 | Tâche « hors pipeline » autorisée non dispatchée | ouvert | `routage-pending.mjs` (`launchTask`), `pipeline-engine.mjs` (`classer`, `emitRoutingGap`), `pipeline-catalog.mjs` |
+| 10 | Tâche « hors pipeline » autorisée non dispatchée | corrigé en dev, non promu en prod (0.71.2) | `routage-pending.mjs` (`launchTask`), `pipeline-engine.mjs` (`classer`, `emitRoutingGap`), `pipeline-catalog.mjs` |
 | 11 | Préfixe contraire à l'intention (« /discussion Corrige… ») | ouvert | `pipeline-observe.mjs` (`explicitChoice`), `pipeline-classify.mjs` |
 | 12 | Tâche en file partie sans sa condition | ouvert | `server.js` (file et drain), `routage-pending.mjs`, `scripts/queue.mjs` |
 | 13 | Tour en double sur la mauvaise cible (prod) | ouvert | `scripts/queue.mjs`, `server.js` (file), procédure du chef |
@@ -203,11 +203,20 @@ Le nettoyage git de la prod a été classé en lacune **trois fois**, malgré
 tronquée : « maintenance de la flotte : ». Il a fallu passer par un message
 direct au musicien.
 
-- **Statut : ouvert.** Une tâche du Routage ne peut pas porter
-  `--hors-pipeline` : `launchTask` ne le transmet pas, et l'étape Découper
-  n'a pas de champ pour une autorisation hors pipeline. Avec `4b82450`, une
-  tâche en « lacune » n'est jamais lancée. La troncature de la raison est à
-  chercher dans l'analyse de `--hors-pipeline` ou dans le signalement.
+- **Statut : corrigé en dev, non promu en prod (0.71.2).** Feu vert de
+  l'utilisateur du 2026-10-11 (« J'ai lu et j'accepte »). Une tâche de
+  l'étape Découper peut porter `hors_pipeline: {raison, autorisation}`, où
+  `autorisation` reprend les mots exacts de l'utilisateur. Le code vérifie
+  que ces mots figurent dans son message ou dans une ligne « utilisateur »
+  de la conversation récente (jamais les mots du chef, ni la question
+  relayée d'un musicien). La tâche n'est alors pas classée (plus de
+  lacune) et `launchTask` passe `--hors-pipeline` avec la raison complète
+  (300 caractères) : le tour ordinaire est tracé (`pipelineBypass`),
+  signalé dans le fil et le rapport du chef. Autorisation introuvable :
+  question, rien n'est lancé. La cause exacte de la raison tronquée de
+  l'incident (« maintenance de la flotte : ») n'a pas été identifiée ; elle
+  ne peut plus se produire par ce chemin. Test permanent :
+  `scripts/_test_hors_pipeline_task.mjs`.
 - Code : `routage-pending.mjs` (`launchTask`), `pipeline-catalog.mjs` (étape
   `decomposer`, champ `impose`), `pipeline-engine.mjs` (`classer`,
   `emitRoutingGap`), `dispatch.mjs` (`--hors-pipeline`).
