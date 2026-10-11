@@ -1448,6 +1448,21 @@ j'accepte ».
   et `noDispatch`.
 - Recette : `_test_no_dispatch_chef.mjs`.
 
+## Dossier du chef : rien n'est annulé pendant le Routage (0.71.1)
+
+Suivi `docs/ROUTAGE-PROBLEMES.md`, n° 18.
+
+- Dans un dossier hors git (`walkSnapshot`, `isWalkSnapshot`), un changement
+  constaté pendant une étape de jugement ne la fait plus refuser
+  (`checkCatalogCriteria`, champ `externalChanges`), et `restoreFiles` ne
+  touche jamais à ce dossier.
+- Signalement : `system/pipeline_external_change {files}`,
+  `state.externalChanges`, et une ligne du rapport du Routage.
+- Les projets git gardent la règle stricte (refus et annulation).
+- **Écrire dans `I:\Dev\Chef` n'est plus perdu**, même pendant une exécution
+  du chef.
+- Recette : `_test_chef_folder_writes.mjs`.
+
 ## Tâches du Routage en attente : jamais bloquées (0.58.0)
 
 Signalement utilisateur : « A nouveau, orchestrateur est termine, et plus rien

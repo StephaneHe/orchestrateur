@@ -1109,6 +1109,7 @@ function checkCatalogCriteria(ctx, step, before, after) {
   // Un JSON court (« {"remaining":[]} ») est une vraie réponse : il est jugé sur sa forme.
   const artOk = art != null && (c.json ? art.trim().length > 1 : art.trim().length >= 20);
   const fail = (why, extra = {}) => ({ ok: false, why, changed, ...extra });
+  let external = null;
   if (step.kind === 'deliver') {
     const head = git(cwd, ['rev-parse', 'HEAD']).out;
     if (!head || head === ctx.base) return fail('aucun commit créé');
@@ -1120,7 +1121,11 @@ function checkCatalogCriteria(ctx, step, before, after) {
   }
   if (!artOk) return fail(`artefact ${step.artefact} absent ou vide`);
   if (step.kind === 'judge') {
-    if (changed.length) return fail(`étape en lecture seule, mais des fichiers du projet ont changé : ${changed.slice(0, 8).join(', ')}`);
+    // Folder outside git (the chef's, 0.71.1, ROUTAGE-PROBLEMES n° 18): a change
+    // seen during the step may come from someone else (the user, a musician
+    // writing a document). It is reported, never blamed on the step nor undone.
+    external = changed.length && isWalkSnapshot(before) ? changed : null;
+    if (changed.length && !external) return fail(`étape en lecture seule, mais des fichiers du projet ont changé : ${changed.slice(0, 8).join(', ')}`);
     if (c.headUnchanged && git(cwd, ['rev-parse', 'HEAD']).out !== ctx.headAtStep) return fail('l’historique git a été modifié : interdit à cette étape (rapport seulement)');
   } else {
     // Médias (0.55.0) : chaque fichier annoncé est ouvert et vérifié par le code.
@@ -1218,7 +1223,7 @@ function checkCatalogCriteria(ctx, step, before, after) {
       }
     }
   }
-  return { ok: true, changed, json, ...(c.media ? { media: ctx.lastCheck?.media || null, wer: ctx.lastCheck?.wer ?? null } : {}) };
+  return { ok: true, changed, json, ...(external ? { externalChanges: external } : {}), ...(c.media ? { media: ctx.lastCheck?.media || null, wer: ctx.lastCheck?.wer ?? null } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -2478,6 +2483,14 @@ export async function runPipeline(o) {
       state.delivered = (state.delivered || []).map(d => ({ ...d, released: true }));
     }
     if (step.crit === 'vert') ctx.suiteRedAtStart = state.suiteRedAtStart = false;
+    // n° 18: changes made in the chef's folder during the step, by someone
+    // else most likely — kept as they are, and said.
+    if (last.crit?.externalChanges?.length) {
+      const files = last.crit.externalChanges;
+      state.externalChanges = [...new Set([...(state.externalChanges || []), ...files])];
+      writeEvent({ type: 'system', subtype: 'pipeline_external_change', pipeline: { run, step: step.id }, files,
+        text: `fichiers du dossier modifiés pendant l’étape ${step.title}, conservés tels quels (pas annulés) : ${files.slice(0, 8).join(', ')}` });
+    }
     if (last.crit?.media?.length) { ctx.lastMedia = state.lastMedia = last.crit.media.map(f => f.path); state.media = [...new Set([...(state.media || []), ...ctx.lastMedia])]; }
     // Boucle déclarée (audit : re-vérifier → corriger tant qu'il reste des failles),
     // bornée par le budget des tours de revue — comme la revue du Développement.
@@ -2675,7 +2688,10 @@ export async function runPipeline(o) {
       const acts = Array.isArray(disp.actions) && disp.actions.length
         ? `\n\n**Actions du chef (exécutées par l’orchestrateur)** :\n${disp.actions.map(a => `- ${a.action}${a.projet ? ` ${a.projet}` : ''} : ${{ done: 'faite', scheduled: 'programmée après la fin de ce tour', failed: `échec (code ${a.code})`, refused: `refusée — ${a.why}` }[a.status] || a.status}`).join('\n')}`
         : '';
-      return `${body || '(rapport vide)'}${acts}${q && !/NEEDS_USER_INPUT:/.test(body) ? `\n\nNEEDS_USER_INPUT: ${q}` : ''}`;
+      const ext = (state.externalChanges || []).length
+        ? `\n\n**Fichiers du dossier du chef modifiés pendant cette exécution** (par vous ou un musicien, conservés, rien n’a été annulé) : ${state.externalChanges.slice(0, 12).map(f => `\`${f}\``).join(', ')}`
+        : '';
+      return `${body || '(rapport vide)'}${acts}${ext}${q && !/NEEDS_USER_INPUT:/.test(body) ? `\n\nNEEDS_USER_INPUT: ${q}` : ''}`;
     }
     const head = git(cwd, ['rev-parse', 'HEAD']).out;
     const delivered = head && head !== base ? git(cwd, ['log', '-1', '--format=%h %s']).out : null;
@@ -2787,8 +2803,14 @@ export function lightScope(cwd, base, cfg) {
   return { files, lines, newCode, over: !!why, why };
 }
 
+/** True for a snapshot of a folder outside git (the chef's): see walkSnapshot. */
+function isWalkSnapshot(snap) { return WALK_CONTENT.has(snap); }
+
 /** Annule les modifications d'un essai refusé (fichiers seulement, jamais les artefacts). */
 function restoreFiles(cwd, before, after, resetTo) {
+  // Never undo changes in a folder outside git (0.71.1, n° 18): nothing tells
+  // the step's writes from the user's or a musician's — they are reported.
+  if (isWalkSnapshot(before)) return;
   if (resetTo) git(cwd, ['reset', '--soft', resetTo]);
   for (const f of changedFiles(before, after)) {
     const abs = path.join(cwd, f);

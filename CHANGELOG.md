@@ -11,6 +11,32 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.71.1] - 2026-10-11
+
+Feu vert de l'utilisateur : « 3. J'ai lu et j'accepte » (ordre 8, puis 18,
+puis 10). Ce lot traite le n° 18 de `docs/ROUTAGE-PROBLEMES.md`.
+
+### Fixed
+- (server) **Une écriture dans le dossier du chef n'est plus effacée par son
+  Routage** (n° 18 : la première copie de
+  `I:\Dev\Chef\docs\ROUTAGE-PROBLEMES.md` avait été supprimée par l'exécution
+  `p-20261010T210614-034d0d`). Dans un dossier hors git (empreinte
+  `walkSnapshot`), un fichier créé ou modifié pendant une étape de jugement
+  n'est plus une faute de l'étape (`checkCatalogCriteria`), et
+  `restoreFiles` ne l'annule jamais. Le changement est signalé :
+  `system/pipeline_external_change` et une ligne du rapport du chef. Les
+  projets git gardent la règle stricte (refus et annulation). La limitation
+  fine des outils, envisagée dans la page de présentation, n'est pas livrée,
+  car son effet réel avec le CLI non interactif n'est pas vérifiable : c'est
+  l'option « signaler sans annuler ».
+
+### Added
+- (server) `scripts/_test_chef_folder_writes.mjs` (8 contrôles).
+
+### Changed
+- (docs) `docs/ROUTAGE-PROBLEMES.md` : n° 18 corrigé en dev, non promu en
+  prod.
+
 ## [0.71.0] - 2026-10-11
 
 Feu vert de l'utilisateur : « 3. J'ai lu et j'accepte » (page

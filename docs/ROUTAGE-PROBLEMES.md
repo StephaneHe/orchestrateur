@@ -42,7 +42,7 @@ Les fichiers de code cités sont des **pistes**, pas un diagnostic établi.
 | 15 | Exécutions en pause à vérifier après redémarrage | ouvert (à reprendre ; chef à vérifier) | — (`--pipeline-resume`) |
 | 16 | Lignes `NEEDS_USER_INPUT` coupées dans la conversation du routeur | ouvert (à confirmer) | `pipeline-engine.mjs` (`conversationExcerpt`, `routingContext`) |
 | 17 | Anciennes erreurs (`[projet C]`, prompts « ?? ») | corrigé | — |
-| 18 | Écriture dans le dossier du chef effacée pendant une étape du Routage | ouvert | `pipeline-engine.mjs` (`walkSnapshot`, `restoreFiles`) |
+| 18 | Écriture dans le dossier du chef effacée pendant une étape du Routage | corrigé en dev, non promu en prod (0.71.1) | `pipeline-engine.mjs` (`walkSnapshot`, `restoreFiles`) |
 
 ---
 
@@ -307,7 +307,17 @@ l'exécution, il est resté.
   de jugement du Routage est annulée, y compris une modification faite à la
   main par l'utilisateur (`TODO_LIST.md`, `CLAUDE.md`…). Elle est aussi
   comptée à tort comme une faute de l'étape (essai refusé, défaut signalé).
-- **Statut : ouvert.**
+- **Statut : corrigé en dev, non promu en prod (0.71.1).** Feu vert de
+  l'utilisateur du 2026-10-11 (« J'ai lu et j'accepte »). Dans un dossier
+  hors git (celui du chef), un changement constaté pendant une étape de
+  jugement n'est plus une faute de l'étape et n'est **jamais annulé** : il
+  est signalé (`system/pipeline_external_change` dans le fil du chef, ligne
+  dans le rapport). Les projets git gardent la règle stricte (refus +
+  annulation). La limitation fine des outils de ces étapes (écriture
+  réservée à l'artefact), envisagée dans la page de présentation, n'a pas été
+  faite : son effet réel avec le CLI non interactif n'est pas vérifiable
+  ici ; c'est l'option de repli « signaler sans annuler » qui est livrée.
+  Test permanent : `scripts/_test_chef_folder_writes.mjs`.
 - Code : `pipeline-engine.mjs` (`walkSnapshot`, `restoreFiles`, critère
   « lecture seule » des étapes de jugement quand `needs.git:false`). Piste :
   ne restaurer que les fichiers modifiés par le processus de l'étape, ou
