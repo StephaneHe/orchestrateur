@@ -48,6 +48,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { REPO, REGRESS_DIR, extractCode, startSandbox, waitUp, serverEnv } from './_regression_sandbox.mjs';
 import { worktreeTree, readKnownKo, checkReport } from './delivery-gate.mjs';
+import { runNode, runSuite } from './suite-runner.mjs';
 
 // Marqueurs du tour qui lance la recette (0.48.0) : jamais transmis aux suites
 // ni à l'instance de test, sinon leurs dispatches passeraient pour ce tour.
@@ -120,8 +121,8 @@ if (flag('--targeted')) {
   selection = { since, changed, ...sel };
 }
 const results = [];
-function record(stage, id, name, status, detail = '') {
-  results.push({ stage, id: `${stage}:${id}`, name, status, detail: String(detail).slice(0, 400) });
+function record(stage, id, name, status, detail = '', extra = null) {
+  results.push({ stage, id: `${stage}:${id}`, name, status, detail: String(detail).slice(0, 400), ...(extra || {}) });
   const mark = status === 'OK' ? '  ok ' : status === 'NA' ? '  na ' : '  KO ';
   console.log(`${mark} [${stage}] ${name}${detail ? ' — ' + String(detail).slice(0, 160) : ''}`);
 }
@@ -158,16 +159,9 @@ const HERMETIC_OVERLAY = [
   '_test_phase1_queue_persist.mjs', '_test_phase4b_harness.mjs',
 ];
 
-function runNode(file, cwd, timeoutMs = 300_000) {
-  return new Promise((resolve) => {
-    const c = spawn(process.execPath, [file], { cwd, env: { ...process.env, ANTHROPIC_API_KEY: '' }, windowsHide: true });
-    let out = '';
-    c.stdout.on('data', d => { out += d; });
-    c.stderr.on('data', d => { out += d; });
-    const t = setTimeout(() => { try { c.kill(); } catch {} }, timeoutMs);
-    c.on('close', (code) => { clearTimeout(t); resolve({ code, out }); });
-  });
-}
+// Full output of each failed suite (0.73.0): one file per suite, git-ignored,
+// referenced by `output` in the report entry.
+const FAILED_OUTPUT_DIR = path.join(REGRESS_DIR, 'suite-output', `${safeLabel}-${new Date().toISOString().replace(/[:.]/g, '-')}`);
 
 async function runSuites() {
   let codeRoot = REPO;
@@ -197,10 +191,10 @@ async function runSuites() {
     if (targeted && !targeted.has(f)) continue; // not touched by this change: not run, not reported
     if (EXCLUDED_SUITES[f]) { record('suite', f, `${f} (exclue : ${EXCLUDED_SUITES[f]})`, 'NA'); continue; }
     if (!suites.includes(f)) { record('suite', f, f, 'NA', 'absente de cet état du code'); continue; }
-    const t0 = Date.now();
-    const r = await runNode(path.join(dir, f), codeRoot);
-    const tail = r.out.trim().split('\n').slice(-1)[0] || '';
-    record('suite', f, f, r.code === 0 ? 'OK' : 'KO', `${tail} (${Math.round((Date.now() - t0) / 1000)} s, exit ${r.code})`);
+    const r = await runSuite(path.join(dir, f), codeRoot, { failedOutputDir: FAILED_OUTPUT_DIR });
+    const output = r.outputFile ? path.relative(REPO, r.outputFile).split(path.sep).join('/') : null;
+    record('suite', f, f, r.ok ? 'OK' : 'KO', `${r.tail} (${r.durationS} s, exit ${r.code})`, output ? { output } : null);
+    if (output) console.log(`       sortie complète : ${output}`);
   }
 }
 

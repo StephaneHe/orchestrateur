@@ -48,8 +48,22 @@ ok(!docs.full && names(docs).every(n => T.BASE_SUITES.includes(n)) && !docs.http
 ok(T.BASE_SUITES.every(b => names(docs).includes(b) || !files.includes(`scripts/${b}`)), 'le socle est toujours exécuté');
 const unk = T.selectTargets(ROOT, ['android/app/src/main/java/X.kt'], { files });
 ok(unk.full && /n'est couvert par aucune suite/.test(unk.reason), `fichier non couvert : COMPLÈTE (« ${unk.reason} »)`);
+// 0.73.0, user decision "B" (2026-10-12): a change to the non-regression
+// tooling runs the suites that cover it, never the full run.
 const run = T.selectTargets(ROOT, ['scripts/regression.mjs'], { files });
-ok(run.full && /outillage de la non-régression/.test(run.reason), 'outillage de la non-régression modifié : COMPLÈTE');
+ok(!run.full && T.TOOLING_SUITES.every(s => names(run).includes(s)) && run.http && !names(run).includes('_test_tts_text.mjs'),
+  `regression.mjs modifié : PAS la complète, les suites de l’outillage (${T.TOOLING_SUITES.join(', ')}) + l’étage HTTP qu’il définit`, run.reason);
+ok(run.suites.find(s => s.file === '_test_failed_suite_output.mjs').reasons.some(r => /outillage de la non-régression : scripts\/regression\.mjs/.test(r)), 'la raison du choix est donnée');
+for (const tf of ['scripts/regression-targets.mjs', 'scripts/suite-runner.mjs', 'scripts/delivery-gate.mjs', 'scripts/prod-jump.mjs']) {
+  const s = T.selectTargets(ROOT, [tf], { files });
+  ok(!s.full && T.TOOLING_SUITES.every(x => names(s).includes(x)) && !s.browser, `${tf} modifié : suites de l’outillage, pas la complète (${s.full ? s.reason : names(s).length + ' suites'})`);
+}
+ok(names(T.selectTargets(ROOT, ['scripts/suite-runner.mjs'], { files })).includes('_test_failed_suite_output.mjs') && names(T.selectTargets(ROOT, ['scripts/regression-targets.mjs'], { files })).includes('_test_targeted_regression.mjs'),
+  'chaque fichier d’outillage sélectionne au moins la suite qui l’exerce');
+const lock = T.selectTargets(ROOT, ['package-lock.json'], { files });
+ok(lock.full && /dépendances/.test(lock.reason), 'package-lock.json (dépendances) : toujours la complète');
+const mix = T.selectTargets(ROOT, ['scripts/regression.mjs', 'android/app/src/main/java/X.kt'], { files });
+ok(mix.full && /android/.test(mix.reason), 'outillage + un fichier couvert par rien : la complète, comme avant');
 const ui = T.selectTargets(ROOT, ['public/app.js'], { files });
 ok(!ui.full && ui.browser && ui.http, 'public/** : étages HTTP et navigateur');
 const graph = T.referenceGraph(ROOT, files);

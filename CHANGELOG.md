@@ -11,6 +11,33 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.73.0] - 2026-10-12
+
+### Changed
+
+- (server) Targeted non-regression (user decision "B"): a change to the
+  non-regression tooling (`TOOLING_FILES`: `regression.mjs`,
+  `regression-targets.mjs`, `suite-runner.mjs`, `delivery-gate.mjs`,
+  `prod-jump.mjs`) no longer falls back to the full run. `--targeted` runs
+  the suites that cover the changed file plus `TOOLING_SUITES`
+  (`_test_failed_suite_output`, `_test_targeted_regression`,
+  `_test_delivery_gate`), and the HTTP stage for `regression.mjs`, which
+  defines the HTTP checks. Only a dependency change (`package-lock.json`,
+  `FULL_TRIGGERS`) or a file covered by nothing still needs the full run.
+  The full run stays mandatory before production. Test:
+  `_test_targeted_regression.mjs`.
+
+- (server) `regression.mjs` keeps the FULL output (stdout + stderr) of every
+  failed suite in `.regress/suite-output/<label>-<timestamp>/<suite>.log`
+  (git-ignored), and the report entry of that suite gets an additive `output`
+  field with the path; the console prints it under the KO line. Until now
+  only the last line was kept, so the failed checks of `_test_model_backoff`
+  and the stack of `_test_responses_shim` were lost after the full run.
+  Green suites write nothing; `detail` and the rest of the report format are
+  unchanged. Suite execution moved to `scripts/suite-runner.mjs`
+  (`runNode`, `runSuite`, `keepFailedOutput`), used by `regression.mjs`.
+  Test: `_test_failed_suite_output.mjs`.
+
 ## [0.72.1] - 2026-10-11
 
 ### Fixed

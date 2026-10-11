@@ -497,6 +497,10 @@ arrière ».
      saisie, rail, attention, « Marquer comme répondue », volet et onglets,
      file + Retirer, recherche, briefing, pool, pièce jointe, temps réel,
      mobile, vue Projets.
+- **Sortie d'une suite en échec** (0.73.0) : gardée en entier dans
+  `.regress/suite-output/<label>-<horodatage>/<suite>.log`, référencée par
+  le champ `output` de l'entrée du rapport (`scripts/suite-runner.mjs`).
+  Recette : `_test_failed_suite_output.mjs`.
 - **Sécurité de l'instance de test** : `7777` est réécrit dans sa copie de
   `server.js` et des scripts, puis **vérifié absent** (sinon abandon). La
   production n'est jamais contactée ni redémarrée. `--restart-check` rejoue
@@ -547,7 +551,13 @@ pendant le développement, et la complète seulement avant une mise en prod ».
   - documentation (`docs/`, `*.md`) et `package.json` dont seule la version
     change : le socle seulement ;
   - **un fichier modifié couvert par rien ⇒ complète**, avec la raison ;
-    l'outillage de la non-régression lui-même (`FULL_TRIGGERS`) ⇒ complète.
+    un changement de dépendances (`FULL_TRIGGERS`, `package-lock.json`) ⇒
+    complète ;
+  - **outillage de la non-régression** (`TOOLING_FILES` : `regression.mjs`,
+    `regression-targets.mjs`, `suite-runner.mjs`, `delivery-gate.mjs`,
+    `prod-jump.mjs`), depuis 0.73.0 (décision utilisateur « B », 2026-10-12) :
+    les suites qui le couvrent plus `TOOLING_SUITES`, et l'étage HTTP pour
+    `regression.mjs` ; **jamais la complète**.
 - **Aucune livraison avec une suite exécutée rouge, ciblée comprise** : le
   hook `pre-commit` vérifie le rapport ciblé comme un complet.
 - **Avant la prod** : la complète (`mode: 'full'` ; `--no-suites` ou

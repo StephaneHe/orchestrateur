@@ -16,7 +16,9 @@
 //   - documentation (*.md, docs/**) and a version-only package.json need
 //     nothing beyond the always-run base;
 //   - a changed file covered by nothing → the FULL run (never a silent gap);
-//   - a change to the runner itself → the FULL run;
+//   - a change to the non-regression tooling (TOOLING_FILES) → the suites that
+//     cover it plus TOOLING_SUITES, never the full run (0.73.0, user decision
+//     "B"); only a dependency change (FULL_TRIGGERS) still needs the full run;
 //   - the base (BASE_SUITES) always runs.
 // The full run stays mandatory before production (scripts/prod-jump.mjs).
 // ============================================================================
@@ -31,8 +33,15 @@ export const BASE_SUITES = ['_test_repo_hygiene.mjs', '_test_user_requirements.m
 export const HTTP_ROOTS = ['server.js', 'scripts/_regression_sandbox.mjs', 'tests/fake_claude/fake_claude.mjs', 'tests/fake_codex/fake_codex.mjs'];
 /** The browser stage runs when one of these changes (or anything under public/). */
 export const BROWSER_ROOTS = ['scripts/_regression_browser.mjs', 'server.js'];
-/** Changes to the runner itself: always the full run. */
-export const FULL_TRIGGERS = ['scripts/regression.mjs', 'scripts/regression-targets.mjs', 'package-lock.json'];
+/** Changes that always need the full run (dependencies). */
+export const FULL_TRIGGERS = ['package-lock.json'];
+/**
+ * The non-regression tooling itself (0.73.0, user decision "B"): a change runs
+ * the suites that cover it, plus TOOLING_SUITES, never the full run.
+ * regression.mjs also defines the HTTP checks, so it brings the HTTP stage.
+ */
+export const TOOLING_FILES = ['scripts/regression.mjs', 'scripts/regression-targets.mjs', 'scripts/suite-runner.mjs', 'scripts/delivery-gate.mjs', 'scripts/prod-jump.mjs'];
+export const TOOLING_SUITES = ['_test_failed_suite_output.mjs', '_test_targeted_regression.mjs', '_test_delivery_gate.mjs'];
 const DOC_RE = /(^docs\/|\.md$|^\.gitignore$|^LICENSE)/i;
 const CODE_RE = /\.(mjs|js|cjs)$/i;
 const REF_RE = /[\w.-]+\.(?:mjs|cjs|js|json|html|css)\b/g;
@@ -119,13 +128,17 @@ export function selectTargets(repo, changed, { since = 'HEAD', files = repoFiles
   let http = false, browser = false;
   const httpWhy = new Set(), browserWhy = new Set(), docsOnly = [];
   for (const f of changed) {
-    if (FULL_TRIGGERS.includes(f)) return { full: true, reason: `${f} modifié (outillage de la non-régression)` };
+    if (FULL_TRIGGERS.includes(f)) return { full: true, reason: `${f} modifié (dépendances)` };
+    if (TOOLING_FILES.includes(f)) {
+      for (const s of TOOLING_SUITES) if (suites.some(x => x.endsWith(`/${s}`))) add(s, `outillage de la non-régression : ${f}`);
+      if (f === 'scripts/regression.mjs') { http = true; httpWhy.add(`${f} (définit les parcours HTTP)`); }
+    }
     if (f === 'package.json') {
       if (versionOnlyPackageChange(repo, since)) { docsOnly.push(f); continue; }
       return { full: true, reason: 'package.json modifié au-delà du numéro de version (dépendances, scripts)' };
     }
     if (DOC_RE.test(f)) { docsOnly.push(f); continue; }
-    let covered = false;
+    let covered = TOOLING_FILES.includes(f);   // its TOOLING_SUITES were added above
     for (const [s, cov] of coverage) if (cov.has(f)) { add(s, `couvre ${f}`); covered = true; }
     if (httpCover.has(f)) { http = true; httpWhy.add(f); covered = true; }
     if (f.startsWith('public/') || BROWSER_ROOTS.includes(f)) { browser = true; http = true; browserWhy.add(f); httpWhy.add(f); covered = true; }
