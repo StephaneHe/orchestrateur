@@ -99,29 +99,42 @@ export function requestControl(logsDir, run, action, by = 'utilisateur') {
   const dir = runDirOf(logsDir, run);
   if (!fs.existsSync(path.join(dir, 'run.json'))) return { ok: false, why: `exécution ${run} introuvable` };
   const f = path.join(dir, CONTROL_FILE);
-  fs.writeFileSync(`${f}.tmp`, JSON.stringify({ action, by: String(by).slice(0, 40), at: new Date().toISOString() }));
-  fs.renameSync(`${f}.tmp`, f);
+  // Unique temp name: two writers (dashboard + CLI) never share a half-written file.
+  const tmp = `${f}.${process.pid}-${Math.random().toString(36).slice(2)}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify({ action, by: String(by).slice(0, 40), at: new Date().toISOString() }));
+  fs.renameSync(tmp, f);
   return { ok: true };
 }
 
-/** Reads and consumes a pending control request (null if none). */
-export function takeControl(runDir) {
+/**
+ * Reads and consumes a pending control request (null if none). The file is
+ * first claimed by an atomic rename, so a request written between the read and
+ * the delete can never be erased unseen. With `since` (ms), a request made
+ * before that instant is stale: consumed and ignored.
+ */
+export function takeControl(runDir, since = null) {
   const f = path.join(runDir, CONTROL_FILE);
+  const claimed = `${f}.${process.pid}-${Math.random().toString(36).slice(2)}.taken`;
+  try { fs.renameSync(f, claimed); } catch { return null; }
   let c = null;
-  try { c = JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; }
-  try { fs.unlinkSync(f); } catch {}
-  return c && CONTROL_ACTIONS.includes(c.action) ? c : null;
+  try { c = JSON.parse(fs.readFileSync(claimed, 'utf8')); } catch {}
+  try { fs.unlinkSync(claimed); } catch {}
+  if (!c || !CONTROL_ACTIONS.includes(c.action)) return null;
+  if (since != null && !(Date.parse(c.at) >= since)) return null;
+  return c;
 }
 
 /**
  * Waits `ms`, polling the control file. "test" runs `onTest` (awaited) and the
  * wait goes on; "retry" ends the wait at once. Returns {reason, waitedMs}.
+ * `since` = when the wait was ANNOUNCED (event + chef notice), which precedes
+ * this call: a request made after the announcement counts even if it lands
+ * before the wait starts; only an older one is stale (0.72.1).
  */
-export async function waitBackoff({ ms, runDir, onTest = async () => {}, pollMs = 250 }) {
+export async function waitBackoff({ ms, runDir, onTest = async () => {}, pollMs = 250, since = Date.now() }) {
   const t0 = Date.now();
-  takeControl(runDir);   // a stale request from an earlier wait does not count
   for (;;) {
-    const c = takeControl(runDir);
+    const c = takeControl(runDir, since);
     if (c?.action === 'retry') return { reason: 'retry', by: c.by, waitedMs: Date.now() - t0 };
     if (c?.action === 'test') { try { await onTest(c); } catch { /* reported by onTest */ } }
     const left = ms - (Date.now() - t0);

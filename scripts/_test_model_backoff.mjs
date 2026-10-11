@@ -68,6 +68,22 @@ section('1. La règle : détection, paliers de +10 s, plafond, canal de contrôl
   t = Date.now();
   w = await B.waitBackoff({ ms: 800, runDir: dir, pollMs: 50, onTest: async () => { tested++; } });
   ok(w.reason === 'elapsed' && tested === 1 && Date.now() - t >= 750, '« tester le model » pendant l’attente : test lancé, l’attente continue');
+  // 0.72.1 race: the engine announces the wait (event + chef notice) BEFORE
+  // waitBackoff starts; a request made in between must count, an older one not.
+  let since = Date.now();
+  B.requestControl(T0, run, 'retry');                         // right after the announcement, before the wait starts
+  t = Date.now();
+  w = await B.waitBackoff({ ms: 5000, runDir: dir, pollMs: 50, since });
+  ok(w.reason === 'retry' && Date.now() - t < 2000, `demande faite entre l’annonce de l’attente et son début : honorée (${w.reason}, ${w.waitedMs} ms)`);
+  B.requestControl(T0, run, 'retry');                         // left over from an earlier wait
+  await sleep(20);
+  since = Date.now();
+  w = await B.waitBackoff({ ms: 300, runDir: dir, pollMs: 50, since });
+  ok(w.reason === 'elapsed' && !fs.existsSync(path.join(dir, B.CONTROL_FILE)), 'demande antérieure à l’annonce : périmée, ignorée et retirée');
+  const eng = fs.readFileSync(path.join(ROOT, 'scripts', 'pipeline-engine.mjs'), 'utf8');
+  const bw = eng.slice(eng.indexOf('const backoffWait = async'), eng.indexOf('const pauseForLaunch = async'));
+  ok(/const since = Date\.now\(\);/.test(bw) && bw.indexOf('const since = Date.now();') < bw.indexOf("subtype: 'pipeline_backoff'") && /waitBackoff\(\{[^}]*\bsince\b/.test(bw),
+    'moteur : l’heure de l’annonce est prise AVANT l’événement et la notification, et passée à l’attente');
   fs.rmSync(T0, { recursive: true, force: true });
 }
 
@@ -93,7 +109,10 @@ const TR = fs.mkdtempSync(path.join(os.tmpdir(), 'orch-mt-'));
 // Disposable root (same layout as _test_pipeline_covered.mjs)
 // ---------------------------------------------------------------------------
 const notices = [];
-const srv = http.createServer((req, res) => { let b = ''; req.on('data', c => { b += c; }); req.on('end', () => { try { notices.push({ path: req.url, ...JSON.parse(b) }); } catch {} res.end('{}'); }); });
+// notifyDelayMs > 0 plays a slow /api/notify (loaded machine): the engine stays
+// longer between announcing a wait and starting it (0.72.1 race).
+let notifyDelayMs = 0, backoffNoticeAnswered = false;
+const srv = http.createServer((req, res) => { let b = ''; req.on('data', c => { b += c; }); req.on('end', () => { try { notices.push({ path: req.url, ...JSON.parse(b) }); } catch {} const answer = () => { if (/pipeline-backoff/.test(b)) backoffNoticeAnswered = true; res.end('{}'); }; if (notifyDelayMs > 0) setTimeout(answer, notifyDelayMs); else answer(); }); });
 await new Promise(r => srv.listen(0, '127.0.0.1', r));
 const T = fs.mkdtempSync(path.join(os.tmpdir(), 'orch-backoff-'));
 const P = path.join(T, 'proj');
@@ -207,6 +226,38 @@ const starts = r.evs.filter(e => e.subtype === 'pipeline_step_start' && e.pipeli
 ok(r.code === 0 && starts.slice(0, 2).every(s => s.model === 'claude-opus-5-5') && starts[2]?.model === 'claude-sonnet-5-5',
   `« changer de model » : case dev.rouge changée dans la page Models → l’essai suivant prend le nouveau model, choisi par l’utilisateur (${starts.map(s => s.model).join(' → ')})`);
 routing('claude-opus-5-5');
+
+// ---------------------------------------------------------------------------
+section('4b. Notification lente (300 ms) : « tester » et « réessayer » faits dès l’annonce de l’attente ne sont jamais perdus');
+// User request (2026-10-11): « Fais les corrections qui s'imposent pour que ces
+// problemes de moteur de pipeline ne provoque plus de probleme sur ces tests. »
+// Before 0.72.1 a request made between the pipeline_backoff event and the start
+// of the wait was thrown away as "stale" (failed 2 out of 2 with 300 ms).
+notifyDelayMs = 300;
+for (const action of ['test', 'retry']) {
+  reset(); fs.writeFileSync(FAILF, '2');
+  const t1 = Date.now();
+  let early = false;
+  backoffNoticeAnswered = false;
+  r = await go([REQ, '--mode', 'leger'], { ORCH_BACKOFF_STEP_MS: '20000' }, async (evs) => {
+    const b = await waitFor(() => evs().find(e => e.subtype === 'pipeline_backoff'), 30_000);
+    const run = evs().find(e => e.type === 'user_prompt' && e.pipeline)?.pipeline.run;
+    if (!b) return;
+    // Polled every 100 ms against a 300 ms notice: the request lands while the
+    // engine is still waiting for the notice, i.e. before waitBackoff starts.
+    early = !backoffNoticeAnswered;   // the engine has not started waiting yet
+    B.requestControl(path.join(T, 'logs'), run, action, 'test');
+    if (action === 'test') {
+      const mt = await waitFor(() => evs().find(e => e.subtype === 'pipeline_model_test' && e.status !== 'running'), 15_000);
+      ok(!!mt && mt.ok === true, `« tester » demandé pendant la notification lente : test lancé (${mt ? 'journal ' + mt.logFile : 'aucun test en 15 s'})`);
+      B.requestControl(path.join(T, 'logs'), run, 'retry', 'test');
+    }
+  });
+  const e4 = ofType(r.evs, 'pipeline_backoff_end')[0];
+  ok(r.code === 0 && e4?.reason === 'retry' && e4.waitedMs < 10_000 && Date.now() - t1 < 60_000,
+    `« ${action === 'test' ? 'tester puis réessayer' : 'réessayer'} » dès l’annonce : attente de 20 s interrompue (${e4?.reason}, ${e4?.waitedMs} ms ; demande faite ${early ? 'AVANT' : 'après'} le début de l’attente)`);
+}
+notifyDelayMs = 0;
 
 // ---------------------------------------------------------------------------
 section('5. Plafond des paliers → pause ; « tester le model » répond en restant en pause ; « continuer » reprend');

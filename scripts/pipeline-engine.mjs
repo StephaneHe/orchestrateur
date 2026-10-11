@@ -1956,8 +1956,12 @@ export async function runPipeline(o) {
     return { ...t, rel };
   };
   const backoffWait = async (step, info, rec, tier, failures) => {
+    // Taken before the wait is announced: a "test"/"retry" made as soon as the
+    // event or the chef's notice appears must count, even though waitBackoff
+    // only starts after postNotify returns (up to 4 s on a slow server).
+    const since = Date.now();
     const ms = delayFor(tier, BO);
-    const until = new Date(Date.now() + ms).toISOString();
+    const until = new Date(since + ms).toISOString();
     state.backoff = { step: step.id, slot: info.slot, model: info.model, provider: info.provider, tier, maxTiers: BO.maxTiers, waitMs: ms, until, failures, stderrLog: rec.stderrLog || null };
     saveState();
     const text = `⏳ ${info.model || 'le model'} ne démarre pas (${failures} erreurs de lancement de suite, étape « ${plainStep(step.id)} ») : `
@@ -1966,7 +1970,7 @@ export async function runPipeline(o) {
     writeEvent({ type: 'system', subtype: 'pipeline_backoff', pipeline: { run, step: step.id, slot: info.slot }, model: info.model, provider: info.provider,
       tier, maxTiers: BO.maxTiers, waitMs: ms, until, failures, why: rec.why, stderrLog: rec.stderrLog || null, text });
     await postNotify(root, 'chef', `[PIPELINE — ${projectName} — ${run}] ${text}\nCommandes : node scripts/model-backoff.mjs ${run} test (tester, avec journal) · node scripts/model-backoff.mjs ${run} retry (réessayer maintenant) · page Models, case « ${info.slot} » (changer de model, puis retry).`, 'pipeline-backoff');
-    const w = await waitBackoff({ ms, runDir, onTest: () => modelTestFor(info, `${projectName} ${run} étape ${step.id} (attente palier ${tier})`) });
+    const w = await waitBackoff({ ms, runDir, since, onTest:() => modelTestFor(info, `${projectName} ${run} étape ${step.id} (attente palier ${tier})`) });
     state.backoff = null;
     saveState();
     writeEvent({ type: 'system', subtype: 'pipeline_backoff_end', pipeline: { run, step: step.id, slot: info.slot }, reason: w.reason, waitedMs: w.waitedMs,

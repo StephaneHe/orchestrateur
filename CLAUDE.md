@@ -1601,6 +1601,10 @@ nouvel essai ».
   - après 6 paliers, pause `launch`.
   - Réglage en test : `ORCH_BACKOFF_STEP_MS`, `ORCH_BACKOFF_MAX_TIERS`.
 - **Choix** : `logs/runs/<run>/backoff-control.json`.
+  - Depuis 0.72.1, une demande compte dès l'annonce de l'attente
+    (`since`, pris avant l'événement `pipeline_backoff` et la notification du
+    chef) ; seule une demande antérieure est périmée. Le fichier est pris par
+    un renommage atomique avant lecture (`takeControl`).
   - CLI : `node scripts/model-backoff.mjs <run> status|retry|test`.
   - Après redémarrage : route `POST /api/pipeline-runs/:run/backoff` et
     boutons de la frise.

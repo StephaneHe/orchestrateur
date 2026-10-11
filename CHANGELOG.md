@@ -11,6 +11,26 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.72.1] - 2026-10-11
+
+### Fixed
+
+- (server) Launch-failure back-off: a "test the model" or "retry now" request
+  made right after a wait was announced could be thrown away unseen. The
+  engine writes the `pipeline_backoff` event and notifies the chef BEFORE the
+  wait starts, and `waitBackoff` began by discarding any pending request as
+  "stale"; a request landing in between (a few ms, up to 4 s with a slow
+  `/api/notify`) was lost, and the wait ran to its end. The wait now gets the
+  announcement time (`since`, taken before the event): only a request older
+  than that is stale. `takeControl` claims the control file by an atomic
+  rename before reading it, so a request written between the read and the
+  delete can no longer be erased; `requestControl` uses a unique temp file.
+  This was the intermittent KO of `_test_model_backoff.mjs` (3 of 43 checks)
+  in the full non-regression run, reproduced 2 out of 2 with a 300 ms notice.
+  New checks: request between announcement and wait honoured, older request
+  ignored, engine order, and the slow-notice (300 ms) scenario for "test" and
+  "retry" (4 failures before the fix, green after).
+
 ## [0.72.0] - 2026-10-11
 
 ### Added
