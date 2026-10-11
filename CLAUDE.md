@@ -482,7 +482,8 @@ arrière ».
 - **Avant** de modifier : poser un tag annoté de retour
   (`git tag -a pre-<sujet>-v<X.Y.Z> -m …`), puis lancer
   `node scripts/regression.mjs --ref <ce tag> --out .regress/report-avant.json`.
-- **Après** : lancer `node scripts/regression.mjs --out .regress/report-apres.json`,
+- **Après** (en développement, `--targeted` suffit : voir la section 0.72.0
+  plus bas) : lancer `node scripts/regression.mjs --out .regress/report-apres.json`,
   puis `node scripts/regression.mjs --compare .regress/report-avant.json
   .regress/report-apres.json --md <rapport.md>`. La comparaison sort en code
   non nul si une ligne passe de OK à autre chose.
@@ -522,6 +523,46 @@ arrière ».
   - Donc : écrire version, CHANGELOG et docs **avant** la non-régression
     finale, puis `git add -A` et commit. Le rapport doit porter sur le
     contenu exact.
+
+## Ciblée pendant le développement, complète avant la prod (0.72.0)
+
+Demande utilisateur (2026-10-11) : « Implemente une Non-régression ciblée
+pendant le développement, et la complète seulement avant une mise en prod ».
+
+- **Pendant le développement** : `node scripts/regression.mjs --targeted
+  [--since <ref>]` (par défaut, le travail non commité ; `--since <tag de
+  retour>` pour tout un sujet). Sélection déterministe
+  (`scripts/regression-targets.mjs`, `selectTargets`), affichée avec la
+  raison de chaque choix et gardée dans le rapport (`mode: 'targeted'`,
+  `selection`) :
+  - le **socle** (`BASE_SUITES`, quelques secondes) tourne toujours :
+    hygiène du dépôt, registre des exigences, garde-fou de livraison,
+    sélection ciblée ;
+  - une suite couvre les fichiers qu'elle **nomme** et la clôture des
+    **imports réels** de ses imports (une simple mention dans du code
+    n'entraîne pas tout le dépôt) ;
+  - étage HTTP : `HTTP_ROOTS` (server.js, bac à sable, doublures) et ce
+    qu'ils couvrent ; étage navigateur : `public/**`,
+    `_regression_browser.mjs`, server.js ;
+  - documentation (`docs/`, `*.md`) et `package.json` dont seule la version
+    change : le socle seulement ;
+  - **un fichier modifié couvert par rien ⇒ complète**, avec la raison ;
+    l'outillage de la non-régression lui-même (`FULL_TRIGGERS`) ⇒ complète.
+- **Aucune livraison avec une suite exécutée rouge, ciblée comprise** : le
+  hook `pre-commit` vérifie le rapport ciblé comme un complet.
+- **Avant la prod** : la complète (`mode: 'full'` ; `--no-suites` ou
+  `--no-browser` donnent `partial`) sur exactement l'arbre du tag :
+  `node scripts/regression.mjs --ref vX.Y.Z`. Puis
+  `node scripts/prod-jump.mjs --tag vX.Y.Z --prod I:\orchestrateur
+  [--apply]` refuse sans elle (et si la prod est modifiée, un tour en cours,
+  pas d'avance rapide), sinon affiche le plan ; `--apply` (décision de
+  l'utilisateur) pose `prod-before-vX.Y.Z` et fait l'avance rapide, sans
+  jamais redémarrer. Contrôle seul : `node scripts/delivery-gate.mjs
+  prod-check vX.Y.Z`. Un rapport antérieur à 0.72.0 (sans `mode`) ne compte
+  pas.
+- Le tag de retour avant modification et le test d'exigence restent
+  obligatoires.
+- Recette : `_test_targeted_regression.mjs`.
 
 ## Vue « Projets » et retour arrière (0.29.0)
 

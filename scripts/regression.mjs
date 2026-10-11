@@ -24,6 +24,9 @@
 //   node scripts/regression.mjs                      arbre de travail (défaut)
 //   node scripts/regression.mjs --ref <tag|sha>      même batterie sur un ancien état
 //   node scripts/regression.mjs --dir <chemin>       … sur un dossier (ex. worktree d'un revert)
+//   node scripts/regression.mjs --targeted [--since <ref>]  CIBLÉE (développement) : socle + suites/étages
+//                                                    qui couvrent les fichiers modifiés ; complète si un fichier
+//                                                    n'est couvert par rien. La prod exige la complète (prod-jump.mjs)
 //   node scripts/regression.mjs --no-browser         sans navigateur
 //   node scripts/regression.mjs --no-suites          sans les suites node
 //   node scripts/regression.mjs --shots <dossier>    enregistre les captures
@@ -98,6 +101,24 @@ if (flag('--compare')) {
 const source = opt('--ref') ? { ref: opt('--ref') } : opt('--dir') ? { dir: opt('--dir') } : { worktree: true };
 const label = opt('--ref') || (opt('--dir') ? path.basename(path.resolve(opt('--dir'))) : 'worktree');
 const safeLabel = label.replace(/[^A-Za-z0-9._-]/g, '_');
+// Targeted run (0.72.0): only the suites and stages touched by the changed
+// files; null = full run. A change covered by nothing falls back to full.
+let selection = null;
+if (flag('--targeted')) {
+  if (!source.worktree) { console.error('--targeted ne vaut que pour l’état de travail (pas avec --ref / --dir)'); process.exit(64); }
+  const { changedFiles, selectTargets } = await import('./regression-targets.mjs');
+  const since = opt('--since') || 'HEAD';
+  const changed = changedFiles(REPO, since);
+  const sel = selectTargets(REPO, changed, { since });
+  console.log(`\n=== Non-régression CIBLÉE — ${changed.length} fichier(s) modifié(s) depuis ${since}`);
+  if (sel.full) console.log(`   → bascule sur la COMPLÈTE : ${sel.reason}`);
+  else {
+    for (const s of sel.suites) console.log(`   suite ${s.file} — ${s.reasons.slice(0, 3).join(' ; ')}${s.reasons.length > 3 ? ` (+${s.reasons.length - 3})` : ''}`);
+    console.log(`   étage HTTP : ${sel.http ? `oui (${sel.reasons.http.slice(0, 4).join(', ')})` : 'non'} · navigateur : ${sel.browser ? `oui (${sel.reasons.browser.slice(0, 4).join(', ')})` : 'non'}`);
+    if (sel.docsOnly.length) console.log(`   sans test propre (docs, version) : ${sel.docsOnly.join(', ')}`);
+  }
+  selection = { since, changed, ...sel };
+}
 const results = [];
 function record(stage, id, name, status, detail = '') {
   results.push({ stage, id: `${stage}:${id}`, name, status, detail: String(detail).slice(0, 400) });
@@ -171,7 +192,9 @@ async function runSuites() {
   const suites = fs.readdirSync(dir).filter(f => /^_test_.*\.mjs$/.test(f)).sort();
   // Une suite présente d'un seul côté doit apparaître des deux (NA de l'autre).
   const known = new Set([...suites, ...fs.readdirSync(path.join(REPO, 'scripts')).filter(f => /^_test_.*\.mjs$/.test(f))]);
+  const targeted = selection && !selection.full ? new Set(selection.suites.map(s => s.file)) : null;
   for (const f of [...known].sort()) {
+    if (targeted && !targeted.has(f)) continue; // not touched by this change: not run, not reported
     if (EXCLUDED_SUITES[f]) { record('suite', f, `${f} (exclue : ${EXCLUDED_SUITES[f]})`, 'NA'); continue; }
     if (!suites.includes(f)) { record('suite', f, f, 'NA', 'absente de cet état du code'); continue; }
     const t0 = Date.now();
@@ -1381,9 +1404,13 @@ async function main() {
   const t0 = Date.now();
   if (!flag('--no-suites')) { console.log('── 1. Suites node'); await runSuites(); }
 
-  console.log('\n── 2. Instance de test (autre port, fixtures, faux claude)');
+  const narrowed = selection && !selection.full;
+  const runHttp = !narrowed || selection.http;
+  const runBrowser = !flag('--no-browser') && (!narrowed || selection.browser);
+  if (!runHttp) console.log('\n── 2. Instance de test : non touchée par cette modification (ciblée)');
+  else console.log('\n── 2. Instance de test (autre port, fixtures, faux claude)');
   let sb = null;
-  try {
+  if (runHttp) try {
     sb = await startSandbox(source, safeLabel, { port: opt('--port') || null });
     console.log(`   instance : ${sb.url}  (${sb.root})`);
     record('http', 'boot', 'Démarrage de server.js sur une instance isolée', 'OK', `port ${sb.port}`);
@@ -1393,7 +1420,7 @@ async function main() {
   if (sb) {
     try {
       await apiChecks(sb);
-      if (!flag('--no-browser')) {
+      if (runBrowser) {
         console.log('\n── 3. Navigateur (Edge / Playwright)');
         const { browserChecks } = await import('./_regression_browser.mjs');
         await browserChecks(sb, { check, record, NA, assert, sleep, until, shots: opt('--shots') });
@@ -1413,9 +1440,14 @@ async function main() {
   const tree = source.worktree ? worktreeTree(REPO)
     : source.ref ? (spawnSync('git', ['-C', REPO, 'rev-parse', `${source.ref}^{tree}`], { encoding: 'utf8' }).stdout || '').trim() || null : null;
   const commit = (spawnSync('git', ['-C', REPO, 'rev-parse', source.ref || 'HEAD'], { encoding: 'utf8' }).stdout || '').trim() || null;
-  const report = { label, at: new Date().toISOString(), durationS: Math.round((Date.now() - t0) / 1000), tree, commit, counts: c, results };
+  // "full" = every stage on every suite: the only kind a production jump accepts.
+  const mode = narrowed ? 'targeted' : (flag('--no-suites') || flag('--no-browser')) ? 'partial' : 'full';
+  const report = { label, at: new Date().toISOString(), durationS: Math.round((Date.now() - t0) / 1000), tree, commit, mode,
+    ...(selection ? { selection: { since: selection.since, changed: selection.changed, full: !!selection.full, reason: selection.reason || null,
+      suites: selection.suites || null, http: selection.http ?? true, browser: selection.browser ?? true } } : {}),
+    counts: c, results };
   fs.writeFileSync(out, JSON.stringify(report, null, 2));
-  console.log(`\n=== ${c.OK} OK · ${c.KO} KO · ${c.NA} NA — ${Math.round((Date.now() - t0) / 1000)} s — rapport : ${out}`);
+  console.log(`\n=== ${mode === 'full' ? 'COMPLÈTE' : mode === 'targeted' ? 'CIBLÉE' : 'PARTIELLE'} : ${c.OK} OK · ${c.KO} KO · ${c.NA} NA — ${Math.round((Date.now() - t0) / 1000)} s — rapport : ${out}`);
   const gate = checkReport(report, { knownKo: readKnownKo(REPO) });
   for (const k of gate.accepted) console.log(`KO accepté (docs/known-ko.json) : ${k.id} — ${k.reason}`);
   console.log(`=== LIVRAISON : ${gate.ok ? 'AUTORISÉE' : `REFUSÉE — ${gate.reasons.join(' ; ')}`}`);

@@ -78,6 +78,26 @@ export function checkReport(report, { tree, knownKo = [] } = {}) {
   return { ok: !reasons.length, reasons, accepted };
 }
 
+/**
+ * Production gate (0.72.0): only a FULL run (every suite, HTTP and browser
+ * stages) on exactly the jumped tree, with no KO, lets a version go to prod.
+ * A targeted or partial run is fine for development, never for production.
+ */
+export function checkProdReport(report, { tree, knownKo = [] } = {}) {
+  const v = checkReport(report, { tree, knownKo });
+  if (report && report.mode !== 'full') v.reasons.unshift(`non-régression ${report.mode === 'targeted' ? 'CIBLÉE' : report.mode || 'sans mode'} : la mise en prod exige la COMPLÈTE`);
+  return { ...v, ok: !v.reasons.length };
+}
+
+/** The most recent FULL report under .regress/ made on `tree`, or null. */
+export function findFullReport(repo, tree) {
+  const dir = path.join(repo, '.regress');
+  let files = [];
+  try { files = fs.readdirSync(dir).filter(f => /^report-.*\.json$/.test(f)).map(f => path.join(dir, f)); } catch { return null; }
+  return files.map(f => { try { return { f, r: JSON.parse(fs.readFileSync(f, 'utf8')), m: fs.statSync(f).mtimeMs }; } catch { return null; } })
+    .filter(x => x && x.r.tree === tree && x.r.mode === 'full').sort((a, b) => b.m - a.m)[0] || null;
+}
+
 /** The most recent report under .regress/ made on `tree`, or the most recent one. */
 export function findReport(repo, tree) {
   const dir = path.join(repo, '.regress');
@@ -133,7 +153,19 @@ async function cli() {
     printVerdict(v, found ? path.basename(found.f) : null);
     process.exit(v.ok ? 0 : 1);
   }
-  console.error('usage: delivery-gate.mjs check [--report <f>] [--tree <sha>] | pre-commit | install-hook');
+  if (cmd === 'prod-check') {
+    const ref = rest.find(a => !a.startsWith('--') && a !== opt('--repo') && a !== opt('--report'));
+    if (!ref) { console.error('usage: delivery-gate.mjs prod-check <tag|commit> [--report <f>]'); process.exit(64); }
+    const tree = git(repo, ['rev-parse', `${ref}^{tree}`]).out;
+    if (!tree) { console.error(`[delivery-gate] référence inconnue : ${ref}`); process.exit(64); }
+    const file = opt('--report');
+    const found = file ? { f: file, r: JSON.parse(fs.readFileSync(file, 'utf8')) } : findFullReport(repo, tree);
+    const v = found ? checkProdReport(found.r, { tree, knownKo: readKnownKo(repo) })
+      : { ok: false, reasons: [`aucune non-régression COMPLÈTE sur ${ref} (arbre ${tree.slice(0, 10)}) : lancer node scripts/regression.mjs --ref ${ref}`], accepted: [] };
+    printVerdict(v, found ? `${path.basename(found.f)}, mise en prod de ${ref}` : `mise en prod de ${ref}`);
+    process.exit(v.ok ? 0 : 1);
+  }
+  console.error('usage: delivery-gate.mjs check [--report <f>] [--tree <sha>] | prod-check <ref> | pre-commit | install-hook');
   process.exit(64);
 }
 

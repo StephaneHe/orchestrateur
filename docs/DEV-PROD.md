@@ -43,8 +43,14 @@ Local, never committed files of the dev checkout:
   (run in `I:\Dev\orchestrateur-dev`). The sandbox rewrites 7777 in its copy
   of `server.js` and the scripts, and verifies that none is left. `--port`
   refuses 7777 and a busy port.
-- Before any release of `dev`, the full regression runs in the dev checkout:
-  `node scripts/regression.mjs`.
+- During development, the **targeted** regression is enough (0.72.0):
+  `node scripts/regression.mjs --targeted [--since <tag>]` runs the always-run
+  base plus the suites and stages that cover the changed files, and falls back
+  to the full run when a changed file is covered by nothing. A targeted run
+  with a KO still refuses the delivery commit (git hook).
+- The **full** regression (`node scripts/regression.mjs`, every suite, HTTP and
+  browser stages) is required before production, on exactly the tag's
+  content: `node scripts/regression.mjs --ref vX.Y.Z`.
 
 ## Jumps (dev → prod)
 
@@ -53,12 +59,20 @@ when.
 
 1. In `I:\Dev\orchestrateur-dev`:
    - the version `X.Y.Z` is bumped with its CHANGELOG entry ;
-   - the full regression is green ;
    - tag `vX.Y.Z` (annotated) ;
+   - the FULL regression on the tag is green:
+     `node scripts/regression.mjs --ref vX.Y.Z` (a targeted or partial run
+     does not count) ;
+   - `node scripts/prod-jump.mjs --tag vX.Y.Z --prod I:\orchestrateur` checks
+     everything (full green report on the tag's tree, production clean, no
+     turn running, fast-forward possible) and prints the plan ;
    - push `dev` and the tag to `origin`, with the user's authorisation.
 2. In `I:\orchestrateur`, when **no orchestrator turn runs**
    (`node scripts/fleet-status.mjs`, no `logs/orchestrateur.turnlock`, empty
    queue). The scripts are read live by every turn of the fleet.
+   `node scripts/prod-jump.mjs --tag vX.Y.Z --prod I:\orchestrateur --apply`
+   (on the user's decision) refuses without a full green run, then does the
+   first three commands below; it never restarts anything.
    ```
    git tag -a prod-before-vX.Y.Z -m "production before the jump to vX.Y.Z"
    git fetch origin --tags

@@ -11,6 +11,39 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.72.0] - 2026-10-11
+
+### Added
+
+- (server) Targeted non-regression for development:
+  `node scripts/regression.mjs --targeted [--since <ref>]`. A deterministic
+  selection (`scripts/regression-targets.mjs`) runs the always-run base
+  (repo hygiene, requirements registry, delivery gate, targeted selection)
+  plus the suites that name a changed file or import it (real import closure),
+  the HTTP stage when server.js, the sandbox, the test doubles or what they
+  import change, and the browser stage for `public/**`. Docs and a
+  version-only `package.json` need the base only. A changed file covered by
+  nothing, or a change to the regression tooling, falls back to the full run.
+  The selection and the reason for each suite are printed and stored in the
+  report (`mode`, `selection`).
+- (server) `scripts/prod-jump.mjs --tag vX.Y.Z --prod <path> [--apply]`: the
+  production jump refuses without a FULL green regression made on exactly the
+  tag's tree (`mode: 'full'`, no KO except the ones listed in
+  `docs/known-ko.json`), with a dirty production, a running orchestrator turn
+  or no fast-forward. Without `--apply` it prints the plan only; with it, it
+  tags `prod-before-vX.Y.Z` and fast-forwards, never restarting anything.
+- (server) `node scripts/delivery-gate.mjs prod-check <ref>`: the same
+  production check, alone.
+- (server) Regression reports carry `mode` (`full`, `targeted`, `partial` for
+  `--no-suites` / `--no-browser`) and the commit.
+
+### Changed
+
+- (server) A targeted run with a KO still refuses the delivery commit (git
+  hook), like a full run. CLAUDE.md and `docs/DEV-PROD.md`: targeted during
+  development, full before production. Reports older than 0.72.0 (no `mode`)
+  do not count for production.
+
 ## [0.71.3] - 2026-10-11
 
 Incident signalé par l'utilisateur : « La non-régression du n° 8 n'était pas
