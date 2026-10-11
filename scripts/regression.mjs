@@ -44,6 +44,7 @@ import http from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { REPO, REGRESS_DIR, extractCode, startSandbox, waitUp, serverEnv } from './_regression_sandbox.mjs';
+import { worktreeTree, readKnownKo, checkReport } from './delivery-gate.mjs';
 
 // Marqueurs du tour qui lance la recette (0.48.0) : jamais transmis aux suites
 // ni à l'instance de test, sinon leurs dispatches passeraient pour ce tour.
@@ -79,10 +80,16 @@ if (flag('--compare')) {
   }
   const summary = (r) => { const c = { OK: 0, KO: 0, NA: 0 }; for (const x of r.results) c[x.status]++; return `${c.OK} OK · ${c.KO} KO · ${c.NA} NA`; };
   lines.push('', `Avant : ${summary(a)} — Après : ${summary(b)} — Régressions : ${regressions}`);
+  // 0.71.3: a KO in the AFTER report blocks too, even if it already existed
+  // before (incident n° 8) — unless listed with its reason in docs/known-ko.json.
+  const gate = checkReport(b, { knownKo: readKnownKo(REPO) });
+  for (const k of gate.accepted) lines.push(`KO accepté (docs/known-ko.json) : ${k.id} — ${k.reason}`);
+  for (const r of gate.reasons) lines.push(`**REFUS** : ${r}`);
+  lines.push(`Livraison : ${regressions || !gate.ok ? 'REFUSÉE' : 'AUTORISÉE'}`);
   const md = lines.join('\n');
   if (opt('--md')) fs.writeFileSync(opt('--md'), md + '\n');
   console.log(md);
-  process.exit(regressions ? 1 : 0);
+  process.exit(regressions || !gate.ok ? 1 : 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1401,8 +1408,17 @@ async function main() {
   const c = { OK: 0, KO: 0, NA: 0 };
   for (const r of results) c[r.status]++;
   const out = opt('--out') || path.join(REGRESS_DIR, `report-${safeLabel}.json`);
-  fs.writeFileSync(out, JSON.stringify({ label, at: new Date().toISOString(), durationS: Math.round((Date.now() - t0) / 1000), counts: c, results }, null, 2));
+  // The tested content is recorded: a delivery is checked against EXACTLY this
+  // tree by scripts/delivery-gate.mjs (0.71.3).
+  const tree = source.worktree ? worktreeTree(REPO)
+    : source.ref ? (spawnSync('git', ['-C', REPO, 'rev-parse', `${source.ref}^{tree}`], { encoding: 'utf8' }).stdout || '').trim() || null : null;
+  const commit = (spawnSync('git', ['-C', REPO, 'rev-parse', source.ref || 'HEAD'], { encoding: 'utf8' }).stdout || '').trim() || null;
+  const report = { label, at: new Date().toISOString(), durationS: Math.round((Date.now() - t0) / 1000), tree, commit, counts: c, results };
+  fs.writeFileSync(out, JSON.stringify(report, null, 2));
   console.log(`\n=== ${c.OK} OK · ${c.KO} KO · ${c.NA} NA — ${Math.round((Date.now() - t0) / 1000)} s — rapport : ${out}`);
+  const gate = checkReport(report, { knownKo: readKnownKo(REPO) });
+  for (const k of gate.accepted) console.log(`KO accepté (docs/known-ko.json) : ${k.id} — ${k.reason}`);
+  console.log(`=== LIVRAISON : ${gate.ok ? 'AUTORISÉE' : `REFUSÉE — ${gate.reasons.join(' ; ')}`}`);
   process.exit(c.KO ? 1 : 0);
 }
 

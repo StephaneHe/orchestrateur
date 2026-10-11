@@ -508,6 +508,20 @@ arrière ».
 - Le contrôle du token gate suit le mode **réel** de `server.js`. Depuis le
   2026-09-07, `TOKEN_GATE_ENABLED = false` (décision utilisateur, commit
   `3bc33bc`) : le rapport le signale au lieu de le masquer.
+- **Aucune livraison avec une suite rouge** (0.71.3, incident du n° 8 :
+  « Le correctif a pourtant été livré. […] Ca ne devrait pas arriver ») :
+  - `scripts/delivery-gate.mjs`, installé comme hook git `pre-commit` par
+    `node scripts/delivery-gate.mjs install-hook`, à faire dans chaque clone.
+    Il refuse un commit de livraison (version de `package.json` changée) sans
+    rapport vert fait sur exactement ce contenu (`report.tree` = arbre
+    indexé).
+  - Un KO n'est accepté que s'il est listé, avec sa raison, dans
+    `docs/known-ko.json`, et il est alors affiché.
+  - `--compare` refuse aussi un KO préexistant (« Livraison : REFUSÉE »).
+  - Recette : `_test_delivery_gate.mjs`.
+  - Donc : écrire version, CHANGELOG et docs **avant** la non-régression
+    finale, puis `git add -A` et commit. Le rapport doit porter sur le
+    contenu exact.
 
 ## Vue « Projets » et retour arrière (0.29.0)
 

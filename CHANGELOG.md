@@ -11,6 +11,38 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.71.3] - 2026-10-11
+
+Incident signalé par l'utilisateur : « La non-régression du n° 8 n'était pas
+entièrement verte : 168 OK, 1 KO, 3 NA. […] Le correctif a pourtant été
+livré. => Comment est-ce possible ? Ca ne devrait pas arriver ».
+
+### Fixed
+- (tests) `_test_pool_chef_dispatch.mjs` plantait en 1 s (exit 1) dans tout
+  clone neuf : il lisait la taille de `logs/orchestrateur.jsonl`, le log de
+  la prod, absent de la dev. L'échec existait depuis la création de la dev
+  (0.68.0), dans tous les rapports, avant comme après le n° 8. Un log absent
+  compte maintenant comme vide, et ne doit pas apparaître après coup.
+
+### Added
+- (tooling) **Aucune livraison avec une suite rouge** :
+  `scripts/delivery-gate.mjs`.
+  - Le hook git `pre-commit` (`delivery-gate.mjs install-hook`) refuse un
+    commit de livraison (version de `package.json` changée) dans trois cas :
+    aucun rapport de non-régression fait sur exactement ce contenu (même arbre
+    git), ou un rapport qui contient un KO.
+  - Un KO déjà connu n'est accepté que s'il est listé, avec sa raison, dans
+    `docs/known-ko.json` (vide aujourd'hui), et il est toujours affiché.
+- (tooling) `regression.mjs` inscrit l'arbre (`tree`) et le commit testés dans
+  son rapport, et affiche « LIVRAISON : AUTORISÉE / REFUSÉE ».
+- (tests) `scripts/_test_delivery_gate.mjs` (11 contrôles).
+
+### Changed
+- (tooling) `regression.mjs --compare` ne dit plus seulement « Régressions :
+  0 » : un KO présent dans le rapport « après », même s'il existait déjà
+  avant, rend la livraison REFUSÉE (code 1). C'est le trou qui avait laissé
+  passer le n° 8.
+
 ## [0.71.2] - 2026-10-11
 
 Feu vert de l'utilisateur : « 3. J'ai lu et j'accepte » (ordre 8, puis 18,

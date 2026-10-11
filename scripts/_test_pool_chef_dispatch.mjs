@@ -189,7 +189,11 @@ scenario('codex : choix du model (flag > projet > défaut config > config.toml d
   const plain = (args) => spawnSync(process.execPath, [DISPATCH, ...args], {
     cwd: ROOT, encoding: 'utf8', env: { ...process.env, ANTHROPIC_API_KEY: '', DISPATCH_SLOT: '' },
   });
-  const logBefore = fs.statSync(path.join(ROOT, 'logs', 'orchestrateur.jsonl')).size;
+  // The musician's own log may not exist (fresh clone, dev instance): a missing
+  // file counts as empty, and must still be missing or empty afterwards.
+  const logFile = path.join(ROOT, 'logs', 'orchestrateur.jsonl');
+  const sizeOf = (f) => { try { return fs.statSync(f).size; } catch { return 0; } };
+  const logBefore = sizeOf(logFile);
   let r = plain(['orchestrateur', '--provider', 'codex', '--model', 'claude-opus-5', 'bonjour']);
   ok(r.status === 64 && /model Claude/.test(r.stderr) && /gpt-6-astra/.test(r.stderr), 'model Claude + --provider codex ⇒ refus clair (exit 64)');
   r = plain(['orchestrateur', '--model', 'gpt-6-astra', 'bonjour']);
@@ -198,8 +202,9 @@ scenario('codex : choix du model (flag > projet > défaut config > config.toml d
   // vérifie pas son égalité, seulement qu'aucune ligne « bonjour » n'y est née.
   // Read only what was appended (the real log can exceed the max string length).
   const tail = (() => {
-    const f = path.join(ROOT, 'logs', 'orchestrateur.jsonl');
-    const len = Math.max(0, fs.statSync(f).size - logBefore);
+    const f = logFile;
+    if (!fs.existsSync(f)) return '';
+    const len = Math.max(0, sizeOf(f) - logBefore);
     const fd = fs.openSync(f, 'r'); const b = Buffer.alloc(len);
     try { fs.readSync(fd, b, 0, len, logBefore); } finally { fs.closeSync(fd); }
     return b.toString('utf8');
