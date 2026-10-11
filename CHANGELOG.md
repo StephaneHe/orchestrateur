@@ -12,7 +12,14 @@ server/dashboard and the Android companion app. Entries are prefixed
 ## [Unreleased]
 
 ### Changed
-- (docs) `docs/ROUTAGE-PROBLEMES.md` : la référence devient
+- (docs) `docs/ROUTAGE-PROBLEMES.md` (2026-10-11) : **ce document fait foi**
+  (décision de l'utilisateur, « ok »). La ligne « Référence : » le désigne,
+  et `I:\Dev\Chef\docs\ROUTAGE-PROBLEMES.md` en est une copie identique,
+  déposée hors exécution Routage du chef. La section « Décisions de
+  l'utilisateur » est retirée. Cela rectifie ce qu'avait introduit `09c6e54`,
+  sans revert.
+- (docs) `docs/ROUTAGE-PROBLEMES.md` (2026-10-10, rectifié depuis, voir
+  ci-dessus) : la référence devient
   `I:\Dev\Chef\docs\ROUTAGE-PROBLEMES.md` (réponse « Oui » de l'utilisateur
   du 2026-10-10), dont le dépôt garde une copie identique. Ajout d'une section
   « Décisions de l'utilisateur » : le réseau local 10.0.0.x bloqué (403) est
