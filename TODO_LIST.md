@@ -177,3 +177,21 @@ Suivi léger des tâches en cours / différées côté orchestrateur.
   cascade sans déclencher de vraie limite. La chaîne complète (flag `claude-limited.until`
   → `runNvidiaFailover` → events écrits dans le log projet) se validera à la prochaine
   vraie limite de session Claude.
+- [ ] (2026-10-12 08:40) **EN ATTENTE (2026-10-12) : corriger le défaut de reprise forcée du
+  Routage.** Demande de l'utilisateur : « note ce probleme pour qu'on le resolve ulterieurement ».
+  À NOTER seulement, pas à corriger maintenant (diagnostic en lecture seule du 2026-10-12, 08:16 UTC).
+  - `scripts/routage-pending.mjs` l.108–114, `detectReprise()` : force `reprise` dès que le
+    texte d'une tâche CITE l'identifiant d'une exécution en pause du projet (`RUN_ID_RE` dans
+    `t.demande`), même pour dire de NE PAS la reprendre.
+  - `scripts/pipeline-engine.mjs` l.737 : écrase la décision du Décomposeur avec cette valeur,
+    sans regarder le pipeline demandé.
+  - `scripts/routage-pending.mjs` l.218 : passe `--pipeline-resume`, donc PAS le `--pipeline`
+    demandé (ex. `redaction`).
+  - `scripts/dispatch.mjs` l.1187–1206 : avec `--pipeline-resume`, la reconnaissance de
+    « abandonner » (`answerPausedRun`) est sautée, donc l'abandon n'a jamais lieu.
+  - Incident observé : l'exécution Développement léger d'un projet ([projet], 2026-10-09) n'a pas
+    pu être abandonnée et a été reprise deux fois par erreur (07:49 et 07:56 UTC le 2026-10-12 ;
+    la 2e, lancée à la place d'une Rédaction neuve, a été tuée par le chef).
+  - Correctif attendu plus tard : `detectReprise` ne se fie qu'au champ `reprise` explicite (plus
+    au texte), et `--pipeline-resume` ne court-circuite plus « abandonner » ; un test de
+    non-régression pour chacun (et la ligne du registre des exigences).
