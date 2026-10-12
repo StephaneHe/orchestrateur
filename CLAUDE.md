@@ -557,7 +557,11 @@ pendant le développement, et la complète seulement avant une mise en prod ».
     `regression-targets.mjs`, `suite-runner.mjs`, `delivery-gate.mjs`,
     `prod-jump.mjs`), depuis 0.73.0 (décision utilisateur « B », 2026-10-12) :
     les suites qui le couvrent plus `TOOLING_SUITES`, et l'étage HTTP pour
-    `regression.mjs` ; **jamais la complète**.
+    `regression.mjs` ; **jamais la complète** ;
+  - **code Android** (`android/`, `OUT_OF_SCOPE`), depuis 0.73.2 (décision
+    utilisateur, 2026-10-12) : **hors périmètre** de la non-régression, aucune
+    suite au-delà du socle, jamais la complète ; raison affichée « code
+    Android : hors périmètre de la non-régression ».
 - **Aucune livraison avec une suite exécutée rouge, ciblée comprise** : le
   hook `pre-commit` vérifie le rapport ciblé comme un complet.
 - **Avant la prod** : la complète (`mode: 'full'` ; `--no-suites` ou

@@ -117,6 +117,7 @@ if (flag('--targeted')) {
     for (const s of sel.suites) console.log(`   suite ${s.file} — ${s.reasons.slice(0, 3).join(' ; ')}${s.reasons.length > 3 ? ` (+${s.reasons.length - 3})` : ''}`);
     console.log(`   étage HTTP : ${sel.http ? `oui (${sel.reasons.http.slice(0, 4).join(', ')})` : 'non'} · navigateur : ${sel.browser ? `oui (${sel.reasons.browser.slice(0, 4).join(', ')})` : 'non'}`);
     if (sel.docsOnly.length) console.log(`   sans test propre (docs, version) : ${sel.docsOnly.join(', ')}`);
+    for (const o of sel.outOfScope || []) console.log(`   ${o.file} — ${o.reason}`);
   }
   selection = { since, changed, ...sel };
 }

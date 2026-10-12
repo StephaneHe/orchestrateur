@@ -11,6 +11,22 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.73.2] - 2026-10-12
+
+### Changed
+
+- (server) Targeted non-regression (user decision: "Dissocier les code Android
+  des tests, vu qu'aucun ne lui correspondent"): `android/` is outside the
+  non-regression scope (`OUT_OF_SCOPE` in `regression-targets.mjs`). A change
+  there no longer counts as a file covered by nothing, so it no longer
+  triggers a ~25 min full run that tests nothing of the Android app; it
+  selects no suite beyond the base, and `regression.mjs --targeted` prints
+  "code Android : hors périmètre de la non-régression" for each such file
+  (also kept in the report, `selection.outOfScope`). The other rules are
+  unchanged: tooling ⇒ its covering suites, `package-lock.json` ⇒ full run,
+  a file covered by nothing ⇒ full run. Test:
+  `_test_targeted_regression.mjs`.
+
 ## [0.73.1] - 2026-10-12
 
 ### Fixed

@@ -46,8 +46,21 @@ ok(JSON.stringify(T.selectTargets(ROOT, ['scripts/pipeline-engine.mjs'], { files
 const docs = T.selectTargets(ROOT, ['docs/ROUTAGE-PROBLEMES.md', 'CHANGELOG.md'], { files });
 ok(!docs.full && names(docs).every(n => T.BASE_SUITES.includes(n)) && !docs.http && !docs.browser, `documentation seule : le socle seulement (${names(docs).join(', ')})`);
 ok(T.BASE_SUITES.every(b => names(docs).includes(b) || !files.includes(`scripts/${b}`)), 'le socle est toujours exécuté');
-const unk = T.selectTargets(ROOT, ['android/app/src/main/java/X.kt'], { files });
+const UNCOVERED = 'tools/uncovered/Fixture.kt';   // covered by nothing, outside android/
+const unk = T.selectTargets(ROOT, [UNCOVERED], { files });
 ok(unk.full && /n'est couvert par aucune suite/.test(unk.reason), `fichier non couvert : COMPLÈTE (« ${unk.reason} »)`);
+// 0.73.2, user decision (2026-10-12): « Dissocier les code Android des tests, vu
+// qu'aucun ne lui correspondent » — android/ is outside the non-regression scope.
+const andr = T.selectTargets(ROOT, ['android/app/src/main/java/X.kt', 'android/app/build.gradle.kts'], { files });
+ok(!andr.full && names(andr).every(n => T.BASE_SUITES.includes(n)) && !andr.http && !andr.browser,
+  `code Android : PAS la complète, aucune suite au-delà du socle (${andr.full ? andr.reason : names(andr).join(', ')})`);
+ok(andr.outOfScope?.length === 2 && andr.outOfScope.every(o => /code Android : hors périmètre de la non-régression/.test(o.reason)),
+  'code Android : raison explicite pour chaque fichier (« hors périmètre de la non-régression »)', JSON.stringify(andr.outOfScope));
+const andrMix = T.selectTargets(ROOT, ['android/app/src/main/java/X.kt', 'scripts/pipeline-engine.mjs'], { files });
+ok(!andrMix.full && names(andrMix).includes('_test_pipeline_engine.mjs'), 'Android + un fichier couvert : seulement les suites du fichier couvert');
+ok(T.selectTargets(ROOT, ['android/x.kt', UNCOVERED], { files }).full, 'Android + un fichier couvert par rien : la complète, comme avant (règle inchangée)');
+const rsrc = fs.readFileSync(path.join(ROOT, 'scripts', 'regression.mjs'), 'utf8');
+ok(/for \(const o of sel\.outOfScope \|\| \[\]\) console\.log/.test(rsrc), 'regression.mjs --targeted affiche la raison des fichiers hors périmètre');
 // 0.73.0, user decision "B" (2026-10-12): a change to the non-regression
 // tooling runs the suites that cover it, never the full run.
 const run = T.selectTargets(ROOT, ['scripts/regression.mjs'], { files });
@@ -62,8 +75,8 @@ ok(names(T.selectTargets(ROOT, ['scripts/suite-runner.mjs'], { files })).include
   'chaque fichier d’outillage sélectionne au moins la suite qui l’exerce');
 const lock = T.selectTargets(ROOT, ['package-lock.json'], { files });
 ok(lock.full && /dépendances/.test(lock.reason), 'package-lock.json (dépendances) : toujours la complète');
-const mix = T.selectTargets(ROOT, ['scripts/regression.mjs', 'android/app/src/main/java/X.kt'], { files });
-ok(mix.full && /android/.test(mix.reason), 'outillage + un fichier couvert par rien : la complète, comme avant');
+const mix = T.selectTargets(ROOT, ['scripts/regression.mjs', UNCOVERED], { files });
+ok(mix.full && /tools\/uncovered/.test(mix.reason), 'outillage + un fichier couvert par rien : la complète, comme avant');
 const ui = T.selectTargets(ROOT, ['public/app.js'], { files });
 ok(!ui.full && ui.browser && ui.http, 'public/** : étages HTTP et navigateur');
 const graph = T.referenceGraph(ROOT, files);

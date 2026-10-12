@@ -42,6 +42,13 @@ export const FULL_TRIGGERS = ['package-lock.json'];
  */
 export const TOOLING_FILES = ['scripts/regression.mjs', 'scripts/regression-targets.mjs', 'scripts/suite-runner.mjs', 'scripts/delivery-gate.mjs', 'scripts/prod-jump.mjs'];
 export const TOOLING_SUITES = ['_test_failed_suite_output.mjs', '_test_targeted_regression.mjs', '_test_delivery_gate.mjs'];
+/**
+ * Outside the non-regression scope (0.73.2, user decision 2026-10-12: "Dissocier
+ * les code Android des tests, vu qu'aucun ne lui correspondent"): no suite of the
+ * full run tests the Android app, so a change there selects nothing and never
+ * triggers the full run.
+ */
+export const OUT_OF_SCOPE = [{ re: /^android\//, reason: 'code Android : hors périmètre de la non-régression' }];
 const DOC_RE = /(^docs\/|\.md$|^\.gitignore$|^LICENSE)/i;
 const CODE_RE = /\.(mjs|js|cjs)$/i;
 const REF_RE = /[\w.-]+\.(?:mjs|cjs|js|json|html|css)\b/g;
@@ -114,7 +121,7 @@ export function versionOnlyPackageChange(repo, since = 'HEAD') {
 
 /**
  * Selection for a set of changed files.
- * → { full: false, suites: [{file, reasons}], http, browser, reasons: {http, browser}, docsOnly }
+ * → { full: false, suites: [{file, reasons}], http, browser, reasons: {http, browser}, docsOnly, outOfScope: [{file, reason}] }
  *   | { full: true, reason }
  */
 export function selectTargets(repo, changed, { since = 'HEAD', files = repoFiles(repo) } = {}) {
@@ -126,8 +133,10 @@ export function selectTargets(repo, changed, { since = 'HEAD', files = repoFiles
   const add = (s, why) => { const k = path.posix.basename(s); if (!picked.has(k)) picked.set(k, new Set()); picked.get(k).add(why); };
   for (const b of BASE_SUITES) if (suites.some(s => s.endsWith(`/${b}`))) add(b, 'socle (toujours exécuté)');
   let http = false, browser = false;
-  const httpWhy = new Set(), browserWhy = new Set(), docsOnly = [];
+  const httpWhy = new Set(), browserWhy = new Set(), docsOnly = [], outOfScope = [];
   for (const f of changed) {
+    const oos = OUT_OF_SCOPE.find(o => o.re.test(f));
+    if (oos) { outOfScope.push({ file: f, reason: oos.reason }); continue; }
     if (FULL_TRIGGERS.includes(f)) return { full: true, reason: `${f} modifié (dépendances)` };
     if (TOOLING_FILES.includes(f)) {
       for (const s of TOOLING_SUITES) if (suites.some(x => x.endsWith(`/${s}`))) add(s, `outillage de la non-régression : ${f}`);
@@ -147,6 +156,6 @@ export function selectTargets(repo, changed, { since = 'HEAD', files = repoFiles
   return {
     full: false,
     suites: [...picked].map(([file, why]) => ({ file, reasons: [...why] })).sort((a, b) => a.file.localeCompare(b.file)),
-    http, browser, reasons: { http: [...httpWhy], browser: [...browserWhy] }, docsOnly,
+    http, browser, reasons: { http: [...httpWhy], browser: [...browserWhy] }, docsOnly, outOfScope,
   };
 }
