@@ -27,6 +27,8 @@
 //   node scripts/regression.mjs --targeted [--since <ref>]  CIBLÉE (développement) : socle + suites/étages
 //                                                    qui couvrent les fichiers modifiés ; complète si un fichier
 //                                                    n'est couvert par rien. La prod exige la complète (prod-jump.mjs)
+//   node scripts/regression.mjs --jobs <n>           suites en parallèle (défaut : ORCH_REGRESS_JOBS, sinon 1/4 des cœurs, 1 à 4 ;
+//                                                    les suites SERIAL_SUITES de suite-runner.mjs restent seules, à la fin)
 //   node scripts/regression.mjs --no-browser         sans navigateur
 //   node scripts/regression.mjs --no-suites          sans les suites node
 //   node scripts/regression.mjs --shots <dossier>    enregistre les captures
@@ -49,6 +51,7 @@ import { pathToFileURL } from 'node:url';
 import { REPO, REGRESS_DIR, extractCode, startSandbox, waitUp, serverEnv } from './_regression_sandbox.mjs';
 import { worktreeTree, readKnownKo, checkReport } from './delivery-gate.mjs';
 import { runNode, runSuite } from './suite-runner.mjs';
+import { runPool, SERIAL_SUITES, defaultJobs } from './suite-runner.mjs';
 
 // Marqueurs du tour qui lance la recette (0.48.0) : jamais transmis aux suites
 // ni à l'instance de test, sinon leurs dispatches passeraient pour ce tour.
@@ -188,15 +191,28 @@ async function runSuites() {
   // Une suite présente d'un seul côté doit apparaître des deux (NA de l'autre).
   const known = new Set([...suites, ...fs.readdirSync(path.join(REPO, 'scripts')).filter(f => /^_test_.*\.mjs$/.test(f))]);
   const targeted = selection && !selection.full ? new Set(selection.suites.map(s => s.file)) : null;
+  // Parallel suites (0.74.0): runPool keeps the alphabetical order of the
+  // results and of the console lines; SERIAL_SUITES run alone, afterwards.
+  const tasks = [];
   for (const f of [...known].sort()) {
     if (targeted && !targeted.has(f)) continue; // not touched by this change: not run, not reported
-    if (EXCLUDED_SUITES[f]) { record('suite', f, `${f} (exclue : ${EXCLUDED_SUITES[f]})`, 'NA'); continue; }
-    if (!suites.includes(f)) { record('suite', f, f, 'NA', 'absente de cet état du code'); continue; }
-    const r = await runSuite(path.join(dir, f), codeRoot, { failedOutputDir: FAILED_OUTPUT_DIR });
+    tasks.push({ name: f, run: async () => {
+      if (EXCLUDED_SUITES[f]) return { na: `${f} (exclue : ${EXCLUDED_SUITES[f]})` };
+      if (!suites.includes(f)) return { na: f, detail: 'absente de cet état du code' };
+      return await runSuite(path.join(dir, f), codeRoot, { failedOutputDir: FAILED_OUTPUT_DIR });
+    } });
+  }
+  const jobs = Number(opt('--jobs')) >= 1 ? Number(opt('--jobs')) : defaultJobs();
+  const t0 = Date.now();
+  await runPool(tasks, { jobs, serial: SERIAL_SUITES, onResult: (i, r) => {
+    const f = tasks[i].name;
+    if (r.na) { record('suite', f, r.na, 'NA', r.detail || ''); return; }
     const output = r.outputFile ? path.relative(REPO, r.outputFile).split(path.sep).join('/') : null;
     record('suite', f, f, r.ok ? 'OK' : 'KO', `${r.tail} (${r.durationS} s, exit ${r.code})`, output ? { output } : null);
     if (output) console.log(`       sortie complète : ${output}`);
-  }
+  } });
+  const serialRun = tasks.filter(t => SERIAL_SUITES.has(t.name)).length;
+  console.log(`   étage des suites : ${Math.round((Date.now() - t0) / 1000)} s — ${tasks.length} suite(s), ${jobs} en parallèle, ${serialRun} en série`);
 }
 
 // ---------------------------------------------------------------------------

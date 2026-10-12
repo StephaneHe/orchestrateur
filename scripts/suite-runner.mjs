@@ -11,6 +11,7 @@
 // ============================================================================
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 
@@ -32,6 +33,50 @@ export function keepFailedOutput({ dir, suite, code, out, durationS }) {
   const f = path.join(dir, `${path.basename(suite).replace(/[^A-Za-z0-9._-]/g, '_')}.log`);
   fs.writeFileSync(f, `# ${suite} — exit ${code}${durationS != null ? ` — ${durationS} s` : ''}\n# full stdout + stderr\n\n${out}`);
   return f;
+}
+
+// ---------------------------------------------------------------------------
+// Parallel suites (0.74.0, user request "Puis fait E"): the suites stage runs
+// up to `jobs` suites at once. Suites listed in SERIAL_SUITES never share the
+// machine with another suite: their checks depend on timing, or they work in
+// the real repository root (its logs/, queue). They run one by one, alone,
+// after the parallel ones. Results are always delivered in the original order.
+// ---------------------------------------------------------------------------
+export const SERIAL_SUITES = new Set([
+  '_test_model_backoff.mjs',       // timing windows (back-off waits, 300 ms notice)
+  '_test_permission_prompt.mjs',   // permission timeouts
+  '_test_neutral_stop.mjs',        // heartbeat freshness
+  '_test_responses_shim.mjs',      // real codex + Windows sandbox, heavy
+  '_test_pool_chef_dispatch.mjs',  // real dispatch.mjs in the repository root
+  '_test_pool_p0a.mjs',            // idem
+  '_test_queue_api.mjs',           // queue.mjs in the repository root
+]);
+
+/** Default parallelism: ORCH_REGRESS_JOBS, else a quarter of the CPUs, 1 to 4. */
+export function defaultJobs(env = process.env, cpus = os.cpus().length) {
+  const n = Number(env.ORCH_REGRESS_JOBS);
+  if (Number.isInteger(n) && n >= 1) return n;
+  return Math.max(1, Math.min(4, Math.floor(cpus / 4)));
+}
+
+/**
+ * Runs tasks [{name, run: () => Promise<any>}] with at most `jobs` at once;
+ * tasks whose name is in `serial` run afterwards, one by one, alone.
+ * onResult(index, value) is called in the ORIGINAL order, as soon as every
+ * earlier task is done. → values in the original order.
+ */
+export async function runPool(tasks, { jobs = 1, serial = new Set(), onResult = () => {} } = {}) {
+  const values = new Array(tasks.length), done = new Array(tasks.length).fill(false);
+  let next = 0;
+  const flush = () => { while (next < tasks.length && done[next]) { onResult(next, values[next]); next++; } };
+  const finish = (i, v) => { values[i] = v; done[i] = true; flush(); };
+  const parallel = tasks.map((t, i) => i).filter(i => !serial.has(tasks[i].name));
+  const serialIdx = tasks.map((t, i) => i).filter(i => serial.has(tasks[i].name));
+  let cursor = 0;
+  const worker = async () => { while (cursor < parallel.length) { const i = parallel[cursor++]; finish(i, await tasks[i].run()); } };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(jobs, parallel.length)) }, worker));
+  for (const i of serialIdx) finish(i, await tasks[i].run());
+  return values;
 }
 
 /**

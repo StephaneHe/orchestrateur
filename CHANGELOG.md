@@ -11,6 +11,24 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.74.0] - 2026-10-12
+
+### Added
+
+- (server) Parallel suites in `regression.mjs` (user request: "Puis fait E"):
+  the `_test_*` suites of the full and targeted runs run up to `--jobs N`
+  at once (or `ORCH_REGRESS_JOBS`; default a quarter of the CPUs, 1 to 4),
+  through `runPool` in `scripts/suite-runner.mjs`. Suites listed in
+  `SERIAL_SUITES` — timing-sensitive (`_test_model_backoff`,
+  `_test_permission_prompt`, `_test_neutral_stop`), heavy
+  (`_test_responses_shim`, real codex sandbox) or working in the repository
+  root (`_test_pool_chef_dispatch`, `_test_pool_p0a`, `_test_queue_api`) —
+  run alone, one by one, after the parallel ones. Results, console lines,
+  the report (same entries, same fields) and the full output of failed
+  suites keep the original alphabetical order. `--jobs 1` restores the old
+  behaviour. The console prints the duration of the suites stage. Test:
+  `_test_parallel_suites.mjs` (real child processes).
+
 ## [0.73.3] - 2026-10-12
 
 ### Changed

@@ -501,6 +501,14 @@ arrière ».
   `.regress/suite-output/<label>-<horodatage>/<suite>.log`, référencée par
   le champ `output` de l'entrée du rapport (`scripts/suite-runner.mjs`).
   Recette : `_test_failed_suite_output.mjs`.
+- **Suites en parallèle** (0.74.0) : `runPool` de `scripts/suite-runner.mjs`,
+  au plus `--jobs N` (ou `ORCH_REGRESS_JOBS` ; défaut : un quart des cœurs,
+  de 1 à 4). Les suites de `SERIAL_SUITES` (sensibles au temps, ou qui
+  travaillent dans la racine du dépôt) tournent seules, à la fin. Résultats,
+  rapport et sortie des échecs dans l'ordre alphabétique d'origine.
+  `--jobs 1` = l'ancien comportement. **Toute nouvelle suite sensible au
+  temps ou qui écrit hors de son dossier temporaire va dans
+  `SERIAL_SUITES`.** Recette : `_test_parallel_suites.mjs`.
 - **Suites du moteur rapides** (0.73.3) : leurs projets de test passent par
   `tests/fixture-speed.mjs` (`FAST_TEST_COMMAND` en un seul processus,
   maintenance git coupée). Toute nouvelle suite du moteur l'importe.
