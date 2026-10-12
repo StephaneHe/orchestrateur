@@ -11,6 +11,32 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.73.1] - 2026-10-12
+
+### Fixed
+
+- (server) `_test_responses_shim.mjs` no longer fails (it was the only KO of
+  the full run). Every run created a fresh CODEX_HOME sandbox (`harnais-*`,
+  ~4 000–15 000 files of codex's plugin clone) in `%TEMP%` and never removed
+  it, and codex's "elevated" Windows sandbox granted write on the whole
+  `%TEMP%` (its tmpdir) to a new capability SID on each run: the first model
+  command waited for that grant to spread over ~1 M entries, about 2 s more
+  per run (2 s on 2026-10-08, 237 s on 2026-10-11), until the suite's 240 s
+  limit killed the turn and `JSON.stringify(undefined).slice` crashed the
+  suite. Now:
+  - codex gets a private `TEMP`/`TMP` inside the sandbox, so it is never
+    granted write on the system `%TEMP%` (checked through codex's `cap_sid`);
+  - the sandbox is removed at the end of the suite and on any exit, retrying
+    for up to 60 s while codex's background plugin clone still holds files;
+  - a codex turn that does not finish fails with a readable check
+    ("tour codex terminé avant la limite de 240 s", "aucun result dans le
+    log") instead of a `TypeError`.
+
+  The suite now runs in ~20 s (5 runs out of 5 green, no `harnais-*` left).
+  The 79 `harnais-*` leftovers (~892 000 entries) were removed from
+  `%TEMP%`; nothing else there was touched. The 78 stale capability-SID
+  entries in the ACL of `%TEMP%` are left as they are (user decision pending).
+
 ## [0.73.0] - 2026-10-12
 
 ### Changed

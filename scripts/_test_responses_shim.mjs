@@ -157,7 +157,36 @@ console.log('\n── 4. web_fetch servi par la passerelle');
 }
 
 // ── Environnement isolé pour les sections 5 à 7 ─────────────────────────────
-const sb = fs.mkdtempSync(path.join(os.tmpdir(), 'harnais-'));
+// 0.73.1: every run used to leave this sandbox (a fresh CODEX_HOME holding
+// thousands of plugin files) in %TEMP%, and codex's "elevated" Windows sandbox
+// granted write on the whole %TEMP% (its tmpdir) to a new capability SID each
+// run: the first command waited for that grant to spread over ~1 M entries,
+// ~2 s more per run, until the 240 s limit killed the turn. Hence a private
+// TEMP for codex inside the sandbox, and the sandbox removed on every exit.
+const SYSTEM_TMP = os.tmpdir();
+const sb = fs.mkdtempSync(path.join(SYSTEM_TMP, 'harnais-'));
+const sbTmp = path.join(sb, 'tmp');
+fs.mkdirSync(sbTmp);
+let sandboxRemoved = false;
+const removeSandbox = () => {
+  if (sandboxRemoved) return;
+  sandboxRemoved = true;
+  // codex keeps cloning its plugins (.tmp/plugins-clone-*, ~10 000 files) in
+  // the background for a few seconds after the turn ends: removal then fails
+  // with EPERM half-way. Retry every second for up to 60 s (sync, so it also
+  // works from the 'exit' handler).
+  const deadline = Date.now() + 60_000;
+  let err = null;
+  for (;;) {
+    try { fs.rmSync(sb, { recursive: true, force: true }); err = null; } catch (e) { err = e; }
+    if (!err && !fs.existsSync(sb)) return;
+    if (Date.now() > deadline) break;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
+  }
+  console.log(`  ! bac à sable non supprimé après 60 s : ${sb} (${err?.code || err?.message || 'encore présent'})`);
+};
+process.on('exit', removeSandbox);   // also after an uncaught exception
+const show = (x, n = 300) => String(JSON.stringify(x ?? null)).slice(0, n);
 const proj = path.join(sb, 'projects', 'labo');
 fs.mkdirSync(proj, { recursive: true });
 fs.mkdirSync(path.join(sb, 'logs'));
@@ -215,13 +244,14 @@ console.log('\n── 5. Routes de la passerelle');
 
 const hasCodex = spawnSync(process.platform === 'win32' ? 'where' : 'which', ['codex'], { encoding: 'utf8' }).status === 0;
 function dispatch(args, extraEnv = {}) {
-  const env = { ...process.env, DISPATCH_ROOT_FOR_TESTS: sb, CODEX_HOME: codexHome, ORCH_PORT: String(gw.address().port), ORCH_PERM_DISABLE: '1', ...extraEnv };
+  const env = { ...process.env, DISPATCH_ROOT_FOR_TESTS: sb, CODEX_HOME: codexHome, TEMP: sbTmp, TMP: sbTmp, ORCH_PORT: String(gw.address().port), ORCH_PERM_DISABLE: '1', ...extraEnv };
   for (const k of ['DISPATCH_SLOT', 'DISPATCH_TICKET', 'ORCH_OBS_ID', 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'CLAUDE_BIN', 'CODEX_BIN']) if (!(k in extraEnv)) delete env[k];
   return new Promise((resolve) => {
     const c = spawn(process.execPath, [DISPATCH, 'labo', ...args], { cwd: sb, env, windowsHide: true });
     let out = ''; c.stdout.on('data', d => out += d); c.stderr.on('data', d => out += d);
-    const timer = setTimeout(() => c.kill(), 240_000);
-    c.on('exit', (code) => { clearTimeout(timer); resolve({ code, out }); });
+    let killed = false;
+    const timer = setTimeout(() => { killed = true; c.kill(); }, 240_000);
+    c.on('exit', (code) => { clearTimeout(timer); resolve({ code, out, killed }); });
   });
 }
 const logOf = () => fs.readFileSync(path.join(sb, 'logs', 'labo.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return {}; } });
@@ -231,6 +261,7 @@ console.log('\n── 6. Bout en bout NVIDIA : dispatch.mjs → codex → passer
 if (!hasCodex) { console.log('  (codex absent de cette machine : section sautée)'); }
 else {
   const r = await dispatch(['ajoute une ligne à note.txt', '--provider', 'nvidia', '--model', 'moonshotai/kimi-k3']);
+  t('tour codex terminé avant la limite de 240 s', !r.killed, `tour tué à 240 s : ${r.out.slice(-300)}`);
   const ev = turn();
   const init = ev.find(e => e.subtype === 'init');
   t('system/init : provider nvidia, harnais codex, model et source explicites, bac à sable, web_fetch', init?.provider === 'nvidia' && init.harness === 'codex' && init.model === 'moonshotai/kimi-k3' && init.modelSource === 'flag' && init.sandbox === 'workspace-write' && /web_fetch/.test(init.webSearch), JSON.stringify(init));
@@ -239,7 +270,7 @@ else {
   t('aucune clé ni jeton visible des commandes du model', /SECRET-ABSENT/.test(outputs) && !/SECRET-VISIBLE\r?\n?$/m.test(outputs.replace(/if \(.*\) \{ "SECRET-VISIBLE" \}/g, '')), outputs.slice(-300));
   t('la clé NVIDIA reste dans la passerelle (le faux fournisseur la reçoit, codex jamais)', nvRequests.every(q => q.auth === 'Bearer cle-nvidia-fixture'));
   const res = ev.find(e => e.type === 'result');
-  t('result : succès, provider nvidia, texte final du model', res && !res.is_error && res.provider === 'nvidia' && /FAIT/.test(res.result || ''), JSON.stringify(res).slice(0, 300));
+  t('result : succès, provider nvidia, texte final du model', res && !res.is_error && res.provider === 'nvidia' && /FAIT/.test(res.result || ''), res ? show(res) : 'aucun result dans le log (tour interrompu ?)');
   t('journal au même format qu\'un tour codex (assistant / tool_use Bash / result)', ev.some(e => e.type === 'assistant' && e.provider === 'nvidia') && ev.some(e => e.subtype === 'model_verified' || e.subtype === 'model_unverified'));
   // Model indisponible : aucun repli, pause côté chef.
   nvRequests.length = 0;
@@ -300,6 +331,23 @@ console.log('\n── 8. Câblage');
   t('.orchestrateur-secret non versionné', /^\.orchestrateur-secret$/m.test(fs.readFileSync(path.join(ROOT, '.gitignore'), 'utf8')));
 }
 
-nv.close(); gw.close();
+console.log('\n── 9. Bac à sable : rien dans %TEMP% du poste, rien laissé derrière (0.73.1)');
+{
+  // Before cleanup: codex must never have been granted write on the system %TEMP%.
+  const norm = (p) => path.resolve(p).toLowerCase().split(path.sep).join('/');
+  let roots = null;
+  try { roots = Object.keys(JSON.parse(fs.readFileSync(path.join(codexHome, 'cap_sid'), 'utf8')).writable_root_by_path || {}); } catch {}
+  if (roots) {
+    t('codex n’obtient jamais l’écriture sur tout le %TEMP% du poste (seulement le TEMP privé du bac à sable)',
+      !roots.some(r => norm(r) === norm(SYSTEM_TMP)) && roots.some(r => norm(r) === norm(sbTmp)), roots.join(', '));
+  } else console.log('  (pas de cap_sid : codex n’a pas posé de bac à sable Windows ici)');
+  t('un résultat absent donne un message lisible, jamais un TypeError', show(undefined) === 'null' && show({ a: 1 }) === '{"a":1}');
+  nv.close(); gw.close();
+  removeSandbox();
+  t('bac à sable supprimé en fin de suite (aucun harnais-* laissé dans %TEMP%)', !fs.existsSync(sb), sb);
+  const src = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
+  t('suppression aussi en sortie anormale (exception non interceptée)', /process\.on\('exit', removeSandbox\)/.test(src));
+}
+
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

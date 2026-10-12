@@ -1129,7 +1129,11 @@ suivante sont tenus dans le plan.
   morte (n° 2 et n° 4 retirés, n° 3 en 500, n° 1 kimi-k3 très lent). Voir le
   plan, §2.7.
 - Recettes :
-  - `_test_responses_shim.mjs` (bout en bout réel avec faux fournisseurs) ;
+  - `_test_responses_shim.mjs` (bout en bout réel avec faux fournisseurs).
+    Depuis 0.73.1, son bac à sable `harnais-*` est supprimé à chaque sortie,
+    et codex y reçoit un `TEMP` privé : un `CODEX_HOME` neuf obtenait sinon
+    l'écriture sur tout `%TEMP%` (nouveau SID de capacité à chaque exécution),
+    et la première commande ralentissait d'exécution en exécution ;
   - HTTP `harness-nvidia`.
 
 ## Pipelines obligatoires — phase 3 : le moteur (0.48.0)
