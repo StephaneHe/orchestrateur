@@ -17,7 +17,9 @@ import { decide } from './interrupt_policy.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT      = path.resolve(__dirname, '..');
-const LOGS      = path.join(ROOT, 'logs');
+// ORCH_ROUTER_LOGS_DIR: lets a test suite keep its router telemetry out of the
+// real logs/ (never set by the server).
+const LOGS      = process.env.ORCH_ROUTER_LOGS_DIR || path.join(ROOT, 'logs');
 try { fs.mkdirSync(LOGS, { recursive: true }); } catch {}
 
 const REQUIRED_FIELDS = [

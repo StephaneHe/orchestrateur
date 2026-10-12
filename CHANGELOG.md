@@ -11,6 +11,27 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.74.1] - 2026-10-12
+
+### Fixed
+
+- (server) `_test_phase2_5_override.mjs` is part of the non-regression again
+  (user request: "si les 2 suites _test_phase2 ne sont pas du code mort, il
+  faut les integrer aux tests"). It covers `detectOverride`
+  (`src/message_router.mjs`), used by `/api/dispatch` for `!interrupt`, so
+  it is live. It had been excluded because it appended to the real
+  `logs/router-*.ndjson`: its router telemetry now goes to a temporary
+  directory (`ORCH_ROUTER_LOGS_DIR`, read by `src/message_router.mjs`, never
+  set by the server), and a new check proves the real `logs/` are untouched.
+  All its previous checks are kept. It runs in the full run and is selected
+  by the targeted run for the code it covers. Test:
+  `_test_phase2_5_integrated.mjs`.
+- `_test_phase2.mjs` stays excluded: it only exercises code never called in
+  production (`route`, `decide`, `classify` — `server.js` imports
+  `detectOverride` only), makes 15 real Haiku calls, and fails today
+  (stop words removed in 0.66.0, CONSULT detection 1/2). Its removal is left
+  to the user.
+
 ## [0.74.0] - 2026-10-12
 
 ### Added

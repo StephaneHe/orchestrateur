@@ -489,8 +489,11 @@ arrière ».
   non nul si une ligne passe de OK à autre chose.
 - `regression.mjs` sort en code non nul au moindre KO. Il enchaîne trois
   étages :
-  1. toutes les suites `scripts/_test_*.mjs` (sauf `_test_phase2*`, qui
-     écrivent dans les vrais `logs/`) ;
+  1. toutes les suites `scripts/_test_*.mjs`, sauf `_test_phase2.mjs` (code
+     mort : `route`/`decide`/`classify` ne sont jamais appelés en
+     production ; appels Haiku réels). `_test_phase2_5_override.mjs` en fait
+     partie depuis 0.74.1 (`detectOverride`, télémétrie dans un dossier
+     temporaire via `ORCH_ROUTER_LOGS_DIR`) ;
   2. une **instance de test isolée** (`.regress/`, port libre, 14 projets de
      fixtures, faux `claude` = `tests/fake_claude`) et ses parcours HTTP ;
   3. les parcours navigateur (Edge headless via `playwright-core`) : fil et

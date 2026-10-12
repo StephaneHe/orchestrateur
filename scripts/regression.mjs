@@ -7,7 +7,7 @@
 // moindre échec. Trois étages :
 //
 //   1. SUITES  : toutes les suites node `scripts/_test_*.mjs` de l'état testé
-//                (sauf _test_phase2*, qui écrivent dans les vrais logs/).
+//                (sauf _test_phase2.mjs : code mort, appels Haiku réels).
 //   2. HTTP    : une INSTANCE DE TEST isolée (scripts/_regression_sandbox.mjs :
 //                autre port, flotte de fixtures, faux `claude`, jamais 7777)
 //                et un parcours de chaque route : token gate, version, config,
@@ -152,9 +152,10 @@ async function until(fn, timeoutMs, stepMs = 300) {
 // ---------------------------------------------------------------------------
 // 1. Suites node
 // ---------------------------------------------------------------------------
+// _test_phase2_5_override.mjs is part of the run since 0.74.1 (it covers
+// detectOverride, used by /api/dispatch; its telemetry goes to a temp dir).
 const EXCLUDED_SUITES = {
-  '_test_phase2.mjs': 'écrit dans les vrais logs/ (router-*.ndjson) et dépend du classifieur',
-  '_test_phase2_5_override.mjs': 'écrit dans les vrais logs/ (router-*.ndjson)',
+  '_test_phase2.mjs': 'code mort (route/decide/classify jamais appelés en production), appels Haiku réels, écrit dans les vrais logs/',
 };
 // Suites hermétiques non liées au code du serveur : ajoutées à un ancien ref
 // qui ne les versionnait pas encore, pour que l'avant/après compare la même liste.

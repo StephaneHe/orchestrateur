@@ -2,17 +2,26 @@
 // Test 2.7 + 2.7.bis — !interrupt explicit override.
 // Verifies override correctness, classifier short-circuit, and negative cases.
 
+// 0.74.1: part of the non-regression. The router telemetry goes to a private
+// temporary directory (ORCH_ROUTER_LOGS_DIR), never to the real logs/.
+
 import fs   from 'node:fs';
+import os   from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { route, detectOverride, getClassifierInvocations, resetClassifierInvocations } from '../src/message_router.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
-const LOGS = path.join(ROOT, 'logs');
+const LOGS = fs.mkdtempSync(path.join(os.tmpdir(), 'orch-router-logs-'));
+process.env.ORCH_ROUTER_LOGS_DIR = LOGS;
+process.on('exit', () => { try { fs.rmSync(LOGS, { recursive: true, force: true }); } catch {} });
+const { route, detectOverride, getClassifierInvocations, resetClassifierInvocations } = await import('../src/message_router.mjs');
 
 const stamp = new Date().toISOString().slice(0, 10);
 const dailyFile = path.join(LOGS, `router-${stamp}.ndjson`);
+const realDailyFile = path.join(ROOT, 'logs', `router-${stamp}.ndjson`);
+const realSize = () => { try { return fs.statSync(realDailyFile).size; } catch { return -1; } };
+const realSizeBefore = realSize();
 
 const dummyClassifier = async () => ({ verdict: 'still_useful', lean: 'queue' });
 
@@ -152,6 +161,11 @@ const flagOk = r.action === 'interrupt'
 record('2.7 API flag override',
   flagOk ? 'PASS' : 'FAIL',
   `decision=${r.action} reason=${r.record.reason} src=${r.record.override_source} cls=${getClassifierInvocations()}`);
+
+// ── Hermetic: nothing written to the real logs/ ──────────────────────────
+record('real logs/ untouched',
+  realSize() === realSizeBefore ? 'PASS' : 'FAIL',
+  `${path.relative(ROOT, realDailyFile)} size ${realSizeBefore} → ${realSize()}`);
 
 // ── Summary ────────────────────────────────────────────────────────────────
 console.log('\n=========== Phase 2.5 results ===========');
