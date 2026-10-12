@@ -271,6 +271,12 @@ ce sera utile ». Procédure complète : `docs/DEV-PROD.md`.
   `git tag -a prod-before-vX.Y.Z`, `git merge --ff-only vX.Y.Z`, régression,
   redémarrage par le chef. **Retour arrière** : `git reset --hard
   prod-before-vX.Y.Z`, redémarrage, régression.
+- **`TODO_LIST.md` n'est pas versionné** (0.74.2, « Une TODO list ne devrait
+  pas etre dans git ») : `.gitignore`, fichier gardé sur le disque. Au bond,
+  `prod-jump --apply` le remet sur le disque de la prod depuis
+  `prod-before-vX.Y.Z` (`keptOnDisk`). Un commit de la prod absent de la dev
+  bloque le bond : `git fetch prod` puis le fusionner dans `dev` avant le tag.
+  Recette : `_test_todo_untracked.mjs`.
 - Contrôle : `node scripts/dev-split.mjs check`. Recette :
   `_test_dev_split.mjs`.
 - Supprimer la dev : retirer l'entrée de config.json, `forgetWorkspace()`,

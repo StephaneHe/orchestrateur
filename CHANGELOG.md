@@ -11,6 +11,27 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.74.2] - 2026-10-12
+
+### Changed
+
+- `TODO_LIST.md` is no longer tracked by git (user request: "Une TODO list ne
+  devrait pas etre dans git"): removed from the index, added to `.gitignore`,
+  kept on disk. The production note of `c0a3f98` is merged into `dev` first,
+  so production (at `c0a3f98`) can fast-forward to the dev without loss.
+
+### Fixed
+
+- (tooling) `prod-jump.mjs`: a file tracked in production that the jumped
+  version stops tracking and ignores (here `TODO_LIST.md`) would be deleted
+  from the production disk by the fast-forward; the plan now announces it and
+  `--apply` puts it back from `prod-before-<tag>` (`keptOnDisk`). A file the
+  version really deletes stays deleted.
+- (tooling) `prod-jump.mjs` checks the fast-forward from the dev side too: a
+  production commit unknown to the dev, or not an ancestor of the tag, is
+  refused before the jump (the check used to be skipped while the tag was not
+  yet in production). Test: `_test_todo_untracked.mjs`.
+
 ## [0.74.1] - 2026-10-12
 
 ### Fixed

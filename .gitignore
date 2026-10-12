@@ -84,3 +84,7 @@ language-settings.json.*.tmp
 # Captures d'écran de l'UI réelle (conversations, noms de projets)
 docs/*.png
 docs/**/captures/
+
+# TODO list: a local working note, never versioned (user, 2026-10-12:
+# "Une TODO list ne devrait pas etre dans git"). prod-jump keeps it on disk.
+TODO_LIST.md

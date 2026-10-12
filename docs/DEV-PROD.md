@@ -79,6 +79,12 @@ when.
    git merge --ff-only vX.Y.Z      # never a merge commit, never a force
    node scripts/regression.mjs     # on the jumped production checkout
    ```
+   A file that production tracks but the version stops tracking and ignores
+   (`TODO_LIST.md` since 0.74.2) is deleted by the fast-forward: `--apply`
+   puts it back from `prod-before-vX.Y.Z` (the plan lists it). By hand:
+   `git show prod-before-vX.Y.Z:TODO_LIST.md > TODO_LIST.md`.
+   A production commit missing from the dev blocks the jump: fetch it
+   (`git fetch prod`) and merge it into `dev` before tagging.
 3. Restart the server so that it serves the same version as the scripts. The
    chef does it with `node scripts/restart-orchestrateur.mjs`, and only if the
    user agrees.

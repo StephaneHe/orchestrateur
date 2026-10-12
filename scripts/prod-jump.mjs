@@ -36,7 +36,19 @@ const git = (repo, args) => {
   return { ok: r.status === 0, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
 };
 
-/** Everything that must hold before the jump; → { ok, problems, plan, report } */
+/**
+ * Files tracked in production (`prodHead`) that the tag stops tracking AND
+ * ignores (e.g. TODO_LIST.md, 0.74.2): the fast-forward would delete them from
+ * the production disk, so the jump puts them back from prod-before-<tag>.
+ * A file the tag deletes without ignoring it is a real deletion: not kept.
+ */
+export function keptOnDisk({ dev = DEV, prodHead, commit }) {
+  if (!prodHead || !commit || !git(dev, ['cat-file', '-e', `${prodHead}^{commit}`]).ok) return [];
+  const gone = git(dev, ['diff', '--name-only', '--diff-filter=D', prodHead, commit]).out.split('\n').filter(Boolean);
+  return gone.filter(f => git(dev, ['check-ignore', '-q', '--no-index', f]).ok);
+}
+
+/** Everything that must hold before the jump; → { ok, problems, plan, report, keep } */
 export function preflight({ dev = DEV, prod, tag, from = 'origin', turnLock = null } = {}) {
   const problems = [];
   const tree = git(dev, ['rev-parse', `${tag}^{tree}`]).out;
@@ -50,6 +62,7 @@ export function preflight({ dev = DEV, prod, tag, from = 'origin', turnLock = nu
     report = { file: found?.f || null, accepted: v.accepted };
     problems.push(...v.reasons);
   }
+  let keep = [];
   if (!prod || !fs.existsSync(path.join(prod, '.git'))) problems.push(`dépôt de prod introuvable : ${prod}`);
   else {
     const dirty = git(prod, ['status', '--porcelain']).out;
@@ -60,20 +73,27 @@ export function preflight({ dev = DEV, prod, tag, from = 'origin', turnLock = nu
       const head = git(prod, ['rev-parse', 'HEAD']).out;
       const known = git(prod, ['cat-file', '-e', `${commit}^{commit}`]).ok;
       if (known && !git(prod, ['merge-base', '--is-ancestor', head, commit]).ok) problems.push(`pas d'avance rapide possible : la prod (${head.slice(0, 7)}) n'est pas un ancêtre de ${tag}`);
+      // The tag is usually not in production yet: check from the dev side too.
+      if (!known) {
+        if (!git(dev, ['cat-file', '-e', `${head}^{commit}`]).ok) problems.push(`pas d'avance rapide vérifiable : le commit de la prod (${head.slice(0, 7)}) est inconnu de la dev (git fetch prod, puis le fusionner dans dev)`);
+        else if (!git(dev, ['merge-base', '--is-ancestor', head, commit]).ok) problems.push(`pas d'avance rapide possible : la prod (${head.slice(0, 7)}) n'est pas un ancêtre de ${tag}`);
+      }
+      keep = keptOnDisk({ dev, prodHead: head, commit });
     }
   }
   const plan = [
     `git -C ${prod} tag -a prod-before-${tag} -m "production before the jump to ${tag}"`,
     `git -C ${prod} fetch ${from} tag ${tag}`,
     `git -C ${prod} merge --ff-only ${tag}`,
+    ...keep.map(f => `remettre ${f} sur le disque (n'est plus suivi par git depuis ${tag}) : contenu de prod-before-${tag}:${f}`),
     `node ${path.join(prod, 'scripts', 'regression.mjs')}   # complète, dans la prod`,
     'redémarrage du serveur par le chef, avec l’accord de l’utilisateur',
   ];
-  return { ok: !problems.length, problems, plan, report, tree, commit };
+  return { ok: !problems.length, problems, plan, report, tree, commit, keep };
 }
 
-/** Steps 1-3 of the plan (tag, fetch, fast-forward); never restarts anything. */
-export function applyJump({ prod, tag, from = 'origin' }) {
+/** Steps 1-3 of the plan (tag, fetch, fast-forward), then the kept files; never restarts anything. */
+export function applyJump({ prod, tag, from = 'origin', keep = [] }) {
   const steps = [
     ['tag', ['tag', '-a', `prod-before-${tag}`, '-m', `production before the jump to ${tag}`]],
     ['fetch', ['fetch', from, 'tag', tag, '--no-tags']],
@@ -83,7 +103,17 @@ export function applyJump({ prod, tag, from = 'origin' }) {
     const r = git(prod, args);
     if (!r.ok) return { ok: false, step: name, err: r.err };
   }
-  return { ok: true };
+  const restored = [];
+  for (const f of keep) {
+    const to = path.join(prod, f);
+    if (fs.existsSync(to)) continue;
+    const r = spawnSync('git', ['-C', prod, 'show', `prod-before-${tag}:${f}`], { windowsHide: true });
+    if (r.status !== 0) return { ok: false, step: `keep ${f}`, err: String(r.stderr || '') };
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    fs.writeFileSync(to, r.stdout);
+    restored.push(f);
+  }
+  return { ok: true, restored };
 }
 
 async function main() {
@@ -99,8 +129,9 @@ async function main() {
   console.log(`[prod-jump] ${tag} : non-régression COMPLÈTE verte (${path.basename(p.report.file)}) — mise en prod possible`);
   console.log(p.plan.map((s, i) => `  ${i + 1}. ${s}`).join('\n'));
   if (!argv.includes('--apply')) { console.log('[prod-jump] plan seulement (ajouter --apply, sur décision de l’utilisateur)'); return; }
-  const r = applyJump({ prod: path.resolve(prod), tag, from });
+  const r = applyJump({ prod: path.resolve(prod), tag, from, keep: p.keep });
   if (!r.ok) { console.error(`[prod-jump] échec à l'étape ${r.step} : ${r.err}`); process.exit(1); }
+  for (const f of r.restored) console.log(`[prod-jump] ${f} remis sur le disque (non suivi par git, contenu de prod-before-${tag})`);
   console.log(`[prod-jump] prod avancée sur ${tag} (retour : git reset --hard prod-before-${tag}). Reste : non-régression complète dans la prod, puis redémarrage par le chef.`);
 }
 
