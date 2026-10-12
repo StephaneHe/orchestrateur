@@ -89,6 +89,28 @@ export function extractCode(source, dst) {
   }
 }
 
+/**
+ * 0.74.3 — makes an extracted copy its own git repository (one commit holding
+ * exactly the extracted files). The copy lives under the ignored .regress/ of
+ * the dev checkout: without this, the suites that ask git about "their"
+ * repository (targeted selection, tracked files) reach the dev repository,
+ * where none of the copy's files are tracked, and fail under --ref.
+ */
+export function snapshotRepo(dir) {
+  const env = { ...process.env, GIT_DIR: undefined, GIT_WORK_TREE: undefined, GIT_INDEX_FILE: undefined };
+  for (const k of Object.keys(env)) if (env[k] === undefined) delete env[k];
+  const g = (...args) => {
+    const r = spawnSync('git', ['-C', dir, '-c', 'user.name=regression', '-c', 'user.email=regression@localhost',
+      '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=NUL', '-c', 'core.autocrlf=false', ...args], { encoding: 'utf8', env, windowsHide: true });
+    if (r.status !== 0) throw new Error(`git ${args[0]} (${dir}) : ${r.stderr}`);
+    return r.stdout.trim();
+  };
+  g('init', '-q');
+  g('add', '-A');
+  g('commit', '-q', '--no-verify', '-m', 'regression snapshot');
+  return g('rev-parse', '--show-toplevel');
+}
+
 /** Réécrit 7777 → port dans server.js et scripts/ ; neutralise ssh et toasts.
  *  Lève si une occurrence de 7777 survit dans du code exécutable. */
 function patchForPort(root, port) {

@@ -11,6 +11,30 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.74.3] - 2026-10-12
+
+### Fixed
+
+- (server) A pipeline run could crash on Windows when saving `run.json`
+  while the server was reading it (`GET /api/pipeline-runs`):
+  `renameSync(run.json.tmp, run.json)` failed with `EPERM`, the turn exited
+  with code 1 and the run stayed "running". Seen on the chef's Routage turn of
+  the full regression run (`http:pipeline-routage` "Routage : null"); the
+  chef's pool slot then stayed held until the lost-process sweep, so the
+  next chef messages ran exactly when the callback wake fired and withdrew it
+  by design (`http:callback-wake`, a cascade of the same failure). Measured:
+  a reader looping on the file makes about 97 % of plain renames fail.
+  `scripts/atomic-file.mjs` (`renameRetry`, `writeFileAtomic`) retries the
+  rename on `EPERM`/`EBUSY`/`EACCES` only (bounded, 10 s); the engine writes
+  `run.json` and the enforcement state through it. Test:
+  `_test_atomic_rename.mjs`.
+- (tooling) `regression.mjs --ref`: the suites run in a copy extracted under
+  the ignored `.regress/`, so git saw none of its files and the git-based
+  suites failed (`_test_phase2_5_integrated`, `_test_targeted_regression`).
+  The copy is now its own git repository (`snapshotRepo`, one commit holding
+  exactly the extracted files) before the local-only files are added. Test:
+  `_test_ref_snapshot.mjs`.
+
 ## [0.74.2] - 2026-10-12
 
 ### Changed

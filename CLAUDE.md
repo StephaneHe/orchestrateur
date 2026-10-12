@@ -510,6 +510,16 @@ arrière ».
   `.regress/suite-output/<label>-<horodatage>/<suite>.log`, référencée par
   le champ `output` de l'entrée du rapport (`scripts/suite-runner.mjs`).
   Recette : `_test_failed_suite_output.mjs`.
+- **`--ref` voit le bon état** (0.74.3) : la copie extraite sous `.regress/`
+  devient son propre dépôt git (`snapshotRepo` de `_regression_sandbox.mjs`),
+  sinon les suites qui interrogent git remontent au dépôt dev, où rien de la
+  copie n'est suivi. Recette : `_test_ref_snapshot.mjs`.
+- **Fichiers lus par le serveur pendant qu'on les écrit** (0.74.3) : sous
+  Windows, `renameSync(tmp, f)` échoue avec `EPERM` si un autre processus lit
+  `f` (cause des KO intermittents `pipeline-routage` / `callback-wake`).
+  Passer par `renameRetry` / `writeFileAtomic` de `scripts/atomic-file.mjs`
+  (`run.json` et l'état de mise en service du moteur). Recette :
+  `_test_atomic_rename.mjs`.
 - **Suites en parallèle** (0.74.0) : `runPool` de `scripts/suite-runner.mjs`,
   au plus `--jobs N` (ou `ORCH_REGRESS_JOBS` ; défaut : un quart des cœurs,
   de 1 à 4). Les suites de `SERIAL_SUITES` (sensibles au temps, ou qui

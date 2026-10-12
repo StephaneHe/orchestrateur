@@ -35,6 +35,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { derivedToken } from './local-secret.mjs';
+import { renameRetry, writeFileAtomic } from './atomic-file.mjs';
 import { readBranchLog } from './dual-run.mjs';
 import { languageFor, languageGate, localize, workingLanguage } from './language.mjs';
 import { CATALOG_PIPELINES, catalogOf, catalogSteps } from './pipeline-catalog.mjs';
@@ -130,7 +131,7 @@ export function writeEnforcement(root, { projects, pipelines, terminal, chef, ge
   j.updatedAt = at;
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(j, null, 2) + '\n');
-  fs.renameSync(tmp, file);
+  renameRetry(tmp, file);
   return j.enforcement;
 }
 
@@ -1603,7 +1604,7 @@ export async function runPipeline(o) {
       try { process.kill(s.pid, 0); alive = true; } catch (e) { alive = e.code === 'EPERM'; }
       if (alive) continue;
       s.status = 'interrupted'; s.endedAt = new Date().toISOString();
-      fs.writeFileSync(`${f}.tmp`, JSON.stringify(s, null, 2)); fs.renameSync(`${f}.tmp`, f);
+      writeFileAtomic(f, JSON.stringify(s, null, 2));
       say(`exécution ${r} close comme interrompue (processus ${s.pid} mort)`);
     }
   } catch { /* aucun dossier d'exécutions */ }
@@ -1638,9 +1639,9 @@ export async function runPipeline(o) {
   }
   const saveState = () => {
     state.updatedAt = new Date().toISOString();
-    const f = path.join(runDir, 'run.json');
-    fs.writeFileSync(`${f}.tmp`, JSON.stringify(state, null, 2));
-    fs.renameSync(`${f}.tmp`, f);
+    // run.json is read by the server (GET /api/pipeline-runs) at any time: a
+    // plain rename fails with EPERM on Windows while it is open (0.74.3).
+    writeFileAtomic(path.join(runDir, 'run.json'), JSON.stringify(state, null, 2));
   };
   const resumed = state.status === 'paused';
   // « continuer » après une limite (items, durée, revue) : l'utilisateur accepte
@@ -2804,7 +2805,7 @@ export async function answerPausedRun({ logsDir, project, projectName, run, answ
   const writeEvent = (ev) => { try { fs.appendFileSync(projectLog, JSON.stringify({ ...(process.env.ORCH_TURN_ID ? { orch_turn: process.env.ORCH_TURN_ID } : {}), ...ev, timestamp: new Date().toISOString() }) + '\n'); } catch {} };
   writeEvent({ type: 'user_prompt', text: promptForLog, pipeline: { run, pipeline: state.pipeline, mode: state.mode, answer },
     ...(sourceProject ? { source: sourceProject } : {}), ...(callbackProject ? { callback: callbackProject } : {}), ...(testLabel ? { test: { label: testLabel } } : {}) });
-  const save = () => { state.updatedAt = new Date().toISOString(); fs.writeFileSync(`${f}.tmp`, JSON.stringify(state, null, 2)); fs.renameSync(`${f}.tmp`, f); };
+  const save = () => { state.updatedAt = new Date().toISOString(); writeFileAtomic(f, JSON.stringify(state, null, 2)); };
   let text, paused = false;
   if (answer === 'tester le model') {
     // 0.60.0: a short trial of the step's model, with its full log; still paused.

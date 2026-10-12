@@ -49,6 +49,7 @@ import http from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { REPO, REGRESS_DIR, extractCode, startSandbox, waitUp, serverEnv } from './_regression_sandbox.mjs';
+import { snapshotRepo } from './_regression_sandbox.mjs';
 import { worktreeTree, readKnownKo, checkReport } from './delivery-gate.mjs';
 import { runNode, runSuite } from './suite-runner.mjs';
 import { runPool, SERIAL_SUITES, defaultJobs } from './suite-runner.mjs';
@@ -173,6 +174,9 @@ async function runSuites() {
   if (!source.worktree) {
     codeRoot = path.join(REGRESS_DIR, `${safeLabel}-code-${Date.now().toString(36)}`);
     extractCode(source, codeRoot);
+    // 0.74.3: its own git repository (exactly the extracted files), before the
+    // local-only files below, so git-based suites see the tested state.
+    snapshotRepo(codeRoot);
     // Les suites de config valident la VRAIE configuration de la flotte.
     for (const f of ['config.json']) fs.copyFileSync(path.join(REPO, f), path.join(codeRoot, f));
     // _test_pool_chef_dispatch mesure logs/orchestrateur.jsonl (présent dans
