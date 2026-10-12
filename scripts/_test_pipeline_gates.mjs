@@ -22,6 +22,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as E from './pipeline-engine.mjs';
 import { deriveState } from './fleet-status-core.mjs';
+import { FAST_TEST_COMMAND } from '../tests/fixture-speed.mjs';   // fast fixture runs (0.73.3), same checks
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FAKE = path.join(ROOT, 'tests', 'fake_claude', 'fake_claude.mjs');
@@ -72,7 +73,7 @@ fs.writeFileSync(path.join(P, 'test', 'base.test.mjs'), "import { test } from 'n
 fs.writeFileSync(path.join(P, 'src', 'pipe.mjs'), 'export const id = (x) => x;\n');
 fs.writeFileSync(path.join(P, 'CHANGELOG.md'), '# Changelog\n\n## [1.0.0] - 2026-10-01\n- début\n');
 fs.writeFileSync(path.join(P, 'docs', 'USER_REQUIREMENTS.md'), '| date | demande | test | version |\n|---|---|---|---|\n');
-fs.writeFileSync(path.join(P, '.orchestrateur', 'pipeline.json'), JSON.stringify({ testCommand: 'node --test', testGlobs: ['test/**'], versionFiles: ['package.json'], changelog: 'CHANGELOG.md', requirements: 'docs/USER_REQUIREMENTS.md' }));
+fs.writeFileSync(path.join(P, '.orchestrateur', 'pipeline.json'), JSON.stringify({ testCommand: FAST_TEST_COMMAND, testGlobs: ['test/**'], versionFiles: ['package.json'], changelog: 'CHANGELOG.md', requirements: 'docs/USER_REQUIREMENTS.md' }));
 g('init', '-q'); g('add', '-A'); g('commit', '-q', '-m', 'init');
 const H0 = g('rev-parse', 'HEAD').stdout.trim();
 const reset = () => { g('reset', '-q', '--hard', H0); g('clean', '-qfd', '-e', '.orchestrateur'); };

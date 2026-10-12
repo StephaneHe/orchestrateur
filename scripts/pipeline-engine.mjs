@@ -318,9 +318,21 @@ export function isLocalOnly(f) {
   return p.startsWith(RUNS_PREFIX) || p === '.claude' || p === '.claude/' || p.startsWith('.claude/');
 }
 
+// Un dépôt git ne cesse pas d'en être un pendant une exécution : la réponse
+// positive est gardée (0.73.3 ; ~28 appels git de moins par exécution, ~40 ms
+// chacun sous Windows). Un dossier hors git est toujours revérifié.
+const KNOWN_GIT_REPOS = new Set();
+function isGitWorkTree(cwd) {
+  const k = path.resolve(cwd);
+  if (KNOWN_GIT_REPOS.has(k)) return true;
+  const yes = git(cwd, ['rev-parse', '--is-inside-work-tree']).out === 'true';
+  if (yes) KNOWN_GIT_REPOS.add(k);
+  return yes;
+}
+
 /** Empreinte de chaque fichier suivi ou non ignoré (hors artefacts d'exécution). */
 export function snapshot(cwd) {
-  if (git(cwd, ['rev-parse', '--is-inside-work-tree']).out !== 'true') return walkSnapshot(cwd);
+  if (!isGitWorkTree(cwd)) return walkSnapshot(cwd);
   const files = git(cwd, ['ls-files', '-c', '-o', '--exclude-standard']).out.split('\n').filter(f => f && !isLocalOnly(f));
   const uniq = [...new Set(files)];
   const map = new Map();

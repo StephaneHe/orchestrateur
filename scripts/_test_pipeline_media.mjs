@@ -18,6 +18,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as E from './pipeline-engine.mjs';
 import * as M from './media-check.mjs';
+import { FAST_TEST_COMMAND } from '../tests/fixture-speed.mjs';   // fast fixture runs (0.73.3), same checks
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FAKE = path.join(ROOT, 'tests', 'fake_claude', 'fake_claude.mjs');
@@ -56,7 +57,7 @@ function repo(extra = {}) {
   fs.writeFileSync(path.join(dir, 'test', 'base.test.mjs'), "import { test } from 'node:test';\ntest('base', () => {});\n");
   fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), '# Changelog\n\n## [1.0.0] - 2026-10-01\n- début\n');
   fs.mkdirSync(path.join(dir, '.orchestrateur'), { recursive: true });
-  fs.writeFileSync(path.join(dir, '.orchestrateur', 'pipeline.json'), JSON.stringify({ testCommand: 'node --test', testGlobs: ['test/**'], versionFiles: ['package.json'], changelog: 'CHANGELOG.md', ...extra.cfg }));
+  fs.writeFileSync(path.join(dir, '.orchestrateur', 'pipeline.json'), JSON.stringify({ testCommand: FAST_TEST_COMMAND, testGlobs: ['test/**'], versionFiles: ['package.json'], changelog: 'CHANGELOG.md', ...extra.cfg }));
   for (const [f, s] of Object.entries(extra.files || {})) fs.writeFileSync(path.join(dir, f), s);
   g(dir, 'init', '-q'); g(dir, 'add', '-A'); g(dir, 'commit', '-q', '-m', 'init');
   return dir;

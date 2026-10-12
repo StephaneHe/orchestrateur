@@ -92,14 +92,14 @@ ok(x.st.steps.find(s => s.id === 'affecter')?.source === 'code' && x.st.steps.fi
 const aff = fs.readFileSync(path.join(T, 'chef', '.orchestrateur', 'runs', x.run, 'affectation.md'), 'utf8');
 ok(/\| P \| Discussion/.test(aff) && /projet hors service : tour ordinaire/.test(aff), 'affectation : P en service (pipeline), Q hors service (tour ordinaire)');
 let pUp = null, qUp = null;
-for (let i = 0; i < 60 && !(pUp && qUp); i++) {
-  await sleep(500);
+for (let i = 0; i < 300 && !(pUp && qUp); i++) {
+  await sleep(100);
   pUp = logOf('P').slice(nP).find(e => e.type === 'user_prompt');
   qUp = logOf('Q').slice(nQ).find(e => e.type === 'user_prompt');
 }
 ok(pUp?.pipeline?.pipeline === 'discussion' && pUp.source === 'chef' && pUp.callback === 'chef', 'P reçoit une exécution Discussion, lancée par le chef, avec retour au chef');
 ok(qUp && !qUp.pipeline && /double/.test(qUp.text), 'Q (hors service) reçoit un tour ordinaire, comme aujourd’hui (pas de phase 7 déguisée)');
-for (let i = 0; i < 60 && ['P', 'Q'].some(n => fs.existsSync(path.join(T, 'logs', `${n}.pid`))); i++) await sleep(500);
+for (let i = 0; i < 300 && ['P', 'Q'].some(n => fs.existsSync(path.join(T, 'logs', `${n}.pid`))); i++) await sleep(100);
 
 // ---------------------------------------------------------------------------
 section('3. Tâches invalides refusées par le code, puis refaites');
@@ -110,7 +110,7 @@ ok(E.validateTasks(T, [{ projet: 'X', pipeline: 'dev', demande: 'quelque chose' 
 x = chefTurn('Fais ceci', { FAKE_PIPE_BAD: 'decomposer:1', FAKE_PIPE_JSON: JSON.stringify({ comprendre: { sens: 'sens simulé', nature: 'taches', raison: 'x' }, decomposer: { taches: [tasks[0]] } }) });
 const d2 = x.st.steps.filter(s => s.id === 'decomposer');
 ok(d2[0]?.status === 'refused' && /JSON/.test(d2[0].why) && d2[1]?.status === 'ok', 'JSON illisible : refusé, refait');
-for (let i = 0; i < 60 && fs.existsSync(path.join(T, 'logs', 'P.pid')); i++) await sleep(500);
+for (let i = 0; i < 300 && fs.existsSync(path.join(T, 'logs', 'P.pid')); i++) await sleep(100);
 
 // ---------------------------------------------------------------------------
 section('4. Demande ambiguë : la question part à l’utilisateur, jamais deviner');
@@ -168,13 +168,13 @@ ok(disp.dispatched.map(d => d.projet).join() === 'P' && disp.waiting.map(w => `$
 ok(E.readPending(path.join(T, 'logs')).length === 1 && logOf('Q').slice(nQ8).every(e => e.type !== 'user_prompt'), 'Q n’est PAS lancée avant la fin de P');
 const newObs = obsCount().slice(nObs);
 ok(newObs.length >= 1 && !newObs.some(o => o.gap), `aucune lacune signalée pour cette réponse (${newObs.length} entrée(s) observée(s), toutes sans lacune)`);
-for (let i = 0; i < 60 && fs.existsSync(path.join(T, 'logs', 'P.pid')); i++) await sleep(500);
+for (let i = 0; i < 300 && fs.existsSync(path.join(T, 'logs', 'P.pid')); i++) await sleep(100);
 x = chefTurn('[CALLBACK_WAKE lot=1 gen=1]\n[P] Tour terminé.', {}, ['--source', 'wake']);
 ok(x.r.code === 0 && statusOf(x.st) === 'lire:ok relancer:ok callback:ok rapporter:ok', `réveil : ${statusOf(x.st || { steps: [] })}`, x.r.out.slice(-600));
 let qUp8 = null;
-for (let i = 0; i < 60 && !qUp8; i++) { await sleep(500); qUp8 = logOf('Q').slice(nQ8).find(e => e.type === 'user_prompt'); }
+for (let i = 0; i < 300 && !qUp8; i++) { await sleep(100); qUp8 = logOf('Q').slice(nQ8).find(e => e.type === 'user_prompt'); }
 ok(qUp8 && /export CSV/.test(qUp8.text) && /Rattachée à : question 4/.test(qUp8.text) && !E.readPending(path.join(T, 'logs')).length, 'après le résultat de P, le réveil lance Q (demande rattachée), file d’attente vidée');
-for (let i = 0; i < 60 && fs.existsSync(path.join(T, 'logs', 'Q.pid')); i++) await sleep(500);
+for (let i = 0; i < 300 && fs.existsSync(path.join(T, 'logs', 'Q.pid')); i++) await sleep(100);
 ok(E.validateTasks(T, [{ projet: 'P', pipeline: 'dev', demande: 'quelque chose', apres: 1 }]).includes('apres'), '« apres » qui ne désigne pas une tâche précédente : refusé');
 
 // 0.69.0: a gap is raised only about ONE unit task, after the message was

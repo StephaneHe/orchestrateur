@@ -18,6 +18,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as E from './pipeline-engine.mjs';
+import { FAST_TEST_COMMAND } from '../tests/fixture-speed.mjs';   // fast fixture runs (0.73.3), same checks
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FAKE = path.join(ROOT, 'tests', 'fake_claude', 'fake_claude.mjs');
@@ -59,7 +60,7 @@ function repo(name, { pipelineJson = true, redTest = false } = {}) {
   fs.writeFileSync(path.join(dir, 'docs', 'USER_REQUIREMENTS.md'), '| date | demande | test | version |\n|---|---|---|---|\n');
   if (pipelineJson) {
     fs.mkdirSync(path.join(dir, '.orchestrateur'), { recursive: true });
-    fs.writeFileSync(path.join(dir, '.orchestrateur', 'pipeline.json'), JSON.stringify({ testCommand: 'node --test', testGlobs: ['test/**'], versionFiles: ['package.json'], changelog: 'CHANGELOG.md', requirements: 'docs/USER_REQUIREMENTS.md', scanCommands: ['node -e "console.log(\'SCAN-SIMULE-OK\')"'] }));
+    fs.writeFileSync(path.join(dir, '.orchestrateur', 'pipeline.json'), JSON.stringify({ testCommand: FAST_TEST_COMMAND, testGlobs: ['test/**'], versionFiles: ['package.json'], changelog: 'CHANGELOG.md', requirements: 'docs/USER_REQUIREMENTS.md', scanCommands: ['node -e "console.log(\'SCAN-SIMULE-OK\')"'] }));
   }
   g(dir, 'init', '-q'); g(dir, 'add', '-A'); g(dir, 'commit', '-q', '-m', 'init');
   return dir;

@@ -11,6 +11,33 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.73.3] - 2026-10-12
+
+### Changed
+
+- (server) Faster engine test suites, same checks (user request: "Accelere
+  les parties ou c'est possible comme suggere"). Measured alone, before →
+  after: `_test_pipeline_gates` 213 → 182 s, `_test_item_delivery` 79 → 62,
+  `_test_tests_per_item` 71 → 59, `_test_pipeline_catalog` 66 → 57,
+  `_test_item_review` 62 → 51, `_test_defect_blocks` 53 → 46,
+  `_test_pipeline_media` 47 → 39, `_test_model_backoff` 41 → 36,
+  `_test_pipeline_engine` 39 → 35, `_test_pipeline_routage` 32 → 28:
+  703 → 595 s (−108 s, −15 %), every suite with the same number of
+  passed checks.
+  - `pipeline-engine.mjs`: `snapshot()` remembers that a directory is a git
+    work tree instead of asking git before every snapshot (~28 git calls
+    fewer per run, ~40 ms each on Windows); a "not a repository" answer is
+    never remembered. Also benefits production runs.
+  - `tests/fixture-speed.mjs` (shared by the 9 slow suites): fixture
+    projects run their node:test files in one process
+    (`--test-isolation=none`; a failing test still exits non-zero), and
+    automatic git maintenance is off in the fixture repositories.
+  - `_test_pipeline_routage`: polls every 100 ms instead of 500 ms, same
+    30 s ceiling.
+  - Profiling showed the rest is structural (one process per step, ~116
+    git calls per run for the integrity checks); nothing was removed.
+  - Test: `_test_fixture_speed.mjs`.
+
 ## [0.73.2] - 2026-10-12
 
 ### Changed

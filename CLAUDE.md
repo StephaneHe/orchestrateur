@@ -501,6 +501,10 @@ arrière ».
   `.regress/suite-output/<label>-<horodatage>/<suite>.log`, référencée par
   le champ `output` de l'entrée du rapport (`scripts/suite-runner.mjs`).
   Recette : `_test_failed_suite_output.mjs`.
+- **Suites du moteur rapides** (0.73.3) : leurs projets de test passent par
+  `tests/fixture-speed.mjs` (`FAST_TEST_COMMAND` en un seul processus,
+  maintenance git coupée). Toute nouvelle suite du moteur l'importe.
+  Recette : `_test_fixture_speed.mjs`.
 - **Sécurité de l'instance de test** : `7777` est réécrit dans sa copie de
   `server.js` et des scripts, puis **vérifié absent** (sinon abandon). La
   production n'est jamais contactée ni redémarrée. `--restart-check` rejoue
