@@ -126,14 +126,27 @@
 .tov-src { color: var(--fg-3); font-size: 0.6875rem; }
 .tov-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: flex-end; padding: 0.7rem 1rem; border-top: 1px solid var(--card-border); }
 .tov-actions[hidden] { display: none; }
-.tov-action {
+.tov-action, .tov-btn {
   min-height: 2.25rem; padding: 0 0.9rem; font-size: 0.8125rem; cursor: pointer;
   background: transparent; color: var(--fg-1); border: 1px solid var(--card-border); border-radius: 5px;
 }
+/* « Envoyer au chef » confirmation (0.79.0) */
+.tov-confirm { padding: 0.7rem 1rem; border-top: 1px solid var(--card-border); background: rgba(90, 209, 232, 0.06); overflow-y: auto; }
+.tov-confirm[hidden] { display: none; }
+.tov-confirm-h { margin: 0 0 0.3rem; font-size: 0.875rem; color: var(--fg-0); }
+.tov-confirm-msg {
+  max-height: 14rem; overflow: auto; margin: 0.4rem 0; padding: 0.5rem 0.6rem; white-space: pre-wrap; overflow-wrap: anywhere;
+  font-family: var(--font-mono, monospace); font-size: 0.75rem; color: var(--fg-1);
+  background: var(--bg-0); border: 1px solid var(--card-border); border-radius: 5px;
+}
+.tov-confirm-draft { margin: 0.3rem 0; font-size: 0.75rem; color: var(--st-think); }
+.tov-confirm-draft[hidden] { display: none; }
+.tov-confirm-bar { display: flex; gap: 0.5rem; justify-content: flex-end; flex-wrap: wrap; }
+.tov-confirm-ok { color: var(--st-live); border-color: rgba(45, 255, 122, 0.35); }
 @media (max-width: 767.98px) {
   .tov-dialog { width: 100vw; height: 100dvh; max-height: none; border-radius: 0; border: 0; }
   .tov-close { min-width: 2.75rem; min-height: 2.75rem; }
-  .tov-action { min-height: 2.75rem; }
+  .tov-action, .tov-btn { min-height: 2.75rem; }
 }
 
 /* --- Git tab (0.76.0) --- */

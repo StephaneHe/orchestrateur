@@ -2359,6 +2359,23 @@ const App = {
     this._syncComposerTarget();
   },
 
+  /** 0.79.0 — TODO « Envoyer au chef » : the item's message goes into the
+   *  chef's composer (replacing the draft, which the overlay announced) and
+   *  leaves when the user sends it — the same channel as any message. */
+  prepareChefMessage(text, ctx = {}) {
+    const input = $("#composer-input");
+    if (!input || !text) return false;
+    this.composer.target = this.composer.CONDUCTOR;
+    this.composer.answerFor = { name: ctx.project || "", question: ctx.title || "", todo: true };
+    input.value = text;
+    input.dispatchEvent(new Event("input"));
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    this.renderComposerContext();
+    this._syncComposerTarget();
+    return true;
+  },
+
   /** « En parler au chef » : retour au composer chef, projet nommé. */
   talkToChefAbout(name) {
     if (!name) return;
@@ -2382,7 +2399,7 @@ const App = {
     if (!ctx) { el.hidden = true; el.innerHTML = ""; return; }
     el.hidden = false;
     el.innerHTML =
-      `<span class="cc-label">${ctx.about ? "Au chef, à propos de" : "Réponse via le chef pour"} ${esc(ctx.name)}</span>` +
+      `<span class="cc-label">${ctx.todo ? "Item TODO de" : ctx.about ? "Au chef, à propos de" : "Réponse via le chef pour"} ${esc(ctx.name)}${ctx.todo ? " — Entrée ou ➤ pour l’envoyer au chef" : ""}</span>` +
       (ctx.question ? `<span class="cc-quote">« ${esc(ctx.question.slice(0, 160))} »</span>` : `<span class="cc-quote"></span>`) +
       `<button class="cc-close" aria-label="Retirer le contexte">✕</button>`;
     $(".cc-close", el).addEventListener("click", () => {

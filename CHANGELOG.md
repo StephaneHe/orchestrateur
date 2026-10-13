@@ -11,6 +11,34 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.79.0] - 2026-10-13
+
+### Added
+
+- (server) TODO item overlay: « Envoyer au chef… » — part 4/5 of the user
+  request « chaque item doit être clickable […] Possilité aussi de lancer le
+  contenu de l'item au chef, pour lancer l'execution. […] ».
+  - A confirmation first shows the exact message: the whole item (title,
+    full detail, continuation lines), its notes when it has some, project,
+    id, line and status. Cancel (button or Escape) leaves everything as it
+    was; a draft already typed to the chef is announced before it would be
+    replaced.
+  - Confirmed, the overlay and the side panel close and the message goes
+    into the chef's composer (`App.prepareChefMessage`, composer context
+    « Item TODO de <projet> — Entrée ou ➤ pour l’envoyer au chef »). It
+    leaves when the user sends it, through the same channel as any message
+    to the chef (`/api/dispatch`), and the chef routes its execution.
+  - The TODO panel itself still sends nothing to the server (0.75.0
+    requirement « en lecture seule pour l'utilisateur »).
+  - The overlay's action bar now shows this action; the 0.77.0 check
+    `todo-item-overlay` was adapted accordingly (it asserted an empty bar,
+    and its test action is now targeted by id).
+- Tests: new browser check `todo-send-chef` (confirmation with the exact
+  message and notes, draft warning, cancel and Escape, composer prefilled
+  and targeted at the chef, nothing sent before the user's Enter, then the
+  chef receives the whole item), `_test_todo.mjs` (wiring, no request from
+  the panel).
+
 ## [0.78.1] - 2026-10-13
 
 ### Fixed

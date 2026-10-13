@@ -164,6 +164,9 @@ try {
   ok(/side-panel\.js/.test(html) && /todo-panel\.js/.test(html) && /id="btn-todo"[^>]*data-sp-open="todo"/.test(html), 'index.html : panneau, onglet TODO, pill');
   const tp = read(path.join(ROOT, 'public', 'todo-panel.js'));
   ok(/type="checkbox" class="ti-box" disabled/.test(tp) && !/method:\s*["'](POST|PUT|PATCH|DELETE)/i.test(tp), 'cases désactivées, aucun envoi vers le serveur');
+  // 0.79.0, part 4/5 « lancer le contenu de l'item au chef » : through the
+  // chef's composer (the user sends it), never a request from the panel.
+  ok(/id: "send-chef"/.test(tp) && /App\.prepareChefMessage\(text/.test(tp) && /askSendToChef/.test(tp) && !/fetch\("\/api\/dispatch/.test(tp), 'envoi au chef : confirmation, puis la saisie du chef (aucune requête du panneau)');
   const sp = read(path.join(ROOT, 'public', 'side-panel.js'));
   ok(/register\(def\)/.test(sp) && /\[data-sp-open\]/.test(sp) && /globalThis\.SidePanel = \{ register, open, close, toggle/.test(sp), 'panneau générique (register / data-sp-open) réutilisable pour l’onglet git');
   const disp = read(path.join(ROOT, 'scripts', 'dispatch.mjs'));

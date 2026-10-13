@@ -78,9 +78,21 @@
         <header class="tov-head"><h2 id="tov-title" class="tov-title"></h2>
           <button type="button" class="tov-close" data-tov-close aria-label="Fermer" title="Fermer (Échap)">✕</button></header>
         <div class="tov-body"></div>
+        <section class="tov-confirm" hidden aria-labelledby="tov-confirm-h">
+          <h3 id="tov-confirm-h" class="tov-confirm-h">Envoyer cet item au chef ?</h3>
+          <p class="tov-hint">Ce message sera placé dans votre saisie au chef. Il partira quand vous l’enverrez (Entrée ou ➤), comme tout message au chef, qui en lancera l’exécution.</p>
+          <pre class="tov-confirm-msg"></pre>
+          <p class="tov-confirm-draft" hidden></p>
+          <div class="tov-confirm-bar">
+            <button type="button" class="tov-btn tov-confirm-ok">Placer dans le message au chef</button>
+            <button type="button" class="tov-btn tov-confirm-cancel">Annuler</button>
+          </div>
+        </section>
         <footer class="tov-actions" hidden></footer>
       </section>`;
     el.addEventListener("click", (e) => { if (e.target.closest("[data-tov-close]")) closeItem(); });
+    el.querySelector(".tov-confirm-cancel").addEventListener("click", () => hideConfirm(true));
+    el.querySelector(".tov-confirm-ok").addEventListener("click", () => confirmSend());
     el.querySelector(".tov-actions").addEventListener("click", (e) => {
       const b = e.target.closest("[data-tov-action]");
       const a = b && actions.find(x => x.id === b.dataset.tovAction);
@@ -119,7 +131,59 @@
     const bar = el.querySelector(".tov-actions");
     const usable = actions.filter(a => !a.when || a.when(i));
     bar.innerHTML = usable.map(a => `<button type="button" class="tov-action" data-tov-action="${esc(a.id)}"${a.title ? ` title="${esc(a.title)}"` : ""}>${esc(a.label)}</button>`).join("");
-    bar.hidden = !usable.length;
+    bar.hidden = !usable.length || !el.querySelector(".tov-confirm").hidden;
+  }
+
+  /* ---- « Envoyer au chef » (0.79.0, part 4/5) ----------------------------
+     User request: « Possilité aussi de lancer le contenu de l'item au chef,
+     pour lancer l'execution ». The panel itself still sends nothing to the
+     server (the TODO stays read-only here, 0.75.0): after a confirmation
+     showing the exact message, the message goes into the chef's composer
+     and leaves through it when the user sends it — the same channel as any
+     message to the chef. */
+  function chefMessage(i) {
+    const full = i.detailFull || i.detail || "";
+    const notes = Array.isArray(i.notes) ? i.notes : [];
+    return [
+      `Item de la TODO de ${i.project} à exécuter : ${i.title}`,
+      full,
+      i.more || "",
+      notes.length ? "Notes de l’utilisateur :\n" + notes.map(n => `- ${n.at ? `(${fmt(n.at)}) ` : ""}${n.text}`).join("\n") : "",
+      `(Item ${i.id}, ${i.project}/TODO_LIST.md ligne ${i.line}, ${(STATUS[i.status] || i.status).replace(/^\S+\s/, "").toLowerCase()}.)`,
+    ].filter(Boolean).join("\n\n");
+  }
+
+  function askSendToChef(i) {
+    const el = overlayEl();
+    const box = el.querySelector(".tov-confirm");
+    box.querySelector(".tov-confirm-msg").textContent = chefMessage(i);
+    const draft = (document.getElementById("composer-input")?.value || "").trim();
+    const warn = box.querySelector(".tov-confirm-draft");
+    warn.textContent = draft ? `⚠ Votre brouillon actuel au chef (${draft.length} caractères) sera remplacé.` : "";
+    warn.hidden = !draft;
+    box.dataset.id = i.id;
+    box.hidden = false;
+    el.querySelector(".tov-actions").hidden = true;
+    box.querySelector(".tov-confirm-ok").focus();
+  }
+
+  function hideConfirm(refocus) {
+    if (!ov.el) return;
+    const box = ov.el.querySelector(".tov-confirm");
+    if (box.hidden) return;
+    box.hidden = true;
+    const i = currentItem();
+    if (i) fillOverlay(i);
+    if (refocus) ov.el.querySelector('[data-tov-action="send-chef"]')?.focus();
+  }
+
+  function confirmSend() {
+    const i = currentItem();
+    if (!i || !globalThis.App?.prepareChefMessage) return;
+    const text = chefMessage(i);
+    closeItem();
+    globalThis.SidePanel?.close();
+    globalThis.App.prepareChefMessage(text, { project: i.project, title: i.title, id: i.id });
   }
 
   function openItem(id) {
@@ -138,6 +202,7 @@
     if (!ov.el || ov.el.hidden) return;
     ov.el.hidden = true;
     ov.id = null;
+    ov.el.querySelector(".tov-confirm").hidden = true;
     document.body.classList.remove("tov-open");
     const back = ov.returnFocus;
     ov.returnFocus = null;
@@ -148,7 +213,12 @@
   // Capture phase: Escape closes the overlay only, not the side panel behind it.
   document.addEventListener("keydown", (e) => {
     if (!ov.el || ov.el.hidden) return;
-    if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); closeItem(); return; }
+    if (e.key === "Escape") {
+      e.preventDefault(); e.stopImmediatePropagation();
+      // Escape first cancels a pending confirmation, then closes the overlay.
+      if (!ov.el.querySelector(".tov-confirm").hidden) hideConfirm(true); else closeItem();
+      return;
+    }
     if (e.key === "Tab") {
       const f = [...ov.el.querySelectorAll("button:not([hidden]), [href], [tabindex]:not([tabindex='-1'])")].filter(x => x.offsetParent !== null);
       if (!f.length) return;
@@ -222,5 +292,10 @@
     if (k >= 0) actions.splice(k, 1, def); else actions.push(def);
     if (ov.el && !ov.el.hidden) { const i = currentItem(); if (i) fillOverlay(i); }
   }
-  globalThis.TodoPanel = { reload: load, openItem, closeItem, registerAction, isItemOpen: () => !!(ov.el && !ov.el.hidden) };
+  registerAction({
+    id: "send-chef", label: "Envoyer au chef…",
+    title: "Prépare un message au chef avec le contenu complet de l’item, pour qu’il en lance l’exécution (confirmation d’abord)",
+    run: (i) => askSendToChef(i),
+  });
+  globalThis.TodoPanel = { reload: load, openItem, closeItem, registerAction, chefMessage, isItemOpen: () => !!(ov.el && !ov.el.hidden) };
 })();

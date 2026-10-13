@@ -341,7 +341,7 @@ export async function browserChecks(sb, t) {
       assert(o.more === long.more, `lignes de suite : ${JSON.stringify(o.more)}`);
       assert(/En cours/.test(o.status) && o.added === '14/09/26 00:00', `statut / date : ${o.status} · ${o.added}`);
       assert(o.focusClose, 'le focus n’est pas sur ✕ à l’ouverture');
-      assert(o.actionsHidden === true && !o.actions.length, 'barre d’actions visible sans action');
+      assert(o.actionsHidden === false && o.actions.join() === 'Envoyer au chef…', `barre d’actions : ${JSON.stringify(o.actions)} (0.79.0 : « Envoyer au chef… »)`);
       await page.keyboard.press('Escape');
       assert(await until(async () => !(await ovState(page)).open, 3000), 'Échap ne ferme pas l’overlay');
       o = await ovState(page);
@@ -361,8 +361,8 @@ export async function browserChecks(sb, t) {
       // The action bar used by the next parts (notes, reject, send to the chef).
       await page.evaluate(() => { window.__tovTest = true; TodoPanel.registerAction({ id: 'regress-test', label: 'Essai', when: () => window.__tovTest, run: (i, h) => { window.__tovRan = i.id; h.close(); } }); });
       await page.click(`${li} .ti-title`);
-      assert(await until(async () => (await ovState(page)).actions.join() === 'Essai', 3000), `action non affichée : ${(await ovState(page)).actions}`);
-      await page.click('#todo-overlay .tov-action');
+      assert(await until(async () => (await ovState(page)).actions.includes('Essai'), 3000), `action non affichée : ${(await ovState(page)).actions}`);
+      await page.click('#todo-overlay [data-tov-action="regress-test"]');
       assert(await until(async () => !(await ovState(page)).open && (await page.evaluate(() => window.__tovRan)) === long.id, 3000), 'action non exécutée sur l’item');
       await page.evaluate(() => { window.__tovTest = false; });
       assert(await overflowX(page) <= 0, `débordement horizontal ${await overflowX(page)} px`);
@@ -381,6 +381,67 @@ export async function browserChecks(sb, t) {
         if (t.shots) await m.screenshot({ path: path.join(path.resolve(t.shots), 'todo-overlay-mobile.png') });
       } finally { await mctx2.close(); }
       return `item « ${long.title} » : ${long.detailFull.length} car. de détail + ${long.more.split('\n').length} ligne(s) de suite ; clic, Entrée, Espace ; ✕, Échap, hors zone ; action essai OK ; mobile plein écran`;
+    });
+    // User request (2026-10-13), part 4/5: « Possilité aussi de lancer le
+    // contenu de l'item au chef, pour lancer l'execution ».
+    await check(B, 'todo-send-chef', 'Overlay d’un item TODO : « Envoyer au chef… » demande une confirmation qui montre le message exact (item complet, notes s’il y en a), annulable ; confirmé, le message est placé dans la saisie au chef (brouillon remplacé seulement après avertissement) et part par le même canal que tout message au chef — le panneau lui-même n’envoie rien', async () => {
+      if (!(await page.evaluate(() => !!window.TodoPanel?.chefMessage))) NA('envoi au chef absent de cet état du code');
+      const api = await (await fetch(`${sb.url}/api/todo`, { headers: H })).json();
+      const long = api.items.find(i => i.project === 'chef' && /beta — analyse/.test(i.title));
+      const chefLog = () => { try { return fs.readFileSync(path.join(sb.root, 'logs', 'chef.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return {}; } }); } catch { return []; } };
+      const sentBefore = chefLog().filter(e => e.type === 'user_prompt' && /Item de la TODO de chef/.test(e.text || '')).length;
+      await page.evaluate(() => window.TodoPanel?.closeItem());
+      try {
+      // Notes are part of the message when the item has some (part 2/5).
+      const withNotes = await page.evaluate(() => TodoPanel.chefMessage({ project: 'p', id: 't-x1', line: 3, title: 'T', status: 'todo', detail: 'd', notes: [{ at: '2026-10-13T10:00', text: 'note A' }] }));
+      assert(/Notes de l’utilisateur :\n- \(13\/10\/26 10:00\) note A/.test(withNotes), `notes absentes du message : ${withNotes}`);
+      await page.fill('#composer-input', 'brouillon en cours');
+      if (!(await todoState(page)).open) await page.click('#btn-todo');
+      const li = `#side-panel .todo-item[data-id="${long.id}"]`;
+      await page.locator(li).waitFor({ timeout: 8000 });
+      await page.click(`${li} .ti-title`);
+      await page.locator('#todo-overlay [data-tov-action="send-chef"]').waitFor({ timeout: 4000 });
+      await page.click('#todo-overlay [data-tov-action="send-chef"]');
+      const conf = () => page.evaluate(() => { const b = document.querySelector('#todo-overlay .tov-confirm'); return { shown: !!b && !b.hidden, msg: b?.querySelector('.tov-confirm-msg')?.textContent || '', draft: b?.querySelector('.tov-confirm-draft')?.hidden === false ? b.querySelector('.tov-confirm-draft').textContent : '' }; });
+      let c = await conf();
+      assert(c.shown && c.msg.startsWith('Item de la TODO de chef à exécuter : beta — analyse') && c.msg.includes(long.detailFull) && c.msg.includes(long.more) && c.msg.includes(long.id), `confirmation : ${JSON.stringify(c).slice(0, 300)}`);
+      assert(/brouillon actuel au chef \(18 caractères\) sera remplacé/.test(c.draft), `avertissement de brouillon : ${c.draft}`);
+      await page.click('#todo-overlay .tov-confirm-cancel');
+      c = await conf();
+      assert(!c.shown && (await page.inputValue('#composer-input')) === 'brouillon en cours', 'Annuler a touché la saisie');
+      await page.click('#todo-overlay [data-tov-action="send-chef"]');
+      await page.keyboard.press('Escape');
+      assert(!(await conf()).shown && (await page.evaluate(() => TodoPanel.isItemOpen())), 'Échap doit annuler la confirmation, pas fermer l’item');
+      await page.click('#todo-overlay [data-tov-action="send-chef"]');
+      await page.click('#todo-overlay .tov-confirm-ok');
+      assert(await until(async () => !(await page.evaluate(() => TodoPanel.isItemOpen())) && !(await todoState(page)).open, 4000), 'overlay ou panneau encore ouverts');
+      const input = await page.inputValue('#composer-input');
+      assert(input === c.msg || input.startsWith('Item de la TODO de chef à exécuter : beta — analyse'), `saisie : ${input.slice(0, 120)}`);
+      assert(await page.evaluate(() => document.activeElement?.id === 'composer-input'), 'le focus n’est pas dans la saisie');
+      const ctx = await page.textContent('#composer-context').catch(() => '');
+      assert(/Item TODO de chef/.test(ctx) && /Entrée ou ➤/.test(ctx), `contexte du composer : ${ctx}`);
+      assert(/À : CHEF/.test(await page.textContent('#composer-target')), 'la saisie ne vise pas le chef');
+      await sleep(500);
+      assert(chefLog().filter(e => e.type === 'user_prompt' && /Item de la TODO de chef/.test(e.text || '')).length === sentBefore, 'envoyé avant le geste de l’utilisateur');
+      await page.press('#composer-input', 'Enter');
+      assert(await until(() => chefLog().filter(e => e.type === 'user_prompt' && /Item de la TODO de chef à exécuter : beta — analyse/.test(e.text || '') && (e.text || '').includes('FIN-DU-DETAIL-COMPLET')).length === sentBefore + 1, 45_000), 'le chef n’a pas reçu le message');
+      // Leave the instance as found: the chef turn this message started must
+      // be over before the next checks read the rail order.
+      const afterPrompt = () => { const ev = chefLog(); const k = ev.map(e => e.type === 'user_prompt' && /Item de la TODO de chef/.test(e.text || '')).lastIndexOf(true); return k >= 0 && ev.slice(k + 1).some(e => e.type === 'result'); };
+      assert(await until(async () => afterPrompt(), 45_000), 'le tour du chef lancé par l’envoi ne s’est pas terminé');
+      await page.evaluate(() => window.App.pollPupitre());
+      await sleep(800);
+      return `confirmation (message exact, brouillon annoncé), Annuler et Échap sans effet, puis saisie au chef et envoi par Entrée → reçu par le chef (${long.detailFull.length} car. de détail)`;
+      } finally {
+        // Never leave an open overlay, panel or draft to the next checks — nor
+        // the pointer over the rail, which freezes its order (railState.hovered).
+        await page.evaluate(() => { window.TodoPanel?.closeItem(); if (window.SidePanel?.isOpen()) window.SidePanel.close(); });
+        await page.fill('#composer-input', '').catch(() => {});
+        await page.mouse.move(5, 5);
+        await sleep(1700);
+        await page.evaluate(() => window.App.pollPupitre());
+        await sleep(500);
+      }
     });
     // 0.78.1 — user report (2026-10-13): « A partir du moment où quelque chose
     // tourne, attaché à un projet, et que ça empêche le projet d'avancer (en
@@ -409,6 +470,11 @@ export async function browserChecks(sb, t) {
       }
       await page.evaluate(() => window.App.pollPupitre());
       assert(await until(async () => { const c = await card(); return c && c.state === before.state; }, 15_000), `état non revenu : ${JSON.stringify(await card())}`);
+      // The rail settles its order 1.5 s after a change, never under the pointer.
+      await page.mouse.move(5, 5);
+      await sleep(1700);
+      await page.evaluate(() => window.App.pollPupitre());
+      await sleep(500);
       return `alpha : « ${before.word} » → « ${during.word} » (${during.line.slice(0, 60)}…) → « ${(await card()).word} »`;
     });
     const railHeads = () => page.evaluate(() => [...document.querySelectorAll('#rail-body .rail-group-head')].map(h => h.textContent.replace(/\s+/g, ' ').trim()));

@@ -677,6 +677,15 @@ de la prod).
   run(item, {close, reload})})` ; la barre est masquée sans action. Le
   glisser-déposer viendra sur les `.todo-item`. Recette : navigateur
   `todo-item-overlay` (bureau et mobile).
+- **« Envoyer au chef… »** (0.79.0, partie 4/5, « lancer le contenu de
+  l'item au chef, pour lancer l'execution ») : action de l'overlay
+  (`send-chef`). Une confirmation montre le message exact (`TodoPanel.
+  chefMessage` : item complet, notes s'il y en a, identifiant) et annonce le
+  brouillon remplacé ; Annuler / Échap n'y touchent pas. Confirmé : le
+  message va dans la saisie du chef (`App.prepareChefMessage`, contexte
+  « Item TODO de … ») et part quand l'utilisateur l'envoie, par le même
+  canal que tout message au chef. **Le panneau lui-même n'envoie toujours
+  rien au serveur** (exigence 0.75.0). Recette : navigateur `todo-send-chef`.
 - **Onglet ⎇ Git** (0.76.0, même demande, partie git) : l'arbre git de chaque
   musicien, en **lecture seule** (`public/git-panel.js`, pill `#btn-git`).
   - On choisit le musicien ; les projets sans dépôt sont listés, désactivés.
