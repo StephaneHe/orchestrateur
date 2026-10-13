@@ -266,6 +266,43 @@ export async function browserChecks(sb, t) {
         return `${opts.length} musiciens (${api.projects.filter(p => p.repo).length} dépôts) ; serveur ancien : « ${msg.slice(0, 70)}… »`;
       } finally { await ctx404.close(); }
     });
+    // User report (2026-10-13): « le pan todo et vide, et sa liste de musiciens
+    // aussi ». Same cause as the Git tab (server not restarted, /api/todo 404).
+    await check(B, 'todo-panel-musicians', 'Panneau TODO : la liste des musiciens contient chaque musicien de /api/todo, et choisir un musicien montre exactement ses items ; serveur pas encore redémarré (route en 404) : la liste des musiciens dit « indisponible » et le panneau explique le redémarrage, jamais vide', async () => {
+      if (!(await page.locator('#btn-todo').count())) NA('panneau TODO absent de cet état du code');
+      const api = await (await fetch(`${sb.url}/api/todo`, { headers: H })).json();
+      assert(api.lists.length > 1 && api.items.length > 0, `listes : ${api.lists.length}, items : ${api.items.length}`);
+      await page.click('#btn-todo');
+      assert(await until(async () => (await todoState(page)).items.length > 0, 8000), 'panneau TODO vide');
+      const opts = await page.evaluate(() => [...document.querySelectorAll('#side-panel .todo-project option')].map(o => o.value));
+      assert(opts.length === api.lists.length + 1 && opts[0] === '', `liste : ${JSON.stringify(opts)}`);
+      for (const l of api.lists) {
+        assert(opts.includes(l.project), `${l.project} absent de la liste`);
+        await page.selectOption('#side-panel .todo-project', l.project);
+        const want = api.items.filter(i => i.project === l.project).map(i => i.id).sort();
+        assert(await until(async () => {
+          const got = (await todoState(page)).items;
+          return got.every(i => i.project === l.project) && got.map(i => i.id).sort().join() === want.join();
+        }, 4000), `${l.project} : items affichés ≠ ${want.length} items de l’API`);
+      }
+      await page.selectOption('#side-panel .todo-project', '');
+      assert(await until(async () => (await todoState(page)).items.length === api.items.length, 4000), 'retour à « Tous les projets »');
+      await page.keyboard.press('Escape');
+      const ctx404 = await browser.newContext({ viewport: { width: 1600, height: 1000 }, locale: 'fr-FR' });
+      try {
+        const p4 = await ctx404.newPage();
+        await p4.route(/\/api\/todo(\/|\?|$)/, r => r.fulfill({ status: 404, contentType: 'text/html', body: '<pre>Cannot GET</pre>' }));
+        await p4.route(/\/api\/version(\?|$)/, r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ version: '0.74.3', repoVersion: '0.76.5', restartRequired: true }) }));
+        await p4.goto(`${sb.url}/?token=${sb.token}`); await p4.locator('.brand').waitFor();
+        await p4.click('#btn-todo');
+        assert(await until(async () => (await p4.locator('#side-panel .todo-unavailable').count()) > 0, 8000), 'aucun message quand la route manque');
+        const msg = await p4.textContent('#side-panel .todo-unavailable');
+        assert(/v0\.74\.3/.test(msg) && /v0\.76\.5/.test(msg) && /redémarrage/.test(msg), `message : ${msg}`);
+        const sel = await p4.evaluate(() => [...document.querySelectorAll('#side-panel .todo-project option')].map(o => o.textContent));
+        assert(sel.length === 1 && /indisponible/.test(sel[0]), `liste des musiciens : ${JSON.stringify(sel)}`);
+        return `${api.lists.length} musiciens, items de chacun vérifiés ; serveur ancien : liste « ${sel[0]} »`;
+      } finally { await ctx404.close(); }
+    });
     const railHeads = () => page.evaluate(() => [...document.querySelectorAll('#rail-body .rail-group-head')].map(h => h.textContent.replace(/\s+/g, ' ').trim()));
     await check(B, 'rail', 'Rail PILOTAGE : À examiner + cadres des musiciens (ou dépliage « Tous » sans cadres)', async () => {
       const txt = await page.textContent('#rail-body');

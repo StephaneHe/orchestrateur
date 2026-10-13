@@ -669,7 +669,9 @@ de la prod).
   leurs routes (404). `SidePanel.explainFailure` remplace alors le panneau
   vide par un message qui donne les deux versions (`/api/version`) et le
   redémarrage à faire ; la liste des musiciens affiche « indisponible ». Même
-  chose pour la TODO. Recette : navigateur `git-panel-musicians`.
+  chose pour la TODO (sa liste depuis 0.76.5, signalement « le pan todo et
+  vide, et sa liste de musiciens aussi »). Recettes : navigateur
+  `git-panel-musicians` et `todo-panel-musicians`.
 
 ## Vue « Projets » et retour arrière (0.29.0)
 

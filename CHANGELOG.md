@@ -11,6 +11,24 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.76.5] - 2026-10-13
+
+### Fixed
+
+- (server) TODO tab of the side panel: its musician list no longer stays
+  empty when `/api/todo` cannot be read (user report: « Bug orchestrateur :
+  le pan todo et vide, et sa liste de musiciens aussi »). Same cause as the
+  Git tab in 0.76.4, checked again on the production server: the process
+  still runs 0.74.3 (`restartRequired: true`) and answers 404 on
+  `/api/todo` while `todo-panel.js` is served from disk; restarting the
+  server fixes it. 0.76.4 already explained this in the panel body; the
+  musician list now shows "— liste des musiciens indisponible —" (or
+  "Chargement…" while loading) instead of nothing.
+  New browser check `todo-panel-musicians`: the list holds every musician
+  of `/api/todo`, choosing one shows exactly its items, and with the route
+  missing the list says "unavailable" and the panel names both versions
+  and the restart.
+
 ## [0.76.4] - 2026-10-13
 
 ### Fixed

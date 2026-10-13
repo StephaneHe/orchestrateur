@@ -61,9 +61,14 @@
     const pane = st.pane;
     if (!pane) return;
     const d = st.data;
-    if (!d) { pane.querySelector(".todo-body").innerHTML = `<p class="todo-empty${st.error ? " todo-unavailable" : ""}">${esc(st.error || "Chargement…")}</p>`; return; }
-    const project = lsGet(LS_PROJECT);
     const sel = pane.querySelector(".todo-project");
+    if (!d) {
+      // Never an empty musician list: say why there is none (user report, 0.76.5).
+      sel.innerHTML = `<option value="" disabled selected>${st.error ? "— liste des musiciens indisponible —" : "Chargement…"}</option>`;
+      pane.querySelector(".todo-body").innerHTML = `<p class="todo-empty${st.error ? " todo-unavailable" : ""}">${esc(st.error || "Chargement…")}</p>`;
+      return;
+    }
+    const project = lsGet(LS_PROJECT);
     const names = d.lists.map(l => l.project);
     sel.innerHTML = `<option value="">Tous les projets (${d.lists.length})</option>` +
       names.map(n => `<option value="${esc(n)}"${n === project ? " selected" : ""}>${esc(n)}</option>`).join("");
