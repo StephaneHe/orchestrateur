@@ -303,6 +303,85 @@ export async function browserChecks(sb, t) {
         return `${api.lists.length} musiciens, items de chacun vérifiés ; serveur ancien : liste « ${sel[0]} »`;
       } finally { await ctx404.close(); }
     });
+    // User request (2026-10-13), part 1/5: « chaque item doit être clickable et
+    // afficher une overlay qui présente l'item complet ».
+    const ovState = (pg) => pg.evaluate(() => {
+      const o = document.getElementById('todo-overlay');
+      const d = o?.querySelector('.tov-dialog');
+      const r = d?.getBoundingClientRect();
+      const close = o?.querySelector('.tov-close')?.getBoundingClientRect();
+      return {
+        open: !!o && !o.hidden, id: d?.dataset.id || null, role: d?.getAttribute('role'), modal: d?.getAttribute('aria-modal'),
+        title: o?.querySelector('.tov-title')?.textContent || '', status: o?.querySelector('.tov-status')?.textContent || '',
+        added: o?.querySelector('.tov-added')?.textContent || '', by: o?.querySelector('.tov-by')?.textContent || '',
+        detail: o?.querySelector('.tov-detail')?.textContent || '', more: o?.querySelector('.tov-more')?.textContent || '',
+        actionsHidden: o?.querySelector('.tov-actions')?.hidden ?? null, actions: [...(o?.querySelectorAll('.tov-action') || [])].map(b => b.textContent),
+        focusClose: document.activeElement === o?.querySelector('.tov-close'), focusId: document.activeElement?.closest?.('.todo-item')?.dataset.id || null,
+        rect: r ? { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) } : null,
+        closeSize: close ? Math.round(Math.min(close.width, close.height)) : 0, vw: innerWidth, vh: innerHeight,
+      };
+    });
+    await check(B, 'todo-item-overlay', 'Panneau TODO : chaque item est cliquable (clic, Entrée, Espace) et ouvre une overlay avec l’item COMPLET (titre, statut, projet, dates, détail entier non tronqué, lignes de suite) ; fermeture par ✕, Échap (le panneau reste ouvert) et clic hors zone ; barre d’actions prête pour les parties suivantes ; plein écran sur mobile', async () => {
+      if (!(await page.locator('#btn-todo').count())) NA('panneau TODO absent de cet état du code');
+      const api = await (await fetch(`${sb.url}/api/todo`, { headers: H })).json();
+      const long = api.items.find(i => i.project === 'chef' && /beta — analyse/.test(i.title));
+      const doneItem = api.items.find(i => i.id === 't-a10001');
+      if (!long?.detailFull) NA('API sans item complet (detailFull) dans cet état du code');
+      await page.selectOption('#side-panel .todo-project', '').catch(() => {});
+      if (!(await todoState(page)).open) await page.click('#btn-todo');
+      assert(await until(async () => (await todoState(page)).items.length > 0, 8000), 'panneau TODO vide');
+      const li = `#side-panel .todo-item[data-id="${long.id}"]`;
+      assert(/item complet/.test(await page.getAttribute(li, 'title') || '') && (await page.getAttribute(li, 'tabindex')) === '0', 'item non signalé comme cliquable');
+      await page.click(`${li} .ti-title`);
+      assert(await until(async () => (await ovState(page)).open, 3000), 'le clic n’ouvre pas l’overlay');
+      let o = await ovState(page);
+      assert(o.id === long.id && o.role === 'dialog' && o.modal === 'true', `overlay : ${JSON.stringify({ id: o.id, role: o.role })}`);
+      assert(o.title === long.title, `titre : ${o.title}`);
+      assert(o.detail === long.detailFull && /FIN-DU-DETAIL-COMPLET$/.test(o.detail) && !o.detail.endsWith('…'), `détail tronqué ou absent (${o.detail.length} car.)`);
+      assert(o.more === long.more, `lignes de suite : ${JSON.stringify(o.more)}`);
+      assert(/En cours/.test(o.status) && o.added === '14/09/26 00:00', `statut / date : ${o.status} · ${o.added}`);
+      assert(o.focusClose, 'le focus n’est pas sur ✕ à l’ouverture');
+      assert(o.actionsHidden === true && !o.actions.length, 'barre d’actions visible sans action');
+      await page.keyboard.press('Escape');
+      assert(await until(async () => !(await ovState(page)).open, 3000), 'Échap ne ferme pas l’overlay');
+      o = await ovState(page);
+      assert((await todoState(page)).open, 'Échap a aussi fermé le panneau');
+      assert(o.focusId === long.id, `focus non rendu à l’item : ${o.focusId}`);
+      await page.keyboard.press('Enter');
+      assert(await until(async () => (await ovState(page)).open, 3000), 'Entrée sur l’item n’ouvre pas l’overlay');
+      await page.mouse.click(8, Math.round((await ovState(page)).vh / 2));
+      assert(await until(async () => !(await ovState(page)).open, 3000), 'clic hors zone ne ferme pas');
+      await page.focus(`#side-panel .todo-item[data-id="${doneItem.id}"]`);
+      await page.keyboard.press(' ');
+      assert(await until(async () => (await ovState(page)).id === doneItem.id && (await ovState(page)).open, 3000), 'Espace n’ouvre pas l’item fait');
+      o = await ovState(page);
+      assert(/Fait/.test(o.status) && o.by === 'alpha' && o.title === doneItem.title, `item fait : ${JSON.stringify({ s: o.status, by: o.by })}`);
+      await page.click('#todo-overlay .tov-close');
+      assert(await until(async () => !(await ovState(page)).open, 3000), '✕ ne ferme pas');
+      // The action bar used by the next parts (notes, reject, send to the chef).
+      await page.evaluate(() => { window.__tovTest = true; TodoPanel.registerAction({ id: 'regress-test', label: 'Essai', when: () => window.__tovTest, run: (i, h) => { window.__tovRan = i.id; h.close(); } }); });
+      await page.click(`${li} .ti-title`);
+      assert(await until(async () => (await ovState(page)).actions.join() === 'Essai', 3000), `action non affichée : ${(await ovState(page)).actions}`);
+      await page.click('#todo-overlay .tov-action');
+      assert(await until(async () => !(await ovState(page)).open && (await page.evaluate(() => window.__tovRan)) === long.id, 3000), 'action non exécutée sur l’item');
+      await page.evaluate(() => { window.__tovTest = false; });
+      assert(await overflowX(page) <= 0, `débordement horizontal ${await overflowX(page)} px`);
+      await page.keyboard.press('Escape');
+      const mctx2 = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'fr-FR' });
+      try {
+        const m = await mctx2.newPage();
+        await m.goto(`${sb.url}/?token=${sb.token}`); await m.locator('.brand').waitFor();
+        await m.evaluate(() => SidePanel.open('todo'));
+        await m.locator(`#side-panel .todo-item[data-id="${long.id}"] .ti-title`).waitFor({ timeout: 8000 });
+        await m.tap(`#side-panel .todo-item[data-id="${long.id}"] .ti-title`);
+        assert(await until(async () => (await ovState(m)).open, 3000), 'mobile : le toucher n’ouvre pas l’overlay');
+        const mo = await ovState(m);
+        assert(mo.rect.x === 0 && mo.rect.y === 0 && mo.rect.w === mo.vw && mo.rect.h === mo.vh, `mobile : overlay pas en plein écran ${JSON.stringify(mo.rect)}`);
+        assert(mo.closeSize >= 44 && mo.detail === long.detailFull, `mobile : ✕ ${mo.closeSize} px, détail complet ${mo.detail === long.detailFull}`);
+        if (t.shots) await m.screenshot({ path: path.join(path.resolve(t.shots), 'todo-overlay-mobile.png') });
+      } finally { await mctx2.close(); }
+      return `item « ${long.title} » : ${long.detailFull.length} car. de détail + ${long.more.split('\n').length} ligne(s) de suite ; clic, Entrée, Espace ; ✕, Échap, hors zone ; action essai OK ; mobile plein écran`;
+    });
     const railHeads = () => page.evaluate(() => [...document.querySelectorAll('#rail-body .rail-group-head')].map(h => h.textContent.replace(/\s+/g, ' ').trim()));
     await check(B, 'rail', 'Rail PILOTAGE : À examiner + cadres des musiciens (ou dépliage « Tous » sans cadres)', async () => {
       const txt = await page.textContent('#rail-body');

@@ -273,6 +273,8 @@ async function apiChecks(sb) {
     assert(a1?.doneBy === 'alpha' && a1.doneAt === '2026-10-13T10:02', `nom du musicien : ${JSON.stringify(a1)}`);
     assert(d.items.find(i => i.project === 'beta' && i.status === 'done')?.doneBy === null, 'coché à la main : aucun nom inventé');
     assert(d.counts.done === 4 && d.counts.open === 5, `compteurs ${JSON.stringify(d.counts)}`);
+    const longItem = d.items.find(i => i.project === 'chef' && /beta — analyse/.test(i.title));
+    assert(longItem && longItem.detail.endsWith('…') && /FIN-DU-DETAIL-COMPLET$/.test(longItem.detailFull || '') && /Spec : docs\/analyse-beta\.md\nReste/.test(longItem.more || ''), `item complet (détail entier, lignes de suite) : ${JSON.stringify(longItem)}`);
     const only = await json('/api/todo?project=alpha');
     assert(only.items.length === 4 && only.items.every(i => i.project === 'alpha'), 'filtre projet');
     assert((await get('/api/todo?project=..%2F..%2Fsecret')).status === 404, 'projet hors liste accepté');

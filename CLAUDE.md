@@ -648,6 +648,17 @@ de la prod).
   `?todo=0` pour un navigateur.
 - Recettes : `_test_todo.mjs`, HTTP `todo-api`, navigateur `todo-panel` et
   `todo-panel-mobile`.
+- **Overlay d'un item** (0.77.0, partie 1/5 de la demande « chaque item doit
+  être clickable et afficher une overlay qui présente l'item complet […] ») :
+  clic, Entrée ou Espace sur un item → `#todo-overlay` (`role=dialog`) avec
+  l'item **complet**. `/api/todo` porte `detailFull` (quand `detail` est
+  coupé à 400 caractères) et `more` (lignes indentées sous l'item, jusqu'à
+  une ligne vide). Fermeture : ✕, Échap (écouteur en capture : le panneau
+  reste ouvert), clic hors zone. Les parties suivantes (notes, rejet, envoi
+  au chef) s'ajoutent par `TodoPanel.registerAction({id, label, when?,
+  run(item, {close, reload})})` ; la barre est masquée sans action. Le
+  glisser-déposer viendra sur les `.todo-item`. Recette : navigateur
+  `todo-item-overlay` (bureau et mobile).
 - **Onglet ⎇ Git** (0.76.0, même demande, partie git) : l'arbre git de chaque
   musicien, en **lecture seule** (`public/git-panel.js`, pill `#btn-git`).
   - On choisit le musicien ; les projets sans dépôt sont listés, désactivés.

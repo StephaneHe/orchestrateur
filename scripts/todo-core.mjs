@@ -44,18 +44,39 @@ function derivedId(project, body) {
   return 'h-' + crypto.createHash('sha1').update(`${project}\n${body}`).digest('hex').slice(0, 10);
 }
 
-/** Splits "**Title** → detail" (legacy chef lines) into title and detail. */
+/**
+ * Splits "**Title** → detail" (legacy chef lines) into title and detail.
+ * `detail` is cut for the list; `detailFull` keeps the whole text (item
+ * overlay, 0.77.0) and is only set when the cut happened.
+ */
 function splitTitle(text) {
   const clean = text.replace(/\*\*/g, '').trim();
   const i = clean.indexOf(' → ');
   const title = (i > 0 ? clean.slice(0, i) : clean).trim();
   const detail = i > 0 ? clean.slice(i + 3).trim() : '';
-  return { title, detail: detail.length > DETAIL_MAX ? detail.slice(0, DETAIL_MAX) + '…' : detail };
+  return detail.length > DETAIL_MAX
+    ? { title, detail: detail.slice(0, DETAIL_MAX) + '…', detailFull: detail }
+    : { title, detail };
+}
+
+/**
+ * Indented lines right under an item belong to it (multi-line items of the
+ * fleet's lists); a blank line, an unindented line or another box ends them.
+ */
+function continuationOf(lines, idx) {
+  const out = [];
+  for (let j = idx + 1; j < lines.length; j++) {
+    const l = lines[j];
+    if (!/^\s+\S/.test(l) || BOX_RE.test(l)) break;
+    out.push(l.trim());
+  }
+  return out.join('\n');
 }
 
 /**
  * Parses a TODO_LIST.md. → items [{id, project, line, status: done|progress|
- * todo, title, detail, type, addedAt, addedEstimated, doneAt, doneBy, manual}]
+ * todo, title, detail, detailFull?, more?, type, addedAt, addedEstimated,
+ * doneAt, doneBy, manual}]
  * `fileMtime` (Date) dates the lines written without an entry date.
  */
 export function parseTodo(text, { project = '', fileMtime = null } = {}) {
@@ -77,12 +98,15 @@ export function parseTodo(text, { project = '', fileMtime = null } = {}) {
     if (am) { addedAt = iso(am[1], am[2]); body = body.slice(am[0].length); }
     const tm = TYPE_RE.exec(body);
     if (tm) { type = tm[1].toLowerCase().replace('é', 'e'); body = body.slice(tm[0].length); }
-    const { title, detail } = splitTitle(body);
+    const { title, detail, detailFull } = splitTitle(body);
     if (!title) return;
     const status = mark === 'x' ? 'done' : mark === '~' ? 'progress' : 'todo';
+    const more = continuationOf(lines, idx);
     items.push({
       id: id || derivedId(project, idSource),
-      project, line: idx + 1, status, title, detail, type: type || 'autre',
+      project, line: idx + 1, status, title, detail,
+      ...(detailFull ? { detailFull } : {}), ...(more ? { more } : {}),
+      type: type || 'autre',
       addedAt: addedAt || est, addedEstimated: !addedAt,
       doneAt: status === 'done' ? doneAt : null,
       doneBy: status === 'done' ? doneBy : null,

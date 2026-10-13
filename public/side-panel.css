@@ -86,6 +86,55 @@
 .ti-type-projet { border-color: rgba(45, 255, 122, 0.35); color: var(--st-live); }
 .ti-prog { color: var(--st-think); }
 .todo-empty { color: var(--fg-2); font-size: 0.8125rem; padding: 1rem 0; }
+.todo-item { cursor: pointer; border-radius: 4px; }
+.todo-item:hover { background: rgba(232, 161, 92, 0.05); }
+.todo-item:focus-visible { outline: 1px solid var(--st-unread); outline-offset: 1px; }
+
+/* --- TODO item overlay (0.77.0) --- above the side panel (60, mobile 200),
+   below the permission overlay (10000). */
+.tov { position: fixed; inset: 0; z-index: 9500; display: flex; align-items: center; justify-content: center; }
+.tov[hidden] { display: none; }
+.tov-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.62); }
+.tov-dialog {
+  position: relative; width: min(42rem, calc(100vw - 2rem)); max-height: calc(100vh - 4rem);
+  display: flex; flex-direction: column; background: #14110e; color: var(--fg-1);
+  border: 1px solid var(--card-border); border-radius: 8px; box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.6);
+}
+.tov-head { display: flex; align-items: flex-start; gap: 0.6rem; padding: 0.9rem 1rem 0.6rem; border-bottom: 1px solid var(--card-border); }
+.tov-title { flex: 1; margin: 0; font-size: 1rem; color: var(--fg-0); font-weight: 600; overflow-wrap: anywhere; }
+.tov-dialog[data-status="done"] .tov-title { color: var(--fg-2); }
+.tov-close {
+  flex: none; min-width: 2.25rem; min-height: 2.25rem; font-size: 1rem; cursor: pointer;
+  background: transparent; color: var(--fg-1); border: 1px solid var(--card-border); border-radius: 5px;
+}
+.tov-close:hover, .tov-close:focus-visible { color: var(--fg-0); border-color: var(--st-unread); }
+.tov-body { padding: 0.8rem 1rem 1rem; overflow-y: auto; font-size: 0.8125rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.tov-row { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; font-size: 0.75rem; color: var(--fg-2); }
+.tov-k { min-width: 3.5rem; color: var(--fg-3); text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.6875rem; }
+.tov-status { border: 1px solid var(--card-border); border-radius: 4px; padding: 0 0.35rem; color: var(--fg-1); }
+.tov-status-done { color: var(--st-live); border-color: rgba(45, 255, 122, 0.35); }
+.tov-status-progress { color: var(--st-think); }
+.tov-proj { color: var(--fg-1); }
+.tov-by { color: var(--st-live); }
+.tov-by.is-unknown { color: var(--fg-3); }
+.tov-hint { color: var(--fg-3); font-size: 0.6875rem; margin: 0; }
+.tov-text {
+  white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg-1); line-height: 1.5;
+  background: rgba(232, 161, 92, 0.04); border: 1px solid rgba(232, 161, 92, 0.1); border-radius: 5px; padding: 0.55rem 0.7rem;
+}
+.tov-more { font-family: var(--font-mono, monospace); font-size: 0.75rem; }
+.tov-src { color: var(--fg-3); font-size: 0.6875rem; }
+.tov-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: flex-end; padding: 0.7rem 1rem; border-top: 1px solid var(--card-border); }
+.tov-actions[hidden] { display: none; }
+.tov-action {
+  min-height: 2.25rem; padding: 0 0.9rem; font-size: 0.8125rem; cursor: pointer;
+  background: transparent; color: var(--fg-1); border: 1px solid var(--card-border); border-radius: 5px;
+}
+@media (max-width: 767.98px) {
+  .tov-dialog { width: 100vw; height: 100dvh; max-height: none; border-radius: 0; border: 0; }
+  .tov-close { min-width: 2.75rem; min-height: 2.75rem; }
+  .tov-action { min-height: 2.75rem; }
+}
 
 /* --- Git tab (0.76.0) --- */
 .gg-filters {

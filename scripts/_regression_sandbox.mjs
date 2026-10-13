@@ -210,7 +210,11 @@ function writeFixtures(root, keepAlivePid) {
     '# TODO_LIST — Chef', '',
     '- [x] (2026-09-15) **alpha — icônes** → FAIT (commit `39ef05c`)',
     '- [ ] (2026-10-08 17:40) Relancer la limite de session',
-    '- [~] (2026-09-14) **beta — analyse** → cause trouvée',
+    // 0.77.0 — a detail longer than the list's cut and continuation lines:
+    // the item overlay must show all of it.
+    '- [~] (2026-09-14) **beta — analyse** → cause trouvée : ' + 'le cache du serveur garde une ancienne réponse ; '.repeat(9) + 'FIN-DU-DETAIL-COMPLET',
+    '  Spec : docs/analyse-beta.md',
+    '  Reste : mesurer avant / après.',
   ].join('\n') + '\n');
   fs.writeFileSync(path.join(projDir, 'alpha', 'TODO_LIST.md'), [
     '# TODO_LIST', '',

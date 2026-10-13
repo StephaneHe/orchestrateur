@@ -71,6 +71,30 @@ try {
   const c = countTodo(items);
   ok(c.done === 3 && c.open === 4 && c.progress === 1, `compteurs ${JSON.stringify(c)}`);
 
+  // User request (2026-10-13, 0.77.0): « chaque item doit être clickable et
+  // afficher une overlay qui présente l'item complet » — the API must carry
+  // the whole item, not only the list's cut detail.
+  console.log('\n── 2b. Item complet : détail entier et lignes de suite (overlay)');
+  const long = 'x'.repeat(380) + ' FIN-DU-DETAIL-ENTIER';
+  const multi = parseTodo([
+    `- [ ] (2026-10-13 09:00) **Long** → ${long} <!-- id:t-long01 -->`,
+    '  Spec : docs/spec.md',
+    '  Deuxième ligne de suite.',
+    '- [ ] Suivant',
+    '  suite du suivant',
+    '',
+    '  pas une suite (après une ligne vide)',
+    '- [x] Court → détail court',
+  ].join('\n'), { project: 'p' });
+  const L = multi.find(i => i.id === 't-long01');
+  ok(L.detail.length <= 401 && L.detail.endsWith('…') && L.detailFull === long, 'détail coupé pour la liste, entier dans detailFull', JSON.stringify(L));
+  ok(L.more === 'Spec : docs/spec.md\nDeuxième ligne de suite.', 'lignes indentées sous l’item = sa suite', L.more);
+  const N = multi.find(i => i.title === 'Suivant');
+  ok(N.more === 'suite du suivant' && multi.length === 3, 'une ligne vide termine la suite ; une case suivante n’est jamais avalée', JSON.stringify(multi.map(i => [i.title, i.more])));
+  const S = multi.find(i => i.title === 'Court');
+  ok(S.detail === 'détail court' && !('detailFull' in S) && !('more' in S), 'item court : ni detailFull ni more');
+  ok(/openItem/.test(panel) && /tov-dialog/.test(panel) && /registerAction/.test(panel), 'panneau : overlay de l’item et point d’ajout des actions');
+
   console.log('\n── 3. Les vrais fichiers de la flotte se lisent sans erreur (disque, pas git)');
   let files = 0, total = 0;
   try {

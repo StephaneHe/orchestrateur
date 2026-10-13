@@ -11,6 +11,35 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.77.0] - 2026-10-13
+
+### Added
+
+- (server) TODO tab of the side panel: each item is clickable (click, Enter
+  or Space) and opens an overlay with the **whole item** — part 1 of the
+  user request « chaque item doit être clickable et afficher une overlay qui
+  présente l'item complet. Possibilité d'y ajouter des notes, et de rejetter
+  l'item. Possilité aussi de lancer le contenu de l'item au chef, pour lancer
+  l'execution. Chaque item est drag & dropable, et les positions doivent
+  persister. » (notes, reject, send to the chef and drag & drop come next).
+  - The overlay shows the title, status, project, type, entry date (« ≈ »
+    when estimated), who ticked it and when, the full detail and the
+    indented continuation lines, and where the item lives (file, line, id).
+  - Closes with ✕, Escape (the side panel behind stays open, focus returns
+    to the item) or a click outside; Tab stays inside; full screen on a
+    phone with 44 px targets.
+  - An action bar for the next parts: `TodoPanel.registerAction({id, label,
+    when?, run(item, {close, reload})})`; hidden while no action is
+    registered.
+- (server) `/api/todo` items carry the whole text: `detailFull` when the
+  list's `detail` is cut at 400 characters, and `more` for the indented
+  lines under an item (they were ignored until now). No write route.
+- Tests: `_test_todo.mjs` section 2b (full detail, continuation lines, a
+  blank line ends them, the next box is never swallowed), HTTP `todo-api`
+  (whole item from the API), new browser check `todo-item-overlay`
+  (desktop and mobile). A fixture item gets a long detail and two
+  continuation lines; item counts are unchanged.
+
 ## [0.76.5] - 2026-10-13
 
 ### Fixed

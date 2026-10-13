@@ -4,7 +4,7 @@ A local Windows dashboard where one "conductor" AI session pilots a fleet of
 headless coding agents, one per project, with a live web viewer and an
 Android companion app.
 
-`version 0.76.5` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
+`version 0.77.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
 
 > **Status: active, personal project.** Built and used daily on a single
 > Windows machine. Pre-1.0: internal APIs and file formats can still change
@@ -145,7 +145,9 @@ same isolated instance, stopped at the end).
     checkboxes, open items on top and done items below, each part newest entry
     first, with the name of the agent that ticked each done item. Only the
     agents write their list, through `scripts/todo.mjs`, which records their
-    name from the turn itself (refused outside a turn).
+    name from the turn itself (refused outside a turn). Clicking an item (or
+    Enter / Space) opens an overlay with the whole item: status, project,
+    dates, the full detail and its indented continuation lines.
   - **Git**: each agent's repository as an SVG graph (commits, branches with
     HEAD highlighted, remote branches, tags, merges). The server only runs
     `git log` (GET routes only, the index is never rewritten).
