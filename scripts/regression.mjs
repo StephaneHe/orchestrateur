@@ -379,6 +379,26 @@ async function apiChecks(sb) {
     assert((await json('/api/queue/eps')).count === 2, 'entrée non retirée');
     assert((await fetch(`${sb.url}/api/queue/nope`, { headers: H })).status === 404, 'projet inconnu ≠ 404');
   });
+  // User request (2026-10-13): queue entries open a detail view with the whole entry.
+  await check(S, 'queue-detail', 'File : GET /api/queue/:projet donne le texte INTÉGRAL de chaque entrée (sauts de ligne compris, jamais tronqué) et tous ses champs', async () => {
+    const text = 'Recette du détail.\n\n' + 'ligne longue '.repeat(60) + '\nFIN';
+    const d = await post('/api/dispatch', { project: 'eps', prompt: text, queueIfBusy: true, callback: 'chef', model: 'claude-sonnet-5', provider: 'claude',
+      newSession: true, pipeline: 'dev', pipelineMode: 'leger', secondModel: 'claude-opus-5-5', secondProvider: 'claude' });
+    const dj = await d.json();
+    assert(d.status === 202 && dj.queued === true, `mise en file : ${d.status}`);
+    try {
+      const q = await json('/api/queue/eps');
+      const e = q.entries.find(x => x.id === dj.id);
+      if (e && e.text === undefined) NA('texte intégral absent de cet état du code');
+      assert(e, 'entrée absente');
+      assert(e.text === text, `texte altéré (${e.text?.length} / ${text.length})`);
+      assert(e.head.length <= 201, 'aperçu non borné');
+      assert(e.position === q.count && e.enqueuedAt && e.callback === 'chef' && e.model === 'claude-sonnet-5' && e.provider === 'claude', `champs : ${JSON.stringify({ ...e, text: undefined })}`);
+      assert(e.newSession === true && e.pipeline === 'dev' && e.pipelineMode === 'leger' && e.secondModel === 'claude-opus-5-5', 'session neuve / pipeline / second model');
+    } finally {
+      await fetch(`${sb.url}/api/queue/eps/${encodeURIComponent(dj.id)}`, { method: 'DELETE', headers: H });
+    }
+  });
   await check(S, 'question', 'Question acquittée sans relancer (200 puis 409), événement dans le log', async () => {
     const a = await post('/api/question/mu/resolve', { note: 'recette', by: 'regression' });
     assert(a.status === 200, `1er acquittement ${a.status}`);

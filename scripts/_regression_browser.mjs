@@ -552,6 +552,97 @@ export async function browserChecks(sb, t) {
       assert((await api('/api/queue/eps')).count === 1, 'serveur : file ≠ 1');
       await page.click('#dive .dive-back');
     });
+    // User request (2026-10-13): « Les éléments de la file d'attente doivent
+    // être clickable pour voir leurs détails » (detail part, read-only).
+    await check(B, 'queue-item-detail', 'File d’un musicien : chaque élément est cliquable (clic, Entrée, Espace) et ouvre une vue de détail en lecture seule avec l’entrée COMPLÈTE (identifiant, date d’ajout, texte intégral jamais tronqué, model/provider, pipeline/mode, callback, session neuve, position) ; « Retirer » n’ouvre pas le détail ; fermeture par ✕, Échap (le volet reste ouvert) et clic hors zone ; barre d’actions prête pour l’édition ; plein écran sur mobile', async () => {
+      if (!(await page.evaluate(() => !!window.Salle?.openQueueDetail))) NA('détail de la file absent de cet état du code');
+      const longText = 'Tâche de recette du détail de file.\n\nPremière consigne : <b>ne pas interpréter</b> ce balisage.\n' +
+        'Deuxième ligne détaillée. '.repeat(30) + '\nFIN-DU-TEXTE-COMPLET';
+      const post = await fetch(`${sb.url}/api/dispatch`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project: 'eps', prompt: longText, queueIfBusy: true, callback: 'chef', model: 'claude-sonnet-5',
+          provider: 'claude', newSession: true, pipeline: 'dev', pipelineMode: 'complet' }) });
+      const pj = await post.json();
+      assert(post.status === 202 && pj.queued === true, `mise en file : ${post.status} ${JSON.stringify(pj)}`);
+      const ovState = (p) => p.evaluate(() => {
+        const ov = document.getElementById('queue-overlay');
+        const d = ov && ov.querySelector('.qdv');
+        const r = d && d.getBoundingClientRect();
+        const q = (s) => ov?.querySelector(s)?.textContent || '';
+        return {
+          open: !!ov && !ov.hidden, text: ov?.querySelector('.qdv-text')?.textContent ?? null,
+          pos: q('dd.qdv-pos'), id: q('dd.qdv-id'), when: q('dd.qdv-when'), model: q('dd.qdv-model'), pipeline: q('dd.qdv-pipeline'),
+          callback: q('dd.qdv-callback'), fresh: q('dd.qdv-newsession'), bold: !!ov?.querySelector('.qdv-text b'),
+          actionsHidden: ov?.querySelector('.qdv-actions')?.hidden, focusIn: !!ov && ov.contains(document.activeElement),
+          rect: r ? { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) } : null,
+          vw: innerWidth, vh: innerHeight, closeSize: Math.round(ov?.querySelector('.qdv-close')?.getBoundingClientRect().height || 0),
+          diveOpen: !document.getElementById('dive').hidden,
+        };
+      });
+      try {
+        await setHash(page, '#/m/eps');
+        const row = `#dive .dq-item[data-queue-open="${pj.id}"]`;
+        assert(await until(async () => (await page.locator(row).count()) === 1, 10_000), 'nouvelle entrée absente du volet');
+        assert(await page.getAttribute(row, 'role') === 'button' && await page.getAttribute(row, 'tabindex') === '0', 'ligne non focalisable');
+        await page.click(row);
+        assert(await until(async () => (await ovState(page)).open, 3000), 'le clic n’ouvre pas le détail');
+        const s = await ovState(page);
+        assert(s.text === longText, `texte tronqué ou altéré (${s.text?.length} / ${longText.length} car.)`);
+        assert(!s.bold, 'balisage interprété');
+        assert(s.id === pj.id && /^2 sur 2$/.test(s.pos), `identifiant/position : ${s.id} / ${s.pos}`);
+        assert(/\d{2}\/\d{2}\/\d{4}/.test(s.when), `date d’ajout : ${s.when}`);
+        assert(/claude-sonnet-5/.test(s.model) && /claude/.test(s.model), `model : ${s.model}`);
+        assert(/dev/.test(s.pipeline) && /complet/.test(s.pipeline), `pipeline : ${s.pipeline}`);
+        assert(/chef/.test(s.callback) && /^oui/.test(s.fresh), `callback / session neuve : ${s.callback} / ${s.fresh}`);
+        assert(s.actionsHidden === true && s.focusIn, `barre d’actions visible sans action, ou focus hors du détail`);
+        await page.keyboard.press('Escape');
+        let a = await ovState(page);
+        assert(!a.open && a.diveOpen, `Échap : détail ${a.open ? 'ouvert' : 'fermé'}, volet ${a.diveOpen ? 'ouvert' : 'fermé'}`);
+        assert(await page.evaluate((id) => document.activeElement?.dataset?.queueOpen === id, pj.id), 'focus non rendu à la ligne');
+        await page.keyboard.press('Enter');
+        assert(await until(async () => (await ovState(page)).open, 3000), 'Entrée n’ouvre pas le détail');
+        await page.click('#queue-overlay .qdv-close');
+        assert(!(await ovState(page)).open, '✕ ne ferme pas');
+        await page.focus(row);
+        await page.keyboard.press(' ');
+        assert(await until(async () => (await ovState(page)).open, 3000), 'Espace n’ouvre pas le détail');
+        await page.mouse.click(5, 500);
+        a = await ovState(page);
+        assert(!a.open && a.diveOpen, 'clic hors zone ne ferme pas (ou ferme le volet)');
+        // Ready for the edit part: an action registered later shows in the bar.
+        await page.evaluate(() => Salle.registerQueueAction({ id: 'regress-test', label: 'Essai', run: (e, c) => { window.__qdvRan = e.id; c.close(); } }));
+        await page.click(row);
+        await page.locator('#queue-overlay [data-qdv-action="regress-test"]').click();
+        assert(await until(async () => !(await ovState(page)).open && (await page.evaluate(() => window.__qdvRan)) === pj.id, 3000), 'action non exécutée sur l’entrée');
+        await page.evaluate(() => Salle.registerQueueAction({ id: 'regress-test', label: 'Essai', when: () => false, run: () => {} }));
+        // « Retirer » keeps its own behaviour and never opens the detail.
+        await page.evaluate(() => { window.__qdvConfirm = window.confirm; window.confirm = () => false; });
+        await page.locator(`${row} .dq-rm`).click();
+        await page.waitForTimeout(300);
+        await page.evaluate(() => { window.confirm = window.__qdvConfirm; });
+        assert(!(await ovState(page)).open, '« Retirer » ouvre le détail');
+        assert((await api('/api/queue/eps')).count === 2, 'Retirer annulé a quand même retiré');
+        await shot(page, 'queue-detail');
+        const mctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'fr-FR' });
+        try {
+          const m = await mctx.newPage();
+          await m.goto(`${sb.url}/?token=${sb.token}#/m/eps`); await m.locator('.brand').waitFor();
+          await m.locator(row).waitFor({ timeout: 10_000 });
+          await m.tap(`${row} .dq-head`);
+          assert(await until(async () => (await ovState(m)).open, 3000), 'mobile : le toucher n’ouvre pas le détail');
+          const mo = await ovState(m);
+          assert(mo.rect.x === 0 && mo.rect.y === 0 && mo.rect.w === mo.vw && mo.rect.h === mo.vh, `mobile : pas en plein écran ${JSON.stringify(mo.rect)}`);
+          assert(mo.closeSize >= 44 && mo.text === longText, `mobile : ✕ ${mo.closeSize} px, texte complet ${mo.text === longText}`);
+          const ox = await m.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+          assert(ox <= 0, `mobile : débordement horizontal ${ox} px`);
+          if (t.shots) await m.screenshot({ path: path.join(path.resolve(t.shots), 'queue-detail-mobile.png') });
+        } finally { await mctx.close(); }
+        return `entrée ${pj.id} : ${longText.length} car. sur ${longText.split('\n').length} lignes, tous les champs ; clic, Entrée, Espace ; ✕, Échap, hors zone ; action prête ; mobile plein écran`;
+      } finally {
+        await page.evaluate(() => window.Salle?.closeQueueDetail?.()).catch(() => {});
+        await fetch(`${sb.url}/api/queue/eps/${encodeURIComponent(pj.id)}`, { method: 'DELETE', headers: H }).catch(() => {});
+        await page.click('#dive .dive-back').catch(() => {});
+      }
+    });
     await check(B, 'search', 'Annuaire / recherche : filtrer puis Entrée ouvre le volet', async () => {
       await page.click('#btn-search');
       assert(await visible(page, '#overlay-search'), 'overlay');

@@ -935,6 +935,7 @@
 
   function closeDive() {
     const el = diveEl();
+    if (queueDetail.id) closeQueueDetail();
     dive.name = null;
     dive.detail = null;
     dive.events = [];
@@ -1158,7 +1159,7 @@
         e.enqueuedAt ? new Date(e.enqueuedAt).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : null,
         e.model, e.callback ? `callback ${e.callback}` : null,
       ].filter(Boolean).join(" · ");
-      return `<div class="dq-item">
+      return `<div class="dq-item" role="button" tabindex="0" data-queue-open="${esc(e.id)}" aria-label="Voir le détail de la tâche ${e.position} en file">
           <span class="dq-n">${e.position}.</span>
           <span class="dq-head" title="${esc(e.id)}">${esc(e.head)}</span>
           <span class="dq-meta">${esc(meta)}</span>
@@ -1169,6 +1170,127 @@
       `<div class="dq-title">⏸ En file derrière son tour (${list.length})</div>` +
       (diveQueue.error ? `<div class="dq-err">file illisible : ${esc(diveQueue.error)}</div>` : "") +
       rows;
+    if (queueDetail.id) paintQueueDetail();
+  }
+
+  // ------------------------------------------------------------------------
+  // Queue entry detail (0.80.0): read-only overlay with the whole entry.
+  // Later parts of the same request (edit, reorder) plug in through
+  // registerQueueAction({id, label, when?, run(entry, {project, close, reload})}).
+  // ------------------------------------------------------------------------
+  const queueDetail = { project: null, id: null, entry: null, gone: false, returnFocus: null };
+  const queueActions = [];
+
+  function registerQueueAction(a) {
+    if (!a || !a.id || typeof a.run !== "function") return;
+    const i = queueActions.findIndex(x => x.id === a.id);
+    if (i >= 0) queueActions.splice(i, 1, a); else queueActions.push(a);
+    if (queueDetail.id) paintQueueDetail();
+  }
+
+  function queueOverlayEl() {
+    let ov = document.getElementById("queue-overlay");
+    if (ov) return ov;
+    ov = document.createElement("div");
+    ov.id = "queue-overlay";
+    ov.className = "qdv-backdrop";
+    ov.hidden = true;
+    ov.innerHTML = `<div class="qdv" role="dialog" aria-modal="true" aria-labelledby="qdv-title">
+        <div class="qdv-head"><h2 id="qdv-title" class="qdv-title"></h2>
+          <button type="button" class="qdv-close" aria-label="Fermer le détail">✕</button></div>
+        <div class="qdv-body"></div>
+        <div class="qdv-actions" hidden></div>
+      </div>`;
+    document.body.appendChild(ov);
+    ov.addEventListener("click", (e) => {
+      if (e.target === ov || e.target.closest(".qdv-close")) { closeQueueDetail(); return; }
+      const b = e.target.closest("[data-qdv-action]");
+      const a = b && queueActions.find(x => x.id === b.dataset.qdvAction);
+      if (a && queueDetail.entry) a.run(queueDetail.entry, {
+        project: queueDetail.project, close: closeQueueDetail,
+        reload: () => { diveQueue.depth = -1; return loadDiveQueue(queueDetail.project); },
+      });
+    });
+    // Capture phase: Escape closes the detail only, never the musician pane.
+    document.addEventListener("keydown", (e) => {
+      if (ov.hidden) return;
+      if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); closeQueueDetail(); return; }
+      if (e.key === "Tab") {
+        const f = [...ov.querySelectorAll("button, [href], [tabindex]:not([tabindex='-1'])")].filter(x => !x.disabled && x.offsetParent);
+        if (!f.length) return;
+        const first = f[0], last = f[f.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+    }, true);
+    return ov;
+  }
+
+  function openQueueDetail(id) {
+    const entry = diveQueue.entries.find(x => x.id === id);
+    if (!entry) return;
+    Object.assign(queueDetail, { project: dive.name, id, entry, gone: false, returnFocus: document.activeElement });
+    const ov = queueOverlayEl();
+    paintQueueDetail();
+    ov.hidden = false;
+    ov.querySelector(".qdv-close").focus();
+  }
+
+  function closeQueueDetail() {
+    const ov = document.getElementById("queue-overlay");
+    if (ov) ov.hidden = true;
+    const back = queueDetail.returnFocus;
+    Object.assign(queueDetail, { project: null, id: null, entry: null, gone: false, returnFocus: null });
+    const row = back?.dataset?.queueOpen ? document.querySelector(`[data-queue-open="${CSS.escape(back.dataset.queueOpen)}"]`) : back;
+    if (row && row.isConnected) row.focus();
+  }
+
+  function fmtWhen(iso) {
+    const d = iso ? new Date(iso) : null;
+    return d && !isNaN(d.getTime())
+      ? d.toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" })
+      : "—";
+  }
+
+  function paintQueueDetail() {
+    const ov = document.getElementById("queue-overlay");
+    if (!ov || !queueDetail.id) return;
+    // The entry is refreshed from the live list; once launched or removed it is
+    // no longer queued, so the last known content stays shown with a notice.
+    const live = queueDetail.project === diveQueue.name ? diveQueue.entries.find(x => x.id === queueDetail.id) : null;
+    if (live) { queueDetail.entry = live; queueDetail.gone = false; }
+    else if (!diveQueue.loading) queueDetail.gone = true;
+    const e = queueDetail.entry;
+    const total = diveQueue.entries.length;
+    const full = typeof e.text === "string";
+    const text = full ? e.text : String(e.head || "");
+    const row = (k, v, cls = "") => v == null || v === "" ? "" : `<dt>${esc(k)}</dt><dd class="${cls}">${v}</dd>`;
+    const prov = (m, p) => m ? esc(m) + (p ? ` <span class="qdv-dim">(${esc(p)})</span>` : "") : null;
+    const pipe = e.pipeline
+      ? esc(e.pipeline) + (e.pipelineMode ? ` · ${esc(e.pipelineMode === "leger" ? "léger" : e.pipelineMode)}` : "")
+      : e.pipelineResume ? `reprise de l'exécution <code>${esc(e.pipelineResume)}</code>` : null;
+    ov.querySelector(".qdv-title").textContent = `Tâche en file — ${queueDetail.project}`;
+    ov.querySelector(".qdv-body").innerHTML =
+      (queueDetail.gone ? `<div class="qdv-gone" role="status">Cette tâche n'est plus dans la file (lancée ou retirée). Dernier contenu connu :</div>` : "") +
+      `<dl class="qdv-fields">` +
+        row("Position", queueDetail.gone ? "—" : `${e.position} sur ${total}`, "qdv-pos") +
+        row("Identifiant", `<code>${esc(e.id)}</code>`, "qdv-id") +
+        row("Ajoutée le", esc(fmtWhen(e.enqueuedAt)), "qdv-when") +
+        row("Model", prov(e.model, e.provider), "qdv-model") +
+        row("Second model", e.secondModel ? prov(e.secondModel, e.secondProvider) + (e.dualMode ? ` · ${esc(e.dualMode)}` : "") : null, "qdv-second") +
+        row("Pipeline", pipe, "qdv-pipeline") +
+        row("Hors pipeline", e.horsPipeline ? esc(e.horsPipeline) : null, "qdv-hors") +
+        row("Callback", e.callback ? `rapport à ${esc(e.callback)}` : "aucun", "qdv-callback") +
+        row("Session neuve", e.newSession ? "oui — le tour repartira sans --resume" : "non", "qdv-newsession") +
+        row("Origine", e.source ? esc(e.source) : null, "qdv-source") +
+        row("Pièces jointes", e.attachments ? String(e.attachments) : null, "qdv-att") +
+      `</dl>` +
+      `<div class="qdv-label">Demande${full ? "" : " <span class=\"qdv-dim\">(aperçu : ce serveur ne fournit pas encore le texte complet, il doit être redémarré)</span>"}</div>` +
+      `<pre class="qdv-text">${esc(text)}</pre>`;
+    const acts = queueActions.filter(a => !a.when || a.when(e, { gone: queueDetail.gone }));
+    const bar = ov.querySelector(".qdv-actions");
+    bar.innerHTML = acts.map(a => `<button type="button" class="qdv-action" data-qdv-action="${esc(a.id)}">${esc(a.label)}</button>`).join("");
+    bar.hidden = !acts.length;
   }
 
   async function removeQueued(id) {
@@ -1298,7 +1420,16 @@
     });
     $(".dive-queue", el).addEventListener("click", (e) => {
       const b = e.target.closest("[data-queue-rm]");
-      if (b) removeQueued(b.dataset.queueRm);
+      if (b) { removeQueued(b.dataset.queueRm); return; }
+      const o = e.target.closest("[data-queue-open]");
+      if (o) openQueueDetail(o.dataset.queueOpen);
+    });
+    $(".dive-queue", el).addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      const o = e.target.closest("[data-queue-open]");
+      if (!o || e.target !== o) return;
+      e.preventDefault();
+      openQueueDetail(o.dataset.queueOpen);
     });
     $$(".dive-tab", el).forEach(b => b.addEventListener("click", () => {
       dive.tab = b.dataset.tab;
@@ -1420,8 +1551,9 @@
     syncRailVisibility, toggleRailSheet, openSearch, renderSearch,
     missionsHtml, orchestraActivityHtml, extractDispatches, findMission,
     label, glyph, fmtAge, snapRow, snapStale, snapAgeMs, healthFlag, alarming, railRank,
-    goBack,
+    goBack, openQueueDetail, closeQueueDetail, registerQueueAction,
     get diveName() { return dive.name; },
+    get queueDetailId() { return queueDetail.id; },
     set returnFocus(el) { dive.returnFocus = el; },
     /** Signale que la prochaine ouverture vient du fil (et non d'un lien). */
     markInAppNavigation() { pendingFromApp = true; },

@@ -492,6 +492,48 @@
 .dq-meta { font-family: var(--font-mono); font-size: 0.625rem; color: var(--fg-2); flex-shrink: 0; }
 .dq-rm { font-family: var(--font-mono); font-size: 0.625rem; padding: 3px 8px; border-radius: 5px; border: 1px solid var(--card-border); color: var(--fg-1); flex-shrink: 0; }
 .dq-rm:hover { background: var(--card-bg-hover); color: var(--st-error); border-color: var(--st-error); }
+.dq-item[data-queue-open] { cursor: pointer; }
+.dq-item[data-queue-open]:hover, .dq-item[data-queue-open]:focus-visible { border-color: var(--st-unread); background: var(--card-bg-hover); outline: none; }
+
+/* Queue entry detail (0.80.0) */
+.qdv-backdrop { position: fixed; inset: 0; z-index: 9500; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.62); }
+.qdv-backdrop[hidden] { display: none; }
+.qdv {
+  position: relative; width: min(44rem, calc(100vw - 2rem)); max-height: calc(100vh - 4rem);
+  display: flex; flex-direction: column; background: #14110e; color: var(--fg-1);
+  border: 1px solid var(--card-border); border-radius: 8px; box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.6);
+}
+.qdv-head { display: flex; align-items: flex-start; gap: 0.6rem; padding: 0.9rem 1rem 0.6rem; border-bottom: 1px solid var(--card-border); }
+.qdv-title { flex: 1; margin: 0; font-size: 1rem; color: var(--fg-0); font-weight: 600; overflow-wrap: anywhere; }
+.qdv-close {
+  flex: none; min-width: 2.25rem; min-height: 2.25rem; font-size: 1rem; cursor: pointer;
+  background: transparent; color: var(--fg-1); border: 1px solid var(--card-border); border-radius: 5px;
+}
+.qdv-close:hover, .qdv-close:focus-visible { color: var(--fg-0); border-color: var(--st-unread); }
+.qdv-body { padding: 0.8rem 1rem 1rem; overflow-y: auto; font-size: 0.8125rem; display: flex; flex-direction: column; gap: 0.6rem; }
+.qdv-gone { color: var(--st-think); font-size: 0.75rem; }
+.qdv-fields { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 0.8rem; margin: 0; font-size: 0.75rem; }
+.qdv-fields dt { color: var(--fg-3); text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.6875rem; }
+.qdv-fields dd { margin: 0; color: var(--fg-1); overflow-wrap: anywhere; }
+.qdv-dim { color: var(--fg-3); }
+.qdv-label { color: var(--fg-3); text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.6875rem; }
+.qdv-text {
+  margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg-1); line-height: 1.5;
+  font-family: var(--font-mono, monospace); font-size: 0.75rem;
+  background: rgba(232, 161, 92, 0.04); border: 1px solid rgba(232, 161, 92, 0.1); border-radius: 5px; padding: 0.55rem 0.7rem;
+}
+.qdv-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: flex-end; padding: 0.7rem 1rem; border-top: 1px solid var(--card-border); }
+.qdv-actions[hidden] { display: none; }
+.qdv-action {
+  min-height: 2.25rem; padding: 0 0.9rem; font-size: 0.8125rem; cursor: pointer;
+  background: transparent; color: var(--fg-1); border: 1px solid var(--card-border); border-radius: 5px;
+}
+@media (max-width: 760px) {
+  .qdv { width: 100vw; max-height: 100vh; height: 100%; border-radius: 0; border: 0; }
+  .qdv-close { min-width: 2.75rem; min-height: 2.75rem; }
+  .qdv-fields { grid-template-columns: 1fr; }
+  .qdv-fields dd { margin-bottom: 0.3rem; }
+}
 .dive-foot {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 14px 12px;

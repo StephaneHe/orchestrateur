@@ -341,6 +341,15 @@ non visible » du journal d'activité).
   au moins 60 s (après un redémarrage, un result manqué…), jamais sous limite
   Claude. Il est journalisé `[queue-sweep]`. La file se gère avec
   `scripts/queue.mjs`, jamais en éditant `logs/queue/*.json`.
+- **Détail d'une entrée de file** (0.80.0, demande « Les éléments de la file
+  d'attente doivent être clickable pour voir leurs détails ») : dans le volet
+  d'un musicien, chaque `.dq-item` (clic, Entrée, Espace) ouvre
+  `#queue-overlay`, en lecture seule, avec l'entrée complète (`text` intégral
+  de `GET /api/queue/:projet`, champs, position suivie en direct). Fermeture
+  par ✕, Échap (capture : le volet reste ouvert), clic hors zone. L'édition et
+  le glisser-déposer s'ajouteront par `Salle.registerQueueAction({id, label,
+  when?, run(entry, {project, close, reload})})`. Recettes : HTTP
+  `queue-detail`, navigateur `queue-item-detail`.
 
 ---
 

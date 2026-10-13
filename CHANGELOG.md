@@ -11,6 +11,37 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.80.0] - 2026-10-13
+
+### Added
+
+- (server) Queue entry detail — the « clickable pour voir leurs détails »
+  part of the user request « il faut pouvoir drag & drop les éléments de la
+  file d'attente, et que celà ai un impacte sur l'ordre de traitement. Les
+  éléments de la file d'attente doivent être clickable pour voir leurs
+  détails, tant qu'ils ne sont pas traités ils sont éditables ».
+  - In a musician's pane, every queued entry is clickable (click, Enter,
+    Space; `role=button`, focusable) and opens `#queue-overlay`
+    (`role=dialog`), read-only: position, id, date added, model / provider,
+    second model, pipeline and mode (or resumed run), out-of-pipeline reason,
+    callback, new session, origin, attachments, and the request text in
+    full, line breaks kept, never cut.
+  - The detail follows the live queue (position refreshed); once the entry is
+    launched or removed it says so and keeps the last known content.
+  - Closing: ✕, Escape (captured: the musician pane stays open), click
+    outside; focus goes back to the row. Full screen on mobile.
+  - « Retirer » keeps its behaviour and never opens the detail.
+  - Ready for the edit part: `Salle.registerQueueAction({id, label, when?,
+    run(entry, {project, close, reload})})`; the action bar is hidden while no
+    action is registered.
+  - `GET /api/queue/:project` entries gain `text` (verbatim prompt) and
+    `secondModel` / `secondProvider` / `dualMode`. A server not yet restarted
+    only gives the 200-character preview: the detail shows it and says the
+    server must be restarted.
+  - The Android app shows only the queue depth, not its entries: unchanged.
+  - Tests: HTTP `queue-detail`, browser `queue-item-detail` (desktop and
+    mobile).
+
 ## [0.79.0] - 2026-10-13
 
 ### Added

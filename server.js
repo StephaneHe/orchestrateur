@@ -392,8 +392,11 @@ function queueEntryView(e, i) {
   return {
     id: e.id, position: i + 1,
     head: text.slice(0, 200) + (text.length > 200 ? '…' : ''),
+    // Verbatim prompt for the detail view (0.80.0): never collapsed nor cut.
+    text: String(e.prompt || ''),
     enqueuedAt: e.enqueuedAt || null,
     model: e.model || null, provider: e.provider || null,
+    secondModel: e.secondModel || null, secondProvider: e.secondProvider || null, dualMode: e.dualMode || null,
     callback: e.callback || null, source: e.source || null,
     attachments: (e.attachmentPaths?.length || 0) + (e.videoPaths?.length || 0),
     newSession: !!e.newSession,
