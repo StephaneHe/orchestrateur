@@ -187,6 +187,22 @@
   });
   window.addEventListener("resize", () => { if (st.open) place(); });
 
-  globalThis.SidePanel = { register, open, close, toggle, setBadge, applyUi, enabled,
+  /**
+   * Plain-language reason for a failed read of a tab's API. The front is
+   * served from disk, so a server started on an older version serves the new
+   * tabs while their routes are still missing (404): say so, with both
+   * versions, instead of an empty panel and a bare "HTTP 404".
+   */
+  async function explainFailure(status, what) {
+    if (status !== 404) return `${what} indisponible : HTTP ${status}`;
+    let v = null;
+    try { const r = await fetch("/api/version"); if (r.ok) v = await r.json(); } catch { /* */ }
+    if (v && v.restartRequired) {
+      return `${what} indisponible : le serveur tourne encore en v${v.version}, alors que le code installé est en v${v.repoVersion}. Ce panneau fonctionnera après le redémarrage de l’orchestrateur (restart-orchestrateur.mjs, lancé par le chef).`;
+    }
+    return `${what} indisponible : le serveur${v ? ` (v${v.version})` : ""} ne connaît pas cette route (HTTP 404). L’orchestrateur doit sans doute être redémarré.`;
+  }
+
+  globalThis.SidePanel = { register, open, close, toggle, setBadge, applyUi, enabled, explainFailure,
     isOpen: () => st.open, current: () => st.tab };
 })();

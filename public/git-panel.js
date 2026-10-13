@@ -33,9 +33,11 @@
     return repos.includes(want) ? want : (repos[0] || "");
   }
 
+  const httpError = (status) => Object.assign(new Error(`HTTP ${status}`), { status });
+
   async function loadProjects() {
     const r = await fetch("/api/git-graph");
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    if (!r.ok) throw httpError(r.status);
     st.projects = (await r.json()).projects || [];
   }
 
@@ -48,12 +50,12 @@
       if (!p) { st.data = { repo: false, commits: [] }; }
       else {
         const r = await fetch(`/api/git-graph/${encodeURIComponent(p)}?n=${st.n}`);
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        if (!r.ok) throw httpError(r.status);
         st.data = await r.json();
       }
       st.error = null;
     } catch (e) {
-      st.error = e.message;
+      st.error = e.status ? await SidePanel.explainFailure(e.status, "Graphe git") : `Graphe git indisponible : ${e.message}`;
     } finally {
       st.loading = false;
     }
@@ -95,11 +97,13 @@
     const cur = current();
     if (st.projects) {
       sel.innerHTML = st.projects.map(p => `<option value="${esc(p.name)}"${p.name === cur ? " selected" : ""}${p.repo ? "" : " disabled"}>${esc(p.name)}${p.repo ? "" : " (pas de dépôt git)"}</option>`).join("");
+    } else if (st.error) {
+      sel.innerHTML = `<option value="" disabled selected>— liste des musiciens indisponible —</option>`;
     }
     const body = pane.querySelector(".gg-body");
     const d = st.data;
     const more = pane.querySelector(".gg-more-btn");
-    if (st.error && !d) { body.innerHTML = `<p class="gg-empty">Graphe indisponible : ${esc(st.error)}</p>`; return; }
+    if (st.error && !d) { body.innerHTML = `<p class="gg-empty gg-unavailable">${esc(st.error)}</p>`; more.hidden = true; return; }
     if (!d) { body.innerHTML = `<p class="gg-empty">Chargement…</p>`; return; }
     if (d.repo === false) { body.innerHTML = `<p class="gg-empty">${cur ? `${esc(cur)} n’a pas de dépôt git.` : "Aucun dépôt git dans la flotte."}</p>`; more.hidden = true; return; }
     if (d.error) { body.innerHTML = `<p class="gg-empty">Lecture impossible : ${esc(d.error)}</p>`; more.hidden = true; return; }

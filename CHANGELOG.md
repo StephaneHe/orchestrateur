@@ -11,6 +11,25 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.76.4] - 2026-10-13
+
+### Fixed
+
+- (server) Side panel on a server that has not been restarted yet (user
+  report: « Bug orchestrateur : le pan git et vide, et sa liste de musiciens
+  aussi »). Cause, reproduced on the production server: the process still
+  runs 0.74.3 (`/api/version` → `restartRequired: true`) while the front is
+  read from disk in 0.76.2, so the Git and TODO tabs are served but
+  `/api/git-graph` and `/api/todo` answer 404; the Git tab then showed an
+  empty musician list and a bare "HTTP 404". The code of 0.76.x is right;
+  the restart fixes it. Now `SidePanel.explainFailure` turns a 404 into a
+  plain message with both versions and the restart to do, and the musician
+  list shows "unavailable" instead of staying empty (Git and TODO tabs).
+  New browser check `git-panel-musicians`: the Git list holds every project
+  of `/api/git-graph` with its git state (repository selectable, no
+  repository greyed out), and with the routes missing the message names
+  both versions and the restart.
+
 ## [0.76.3] - 2026-10-13
 
 ### Added

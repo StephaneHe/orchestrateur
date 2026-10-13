@@ -663,6 +663,13 @@ de la prod).
     pur (`layoutGraph`). Ne jamais y ajouter de commande qui écrit.
   - Recettes : `_test_git_graph.mjs`, HTTP `git-graph`, navigateur
     `git-panel` et `git-panel-mobile`.
+- **Serveur pas encore redémarré** (0.76.4, signalement « le pan git et vide,
+  et sa liste de musiciens aussi ») : le front est lu sur le disque, donc un
+  serveur lancé sur une version antérieure sert les nouveaux onglets sans
+  leurs routes (404). `SidePanel.explainFailure` remplace alors le panneau
+  vide par un message qui donne les deux versions (`/api/version`) et le
+  redémarrage à faire ; la liste des musiciens affiche « indisponible ». Même
+  chose pour la TODO. Recette : navigateur `git-panel-musicians`.
 
 ## Vue « Projets » et retour arrière (0.29.0)
 

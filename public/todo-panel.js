@@ -30,11 +30,11 @@
     st.loading = true;
     try {
       const r = await fetch("/api/todo");
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) throw Object.assign(new Error(`HTTP ${r.status}`), { status: r.status });
       st.data = await r.json();
       st.error = null;
     } catch (e) {
-      st.error = e.message;
+      st.error = e.status ? await SidePanel.explainFailure(e.status, "Liste") : `Liste indisponible : ${e.message}`;
     } finally {
       st.loading = false;
     }
@@ -61,7 +61,7 @@
     const pane = st.pane;
     if (!pane) return;
     const d = st.data;
-    if (!d) { pane.querySelector(".todo-body").innerHTML = `<p class="todo-empty">${st.error ? `Liste indisponible : ${esc(st.error)}` : "Chargement…"}</p>`; return; }
+    if (!d) { pane.querySelector(".todo-body").innerHTML = `<p class="todo-empty${st.error ? " todo-unavailable" : ""}">${esc(st.error || "Chargement…")}</p>`; return; }
     const project = lsGet(LS_PROJECT);
     const sel = pane.querySelector(".todo-project");
     const names = d.lists.map(l => l.project);

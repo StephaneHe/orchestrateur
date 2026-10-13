@@ -230,6 +230,42 @@ export async function browserChecks(sb, t) {
       assert(await until(async () => !(await gitState(page)).open, 3000), 'Échap ne ferme pas');
       return `omega : ${s.rows} commits, ${s.edges} trait(s), refs ${s.refs.slice(0, 4).join(' · ')}`;
     });
+    // User report (2026-10-13): « le pan git et vide, et sa liste de musiciens
+    // aussi ». Cause: a server started on an older version serves the new front
+    // from disk but not its routes (404). The panel must list every musician
+    // with its git state, and say plainly when the server needs a restart.
+    await check(B, 'git-panel-musicians', 'Panneau Git : la liste des musiciens contient TOUS les projets de /api/git-graph avec leur état git (dépôt sélectionnable, sans dépôt grisé) ; serveur pas encore redémarré (routes en 404) : message clair avec les deux versions et le redémarrage, jamais un panneau ni une liste vides (Git et TODO)', async () => {
+      if (!(await page.locator('#btn-git').count())) NA('onglet Git absent de cet état du code');
+      const api = await (await fetch(`${sb.url}/api/git-graph`, { headers: H })).json();
+      assert(api.projects.length > 1, `projets : ${api.projects.length}`);
+      await page.click('#btn-git');
+      assert(await until(async () => (await gitState(page)).rows > 0, 10_000), 'graphe vide');
+      const opts = await page.evaluate(() => [...document.querySelectorAll('#side-panel .gg-project option')].map(o => ({ v: o.value, d: o.disabled })));
+      assert(opts.length === api.projects.length, `liste : ${opts.length} musicien(s) sur ${api.projects.length}`);
+      for (const p of api.projects) {
+        const o = opts.find(x => x.v === p.name);
+        assert(o && o.d === !p.repo, `${p.name} : ${o ? (o.d ? 'grisé' : 'sélectionnable') : 'absent'} (dépôt : ${p.repo})`);
+      }
+      await page.keyboard.press('Escape');
+      const ctx404 = await browser.newContext({ viewport: { width: 1600, height: 1000 }, locale: 'fr-FR' });
+      try {
+        const p4 = await ctx404.newPage();
+        await p4.route(/\/api\/(git-graph|todo)(\/|\?|$)/, r => r.fulfill({ status: 404, contentType: 'text/html', body: '<pre>Cannot GET</pre>' }));
+        await p4.route(/\/api\/version(\?|$)/, r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ version: '0.74.3', repoVersion: '0.76.4', restartRequired: true }) }));
+        await p4.goto(`${sb.url}/?token=${sb.token}`); await p4.locator('.brand').waitFor();
+        await p4.click('#btn-git');
+        assert(await until(async () => (await p4.locator('#side-panel .gg-unavailable').count()) > 0, 8000), 'aucun message quand les routes manquent');
+        const msg = await p4.textContent('#side-panel .gg-unavailable');
+        assert(/v0\.74\.3/.test(msg) && /v0\.76\.4/.test(msg) && /redémarrage/.test(msg), `message Git : ${msg}`);
+        const sel = await p4.evaluate(() => [...document.querySelectorAll('#side-panel .gg-project option')].map(o => o.textContent));
+        assert(sel.length === 1 && /indisponible/.test(sel[0]), `liste Git : ${JSON.stringify(sel)}`);
+        await p4.click('#side-panel [data-sp-tab="todo"]');
+        assert(await until(async () => (await p4.locator('#side-panel .todo-unavailable').count()) > 0, 8000), 'TODO : aucun message quand la route manque');
+        const tmsg = await p4.textContent('#side-panel .todo-unavailable');
+        assert(/v0\.74\.3/.test(tmsg) && /redémarrage/.test(tmsg), `message TODO : ${tmsg}`);
+        return `${opts.length} musiciens (${api.projects.filter(p => p.repo).length} dépôts) ; serveur ancien : « ${msg.slice(0, 70)}… »`;
+      } finally { await ctx404.close(); }
+    });
     const railHeads = () => page.evaluate(() => [...document.querySelectorAll('#rail-body .rail-group-head')].map(h => h.textContent.replace(/\s+/g, ' ').trim()));
     await check(B, 'rail', 'Rail PILOTAGE : À examiner + cadres des musiciens (ou dépliage « Tous » sans cadres)', async () => {
       const txt = await page.textContent('#rail-body');
