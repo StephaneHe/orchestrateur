@@ -75,6 +75,7 @@ import { readPending, dependencyResult, releaseReady, staleEntries, markNotified
 import { createModelRouting, incompatibility } from './scripts/model-routing.mjs';
 import { createRecommendations } from './scripts/model-reco.mjs';
 import { TODO_FILE, parseTodo, sortTodo, countTodo } from './scripts/todo-core.mjs';
+import { readGitGraph, GIT_N_DEFAULT, GIT_N_MAX } from './scripts/git-graph-core.mjs';
 import { mountGatewayRoutes } from './scripts/responses-gateway.mjs';
 // Clés NVIDIA / OpenRouter saisies dans la page Models (0.43.0).
 import { createApiKeys } from './scripts/api-keys.mjs';
@@ -2644,6 +2645,32 @@ app.get('/api/todo', (req, res) => {
     all.push(...items);
   }
   res.json({ ok: true, items: sortTodo(all), counts: countTodo(all), lists });
+});
+
+// ── Git graph of each musician (0.76.0) ─────────────────────────────────────
+// READ-ONLY: the only git command is `git log` (scripts/git-graph-core.mjs,
+// GIT_OPTIONAL_LOCKS=0), in the directory of a config.json project (never a
+// path from the request). GET only: no route can trigger a git operation.
+const gitGraphCache = new Map();
+const GIT_GRAPH_TTL_MS = 15_000;
+const isGitRepo = (dir) => { try { return fs.existsSync(path.join(dir, '.git')); } catch { return false; } };
+app.get('/api/git-graph', (req, res) => {
+  const projects = (config.projects || []).filter(p => p && p.name && p.path)
+    .map(p => ({ name: p.name, repo: isGitRepo(p.path) }));
+  res.json({ ok: true, projects });
+});
+app.get('/api/git-graph/:project', async (req, res) => {
+  const p = (config.projects || []).find(x => x && x.name === req.params.project && x.path);
+  if (!p) return res.status(404).json({ ok: false, error: `projet inconnu : ${req.params.project}` });
+  if (!isGitRepo(p.path)) return res.json({ ok: true, project: p.name, repo: false, commits: [] });
+  const n = Math.max(1, Math.min(GIT_N_MAX, parseInt(req.query.n, 10) || GIT_N_DEFAULT));
+  const key = `${p.name}:${n}`;
+  const hit = gitGraphCache.get(key);
+  if (hit && Date.now() - hit.at < GIT_GRAPH_TTL_MS) return res.json(hit.body);
+  const g = await readGitGraph(p.path, { n });
+  const body = { ok: true, project: p.name, n, ...g };
+  gitGraphCache.set(key, { at: Date.now(), body });
+  res.json(body);
 });
 
 // ── Models par tâche (0.39.0) ───────────────────────────────────────────────

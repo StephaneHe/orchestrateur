@@ -193,6 +193,41 @@ export async function browserChecks(sb, t) {
       await until(async () => /À examiner/.test(await page.textContent('#rail-body') || ''), 15_000);
       return `${s.items.length} items : ${k} faits (avec nom) puis ${s.items.length - k} non faits, ordre par date d’entrée, panneau ${s.width}px × pleine hauteur`;
     });
+    // ---------------- Git graph tab (0.76.0) ----------------
+    const gitState = (pg) => pg.evaluate(() => {
+      const pane = document.querySelector('#side-panel [data-sp-pane="git"]');
+      return {
+        open: !!document.querySelector('#side-panel.is-open'), visible: !!pane && !pane.hidden,
+        project: pane?.querySelector('.gg-project')?.value || null,
+        rows: pane ? pane.querySelectorAll('.gg-row').length : 0, dots: pane ? pane.querySelectorAll('.gg-dot').length : 0,
+        edges: pane ? pane.querySelectorAll('.gg-edge').length : 0,
+        refs: pane ? [...pane.querySelectorAll('.gg-ref')].map(r => r.textContent.trim()) : [],
+        summary: pane?.querySelector('.gg-summary')?.textContent || '',
+        buttons: pane ? [...pane.querySelectorAll('button, a, input:not([type=hidden])')].map(b => b.className || b.tagName) : [],
+      };
+    });
+    await check(B, 'git-panel', 'Arbre git des musiciens dans le même panneau que la TODO : pill ⎇ Git, choix du musicien (dépôts seulement), un point par commit, branches, tags et HEAD affichés, lignes de l’historique ; aucune action git possible ; bascule entre onglets TODO / Git', async () => {
+      if (!(await page.locator('#btn-git').count())) NA('onglet Git absent de cet état du code');
+      assert(await until(async () => visible(page, '#btn-git'), 6000), 'pill ⎇ Git absente');
+      await page.click('#btn-git');
+      assert(await until(async () => (await gitState(page)).open && (await gitState(page)).visible, 4000), 'onglet Git non ouvert');
+      await page.selectOption('#side-panel .gg-project', 'omega');
+      assert(await until(async () => (await gitState(page)).rows > 0, 10_000), 'graphe omega vide');
+      const s = await gitState(page);
+      assert(s.project === 'omega' && s.dots === s.rows && /omega · HEAD/.test(s.summary), `rendu : ${JSON.stringify({ p: s.project, rows: s.rows, dots: s.dots, sum: s.summary })}`);
+      assert(s.refs.some(r => /^HEAD → /.test(r)), `HEAD non signalé : ${s.refs.join(' | ')}`);
+      assert(await page.evaluate(() => [...document.querySelectorAll('#side-panel .gg-project option')].some(o => o.disabled && /pas de dépôt git/.test(o.textContent))), 'les projets sans dépôt ne sont pas signalés');
+      assert(s.buttons.every(b => /gg-more-btn|gg-project/.test(b)), `élément d’action inattendu : ${s.buttons.join(', ')}`);
+      assert(await overflowX(page) <= 0, `débordement horizontal ${await overflowX(page)} px`);
+      await shot(page, 'git-panel-desktop');
+      await page.click('#side-panel [data-sp-tab="todo"]');
+      assert(await until(async () => (await page.locator('#side-panel [data-sp-pane="todo"]').isVisible()) && !(await gitState(page)).visible, 3000), 'bascule vers TODO');
+      await page.click('#side-panel [data-sp-tab="git"]');
+      assert(await until(async () => (await gitState(page)).visible && (await gitState(page)).project === 'omega', 3000), 'retour à Git (musicien mémorisé)');
+      await page.keyboard.press('Escape');
+      assert(await until(async () => !(await gitState(page)).open, 3000), 'Échap ne ferme pas');
+      return `omega : ${s.rows} commits, ${s.edges} trait(s), refs ${s.refs.slice(0, 4).join(' · ')}`;
+    });
     const railHeads = () => page.evaluate(() => [...document.querySelectorAll('#rail-body .rail-group-head')].map(h => h.textContent.replace(/\s+/g, ' ').trim()));
     await check(B, 'rail', 'Rail PILOTAGE : À examiner + cadres des musiciens (ou dépliage « Tous » sans cadres)', async () => {
       const txt = await page.textContent('#rail-body');
@@ -1378,6 +1413,21 @@ export async function browserChecks(sb, t) {
       await shot(m, 'todo-panel-mobile');
       await m.click('#side-panel .sp-close');
       assert(await until(async () => !(await todoState(m)).open, 3000), 'ne se ferme pas');
+    });
+    await check(B, 'git-panel-mobile', 'Arbre git · mobile : onglet Git du panneau plein écran, graphe lisible, choix ≥ 44 px, aucun débordement', async () => {
+      if (!(await m.locator('#btn-git').count())) NA('onglet Git absent de cet état du code');
+      await m.click('#sp-edge');
+      assert(await until(async () => (await gitState(m)).open, 4000), 'panneau fermé');
+      await m.click('#side-panel [data-sp-tab="git"]');
+      await m.selectOption('#side-panel .gg-project', 'omega');
+      assert(await until(async () => (await gitState(m)).rows > 0, 10_000), 'graphe vide sur mobile');
+      const sel = await m.locator('#side-panel .gg-project').boundingBox();
+      assert(sel.height >= 44, `choix du musicien : ${sel.height}px`);
+      assert(await m.evaluate(() => document.documentElement.scrollWidth - window.innerWidth) <= 0, 'débordement horizontal');
+      await shot(m, 'git-panel-mobile');
+      await m.click('#side-panel [data-sp-tab="todo"]');
+      await m.click('#side-panel .sp-close');
+      assert(await until(async () => !(await gitState(m)).open, 3000), 'ne se ferme pas');
     });
     await check(B, 'mobile-journal', 'Mobile : cadres dans la feuille Pilotage, journal plein écran, aucun débordement', async () => {
       if (!(await m.evaluate(() => !!window.Activite))) NA('fonction absente de cet état du code');

@@ -865,6 +865,33 @@ async function apiChecks(sb) {
       return `Images 4/4 (classée automatiquement), ${path.relative(omegaDir, png)} vérifié, livré (commit ${g('log', '-1', '--format=%h').stdout.trim()})`;
     } finally { fs.rmSync(routingFile, { force: true }); }
   });
+  // 0.76.0 — git graph of each musician, read-only (side panel).
+  await check(S, 'git-graph', 'Arbre git des musiciens : GET /api/git-graph (projets de config.json, dépôt ou non) et /api/git-graph/:projet (commits, branches, tags, HEAD, voies) ; lecture seule — refs, HEAD et index inchangés, aucune route d’écriture, projet hors liste refusé', async () => {
+    if (!fs.existsSync(path.join(sb.root, 'scripts', 'git-graph-core.mjs'))) NA('graphe git absent de cet état du code');
+    const g = omegaRepo();
+    g('tag', '-f', 'recette-git', 'HEAD');
+    const state = () => ({ refs: g('for-each-ref', '--format=%(refname) %(objectname)').stdout, head: fs.readFileSync(path.join(omegaDir, '.git', 'HEAD'), 'utf8'), index: fs.statSync(path.join(omegaDir, '.git', 'index')).mtimeMs });
+    const before = state();
+    const list = await json('/api/git-graph');
+    const by = Object.fromEntries(list.projects.map(p => [p.name, p]));
+    assert(by.omega?.repo === true && by.alpha?.repo === false, `liste : ${JSON.stringify(list.projects.slice(0, 4))}`);
+    const d = await json('/api/git-graph/omega?n=20');
+    assert(d.repo && d.commits.length >= 1 && d.layout.rows.length === d.commits.length && !!d.head, `graphe omega : ${JSON.stringify({ n: d.commits?.length, head: d.head, err: d.error })}`);
+    assert(d.commits.some(c => c.refs.tags.includes('recette-git')) && d.commits[0].refs.head, 'tag ou HEAD absents');
+    assert(d.layout.segments.every(s => s.r2 === s.r1 + 1), 'segments');
+    assert((await json('/api/git-graph/alpha')).repo === false, 'projet sans dépôt');
+    assert((await get('/api/git-graph/..%2F..%2Fsecret')).status === 404 && (await get('/api/git-graph/inconnu')).status === 404, 'projet hors liste accepté');
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      const r = await fetch(sb.url + '/api/git-graph/omega', { method, headers: { ...H, 'Content-Type': 'application/json' }, body: method === 'DELETE' ? undefined : '{"cmd":"reset"}' });
+      assert(r.status === 404, `${method} /api/git-graph/omega → ${r.status} (aucune opération git ne doit exister)`);
+    }
+    const one = await json('/api/git-graph/omega?n=1');
+    assert(one.commits.length === 1 && (one.truncated || d.commits.length === 1), 'fenêtre n');
+    const after = state();
+    assert(after.refs === before.refs && after.head === before.head && after.index === before.index, 'le dépôt a changé pendant la lecture');
+    g('tag', '-d', 'recette-git');
+    return `omega : ${d.commits.length} commits, HEAD ${d.head}, ${d.layout.lanes} voie(s) ; dépôt inchangé ; écritures : 404`;
+  });
   // 0.56.0 — phase 7 : relevé de la mise en service générale (« une semaine sans contournement »).
   await check(S, 'pipeline-health', 'Pipelines, phase 7 : relevé de la mise en service — exécutions, tours hors pipeline, tours ordinaires, refus (moteur et porte), pauses, jours complets sans contournement', async () => {
     if (!fs.existsSync(path.join(sb.root, 'scripts', 'pipeline-health.mjs'))) NA('relevé absent de cet état du code');

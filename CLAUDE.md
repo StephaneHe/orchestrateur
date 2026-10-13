@@ -646,6 +646,21 @@ de la prod).
   `?todo=0` pour un navigateur.
 - Recettes : `_test_todo.mjs`, HTTP `todo-api`, navigateur `todo-panel` et
   `todo-panel-mobile`.
+- **Onglet ⎇ Git** (0.76.0, même demande, partie git) : l'arbre git de chaque
+  musicien, en **lecture seule** (`public/git-panel.js`, pill `#btn-git`).
+  - On choisit le musicien ; les projets sans dépôt sont listés, désactivés.
+  - Graphe SVG : un point par commit, une voie colorée par ligne
+    d'historique, fusions et embranchements. Chaque ligne affiche branches
+    (HEAD en évidence), branches distantes, tags, sha court, sujet, auteur
+    et date. « Plus de commits » relit l'historique, par 80, jusqu'à 300.
+  - Serveur : `GET /api/git-graph` et `GET /api/git-graph/:projet?n=`,
+    cache de 15 s, projets de `config.json` seulement. **GET seulement.**
+  - `scripts/git-graph-core.mjs` : la **seule** commande est `git log --all
+    --topo-order --decorate=full` (argv en tableau, sans shell,
+    `GIT_OPTIONAL_LOCKS=0` : l'index n'est jamais réécrit). Calcul des voies
+    pur (`layoutGraph`). Ne jamais y ajouter de commande qui écrit.
+  - Recettes : `_test_git_graph.mjs`, HTTP `git-graph`, navigateur
+    `git-panel` et `git-panel-mobile`.
 
 ## Vue « Projets » et retour arrière (0.29.0)
 

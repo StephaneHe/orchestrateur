@@ -11,6 +11,32 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.76.0] - 2026-10-13
+
+### Added
+
+- (server) Git graph of each musician, in the side panel of 0.75.0 (user
+  request: "Sur dev, je veux que l'on reprenne l'implémentation de notre
+  todo list et git visualisation sur pannel" — git part), READ-ONLY:
+  - "⎇ Git" tab (`public/git-panel.js`, pill `#btn-git`): choose a musician
+    (projects without a git repository are listed, disabled); commits drawn
+    as an SVG graph (one dot per commit, one coloured lane per open line of
+    history, merges and branch points), each row with its branches (HEAD
+    highlighted), remote branches, tags, short sha, subject, author and
+    date; "Plus de commits" reads older history (80 at a time, up to 300);
+    refreshed every 30 s while open.
+  - `GET /api/git-graph` (projects of `config.json`, repository or not) and
+    `GET /api/git-graph/:project?n=`; cached 15 s. GET only: no route can
+    trigger a git operation; a project outside `config.json` gets 404.
+  - `scripts/git-graph-core.mjs`: the only git command is `git log --all
+    --topo-order --decorate=full` (argv array, no shell,
+    `GIT_OPTIONAL_LOCKS=0` so the index is never rewritten); refs parsed
+    from full ref names; pure lane layout (`layoutGraph`).
+  - Tests: `_test_git_graph.mjs` (real repository with a branch, a merge and
+    tags; every parent→child link drawn; refs, HEAD, index and working tree
+    unchanged after reading), HTTP `git-graph`, browser `git-panel` and
+    `git-panel-mobile`.
+
 ## [0.75.0] - 2026-10-13
 
 ### Added

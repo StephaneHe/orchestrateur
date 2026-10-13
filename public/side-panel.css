@@ -87,7 +87,50 @@
 .ti-prog { color: var(--st-think); }
 .todo-empty { color: var(--fg-2); font-size: 0.8125rem; padding: 1rem 0; }
 
+/* --- Git tab (0.76.0) --- */
+.gg-filters {
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  padding: 0.6rem 0; border-bottom: 1px solid var(--card-border); font-size: 0.75rem; color: var(--fg-2);
+}
+.gg-project {
+  font-family: var(--font-body); font-size: 0.75rem; max-width: 16rem;
+  background: var(--bg-0); color: var(--fg-1); border: 1px solid var(--card-border); border-radius: 5px; padding: 0.15rem 0.3rem;
+}
+.gg-ro { margin-left: auto; border: 1px solid var(--card-border); border-radius: 4px; padding: 0 0.35rem; }
+.gg-summary { font-size: 0.6875rem; color: var(--fg-2); margin: 0.6rem 0 0.4rem; }
+.gg-summary b { color: var(--st-live); }
+.gg-graph { position: relative; }
+.gg-svg { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.gg-edge { fill: none; stroke-width: 2; }
+.gg-edge.gg-more { stroke-dasharray: 3 3; }
+.gg-dot { stroke: var(--bg-1); stroke-width: 1.5; }
+.gg-rows { list-style: none; margin: 0; padding: 0; }
+.gg-row {
+  display: flex; align-items: center; gap: 0.35rem; overflow: hidden; white-space: nowrap;
+  font-size: 0.75rem; border-bottom: 1px solid rgba(232, 161, 92, 0.05);
+}
+.gg-subject { color: var(--fg-0); overflow: hidden; text-overflow: ellipsis; flex: 1 1 auto; min-width: 3rem; }
+.gg-row.is-head .gg-subject { font-weight: 600; }
+.gg-meta { color: var(--fg-3); font-size: 0.6875rem; flex: 0 0 auto; }
+.gg-sha { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--st-think); }
+.gg-refs { display: inline-flex; gap: 0.25rem; flex: 0 1 auto; overflow: hidden; }
+.gg-ref {
+  font-size: 0.625rem; border: 1px solid var(--card-border); border-radius: 4px; padding: 0 0.3rem;
+  color: var(--fg-1); white-space: nowrap;
+}
+.gg-branch { border-color: rgba(45, 255, 122, 0.4); color: var(--st-live); }
+.gg-head { background: rgba(45, 255, 122, 0.12); font-weight: 700; }
+.gg-remote { border-color: rgba(95, 212, 255, 0.4); color: var(--st-unread); }
+.gg-tag { border-color: rgba(232, 161, 92, 0.45); color: var(--st-think); }
+.gg-empty { color: var(--fg-2); font-size: 0.8125rem; padding: 1rem 0; }
+.gg-more-btn {
+  margin-top: 0.6rem; font-family: var(--font-body); font-size: 0.75rem; cursor: pointer;
+  background: transparent; color: var(--fg-1); border: 1px solid var(--card-border); border-radius: 6px; padding: 0.3rem 0.7rem;
+}
+
 @media (max-width: 767.98px) {
+  .gg-project, .gg-more-btn { min-height: 44px; }
+  .gg-meta { display: none; }
   .sp { top: 0; width: 100vw; z-index: 200; }
   .sp-close, .sp-tab { min-height: 44px; min-width: 44px; }
   .todo-project { min-height: 44px; }
