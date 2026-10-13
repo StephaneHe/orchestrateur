@@ -130,6 +130,69 @@ export async function browserChecks(sb, t) {
       assert(await rootPx(page) === 16 && await page.evaluate(() => localStorage.getItem('ui.textScale')) === null, 'retour à 100 % non mémorisé');
       return `polices ${base.join('/')} px → ${big.join('/')} px à 150 %`;
     });
+    // ---------------- Side panel + TODO (0.75.0) ----------------
+    const todoState = (pg) => pg.evaluate(() => {
+      const sp = document.getElementById('side-panel');
+      const r = sp && sp.getBoundingClientRect();
+      const bar = document.querySelector('header.topbar').getBoundingClientRect();
+      return {
+        open: !!sp && sp.classList.contains('is-open') && r.left < innerWidth - 10,
+        top: r ? Math.round(r.top) : null, bottom: r ? Math.round(r.bottom) : null, width: r ? Math.round(r.width) : null,
+        barBottom: Math.round(bar.bottom), vh: innerHeight, vw: innerWidth,
+        secs: [...document.querySelectorAll('#side-panel .todo-sec')].map(s => s.dataset.sec),
+        items: [...document.querySelectorAll('#side-panel .todo-item')].map(li => ({ id: li.dataset.id, status: li.dataset.status, added: li.dataset.added, project: li.dataset.project,
+          by: li.querySelector('.ti-by')?.textContent.trim() || null, box: li.querySelector('.ti-box'), disabled: li.querySelector('.ti-box')?.disabled, checked: li.querySelector('.ti-box')?.checked }))
+          .map(({ box, ...x }) => x),
+      };
+    });
+    await check(B, 'todo-panel', 'Panneau à bascule pleine hauteur + TODO des musiciens : pill, touche t, onglet du bord, Échap ; faits en haut puis non faits, chacun du plus récent au plus ancien ; nom du musicien à côté de chaque fait ; cases en lecture seule ; mémorisé ; ?todo=0', async () => {
+      if (!(await page.locator('#btn-todo').count())) NA('panneau absent de cet état du code');
+      await page.goto(`${sb.url}/?token=${sb.token}`); await page.locator('.brand').waitFor();
+      assert(await until(async () => visible(page, '#btn-todo'), 8000), 'pill ☑ TODO absente');
+      assert(await until(async () => /\d/.test(await page.textContent('#btn-todo [data-sp-badge]') || ''), 8000), 'compteur des non faits absent de la pill');
+      await page.locator('body').click({ position: { x: 5, y: 300 } }).catch(() => {});
+      await page.keyboard.press('t');
+      assert(await until(async () => (await todoState(page)).open, 4000), 'touche t : panneau fermé');
+      assert(await until(async () => (await todoState(page)).items.length >= 9, 8000), 'items absents');
+      const s = await todoState(page);
+      assert(Math.abs(s.top - s.barBottom) <= 2 && Math.abs(s.bottom - s.vh) <= 2, `pas pleine hauteur sous la barre : ${s.top}-${s.bottom} (barre ${s.barBottom}, fenêtre ${s.vh})`);
+      assert(s.secs.join() === 'done,open', `sections : ${s.secs.join()}`);
+      const k = s.items.findIndex(i => i.status !== 'done');
+      assert(k > 0 && s.items.slice(0, k).every(i => i.status === 'done') && s.items.slice(k).every(i => i.status !== 'done'), 'faits pas en haut');
+      for (const part of [s.items.slice(0, k), s.items.slice(k)]) part.forEach((x, n) => assert(n === 0 || part[n - 1].added >= x.added, `ordre par date d’entrée : ${part.map(i => i.added).join(' ')}`));
+      assert(s.items.slice(0, k).every(i => i.by && /^✓ /.test(i.by)), 'un fait sans nom affiché à côté');
+      assert(s.items.find(i => i.id === 't-a10001')?.by === '✓ alpha', `nom du musicien : ${JSON.stringify(s.items.find(i => i.id === 't-a10001'))}`);
+      assert(s.items.slice(k).every(i => !i.by), 'un non fait porte un nom');
+      assert(s.items.every(i => i.disabled) && s.items.slice(0, k).every(i => i.checked) && s.items.slice(k).every(i => !i.checked), 'cases non désactivées ou mal cochées');
+      await page.evaluate(() => document.querySelector('#side-panel .todo-item[data-status="todo"] .ti-box')?.click());
+      assert((await todoState(page)).items.filter(i => i.checked).length === k, 'une case a pu être cochée');
+      assert(await overflowX(page) <= 0, `débordement horizontal ${await overflowX(page)} px`);
+      await shot(page, 'todo-panel-desktop');
+      await page.reload(); await page.locator('.brand').waitFor();
+      assert(await until(async () => (await todoState(page)).open, 6000), 'ouverture non mémorisée au rechargement');
+      await page.keyboard.press('Escape');
+      assert(await until(async () => !(await todoState(page)).open, 3000), 'Échap ne ferme pas');
+      assert(await visible(page, '#sp-edge'), 'onglet du bord absent quand fermé');
+      await page.click('#sp-edge');
+      assert(await until(async () => (await todoState(page)).open, 3000), 'onglet du bord n’ouvre pas');
+      await page.click('#side-panel .sp-close');
+      assert(await until(async () => !(await todoState(page)).open, 3000), '✕ ne ferme pas');
+      await page.click('#btn-todo');
+      assert(await until(async () => (await todoState(page)).open && (await page.getAttribute('#btn-todo', 'aria-pressed')) === 'true', 3000), 'pill n’ouvre pas');
+      await page.click('#btn-todo');
+      assert(await until(async () => !(await todoState(page)).open, 3000), 'pill ne referme pas');
+      await page.goto(`${sb.url}/?token=${sb.token}&todo=0`); await page.locator('.brand').waitFor();
+      await page.locator('body').click({ position: { x: 5, y: 300 } }).catch(() => {});
+      await page.keyboard.press('t');
+      await sleep(400);
+      assert(!(await visible(page, '#btn-todo')) && !(await visible(page, '#sp-edge')) && !(await todoState(page)).open, '?todo=0 : panneau encore accessible');
+      await page.goto(`${sb.url}/?token=${sb.token}&todo=1`); await page.locator('.brand').waitFor();
+      assert(await until(async () => visible(page, '#btn-todo'), 6000), '?todo=1 ne rétablit pas');
+      // Leave the page as the next checks expect it: plain URL, rail filled.
+      await page.goto(`${sb.url}/?token=${sb.token}`); await page.locator('.brand').waitFor();
+      await until(async () => /À examiner/.test(await page.textContent('#rail-body') || ''), 15_000);
+      return `${s.items.length} items : ${k} faits (avec nom) puis ${s.items.length - k} non faits, ordre par date d’entrée, panneau ${s.width}px × pleine hauteur`;
+    });
     const railHeads = () => page.evaluate(() => [...document.querySelectorAll('#rail-body .rail-group-head')].map(h => h.textContent.replace(/\s+/g, ' ').trim()));
     await check(B, 'rail', 'Rail PILOTAGE : À examiner + cadres des musiciens (ou dépliage « Tous » sans cadres)', async () => {
       const txt = await page.textContent('#rail-body');
@@ -1299,6 +1362,22 @@ export async function browserChecks(sb, t) {
           await fetch(`${sb.url}/api/permission/${p.id}/decide`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ decision: 'deny' }) });
         }
       }
+    });
+    await check(B, 'todo-panel-mobile', 'Panneau TODO · mobile : ouvert par l’onglet du bord, plein écran, ✕ et filtre ≥ 44 px, aucun débordement, fermeture', async () => {
+      if (!(await m.locator('#sp-edge').count())) NA('panneau absent de cet état du code');
+      await setHash(m, '#/');
+      assert(await until(async () => visible(m, '#sp-edge'), 6000), 'onglet du bord absent sur mobile');
+      await m.click('#sp-edge');
+      assert(await until(async () => (await todoState(m)).open && (await todoState(m)).items.length > 0, 8000), 'panneau mobile vide ou fermé');
+      const s = await todoState(m);
+      assert(s.top <= 1 && Math.abs(s.width - s.vw) <= 1 && Math.abs(s.bottom - s.vh) <= 2, `pas plein écran : top ${s.top}, ${s.width}/${s.vw} px, bas ${s.bottom}/${s.vh}`);
+      const close = await m.locator('#side-panel .sp-close').boundingBox();
+      const sel = await m.locator('#side-panel .todo-project').boundingBox();
+      assert(close.height >= 44 && close.width >= 44 && sel.height >= 44, `cibles : ✕ ${close.width}×${close.height}, filtre ${sel.height}`);
+      assert(await m.evaluate(() => document.documentElement.scrollWidth - window.innerWidth) <= 0, 'débordement horizontal');
+      await shot(m, 'todo-panel-mobile');
+      await m.click('#side-panel .sp-close');
+      assert(await until(async () => !(await todoState(m)).open, 3000), 'ne se ferme pas');
     });
     await check(B, 'mobile-journal', 'Mobile : cadres dans la feuille Pilotage, journal plein écran, aucun débordement', async () => {
       if (!(await m.evaluate(() => !!window.Activite))) NA('fonction absente de cet état du code');

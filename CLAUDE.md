@@ -609,6 +609,44 @@ pendant le développement, et la complète seulement avant une mise en prod ».
   obligatoires.
 - Recette : `_test_targeted_regression.mjs`.
 
+## Panneau latéral et TODO des musiciens (0.75.0)
+
+Demande utilisateur (2026-10-13) : « Sur dev, je veux que l'on reprenne
+l'implémentation de notre todo list et git visualisation sur pannel ». Ici la
+partie TODO ; proposition du 2026-10-11 (`attachments/proposition-panneau-todo.html`
+de la prod).
+
+- **Panneau** (`public/side-panel.js` + `side-panel.css`) : tiroir pleine
+  hauteur sous la barre du haut (plein écran sur mobile). On l'ouvre et le
+  ferme par la pill « ☑ TODO », la touche `t`, l'onglet du bord ou Échap.
+  L'état ouvert et l'onglet sont mémorisés. **Générique** :
+  `SidePanel.register({id, label, icon, key, mount, onOpen, onClose})`, et
+  tout élément `[data-sp-open="<id>"]` l'ouvre. L'onglet Git des musiciens
+  viendra s'y brancher.
+- **TODO** (`public/todo-panel.js`) : la liste de chaque musicien, en cases
+  à cocher **désactivées**. Les faits sont en haut, puis les non faits ; dans
+  chaque partie, du plus récent au plus ancien par date d'entrée. Le nom du
+  musicien est à côté de chaque fait.
+- **Lecture** : `GET /api/todo[?project=]`. Le `TODO_LIST.md` de chaque
+  projet de `config.json` est lu sur le **disque**, jamais par git, avec un
+  cache par mtime et taille. **Aucune route d'écriture.**
+- **Écriture** : `scripts/todo.mjs` seulement (format dans
+  `scripts/todo-core.mjs`) :
+  - `add [--type]`, `start`, `done <id>|--match`, `list` ;
+  - le nom (« → fait (date) par <musicien> ») vient de `ORCH_TURN_PROJECT`,
+    jamais d'un argument ;
+  - `done` et `start` sont refusés hors d'un tour ;
+  - un musicien n'écrit que sa liste, sauf le chef ;
+  - verrou et écriture atomique.
+
+  `dispatch.mjs` ajoute `todoRule()` au prompt des musiciens. Les anciennes
+  lignes sont lues telles quelles : sans date, c'est la date du fichier,
+  affichée « ≈ » ; cochées à la main, elles affichent « ✓ — ».
+- **Désactiver sans redéploiement** : `"ui": {"sidePanel": false}`, ou
+  `?todo=0` pour un navigateur.
+- Recettes : `_test_todo.mjs`, HTTP `todo-api`, navigateur `todo-panel` et
+  `todo-panel-mobile`.
+
 ## Vue « Projets » et retour arrière (0.29.0)
 
 - `#/projets` (`public/projets.js` + `projets.css`) : le statut de chaque

@@ -1412,6 +1412,19 @@ function simpleCommandsRule() {
     `Sinon le CLI refuse l'appel en mode non interactif, sans recours possible.`;
 }
 
+// ---------- TODO list (0.75.0) -----------------------------------------------
+// The dashboard shows each musician's TODO_LIST.md read-only, with the name of
+// the musician next to each done item. That name is recorded by todo.mjs from
+// this turn's ORCH_TURN_PROJECT: a line ticked by hand has no name.
+function todoRule() {
+  const todo = path.join(ROOT, 'scripts', 'todo.mjs').replace(/\\/g, '/');
+  return `\n\n---\nTODO LIST : ta liste est TODO_LIST.md à la racine de ton projet (affichée en lecture seule à ` +
+    `l'utilisateur). Ajoute, démarre et coche tes items avec cette commande, jamais en éditant les cases à la main : ` +
+    `node "${todo}" add [--type projet|fonctionnalite|correction|autre] "<titre>" · ` +
+    `node "${todo}" start <id> · node "${todo}" done <id> (ou --match "<extrait du titre>") · ` +
+    `node "${todo}" list. Elle date l'entrée et enregistre ton nom au moment où tu coches.`;
+}
+
 // ---------- callback injection ----------------------------------------------
 
 // promptForLog = original prompt shown in the viewer (no boilerplate).
@@ -1433,6 +1446,7 @@ if (callbackProject) {
 if (projectName !== CONDUCTOR) prompt = prompt + backgroundRule(callbackProject || CONDUCTOR);
 if (projectName !== CONDUCTOR) prompt = prompt + userRequirementsRule();
 if (projectName !== CONDUCTOR) prompt = prompt + simpleCommandsRule();
+if (projectName !== CONDUCTOR) prompt = prompt + todoRule();
 
 // ---------- langue de discussion (0.51.0) ------------------------------------
 // Demande utilisateur : « La langue de la discussion doit pouvoir etre fixee et

@@ -204,6 +204,22 @@ function writeFixtures(root, keepAlivePid) {
   const names = ['chef', 'alpha', 'beta', 'gamma', 'delta', 'eps', 'theta', 'iota', 'kappa', 'lambda', 'mu', 'omega', 'zeta', 'eta'];
   for (const n of names) fs.mkdirSync(path.join(projDir, n), { recursive: true });
   fs.writeFileSync(path.join(projDir, 'alpha', 'package.json'), JSON.stringify({ name: 'alpha', version: '1.2.3' }));
+  // 0.75.0 — TODO lists (side panel): the chef's dated legacy format, the new
+  // format with the name of the musician who ticked, and an undated list.
+  fs.writeFileSync(path.join(projDir, 'chef', 'TODO_LIST.md'), [
+    '# TODO_LIST — Chef', '',
+    '- [x] (2026-09-15) **alpha — icônes** → FAIT (commit `39ef05c`)',
+    '- [ ] (2026-10-08 17:40) Relancer la limite de session',
+    '- [~] (2026-09-14) **beta — analyse** → cause trouvée',
+  ].join('\n') + '\n');
+  fs.writeFileSync(path.join(projDir, 'alpha', 'TODO_LIST.md'), [
+    '# TODO_LIST', '',
+    '- [x] (2026-10-12 18:40) [projet] Publier la 1.2.3 → fait (2026-10-13 10:02) par alpha <!-- id:t-a10001 -->',
+    '- [x] (2026-10-01 09:00) [correction] Bouton mal aligné → fait (2026-10-02 11:00) par alpha <!-- id:t-a10002 -->',
+    '- [ ] (2026-10-13 08:00) [fonctionnalite] Mode hors ligne <!-- id:t-a10003 -->',
+    '- [ ] (2026-09-20 12:00) Nettoyer les logs <!-- id:t-a10004 -->',
+  ].join('\n') + '\n');
+  fs.writeFileSync(path.join(projDir, 'beta', 'TODO_LIST.md'), '- [ ] Écrire la doc\n- [x] Item coché à la main\n');
   fs.mkdirSync(path.join(projDir, 'alpha', 'app'), { recursive: true });
   fs.writeFileSync(path.join(projDir, 'alpha', 'app', 'build.gradle.kts'), 'android {\n  defaultConfig {\n    versionName = "1.2.3"\n    versionCode = 7\n  }\n}\n');
   fs.writeFileSync(path.join(projDir, 'gamma', 'pyproject.toml'), '[project]\nname = "gamma"\nversion = "0.4.0"\n');

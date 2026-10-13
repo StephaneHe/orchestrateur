@@ -11,6 +11,41 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.75.0] - 2026-10-13
+
+### Added
+
+- (server) Side panel and the musicians' TODO lists (user request: "Sur dev,
+  je veux que l'on reprenne l'implémentation de notre todo list et git
+  visualisation sur pannel" — TODO part, on the 2026-10-11 proposal):
+  - `public/side-panel.js` + `side-panel.css`: a full-height toggle drawer
+    under the top bar (full screen on a phone), opened and closed by the
+    "☑ TODO" pill, the `t` key, the edge tab or Escape; open state and tab
+    remembered. Generic (`SidePanel.register({id, label, icon, key, mount,
+    onOpen, onClose})`, any `[data-sp-open]` element): the per-musician git
+    graphs will be its next tab.
+  - `public/todo-panel.js`: every musician's list as read-only checkboxes,
+    DONE items first then NOT DONE, each part newest first by entry date,
+    the musician's name next to each done item; filter by project; count of
+    open items on the pill; refreshed every 15 s while open.
+  - `GET /api/todo[?project=]`: reads each `TODO_LIST.md` from DISK (the
+    projects of `config.json` only), cached on mtime and size. No write
+    route.
+  - `scripts/todo-core.mjs` (reader and format) and `scripts/todo.mjs`, the
+    only writer: `add [--type]`, `start`, `done <id>|--match`, `list`. The
+    name written next to a done item ("→ fait (date) par <musician>") comes
+    from the turn's `ORCH_TURN_PROJECT`, never from an argument; `done` and
+    `start` are refused outside a turn; a musician only writes its own list
+    (the chef may write another one's, under its own name); lock + atomic
+    write, one line changes. Existing lines are read as they are (no entry
+    date → the file's date, shown "≈"; ticked by hand → "✓ —").
+  - `dispatch.mjs` adds a short TODO rule to every musician's prompt (not
+    shown in the thread).
+  - Off without redeploying: `config.json` `"ui": {"sidePanel": false}`, or
+    `?todo=0` for one browser.
+  - Tests: `_test_todo.mjs`, HTTP `todo-api`, browser `todo-panel` and
+    `todo-panel-mobile`.
+
 ## [0.74.3] - 2026-10-12
 
 ### Fixed

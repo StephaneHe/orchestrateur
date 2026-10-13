@@ -74,6 +74,7 @@ import { readPending, dependencyResult, releaseReady, staleEntries, markNotified
 // Vue « Models par tâche » (0.39.0) : catalogue + model-routing.json.
 import { createModelRouting, incompatibility } from './scripts/model-routing.mjs';
 import { createRecommendations } from './scripts/model-reco.mjs';
+import { TODO_FILE, parseTodo, sortTodo, countTodo } from './scripts/todo-core.mjs';
 import { mountGatewayRoutes } from './scripts/responses-gateway.mjs';
 // Clés NVIDIA / OpenRouter saisies dans la page Models (0.43.0).
 import { createApiKeys } from './scripts/api-keys.mjs';
@@ -2607,8 +2608,43 @@ function uiFlags() {
     tts: config.ui?.tts !== false,
     // 0.39.0 — vue « Models par tâche ».
     modelRouting: config.ui?.modelRouting !== false,
+    // 0.75.0 — side panel (TODO list; git graphs next).
+    sidePanel: config.ui?.sidePanel !== false,
   };
 }
+
+// ── TODO lists of the musicians (0.75.0) ────────────────────────────────────
+// Read-only: every musician's TODO_LIST.md, read from DISK (since 0.74.2 the
+// orchestrator's own list is not tracked by git). Only the projects of
+// config.json (allowlist, never a path from the request). Cached per file on
+// (mtime, size). There is deliberately no write route: only the musicians
+// tick their items, through scripts/todo.mjs.
+const todoCache = new Map();
+function todoOf(project) {
+  const file = path.join(project.path, TODO_FILE);
+  let st;
+  try { st = fs.statSync(file); } catch { todoCache.delete(project.name); return null; }
+  const key = `${st.mtimeMs}:${st.size}`;
+  const hit = todoCache.get(project.name);
+  if (hit && hit.key === key) return hit.items;
+  let items = [];
+  try { items = parseTodo(fs.readFileSync(file, 'utf8'), { project: project.name, fileMtime: st.mtime }); } catch { items = []; }
+  todoCache.set(project.name, { key, items });
+  return items;
+}
+app.get('/api/todo', (req, res) => {
+  const only = typeof req.query.project === 'string' && req.query.project ? req.query.project : null;
+  const projects = (config.projects || []).filter(p => p && p.name && p.path && (!only || p.name === only));
+  if (only && !projects.length) return res.status(404).json({ ok: false, error: `projet inconnu : ${only}` });
+  const all = [], lists = [];
+  for (const p of projects) {
+    const items = todoOf(p);
+    if (!items) continue;
+    lists.push({ project: p.name, ...countTodo(items) });
+    all.push(...items);
+  }
+  res.json({ ok: true, items: sortTodo(all), counts: countTodo(all), lists });
+});
 
 // ── Models par tâche (0.39.0) ───────────────────────────────────────────────
 // Enregistrement seulement : dispatch.mjs ne lit pas encore model-routing.json.

@@ -1,0 +1,97 @@
+/* ==========================================================================
+   public/side-panel.css — full-height toggle drawer + TODO tab (0.75.0)
+   Font sizes in rem only (they follow the A− / A+ text size).
+   ========================================================================== */
+.sp {
+  position: fixed;
+  top: var(--sp-top, 56px);
+  right: 0;
+  bottom: 0;
+  width: min(440px, 92vw);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-1);
+  border-left: 1px solid var(--card-border);
+  box-shadow: -12px 0 30px rgba(0, 0, 0, 0.45);
+  transform: translateX(100%);
+  visibility: hidden;
+  transition: transform 0.25s ease, visibility 0s linear 0.25s;
+}
+.sp.is-open { transform: translateX(0); visibility: visible; transition: transform 0.25s ease; }
+.sp-head {
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--card-border);
+}
+.sp-tabs { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+.sp-tab {
+  font-family: var(--font-body); font-size: 0.8125rem; color: var(--fg-2);
+  background: transparent; border: 1px solid transparent; border-radius: 6px;
+  padding: 0.25rem 0.6rem; cursor: pointer; min-height: 2rem;
+}
+.sp-tab[aria-selected="true"] { border-color: var(--st-think); color: var(--fg-0); }
+.sp-badge { margin-left: 0.35rem; color: var(--st-input); font-weight: 700; }
+.sp-badge:empty { display: none; }
+.sp-close {
+  margin-left: auto; font-family: var(--font-body); font-size: 0.9375rem;
+  background: transparent; border: 1px solid var(--card-border); color: var(--fg-1);
+  border-radius: 6px; width: 2.25rem; height: 2.25rem; cursor: pointer;
+}
+.sp-body { flex: 1; overflow: auto; min-height: 0; }
+.sp-pane { padding: 0 0.8rem 1.2rem; }
+.sp-edge {
+  position: fixed; right: 0; top: 50%; transform: translateY(-50%); z-index: 55;
+  writing-mode: vertical-rl; font-family: var(--font-body); font-size: 0.75rem; letter-spacing: 0.1em;
+  background: var(--bg-2); color: var(--fg-1); border: 1px solid var(--card-border); border-right: none;
+  border-radius: 8px 0 0 8px; padding: 0.7rem 0.35rem; cursor: pointer;
+}
+.sp-edge-n { color: var(--st-input); }
+.pill-sp .sp-badge { color: var(--st-input); }
+
+/* --- TODO tab --- */
+.todo-filters {
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  padding: 0.6rem 0; border-bottom: 1px solid var(--card-border); font-size: 0.75rem; color: var(--fg-2);
+}
+.todo-project {
+  font-family: var(--font-body); font-size: 0.75rem; max-width: 14rem;
+  background: var(--bg-0); color: var(--fg-1); border: 1px solid var(--card-border); border-radius: 5px; padding: 0.15rem 0.3rem;
+}
+.todo-ro { margin-left: auto; border: 1px solid var(--card-border); border-radius: 4px; padding: 0 0.35rem; }
+.todo-sec-h {
+  font-size: 0.6875rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-2);
+  margin: 0.9rem 0 0.3rem; font-weight: 600; display: flex; justify-content: space-between;
+}
+.todo-n { color: var(--fg-1); }
+.todo-list { list-style: none; margin: 0; padding: 0; }
+.todo-item {
+  display: grid; grid-template-columns: 1.25rem 1fr; gap: 0.45rem;
+  padding: 0.45rem 0.15rem; border-bottom: 1px solid rgba(232, 161, 92, 0.07);
+}
+.ti-box { margin-top: 0.2rem; accent-color: var(--st-live); cursor: not-allowed; }
+.ti-main { min-width: 0; }
+.ti-title { color: var(--fg-0); font-size: 0.8125rem; overflow-wrap: anywhere; }
+.todo-item.is-done .ti-title { color: var(--fg-2); text-decoration: line-through; text-decoration-color: var(--fg-3); }
+.ti-detail {
+  font-size: 0.6875rem; color: var(--fg-3); margin-top: 0.1rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ti-meta { font-size: 0.6875rem; color: var(--fg-3); margin-top: 0.15rem; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+.ti-by { color: var(--st-live); font-weight: 600; }
+.ti-by.is-unknown { color: var(--fg-3); font-weight: 400; }
+.ti-proj { color: var(--fg-2); }
+.ti-type { border: 1px solid var(--card-border); border-radius: 4px; padding: 0 0.3rem; color: var(--fg-2); }
+.ti-type-fonctionnalite { border-color: rgba(95, 212, 255, 0.4); color: var(--st-unread); }
+.ti-type-correction { border-color: rgba(255, 45, 139, 0.4); color: var(--st-error); }
+.ti-type-projet { border-color: rgba(45, 255, 122, 0.35); color: var(--st-live); }
+.ti-prog { color: var(--st-think); }
+.todo-empty { color: var(--fg-2); font-size: 0.8125rem; padding: 1rem 0; }
+
+@media (max-width: 767.98px) {
+  .sp { top: 0; width: 100vw; z-index: 200; }
+  .sp-close, .sp-tab { min-height: 44px; min-width: 44px; }
+  .todo-project { min-height: 44px; }
+  /* The top bar is full on a phone: the edge tab opens the panel there. */
+  .topbar-actions .pill-sp { display: none; }
+  .sp-edge { min-width: 44px; min-height: 44px; }
+}

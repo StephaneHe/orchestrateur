@@ -259,6 +259,37 @@ async function apiChecks(sb) {
     assert(v.version === pkgVersion, `${v.version} ≠ ${pkgVersion}`);
     return `v${v.version}`;
   });
+  // 0.75.0 — TODO lists of the musicians, read-only (side panel).
+  await check(S, 'todo-api', 'TODO des musiciens : GET /api/todo lit le disque (projets de config.json seulement), faits puis non faits, chacun du plus récent au plus ancien, nom du musicien sur les faits ; aucune route d’écriture ; un item coché par todo.mjs pendant un tour apparaît avec son nom', async () => {
+    if (!fs.existsSync(path.join(sb.root, 'scripts', 'todo-core.mjs'))) NA('TODO absente de cet état du code');
+    const d = await json('/api/todo');
+    const lists = Object.fromEntries(d.lists.map(l => [l.project, l]));
+    assert(lists.chef?.total === 3 && lists.alpha?.total === 4 && lists.beta?.total === 2 && d.items.length === 9, `listes : ${JSON.stringify(d.lists)}`);
+    const k = d.items.findIndex(i => i.status !== 'done');
+    assert(k > 0 && d.items.slice(0, k).every(i => i.status === 'done') && d.items.slice(k).every(i => i.status !== 'done'), 'faits pas en premier');
+    for (const part of [d.items.slice(0, k), d.items.slice(k)]) part.forEach((x, n) => assert(n === 0 || String(part[n - 1].addedAt) >= String(x.addedAt), `ordre : ${part.map(i => i.addedAt).join(' ')}`));
+    const a1 = d.items.find(i => i.id === 't-a10001');
+    assert(a1?.doneBy === 'alpha' && a1.doneAt === '2026-10-13T10:02', `nom du musicien : ${JSON.stringify(a1)}`);
+    assert(d.items.find(i => i.project === 'beta' && i.status === 'done')?.doneBy === null, 'coché à la main : aucun nom inventé');
+    assert(d.counts.done === 4 && d.counts.open === 5, `compteurs ${JSON.stringify(d.counts)}`);
+    const only = await json('/api/todo?project=alpha');
+    assert(only.items.length === 4 && only.items.every(i => i.project === 'alpha'), 'filtre projet');
+    assert((await get('/api/todo?project=..%2F..%2Fsecret')).status === 404, 'projet hors liste accepté');
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      const r = await fetch(sb.url + '/api/todo', { method, headers: { ...H, 'Content-Type': 'application/json' }, body: method === 'DELETE' ? undefined : '{}' });
+      assert(r.status === 404, `${method} /api/todo → ${r.status} (aucune écriture ne doit exister)`);
+    }
+    assert((await json('/api/config')).ui?.sidePanel === true, 'drapeau ui.sidePanel absent');
+    // A musician ticks during its turn: the panel shows its name.
+    const env = { ...process.env, ORCH_TURN_PROJECT: 'alpha' };
+    const r = spawnSync(process.execPath, [path.join(sb.root, 'scripts', 'todo.mjs'), 'done', 't-a10003'], { encoding: 'utf8', env, windowsHide: true });
+    assert(r.status === 0, `todo.mjs done : ${r.status} ${r.stderr}`);
+    const a3 = (await json('/api/todo?project=alpha')).items.find(i => i.id === 't-a10003');
+    assert(a3?.status === 'done' && a3.doneBy === 'alpha', `item coché par alpha : ${JSON.stringify(a3)}`);
+    const refused = spawnSync(process.execPath, [path.join(sb.root, 'scripts', 'todo.mjs'), 'done', 't-a10004'], { encoding: 'utf8', env: { ...process.env, ORCH_TURN_PROJECT: '' }, windowsHide: true });
+    assert(refused.status === 3, `coché hors d’un tour : ${refused.status}`);
+    return `${d.items.length} items (3 listes), faits puis non faits, nom affiché ; écriture : 404 ; coché par alpha pendant son tour → visible`;
+  });
   await check(S, 'config', '/api/config : flotte, états hydratés, parcage, lecture', async () => {
     const c = await json('/api/config');
     const by = Object.fromEntries(c.projects.map(p => [p.name, p]));
