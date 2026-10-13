@@ -11,6 +11,47 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.85.0] - 2026-10-13
+
+### Added
+
+- (server) TODO panel: rejecting an item — part 3/5 of the user request
+  « chaque item doit être clickable […] Possibilité d'y ajouter des notes,
+  et de rejetter l'item. […] », with the user's choice: « le rejet est
+  marqué dans le TODO_LIST.md du musicien. Dans l'UI passe le dans la liste
+  des "faits" mais barre, avec une marque « rejeté (date) par
+  l'utilisateur » ».
+  - The item overlay of an open item (to do or in progress) gets
+    « Rejeter l'item… ». A confirmation says what will be written and
+    where; Cancel or Escape leave everything as it was.
+  - Confirmed: `POST /api/reject/todo/:project/:id` (same origin; project of
+    config.json) rewrites only that line of the musician's `TODO_LIST.md`:
+    `- [x] … → rejeté (YYYY-MM-DD HH:MM) par l'utilisateur <!-- id:… -->`
+    (`rejectItem` of `scripts/todo-core.mjs`), under the list's lock (the one
+    of `scripts/todo.mjs`, `withListLock`) with an atomic write. A legacy
+    line gets its id written down, unchanged. An item already done or
+    already rejected is refused (409); a locked list answers 423.
+  - Read back by `parseTodo` as a closed item with `rejected: {at, by}`:
+    the panel shows it among the done ones, struck through, with « ✕ rejeté
+    (date) par l'utilisateur »; the overlay says « ✕ Rejeté » and the date,
+    and no longer offers the action. `countTodo` gains `rejected`. If a
+    musician reopens it with `todo.mjs`, the mark goes away.
+- Tests: suite `_test_todo_reject.mjs` (line written, read back, refusals,
+  wiring), HTTP `todo-reject` (one line changed in the real list, served
+  with the done items, 409 / 403 / 404 without any write), browser
+  `todo-item-reject` (confirmation, Escape and Cancel write nothing,
+  rejected item among the done ones, struck, with its mark, written in the
+  musician's list).
+
+### Changed
+
+- (server) `_test_todo.mjs` allows the panel's POST to `/api/reject/todo/`
+  besides the notes and order routes (« L'accord POST couvre toutes les
+  requetes necessaires a cette fonctionalite »), and checks that this route
+  only rewrites the rejected line under the list's lock. The browser check
+  `todo-item-overlay` now expects the bar of an open item to be exactly
+  « Envoyer au chef… » and « Rejeter l'item… ».
+
 ## [0.84.0] - 2026-10-13
 
 ### Added

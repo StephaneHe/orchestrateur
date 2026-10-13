@@ -11,6 +11,10 @@
 //   - [ ] (2026-10-13 09:12) [correction] Title <!-- id:t-7f3a1c -->
 //   - [~] (2026-10-13 09:12) Title <!-- id:… -->                   in progress
 //   - [x] (2026-10-12 18:40) Title → fait (2026-10-13 10:02) par orchestrateur-dev <!-- id:… -->
+//   - [x] (2026-10-12 18:40) Title → rejeté (2026-10-13 18:40) par l'utilisateur <!-- id:… -->
+// A rejected item (0.85.0, user choice « le rejet est marqué dans le
+// TODO_LIST.md du musicien ») is closed ("[x]", so it sits with the done
+// ones) and carries `rejected: {at, by}`; only the dashboard writes it.
 // The date in parentheses is the ENTRY date (the chef already writes it). The
 // "→ fait (…) par <musician>" suffix is written only by scripts/todo.mjs, from
 // the turn's ORCH_TURN_PROJECT: an item ticked by hand has no recorded name.
@@ -30,6 +34,8 @@ const TYPE_RE = /^\[(projet|fonctionnalit[eé]|correction|autre)\]\s*/i;
 const ID_RE = /\s*<!--\s*id:([A-Za-z0-9-]{3,40})\s*-->\s*$/;
 const DONE_RE = /\s*→\s*fait \((\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})\) par ([A-Za-z0-9_.-]{1,64})\s*$/;
 const NAME_RE = /^[A-Za-z0-9_.-]{1,64}$/;
+const REJECTED_RE = /\s*→\s*rejeté \((\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})\) par l'utilisateur\s*$/;
+export const REJECTED_BY = 'utilisateur';
 const DETAIL_MAX = 400;
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -88,9 +94,11 @@ export function parseTodo(text, { project = '', fileMtime = null } = {}) {
     if (!m) return;
     const mark = m[2].toLowerCase();
     let body = m[4];
-    let id = null, doneAt = null, doneBy = null, addedAt = null, type = null;
+    let id = null, doneAt = null, doneBy = null, addedAt = null, type = null, rejectedAt = null;
     const idm = ID_RE.exec(body);
     if (idm) { id = idm[1]; body = body.slice(0, idm.index); }
+    const rm = REJECTED_RE.exec(body);
+    if (rm) { rejectedAt = iso(rm[1], rm[2]); body = body.slice(0, rm.index); }
     const dm = DONE_RE.exec(body);
     if (dm) { doneAt = iso(dm[1], dm[2]); doneBy = dm[3]; body = body.slice(0, dm.index); }
     const idSource = body.trim();
@@ -110,7 +118,8 @@ export function parseTodo(text, { project = '', fileMtime = null } = {}) {
       addedAt: addedAt || est, addedEstimated: !addedAt,
       doneAt: status === 'done' ? doneAt : null,
       doneBy: status === 'done' ? doneBy : null,
-      manual: status === 'done' && !doneBy,
+      manual: status === 'done' && !doneBy && !rejectedAt,
+      ...(status === 'done' && rejectedAt ? { rejected: { at: rejectedAt, by: REJECTED_BY } } : {}),
     });
   });
   return items;
@@ -126,8 +135,8 @@ export function sortTodo(items) {
 }
 
 export function countTodo(items) {
-  const c = { done: 0, progress: 0, todo: 0, open: 0, total: items.length };
-  for (const i of items) { c[i.status]++; if (i.status !== 'done') c.open++; }
+  const c = { done: 0, progress: 0, todo: 0, open: 0, rejected: 0, total: items.length };
+  for (const i of items) { c[i.status]++; if (i.status !== 'done') c.open++; if (i.rejected) c.rejected++; }
   return c;
 }
 
@@ -173,12 +182,30 @@ export function setStatus(text, ref, status, { by = null, now = new Date(), proj
   // A legacy line gets its (derived) id written down: it stays stable afterwards.
   const idPart = idm ? body.slice(idm.index) : ` <!-- id:${item.id} -->`;
   if (idm) body = body.slice(0, idm.index);
-  body = body.replace(DONE_RE, '');
+  body = body.replace(DONE_RE, '').replace(REJECTED_RE, '');
   if (status === 'done') {
     if (!by || !NAME_RE.test(by)) throw new Error('nom du musicien absent ou invalide');
     body = `${body.replace(/\s+$/, '')} → fait (${stamp(now)}) par ${by}`;
   }
   const mark = status === 'done' ? 'x' : status === 'progress' ? '~' : ' ';
   lines[index] = `${m[1]}${mark}${m[3]}${body}${idPart}`;
+  return lines.join(text.includes('\r\n') ? '\r\n' : '\n');
+}
+
+/**
+ * Rejects one OPEN item (0.85.0): "[x]" + "→ rejeté (<now>) par l'utilisateur";
+ * only that line changes. Refuses an item already done or rejected.
+ */
+export function rejectItem(text, ref, { now = new Date(), project = '' } = {}) {
+  const { index, item } = findItem(text, ref, project);
+  if (item.status === 'done') throw Object.assign(new Error(item.rejected ? 'item déjà rejeté' : 'item déjà fait : il ne peut plus être rejeté'), { code: 'closed' });
+  const lines = String(text).split(/\r?\n/);
+  const m = BOX_RE.exec(lines[index]);
+  let body = m[4];
+  const idm = ID_RE.exec(body);
+  const idPart = idm ? body.slice(idm.index) : ` <!-- id:${item.id} -->`;
+  if (idm) body = body.slice(0, idm.index);
+  body = `${body.replace(DONE_RE, '').replace(REJECTED_RE, '').replace(/\s+$/, '')} → rejeté (${stamp(now)}) par l'utilisateur`;
+  lines[index] = `${m[1]}x${m[3]}${body}${idPart}`;
   return lines.join(text.includes('\r\n') ? '\r\n' : '\n');
 }

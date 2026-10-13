@@ -51,12 +51,14 @@
     const prog = i.status === "progress" ? `<span class="ti-prog" title="En cours">◐ en cours</span>` : "";
     const nNotes = Array.isArray(i.notes) ? i.notes.length : 0;
     const notes = nNotes ? `<span class="ti-notes" title="${nNotes} note${nNotes > 1 ? "s" : ""} — ouvrir l’item pour les lire">✎ ${nNotes}</span>` : "";
-    const by = !done ? "" : i.doneBy
+    const by = !done ? "" : i.rejected
+      ? `<span class="ti-rejected" title="Rejeté par l’utilisateur le ${esc(fmt(i.rejected.at))}">✕ rejeté (${esc(fmt(i.rejected.at))}) par l’utilisateur</span>`
+      : i.doneBy
       ? `<span class="ti-by" title="Coché par ${esc(i.doneBy)}${i.doneAt ? ` le ${esc(fmt(i.doneAt))}` : ""}">✓ ${esc(i.doneBy)}</span>`
       : `<span class="ti-by is-unknown" title="Nom non enregistré : item coché à la main, hors de todo.mjs">✓ —</span>`;
-    return `<li class="todo-item${done ? " is-done" : ""}" data-key="${esc(i.project + "/" + i.id)}" data-id="${esc(i.id)}" data-status="${esc(i.status)}" data-project="${esc(i.project)}" data-added="${esc(i.addedAt || "")}" tabindex="0" role="button" aria-haspopup="dialog" title="Voir l’item complet">
+    return `<li class="todo-item${done ? " is-done" : ""}${i.rejected ? " is-rejected" : ""}" data-key="${esc(i.project + "/" + i.id)}" data-id="${esc(i.id)}" data-status="${esc(i.status)}" data-project="${esc(i.project)}" data-added="${esc(i.addedAt || "")}" tabindex="0" role="button" aria-haspopup="dialog" title="Voir l’item complet">
       <span class="ti-grip" aria-hidden="true" title="Glisser pour déplacer (clavier : Alt+↑ / Alt+↓)">⋮⋮</span>
-      <input type="checkbox" class="ti-box" disabled ${done ? "checked" : ""} aria-label="${done ? "Fait" : "Non fait"} (lecture seule : seul le musicien coche)" title="Lecture seule : c’est le musicien qui coche">
+      <input type="checkbox" class="ti-box" disabled ${done ? "checked" : ""} aria-label="${i.rejected ? "Rejeté" : done ? "Fait" : "Non fait"} (lecture seule : seul le musicien coche)" title="Lecture seule : c’est le musicien qui coche">
       <div class="ti-main"><div class="ti-title">${esc(i.title)}</div>
         ${i.detail ? `<div class="ti-detail">${esc(i.detail)}</div>` : ""}
         <div class="ti-meta">${by}<span class="ti-proj">${esc(i.project)}</span>${added}${type}${prog}${notes}</div></div></li>`;
@@ -103,11 +105,22 @@
             <button type="button" class="tov-btn tov-confirm-cancel">Annuler</button>
           </div>
         </section>
+        <section class="tov-reject" hidden aria-labelledby="tov-reject-h">
+          <h3 id="tov-reject-h" class="tov-confirm-h">Rejeter cet item ?</h3>
+          <p class="tov-hint">Il sera marqué « rejeté (date) par l’utilisateur » dans le TODO_LIST.md de <b class="tov-reject-proj"></b>, que le musicien lit, et passera dans les faits, barré.</p>
+          <p class="tov-reject-msg" role="status" aria-live="polite"></p>
+          <div class="tov-confirm-bar">
+            <button type="button" class="tov-btn tov-reject-ok">Rejeter l’item</button>
+            <button type="button" class="tov-btn tov-reject-cancel">Annuler</button>
+          </div>
+        </section>
         <footer class="tov-actions" hidden></footer>
       </section>`;
     el.addEventListener("click", (e) => { if (e.target.closest("[data-tov-close]")) closeItem(); });
     el.querySelector(".tov-confirm-cancel").addEventListener("click", () => hideConfirm(true));
     el.querySelector(".tov-confirm-ok").addEventListener("click", () => confirmSend());
+    el.querySelector(".tov-reject-cancel").addEventListener("click", () => hideReject(true));
+    el.querySelector(".tov-reject-ok").addEventListener("click", () => confirmReject());
     const form = el.querySelector(".tov-note-form"), area = el.querySelector(".tov-note-text");
     form.addEventListener("submit", (e) => { e.preventDefault(); addNote(); });
     area.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); addNote(); } });
@@ -135,11 +148,13 @@
     el.querySelector(".tov-title").textContent = i.title;
     const full = i.detailFull || i.detail || "";
     const done = i.status === "done";
-    const doneLine = !done ? "" : i.doneBy
+    const doneLine = !done ? "" : i.rejected
+      ? `<div class="tov-row"><span class="tov-k">Rejeté</span><span class="tov-rejected">rejeté (${esc(fmt(i.rejected.at))}) par l’utilisateur</span></div>`
+      : i.doneBy
       ? `<div class="tov-row"><span class="tov-k">Fait</span><span class="tov-done-at">${esc(fmt(i.doneAt))}</span> par <b class="tov-by">${esc(i.doneBy)}</b></div>`
       : `<div class="tov-row"><span class="tov-k">Fait</span><span class="tov-by is-unknown">coché à la main (nom non enregistré)</span></div>`;
     el.querySelector(".tov-body").innerHTML = `
-      <div class="tov-row tov-tags"><span class="tov-status tov-status-${esc(i.status)}">${STATUS[i.status] || esc(i.status)}</span>
+      <div class="tov-row tov-tags"><span class="tov-status tov-status-${esc(i.rejected ? "rejected" : i.status)}">${i.rejected ? "✕ Rejeté" : STATUS[i.status] || esc(i.status)}</span>
         <span class="tov-proj">${esc(i.project)}</span>${TYPE[i.type] ? `<span class="ti-type ti-type-${esc(i.type)}">${TYPE[i.type]}</span>` : ""}</div>
       <div class="tov-row"><span class="tov-k">Entrée</span><span class="tov-added">${i.addedEstimated ? "≈ " : ""}${esc(fmt(i.addedAt))}</span>${i.addedEstimated ? `<span class="tov-hint">(date estimée : date du fichier)</span>` : ""}</div>
       ${doneLine}
@@ -151,7 +166,7 @@
     const bar = el.querySelector(".tov-actions");
     const usable = actions.filter(a => !a.when || a.when(i));
     bar.innerHTML = usable.map(a => `<button type="button" class="tov-action" data-tov-action="${esc(a.id)}"${a.title ? ` title="${esc(a.title)}"` : ""}>${esc(a.label)}</button>`).join("");
-    bar.hidden = !usable.length || !el.querySelector(".tov-confirm").hidden;
+    bar.hidden = !usable.length || !el.querySelector(".tov-confirm").hidden || !el.querySelector(".tov-reject").hidden;
   }
 
   /* ---- « Envoyer au chef » (0.79.0, part 4/5) ----------------------------
@@ -204,6 +219,60 @@
     closeItem();
     globalThis.SidePanel?.close();
     globalThis.App.prepareChefMessage(text, { project: i.project, title: i.title, id: i.id });
+  }
+
+  /* ---- Reject (0.85.0, part 3/5): « Possibilité […] de rejetter l'item ».
+     User choice (2026-10-13): the rejection is written in the musician's
+     TODO_LIST.md; the item goes to the done ones, struck, « rejeté (date) par
+     l'utilisateur ». A confirmation first; POST /api/reject/todo/:p/:id. */
+  function askReject(i) {
+    const el = overlayEl();
+    const box = el.querySelector(".tov-reject");
+    box.querySelector(".tov-reject-proj").textContent = i.project;
+    box.querySelector(".tov-reject-msg").textContent = "";
+    box.querySelector(".tov-reject-msg").classList.remove("is-error");
+    box.hidden = false;
+    el.querySelector(".tov-actions").hidden = true;
+    box.querySelector(".tov-reject-ok").focus();
+  }
+
+  function hideReject(refocus) {
+    if (!ov.el) return;
+    const box = ov.el.querySelector(".tov-reject");
+    if (box.hidden) return;
+    box.hidden = true;
+    const i = currentItem();
+    if (i) fillOverlay(i);
+    if (refocus) ov.el.querySelector('[data-tov-action="reject"]')?.focus();
+  }
+
+  async function confirmReject() {
+    const i = currentItem();
+    if (!i || ov.busy) return;
+    const box = ov.el.querySelector(".tov-reject");
+    const msg = box.querySelector(".tov-reject-msg"), btn = box.querySelector(".tov-reject-ok");
+    ov.busy = true; btn.disabled = true;
+    msg.classList.remove("is-error");
+    msg.textContent = "Rejet en cours…";
+    try {
+      const r = await fetch(`/api/reject/todo/${encodeURIComponent(i.project)}/${encodeURIComponent(i.id)}`, { method: "POST" });
+      const isJson = (r.headers.get("content-type") || "").includes("json");
+      const j = isJson ? await r.json() : null;
+      if (!r.ok || !j || !j.ok) {
+        msg.textContent = j && j.error ? `Item non rejeté : ${j.error}` : await SidePanel.explainFailure(r.status, "Rejet");
+        msg.classList.add("is-error");
+        return;
+      }
+      box.hidden = true;
+      await load();
+      const now = findItem(i.id) || { ...i, ...j.item };
+      if (ov.el && !ov.el.hidden) { fillOverlay(now); ov.el.querySelector(".tov-close").focus(); }
+    } catch (e) {
+      msg.textContent = `Item non rejeté : ${e.message}`;
+      msg.classList.add("is-error");
+    } finally {
+      ov.busy = false; btn.disabled = false;
+    }
   }
 
   /* ---- Notes (0.78.0): « Possibilité d'y ajouter des notes ». Stored by the
@@ -284,6 +353,7 @@
     ov.el.hidden = true;
     ov.id = null;
     ov.el.querySelector(".tov-confirm").hidden = true;
+    ov.el.querySelector(".tov-reject").hidden = true;
     ov.filledId = null;
     document.body.classList.remove("tov-open");
     const back = ov.returnFocus;
@@ -298,7 +368,9 @@
     if (e.key === "Escape") {
       e.preventDefault(); e.stopImmediatePropagation();
       // Escape first cancels a pending confirmation, then closes the overlay.
-      if (!ov.el.querySelector(".tov-confirm").hidden) hideConfirm(true); else closeItem();
+      if (!ov.el.querySelector(".tov-confirm").hidden) hideConfirm(true);
+      else if (!ov.el.querySelector(".tov-reject").hidden) hideReject(true);
+      else closeItem();
       return;
     }
     if (e.key === "Tab") {
@@ -493,6 +565,12 @@
     id: "send-chef", label: "Envoyer au chef…",
     title: "Prépare un message au chef avec le contenu complet de l’item, pour qu’il en lance l’exécution (confirmation d’abord)",
     run: (i) => askSendToChef(i),
+  });
+  registerAction({
+    id: "reject", label: "Rejeter l’item…",
+    title: "Marque l’item « rejeté par l’utilisateur » dans le TODO_LIST.md du musicien ; il passe dans les faits, barré (confirmation d’abord)",
+    when: (i) => i.status !== "done",
+    run: (i) => askReject(i),
   });
   globalThis.TodoPanel = { reload: load, openItem, closeItem, registerAction, chefMessage, isItemOpen: () => !!(ov.el && !ov.el.hidden), isDragging: () => drag.on };
 })();

@@ -168,7 +168,10 @@ try {
   // explicit agreement (2026-10-13, « J'autorise l'envoie de POST à partir de
   // todo-panel.js »): a POST is allowed to the notes route (0.81.0) and, under
   // the same agreement, to the order route of the drag and drop (0.83.0,
-  // part 5/5). Every other write from the panel stays forbidden.
+  // part 5/5), and to the reject route (0.85.0, part 3/5: « L'accord POST
+  // couvre toutes les requetes necessaires a cette fonctionalite »; the user
+  // chose that a rejection is written in the musician's TODO_LIST.md). Every
+  // other write from the panel stays forbidden.
   const calls = tp.split(/\bfetch\(/).slice(1).map(c => {
     const url = (c.match(/^\s*([`"'])(.*?)\1/) || [])[2] || '?';
     const body = c.slice(0, c.search(/\)\s*;/) + 1 || 600);
@@ -176,8 +179,12 @@ try {
     return { url, method };
   });
   const writes = calls.filter(c => c.method !== 'GET');
-  ok(writes.length > 0 && writes.every(c => c.method === 'POST' && (c.url.startsWith('/api/notes/todo/') || c.url === '/api/order/todo')),
-    `écritures du panneau : POST vers /api/notes/todo/ et /api/order/todo seulement (${JSON.stringify(writes)})`);
+  ok(writes.length > 0 && writes.every(c => c.method === 'POST' && (c.url.startsWith('/api/notes/todo/') || c.url === '/api/order/todo' || c.url.startsWith('/api/reject/todo/'))),
+    `écritures du panneau : POST vers /api/notes/todo/, /api/order/todo et /api/reject/todo/ seulement (${JSON.stringify(writes)})`);
+  // The reject route writes only the rejected line (todo-core rejectItem), under the list's lock.
+  const rejectRoute = srv.slice(srv.indexOf("app.post('/api/reject/todo/"), srv.indexOf('// ── Order of the TODO items'));
+  ok(/sameOriginOnly/.test(rejectRoute) && /rejectItem\(text, \{ id: req\.params\.id \}/.test(rejectRoute) && /withListLock\(file/.test(rejectRoute) && /writeFileAtomic\(file, next/.test(rejectRoute),
+    'rejet : même origine, verrou de la liste, seule la ligne rejetée change (rejectItem), écriture atomique');
   const orderMod = read(path.join(ROOT, 'scripts', 'todo-order.mjs'));
   const orderWrites = orderMod.match(/\b(writeFileAtomic|writeFileSync|writeFile|appendFileSync|appendFile|renameSync|renameRetry|unlinkSync)\s*\([^,)]*/g) || [];
   ok(orderWrites.length > 0 && orderWrites.every(w => /\(\s*file$/.test(w)) && !/TODO_FILE/.test(orderMod)

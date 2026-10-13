@@ -4,7 +4,7 @@ A local Windows dashboard where one "conductor" AI session pilots a fleet of
 headless coding agents, one per project, with a live web viewer and an
 Android companion app.
 
-`version 0.84.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
+`version 0.85.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
 
 > **Status: active, personal project.** Built and used daily on a single
 > Windows machine. Pre-1.0: internal APIs and file formats can still change
@@ -157,7 +157,10 @@ same isolated instance, stopped at the end).
     `todo-order.json`, and open items always stay above done ones. In a
     message to the conductor, every line starting with `TODO:` is added to
     the conductor's list by the router itself (no model involved); the rest
-    of the message is handled as usual.
+    of the message is handled as usual. « Rejeter l'item… » (after a
+    confirmation) marks an open item « rejeté (date) par l'utilisateur » in
+    the agent's `TODO_LIST.md`; it then shows among the done items, struck
+    through.
   - **Git**: each agent's repository as an SVG graph (commits, branches with
     HEAD highlighted, remote branches, tags, merges). The server only runs
     `git log` (GET routes only, the index is never rewritten).

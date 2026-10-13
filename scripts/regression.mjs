@@ -365,6 +365,36 @@ async function apiChecks(sb) {
       await send([]);
     }
   });
+  // User request (2026-10-13), part 3/5, and the user's choice: « le rejet est
+  // marqué dans le TODO_LIST.md du musicien. Dans l'UI passe le dans la liste
+  // des "faits" mais barre, avec une marque « rejeté (date) par l'utilisateur » ».
+  await check(S, 'todo-reject', 'Rejet d’un item TODO : POST /api/reject/todo/:projet/:item (même origine) écrit « → rejeté (date) par l’utilisateur » sur la seule ligne de l’item dans le TODO_LIST.md du musicien ; GET /api/todo le rend fermé (avec les faits) et `rejected` ; refus : déjà rejeté ou déjà fait 409, autre origine 403, item ou projet inconnu 404', async () => {
+    if (!fs.existsSync(path.join(sb.root, 'scripts', 'todo-capture.mjs')) || !fs.readFileSync(path.join(sb.root, 'server.js'), 'utf8').includes('/api/reject/todo/')) NA('rejet absent de cet état du code');
+    const listFile = path.join(sb.root, 'projects', 'alpha', 'TODO_LIST.md');
+    const before = fs.readFileSync(listFile, 'utf8');
+    const reject = (proj, id, extra = {}) => fetch(`${sb.url}/api/reject/todo/${encodeURIComponent(proj)}/${encodeURIComponent(id)}`, { method: 'POST', headers: { ...H, ...extra } });
+    try {
+      const r = await reject('alpha', 't-a10004');
+      const j = await r.json();
+      assert(r.ok && j.ok && j.item?.rejected?.by === 'utilisateur' && j.item.status === 'done', `rejet : ${r.status} ${JSON.stringify(j)}`);
+      const after = fs.readFileSync(listFile, 'utf8');
+      const diff = before.split('\n').map((l, n) => (l === after.split('\n')[n] ? null : n)).filter(n => n != null);
+      const line = after.split('\n')[diff[0]] || '';
+      assert(diff.length === 1 && /^- \[x\] \(2026-09-20 12:00\) Nettoyer les logs → rejeté \(\d{4}-\d{2}-\d{2} \d{2}:\d{2}\) par l'utilisateur <!-- id:t-a10004 -->$/.test(line), `ligne écrite : ${line} (${diff.length} ligne(s) changée(s))`);
+      const items = (await json('/api/todo?project=alpha')).items;
+      const it = items.find(i => i.id === 't-a10004');
+      assert(it?.status === 'done' && it.rejected?.at && items.findIndex(i => i.id === 't-a10004') > items.findIndex(i => i.status !== 'done'), `rendu : ${JSON.stringify(it)}`);
+      assert((await reject('alpha', 't-a10004')).status === 409, 'second rejet accepté');
+      assert((await reject('alpha', 't-a10001')).status === 409, 'rejet d’un item fait accepté');
+      assert((await reject('alpha', 't-a10003', { Origin: 'http://evil.example' })).status === 403, 'autre origine acceptée');
+      assert((await reject('alpha', 't-inexistant')).status === 404, 'item inconnu accepté');
+      assert((await reject('projet-inconnu', 't-a10004')).status === 404, 'projet hors liste accepté');
+      assert(fs.readFileSync(listFile, 'utf8') === after, 'un refus a modifié la liste');
+      return `t-a10004 rejeté (une ligne : « → rejeté (date) par l’utilisateur »), rendu avec les faits ; refus 409 / 403 / 404 sans écriture`;
+    } finally {
+      fs.writeFileSync(listFile, before);
+    }
+  });
   await check(S, 'config', '/api/config : flotte, états hydratés, parcage, lecture', async () => {
     const c = await json('/api/config');
     const by = Object.fromEntries(c.projects.map(p => [p.name, p]));

@@ -35,12 +35,12 @@ export function splitTodoLines(message) {
 }
 
 /** Same lock as scripts/todo.mjs (`<file>.lock`, taken over after 30 s). */
-function withLock(file, fn) {
+export function withListLock(file, fn, { tries = 200 } = {}) {
   const lock = `${file}.lock`;
   for (let i = 0; ; i++) {
     try { fs.writeFileSync(lock, String(process.pid), { flag: 'wx' }); break; } catch {
       try { if (Date.now() - fs.statSync(lock).mtimeMs > 30_000) { fs.rmSync(lock, { force: true }); continue; } } catch { continue; }
-      if (i > 200) throw new Error(`liste verrouillée (${lock})`);
+      if (i > tries) throw Object.assign(new Error(`liste verrouillée (${lock})`), { code: "locked" });
       const until = Date.now() + 50; while (Date.now() < until) { /* short wait */ }
     }
   }
@@ -51,7 +51,7 @@ function withLock(file, fn) {
 export function captureTodos(dir, todos, { now = new Date() } = {}) {
   if (!todos.length) return [];
   const file = path.join(dir, TODO_FILE);
-  return withLock(file, () => {
+  return withListLock(file, () => {
     let text = '';
     try { text = fs.readFileSync(file, 'utf8'); } catch { /* new list */ }
     const added = [];

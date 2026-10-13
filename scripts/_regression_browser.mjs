@@ -341,7 +341,7 @@ export async function browserChecks(sb, t) {
       assert(o.more === long.more, `lignes de suite : ${JSON.stringify(o.more)}`);
       assert(/En cours/.test(o.status) && o.added === '14/09/26 00:00', `statut / date : ${o.status} · ${o.added}`);
       assert(o.focusClose, 'le focus n’est pas sur ✕ à l’ouverture');
-      assert(o.actionsHidden === false && o.actions.join() === 'Envoyer au chef…', `barre d’actions : ${JSON.stringify(o.actions)} (0.79.0 : « Envoyer au chef… »)`);
+      assert(o.actionsHidden === false && o.actions.join() === 'Envoyer au chef…,Rejeter l’item…', `barre d’actions : ${JSON.stringify(o.actions)} (0.79.0 : « Envoyer au chef… » ; 0.85.0 : « Rejeter l’item… » sur un item ouvert)`);
       await page.keyboard.press('Escape');
       assert(await until(async () => !(await ovState(page)).open, 3000), 'Échap ne ferme pas l’overlay');
       o = await ovState(page);
@@ -626,6 +626,61 @@ export async function browserChecks(sb, t) {
         await reset();
         await page.evaluate(() => window.TodoPanel?.reload()).catch(() => {});
         if ((await todoState(page)).open) await page.keyboard.press('Escape').catch(() => {});
+      }
+    });
+    // User request (2026-10-13), part 3/5, and the user's choice: « le rejet est
+    // marqué dans le TODO_LIST.md du musicien. Dans l'UI passe le dans la liste
+    // des "faits" mais barre, avec une marque « rejeté (date) par l'utilisateur » ».
+    await check(B, 'todo-item-reject', 'Overlay d’un item TODO ouvert : « Rejeter l’item… » demande une confirmation (annulable par le bouton ou Échap) ; confirmé, le rejet est écrit dans le TODO_LIST.md du musicien et l’item passe dans les « faits », barré, avec « rejeté (date) par l’utilisateur » ; l’action disparaît pour un item fermé', async () => {
+      if (!(await page.evaluate(() => typeof window.TodoPanel?.registerAction === 'function'))) NA('panneau TODO absent de cet état du code');
+      const listFile = path.join(sb.root, 'projects', 'alpha', 'TODO_LIST.md');
+      const before = fs.readFileSync(listFile, 'utf8');
+      const li = '#side-panel .todo-item[data-key="alpha/t-a10004"]';
+      const st = () => page.evaluate(() => {
+        const o = document.getElementById('todo-overlay');
+        const x = document.querySelector('#side-panel .todo-item[data-key="alpha/t-a10004"]');
+        const t = x?.querySelector('.ti-title');
+        return {
+          open: !!o && !o.hidden, confirm: !!o && !o.querySelector('.tov-reject')?.hidden,
+          actions: [...(o?.querySelectorAll('.tov-actions [data-tov-action]') || [])].map(b => b.dataset.tovAction),
+          status: o?.querySelector('.tov-status')?.textContent || '', rejectedLine: o?.querySelector('.tov-rejected')?.textContent || '',
+          sec: x?.closest('.todo-sec')?.dataset.sec || null, rejected: x?.classList.contains('is-rejected'),
+          struck: t ? getComputedStyle(t).textDecorationLine : '', meta: x?.querySelector('.ti-rejected')?.textContent || '',
+        };
+      });
+      try {
+        await page.evaluate(() => SidePanel.open('todo'));
+        await page.selectOption('#side-panel .todo-project', '').catch(() => {});
+        await page.evaluate(() => window.TodoPanel.reload());
+        await page.locator(li).waitFor({ timeout: 8000 });
+        assert((await st()).sec === 'open', 'item pas dans les non faits au départ');
+        await page.click(`${li} .ti-title`);
+        assert(await until(async () => (await st()).open, 3000), 'overlay non ouvert');
+        assert((await st()).actions.includes('reject'), `action absente : ${(await st()).actions}`);
+        // Cancel first: nothing is written.
+        await page.click('#todo-overlay [data-tov-action="reject"]');
+        assert((await st()).confirm, 'pas de confirmation');
+        await page.keyboard.press('Escape');
+        let s = await st();
+        assert(!s.confirm && s.open, 'Échap : la confirmation doit se fermer, l’overlay rester ouvert');
+        await page.click('#todo-overlay [data-tov-action="reject"]');
+        await page.click('#todo-overlay .tov-reject-cancel');
+        assert(!(await st()).confirm && fs.readFileSync(listFile, 'utf8') === before, 'Annuler a écrit quelque chose');
+        // Confirm.
+        await page.click('#todo-overlay [data-tov-action="reject"]');
+        await page.click('#todo-overlay .tov-reject-ok');
+        assert(await until(async () => (await st()).sec === 'done', 8000), `l’item n’est pas passé dans les faits (${(await st()).sec})`);
+        s = await st();
+        assert(s.rejected && /line-through/.test(s.struck) && /^✕ rejeté \(\d{2}\/\d{2}\/\d{2} \d{2}:\d{2}\) par l’utilisateur$/.test(s.meta), `affichage : ${JSON.stringify(s)}`);
+        assert(/Rejeté/.test(s.status) && /^rejeté \(.+\) par l’utilisateur$/.test(s.rejectedLine) && !s.actions.includes('reject'), `overlay après rejet : ${JSON.stringify(s)}`);
+        assert(/Nettoyer les logs → rejeté \(\d{4}-\d{2}-\d{2} \d{2}:\d{2}\) par l'utilisateur <!-- id:t-a10004 -->/.test(fs.readFileSync(listFile, 'utf8')), 'rejet absent du TODO_LIST.md du musicien');
+        await shot(page, 'todo-reject');
+        return `alpha/t-a10004 : confirmation, Échap et Annuler sans écriture ; rejeté → faits, barré, « ${s.meta} »`;
+      } finally {
+        fs.writeFileSync(listFile, before);
+        await page.evaluate(() => window.TodoPanel?.closeItem()).catch(() => {});
+        await page.evaluate(() => window.TodoPanel?.reload()).catch(() => {});
+        await page.evaluate(() => SidePanel.close()).catch(() => {});
       }
     });
     const railHeads = () => page.evaluate(() => [...document.querySelectorAll('#rail-body .rail-group-head')].map(h => h.textContent.replace(/\s+/g, ' ').trim()));

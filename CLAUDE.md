@@ -722,6 +722,19 @@ de la prod).
   todo-panel.js ») : le panneau peut faire un POST, vers cette route
   seulement (`_test_todo.mjs`). Recettes : `_test_todo_notes.mjs`, HTTP `todo-notes`,
   navigateur `todo-item-notes`.
+- **Rejet d'un item** (0.85.0, partie 3/5 ; choix de l'utilisateur : « le
+  rejet est marqué dans le TODO_LIST.md du musicien. Dans l'UI passe le dans
+  la liste des "faits" mais barre, avec une marque « rejeté (date) par
+  l'utilisateur » ») : action « Rejeter l'item… » de l'overlay (item non
+  fait), avec confirmation. `POST /api/reject/todo/:projet/:item`
+  (`sameOriginOnly`) réécrit **la seule ligne** de l'item : `[x] … → rejeté
+  (date) par l'utilisateur` (`rejectItem` de `todo-core.mjs`), sous le verrou
+  de la liste (`withListLock` de `todo-capture.mjs`, celui de `todo.mjs`),
+  écriture atomique. C'est la **seule** écriture du dashboard dans un
+  `TODO_LIST.md`. Relu `status: done` + `rejected {at, by}` : rangé avec les
+  faits, barré, « ✕ rejeté (date) par l'utilisateur ». Déjà fait ou rejeté :
+  409 ; liste verrouillée : 423. Recettes : `_test_todo_reject.mjs`, HTTP
+  `todo-reject`, navigateur `todo-item-reject`.
 - **Glisser-déposer** (0.83.0, partie 5/5, « Chaque item est drag & dropable,
   et les positions doivent persister ») : souris n'importe où sur l'item
   (seuil 6 px), doigt sur la poignée `.ti-grip` (44 px sur mobile), ou

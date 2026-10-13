@@ -75,7 +75,9 @@ import { readPending, dependencyResult, releaseReady, staleEntries, markNotified
 // Vue « Models par tâche » (0.39.0) : catalogue + model-routing.json.
 import { createModelRouting, incompatibility } from './scripts/model-routing.mjs';
 import { createRecommendations } from './scripts/model-reco.mjs';
-import { TODO_FILE, parseTodo, sortTodo, countTodo } from './scripts/todo-core.mjs';
+import { TODO_FILE, parseTodo, sortTodo, countTodo, rejectItem } from './scripts/todo-core.mjs';
+import { withListLock } from './scripts/todo-capture.mjs';
+import { writeFileAtomic } from './scripts/atomic-file.mjs';
 import { createNotesStore, NOTES_FILE, ITEM_ID_RE, NOTE_MAX } from './scripts/todo-notes.mjs';
 import { createOrderStore, ORDER_FILE, applyOrder, cleanOrder } from './scripts/todo-order.mjs';
 import { readGitGraph, GIT_N_DEFAULT, GIT_N_MAX } from './scripts/git-graph-core.mjs';
@@ -2721,6 +2723,35 @@ app.post('/api/notes/todo/:project/:id', sameOriginOnly, express.json({ limit: '
     res.status(201).json({ ok: true, ...r, max: NOTE_MAX });
   } catch (e) {
     res.status(e.status || 500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Rejecting a TODO item (0.85.0) ──────────────────────────────────────────
+// User choice (2026-10-13): « le rejet est marqué dans le TODO_LIST.md du
+// musicien. Dans l'UI passe le dans la liste des "faits" mais barre, avec une
+// marque « rejeté (date) par l'utilisateur » ». The only dashboard write to a
+// musician's list, and only this line: "[x] … → rejeté (date) par
+// l'utilisateur" (todo-core rejectItem), under the list's lock (the one of
+// scripts/todo.mjs), atomic write. Same origin; project of config.json; an
+// open item only.
+app.post('/api/reject/todo/:project/:id', sameOriginOnly, (req, res) => {
+  const p = (config.projects || []).find(x => x && x.name === req.params.project && x.path);
+  if (!p) return res.status(404).json({ ok: false, error: `projet inconnu : ${req.params.project}` });
+  if (!ITEM_ID_RE.test(req.params.id)) return res.status(400).json({ ok: false, error: 'identifiant d’item invalide' });
+  const file = path.join(p.path, TODO_FILE);
+  try {
+    const item = withListLock(file, () => {
+      const text = fs.readFileSync(file, 'utf8');
+      const next = rejectItem(text, { id: req.params.id }, { project: p.name });
+      writeFileAtomic(file, next, `${file}.${process.pid}.tmp`);
+      return parseTodo(next, { project: p.name }).find(i => i.id === req.params.id);
+    }, { tries: 20 });
+    const msg = `[todo] ${p.name} : item ${req.params.id} rejeté par l'utilisateur`;
+    console.log(msg); debugLog(msg);
+    res.json({ ok: true, item });
+  } catch (e) {
+    const status = e.code === 'closed' ? 409 : e.code === 'locked' ? 423 : e.code === 'ENOENT' || /^aucun item/.test(e.message) ? 404 : 500;
+    res.status(status).json({ ok: false, error: e.message });
   }
 });
 
