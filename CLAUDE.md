@@ -350,6 +350,19 @@ non visible » du journal d'activité).
   le glisser-déposer s'ajouteront par `Salle.registerQueueAction({id, label,
   when?, run(entry, {project, close, reload})})`. Recettes : HTTP
   `queue-detail`, navigateur `queue-item-detail`.
+- **Glisser-déposer de la file** (0.86.0, demande « il faut pouvoir drag &
+  drop les éléments de la file d'attente, et que celà ai un impacte sur
+  l'ordre de traitement ») : souris sur la ligne (seuil 6 px), doigt sur la
+  poignée `.dq-grip` (44 px sur mobile), Alt+↑/↓. `POST
+  /api/queue/:projet/order {ids}` (`sameOriginOnly`) réordonne la file en
+  **mémoire** puis réécrit le fichier : le drain lance la tête, donc l'ordre
+  déposé **est** l'ordre d'exécution. Concurrence (`reorderQueue` de
+  `scripts/queue-order.mjs`) : un élément parti est ignoré (`missing`), un
+  arrivé reste après (`appended`), sans perte ni doublon. Délais du balayage
+  réglables pour les tests seulement (`ORCH_QUEUE_SWEEP_MS`,
+  `ORCH_QUEUE_STALL_MS`). Recettes : `_test_queue_order.mjs` (instance
+  privée : les tours partent dans l'ordre déposé ; suite en série), HTTP
+  `queue-order`, navigateur `queue-drag`.
 
 ---
 

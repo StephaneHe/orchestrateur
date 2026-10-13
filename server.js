@@ -77,6 +77,7 @@ import { createModelRouting, incompatibility } from './scripts/model-routing.mjs
 import { createRecommendations } from './scripts/model-reco.mjs';
 import { TODO_FILE, parseTodo, sortTodo, countTodo, rejectItem } from './scripts/todo-core.mjs';
 import { withListLock } from './scripts/todo-capture.mjs';
+import { cleanQueueIds, reorderQueue } from './scripts/queue-order.mjs';
 import { writeFileAtomic } from './scripts/atomic-file.mjs';
 import { createNotesStore, NOTES_FILE, ITEM_ID_RE, NOTE_MAX } from './scripts/todo-notes.mjs';
 import { createOrderStore, ORDER_FILE, applyOrder, cleanOrder } from './scripts/todo-order.mjs';
@@ -939,8 +940,9 @@ const drainLaunchedAt = new Map();  // nom → dernier lancement depuis la file
 // déclenchera jamais : la file rehydratée au redémarrage, un tour lancé hors
 // serveur dont le result a été manqué, un drain abandonné. Jamais sous limite
 // Claude (même raison que la garde B1 sur les result synthétiques).
-const QUEUE_SWEEP_MS = 30_000;
-const QUEUE_STALL_MS = 60_000;
+// Overridable for the tests only (ORCH_QUEUE_SWEEP_MS / ORCH_QUEUE_STALL_MS).
+const QUEUE_SWEEP_MS = Number(process.env.ORCH_QUEUE_SWEEP_MS) || 30_000;
+const QUEUE_STALL_MS = Number(process.env.ORCH_QUEUE_STALL_MS) || 60_000;
 const queueStalledSince = new Map();
 function sweepQueues() {
   if (readLimitedUntil()) return;
@@ -3281,6 +3283,29 @@ app.get('/api/queue/:project', async (req, res) => {
     count: q.length,
     entries: q.map(queueEntryView),
   });
+});
+
+// 0.86.0 — drag and drop of the queue: « il faut pouvoir drag & drop les
+// éléments de la file d'attente, et que celà ai un impacte sur l'ordre de
+// traitement ». The in-memory queue is reordered (then the sidecar rewritten
+// from it): the drain launches its head, so this IS the order of execution.
+// Entries launched or removed meanwhile are ignored, new ones kept after the
+// posted ones (scripts/queue-order.mjs): no loss, no duplicate.
+app.post('/api/queue/:project/order', sameOriginOnly, express.json({ limit: '64kb' }), (req, res) => {
+  const name = queueProjectOr404(req, res);
+  if (!name) return;
+  let ids;
+  try { ids = cleanQueueIds(req.body?.ids); } catch (e) { return res.status(e.status || 400).json({ ok: false, error: e.message }); }
+  const q = dispatchQueue.get(name) ?? [];
+  const r = reorderQueue(q, ids);
+  if (r.changed) {
+    dispatchQueue.set(name, r.entries);
+    persistQueue(name);
+    const msg = `[queue] ${name} : ordre changé (${r.entries.map(e => e.id).join(', ')})` +
+      (r.missing.length ? ` — déjà partis : ${r.missing.join(', ')}` : '') + (r.appended.length ? ` — arrivés entre-temps : ${r.appended.join(', ')}` : '');
+    console.log(msg); debugLog(msg);
+  }
+  res.json({ ok: true, project: name, changed: r.changed, missing: r.missing, appended: r.appended, count: r.entries.length, entries: r.entries.map(queueEntryView) });
 });
 
 app.delete('/api/queue/:project/:id', (req, res) => {

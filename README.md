@@ -4,7 +4,7 @@ A local Windows dashboard where one "conductor" AI session pilots a fleet of
 headless coding agents, one per project, with a live web viewer and an
 Android companion app.
 
-`version 0.85.1` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
+`version 0.86.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
 
 > **Status: active, personal project.** Built and used daily on a single
 > Windows machine. Pre-1.0: internal APIs and file formats can still change
@@ -83,7 +83,9 @@ same isolated instance, stopped at the end).
   question. The acknowledgement is written to the log, so it survives a
   restart and never starts a turn.
 - **Per-agent queue.** A message to a busy agent is queued (FIFO, persisted)
-  instead of starting a second concurrent session.
+  instead of starting a second concurrent session. In the agent's pane, each
+  queued task opens a detail view, and the tasks can be reordered by drag
+  and drop (or Alt+↑ / Alt+↓): the server drains them in that order.
 - **Live web viewer.** Vanilla JS + xterm.js, fed by Server-Sent Events from
   the append-only stream-json logs: thread view, attention band, search,
   briefing, queue management, image attachments, a "Projects" status view,

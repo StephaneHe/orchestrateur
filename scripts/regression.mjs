@@ -522,6 +522,33 @@ async function apiChecks(sb) {
     assert((await json('/api/queue/eps')).count === 2, 'entrée non retirée');
     assert((await fetch(`${sb.url}/api/queue/nope`, { headers: H })).status === 404, 'projet inconnu ≠ 404');
   });
+  // User request (2026-10-13): « il faut pouvoir drag & drop les éléments de la
+  // file d'attente, et que celà ai un impacte sur l'ordre de traitement ».
+  await check(S, 'queue-order', 'File : POST /api/queue/:projet/order (même origine) réordonne la file du serveur (mémoire et fichier réécrit), qui est l’ordre de lancement ; un élément parti entre-temps est ignoré sans perte ni doublon ; refus : autre origine, projet inconnu, liste invalide', async () => {
+    if (!fs.readFileSync(path.join(sb.root, 'server.js'), 'utf8').includes("'/api/queue/:project/order'")) NA('réordonnancement de la file absent de cet état du code');
+    const ids0 = (await json('/api/queue/eps')).entries.map(e => e.id);
+    assert(ids0.length >= 2, `file d’eps : ${ids0.length} entrée(s)`);
+    const send = (ids, extra = {}) => fetch(`${sb.url}/api/queue/eps/order`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json', ...extra }, body: JSON.stringify({ ids }) });
+    try {
+      const rev = [...ids0].reverse();
+      const r = await send(rev);
+      const j = await r.json();
+      assert(r.ok && j.changed && j.entries.map(e => e.id).join() === rev.join() && j.entries[0].position === 1, `réordonnancement : ${r.status} ${JSON.stringify(j).slice(0, 200)}`);
+      assert((await json('/api/queue/eps')).entries.map(e => e.id).join() === rev.join(), 'la file du serveur ne suit pas l’ordre');
+      const side = JSON.parse(fs.readFileSync(path.join(sb.root, 'logs', 'queue', 'eps.json'), 'utf8')).map(e => e.id);
+      assert(side.join() === rev.join(), `fichier de la file : ${side.join()}`);
+      // Concurrent change: an id no longer queued, and one entry left out.
+      const r2 = await send(['q-deja-parti', rev[1]]);
+      const j2 = await r2.json();
+      assert(r2.ok && j2.missing.join() === 'q-deja-parti' && j2.entries.map(e => e.id).join() === [rev[1], rev[0], ...rev.slice(2)].join() && j2.count === ids0.length, `concurrence : ${JSON.stringify(j2).slice(0, 240)}`);
+      assert((await send(rev, { Origin: 'http://evil.example' })).status === 403, 'autre origine acceptée');
+      assert((await fetch(`${sb.url}/api/queue/nope/order`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: '{"ids":[]}' })).status === 404, 'projet inconnu accepté');
+      assert((await send('pas-une-liste')).status === 400, 'liste invalide acceptée');
+      return `${ids0.length} entrées inversées (mémoire et fichier), élément parti ignoré sans perte, refus 403 / 404 / 400`;
+    } finally {
+      await send(ids0);
+    }
+  });
   // User request (2026-10-13): queue entries open a detail view with the whole entry.
   await check(S, 'queue-detail', 'File : GET /api/queue/:projet donne le texte INTÉGRAL de chaque entrée (sauts de ligne compris, jamais tronqué) et tous ses champs', async () => {
     const text = 'Recette du détail.\n\n' + 'ligne longue '.repeat(60) + '\nFIN';

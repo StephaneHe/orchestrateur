@@ -849,6 +849,62 @@ export async function browserChecks(sb, t) {
         await page.click('#dive .dive-back').catch(() => {});
       }
     });
+    // User request (2026-10-13): « il faut pouvoir drag & drop les éléments de la
+    // file d'attente, et que celà ai un impacte sur l'ordre de traitement ».
+    await check(B, 'queue-drag', 'File d’un musicien : les éléments en attente se réordonnent par glisser-déposer (souris ; poignée de 44 px sur mobile) ou Alt+↑/↓ ; le nouvel ordre est celui de la file du serveur (ordre de lancement) ; le glisser n’ouvre pas le détail, le clic simple l’ouvre toujours ; « Retirer » ne lance pas de glisser', async () => {
+      if (!(await page.evaluate(() => typeof window.Salle?.openQueueDetail === 'function')) || !fs.readFileSync(path.join(sb.root, 'public', 'salle.js'), 'utf8').includes('saveQueueOrder')) NA('glisser-déposer de la file absent de cet état du code');
+      const add = async (t) => (await (await fetch(`${sb.url}/api/dispatch`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ project: 'eps', prompt: t, queueIfBusy: true }) })).json()).id;
+      const mine = [];
+      const domIds = () => page.evaluate(() => [...document.querySelectorAll('#dive .dive-queue > .dq-item')].map(r => r.dataset.queueOpen));
+      const srvIds = async () => (await api('/api/queue/eps')).entries.map(e => e.id);
+      try {
+        mine.push(await add('Tâche glissée n° 1'), await add('Tâche glissée n° 2'));
+        await setHash(page, '#/m/eps');
+        assert(await until(async () => (await domIds()).length >= 3, 10_000), `éléments affichés : ${(await domIds()).length}`);
+        const d0 = await domIds();
+        const row = (id) => `#dive .dq-item[data-queue-open="${id}"]`;
+        // 1. Mouse drag: the last row to the top.
+        const a = await page.locator(`${row(d0[d0.length - 1])} .dq-head`).boundingBox();
+        const b = await page.locator(row(d0[0])).boundingBox();
+        await page.mouse.move(a.x + 20, a.y + a.height / 2);
+        await page.mouse.down();
+        for (let k = 1; k <= 8; k++) await page.mouse.move(a.x + 20, a.y + a.height / 2 + (b.y + 2 - a.y - a.height / 2) * k / 8);
+        await page.mouse.up();
+        const want = [d0[d0.length - 1], ...d0.slice(0, -1)];
+        assert(await until(async () => (await srvIds()).join() === want.join(), 6000), `ordre du serveur : ${(await srvIds()).join()} (attendu ${want.join()})`);
+        assert((await domIds()).join() === want.join(), 'ordre affiché différent');
+        await sleep(400);
+        assert(!(await page.evaluate(() => window.Salle.queueDetailId)), 'le glisser a ouvert le détail');
+        // 2. Keyboard: Alt+↓ moves the focused row one place down.
+        await page.focus(row(want[0]));
+        await page.keyboard.press('Alt+ArrowDown');
+        const want2 = [want[1], want[0], ...want.slice(2)];
+        assert(await until(async () => (await srvIds()).join() === want2.join(), 6000), `Alt+↓ : ${(await srvIds()).join()}`);
+        // 3. A simple click still opens the detail; « Retirer » never starts a drag.
+        await page.click(`${row(want2[0])} .dq-head`);
+        assert(await until(async () => !!(await page.evaluate(() => window.Salle.queueDetailId)), 3000), 'le clic simple n’ouvre plus le détail');
+        await page.keyboard.press('Escape');
+        await page.evaluate(() => { window.__qdConfirm = window.confirm; window.confirm = () => false; });
+        await page.locator(`${row(want2[1])} .dq-rm`).click();
+        await page.evaluate(() => { window.confirm = window.__qdConfirm; });
+        assert((await srvIds()).join() === want2.join() && !(await page.evaluate(() => window.Salle.queueDetailId)), '« Retirer » annulé a changé la file ou ouvert le détail');
+        await shot(page, 'queue-drag');
+        // 4. Mobile: a 44 px grip (a finger drags from it, the pane still scrolls).
+        const mctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'fr-FR' });
+        try {
+          const m = await mctx.newPage();
+          await m.goto(`${sb.url}/?token=${sb.token}#/m/eps`); await m.locator('.brand').waitFor();
+          await m.locator('#dive .dq-item .dq-grip').first().waitFor({ timeout: 10_000 });
+          const g = await m.locator('#dive .dq-item .dq-grip').first().boundingBox();
+          assert(g && g.width >= 44 && g.height >= 44, `poignée mobile ${JSON.stringify(g)}`);
+        } finally { await mctx.close(); }
+        return `glisser : dernier en tête, ordre du serveur suivi ; Alt+↓ ; clic simple → détail ; « Retirer » sans glisser ; poignée mobile 44 px`;
+      } finally {
+        for (const id of mine) await fetch(`${sb.url}/api/queue/eps/${encodeURIComponent(id)}`, { method: 'DELETE', headers: H }).catch(() => {});
+        await page.evaluate(() => window.Salle?.closeQueueDetail?.()).catch(() => {});
+        await page.click('#dive .dive-back').catch(() => {});
+      }
+    });
     // User report (2026-10-13): « A partir du moment où quelque chose tourne,
     // attaché à un projet, et que ça empêche le projet d'avancer […] » — the
     // queue held by a lingering process is visible on the card and in the pane.

@@ -11,6 +11,41 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.86.0] - 2026-10-13
+
+### Added
+
+- (server) Drag and drop of a musician's queue — the drag-and-drop part of
+  the user request « il faut pouvoir drag & drop les éléments de la file
+  d'attente, et que celà ai un impacte sur l'ordre de traitement. […] »,
+  confirmed in full mode (« Ok pour A pour le clicker deposer »). Not the
+  TODO panel's drag and drop (0.83.0), and not the editing of queued tasks
+  (in the user's TODO list).
+  - In the musician's pane, queued tasks are reordered with the mouse
+    (anywhere on the row, past a 6 px threshold), with a finger on the ⋮⋮
+    grip (44 px on mobile, the pane still scrolls) or with Alt+↑ / Alt+↓ on
+    a focused row. A drag never opens the detail; a simple click, Enter or
+    Space still do; « Retirer » never starts a drag.
+  - `POST /api/queue/:project/order {ids}` (same origin; project of
+    config.json) reorders the queue the server holds in memory, then
+    rewrites `logs/queue/<project>.json` from it (never edited by hand). The
+    drain launches the head: the dropped order IS the order of execution.
+  - Concurrent changes (`scripts/queue-order.mjs`, `reorderQueue`): a task
+    launched or removed meanwhile is no longer in the queue, so it cannot be
+    moved — its id is ignored and reported (`missing`); a task arrived
+    meanwhile keeps its place after the posted ones (`appended`). No loss,
+    no duplicate. The pane says « Ordre enregistré » or how many tasks had
+    already left.
+  - The Android app shows only the queue depth, not its tasks: unchanged.
+  - `ORCH_QUEUE_SWEEP_MS` / `ORCH_QUEUE_STALL_MS` override the queue sweep
+    timings, for the tests only (defaults unchanged: 30 s / 60 s).
+- Tests: suite `_test_queue_order.mjs` (merge rule; then, on a private
+  instance of the real server, three tasks queued behind a busy musician
+  are reordered and run in the dropped order — serial suite), HTTP
+  `queue-order` (memory and sidecar order, a task gone meanwhile, refusals
+  403 / 404 / 400), browser `queue-drag` (drag, server order, Alt+↓, click
+  still opens the detail, « Retirer » without drag, 44 px grip on mobile).
+
 ## [0.85.1] - 2026-10-13
 
 ### Changed

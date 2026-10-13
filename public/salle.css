@@ -498,6 +498,15 @@
 .dq-held-how { margin-top: 4px; font-size: 0.6875rem; color: var(--fg-2); overflow-wrap: anywhere; }
 .rc-chip-held { color: var(--st-think); border-color: var(--st-think); }
 .dq-item[data-queue-open] { cursor: pointer; }
+/* Queue drag and drop (0.86.0) */
+.dq-grip { color: var(--fg-3); font-size: 0.75rem; line-height: 1; cursor: grab; user-select: none; touch-action: none; letter-spacing: -0.15em; flex-shrink: 0; }
+.dq-item:hover .dq-grip { color: var(--fg-1); }
+.dq-item.is-dragging { outline: 1px dashed var(--st-unread); background: rgba(95, 212, 255, 0.1); cursor: grabbing; user-select: none; }
+.dq-order-msg { font-size: 0.6875rem; color: var(--fg-2); }
+.dq-order-msg.is-error { color: var(--st-error); }
+@media (max-width: 760px) {
+  .dq-grip { min-width: 2.75rem; min-height: 2.75rem; display: inline-flex; align-items: center; justify-content: center; font-size: 1rem; }
+}
 .dq-item[data-queue-open]:hover, .dq-item[data-queue-open]:focus-visible { border-color: var(--st-unread); background: var(--card-bg-hover); outline: none; }
 
 /* Queue entry detail (0.80.0) */

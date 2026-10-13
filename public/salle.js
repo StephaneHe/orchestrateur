@@ -1153,6 +1153,7 @@
   function paintDiveQueue(el) {
     const box = $(".dive-queue", el);
     if (!box) return;
+    if (qdrag.on) { qdrag.pendingPaint = true; return; }
     const list = diveQueue.entries;
     if (!list.length && !diveQueue.error) { box.hidden = true; box.innerHTML = ""; return; }
     box.hidden = false;
@@ -1161,7 +1162,8 @@
         e.enqueuedAt ? new Date(e.enqueuedAt).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : null,
         e.model, e.callback ? `callback ${e.callback}` : null,
       ].filter(Boolean).join(" · ");
-      return `<div class="dq-item" role="button" tabindex="0" data-queue-open="${esc(e.id)}" aria-label="Voir le détail de la tâche ${e.position} en file">
+      return `<div class="dq-item" role="button" tabindex="0" data-queue-open="${esc(e.id)}" aria-label="Voir le détail de la tâche ${e.position} en file (Alt+↑ / Alt+↓ pour la déplacer)">
+          <span class="dq-grip" aria-hidden="true" title="Glisser pour changer l’ordre de traitement (clavier : Alt+↑ / Alt+↓)">⋮⋮</span>
           <span class="dq-n">${e.position}.</span>
           <span class="dq-head" title="${esc(e.id)}">${esc(e.head)}</span>
           <span class="dq-meta">${esc(meta)}</span>
@@ -1172,8 +1174,114 @@
       `<div class="dq-title">⏸ En file derrière son tour (${list.length})</div>` +
       heldBannerHtml(snapRow(diveQueue.name)) +
       (diveQueue.error ? `<div class="dq-err">file illisible : ${esc(diveQueue.error)}</div>` : "") +
+      (diveQueue.orderMsg ? `<div class="dq-order-msg${diveQueue.orderBad ? " is-error" : ""}" role="status">${esc(diveQueue.orderMsg)}</div>` : "") +
       rows;
     if (queueDetail.id) paintQueueDetail();
+  }
+
+  // ------------------------------------------------------------------------
+  // Queue drag and drop (0.86.0): « il faut pouvoir drag & drop les éléments
+  // de la file d'attente, et que celà ai un impacte sur l'ordre de
+  // traitement ». Pointer events: a mouse drags from anywhere on the row past
+  // a 6 px threshold (below it, the click opens the detail as before); a
+  // finger drags from the ⋮⋮ grip only, so the pane still scrolls; Alt+↑ /
+  // Alt+↓ on a focused row. « Retirer » never starts a drag. The new order
+  // goes to POST /api/queue/:p/order: the server reorders the queue it
+  // drains, so the head is the next task launched.
+  // ------------------------------------------------------------------------
+  const qdrag = { on: false, row: null, pointer: null, x: 0, y: 0, before: null, suppressClickUntil: 0, pendingPaint: false };
+  const QDRAG_THRESHOLD = 6;
+  const queueRowIds = (box) => [...box.querySelectorAll(":scope > .dq-item")].map(r => r.dataset.queueOpen);
+
+  function onQueuePointerDown(e) {
+    if (e.button !== 0 || qdrag.row) return;
+    const row = e.target.closest(".dq-item");
+    if (!row || e.target.closest(".dq-rm")) return;
+    if (e.pointerType !== "mouse" && !e.target.closest(".dq-grip")) return;
+    Object.assign(qdrag, { row, pointer: e.pointerId, x: e.clientX, y: e.clientY, on: false, before: queueRowIds(row.parentElement) });
+    document.addEventListener("pointermove", onQueuePointerMove);
+    document.addEventListener("pointerup", onQueuePointerUp);
+    document.addEventListener("pointercancel", onQueuePointerCancel);
+  }
+
+  function onQueuePointerMove(e) {
+    if (e.pointerId !== qdrag.pointer || !qdrag.row) return;
+    if (!qdrag.on) {
+      if (Math.hypot(e.clientX - qdrag.x, e.clientY - qdrag.y) < QDRAG_THRESHOLD) return;
+      qdrag.on = true;
+      qdrag.row.classList.add("is-dragging");
+    }
+    e.preventDefault();
+    const box = qdrag.row.parentElement;
+    const rows = [...box.querySelectorAll(":scope > .dq-item")].filter(r => r !== qdrag.row);
+    const next = rows.find(r => { const b = r.getBoundingClientRect(); return e.clientY < b.top + b.height / 2; });
+    if (next) { if (qdrag.row.nextElementSibling !== next) box.insertBefore(qdrag.row, next); }
+    else if (rows.length && rows[rows.length - 1].nextElementSibling !== qdrag.row) rows[rows.length - 1].after(qdrag.row);
+  }
+
+  function endQueueDrag() {
+    document.removeEventListener("pointermove", onQueuePointerMove);
+    document.removeEventListener("pointerup", onQueuePointerUp);
+    document.removeEventListener("pointercancel", onQueuePointerCancel);
+    if (qdrag.row) qdrag.row.classList.remove("is-dragging");
+    const out = { was: qdrag.on, row: qdrag.row, before: qdrag.before };
+    Object.assign(qdrag, { on: false, row: null, pointer: null, before: null });
+    return out;
+  }
+
+  function onQueuePointerUp(e) {
+    if (e.pointerId !== qdrag.pointer) return;
+    const { was, row, before } = endQueueDrag();
+    if (!was) return;
+    qdrag.suppressClickUntil = Date.now() + 400;
+    const ids = queueRowIds(row.parentElement);
+    if (ids.join("|") !== before.join("|")) saveQueueOrder(ids);
+    else { qdrag.pendingPaint = false; const el = diveEl(); if (el) paintDiveQueue(el); }
+  }
+
+  function onQueuePointerCancel(e) {
+    if (e.pointerId !== qdrag.pointer) return;
+    if (endQueueDrag().was) { qdrag.pendingPaint = false; const el = diveEl(); if (el) paintDiveQueue(el); }
+  }
+
+  function moveQueueByKey(row, dir) {
+    const sib = dir < 0 ? row.previousElementSibling : row.nextElementSibling;
+    if (!sib || !sib.classList.contains("dq-item")) return;
+    row.parentElement.insertBefore(row, dir < 0 ? sib : sib.nextElementSibling);
+    saveQueueOrder(queueRowIds(row.parentElement), row.dataset.queueOpen);
+  }
+
+  async function saveQueueOrder(ids, focusId) {
+    const name = diveQueue.name;
+    if (!name) return;
+    diveQueue.orderMsg = "Enregistrement de l’ordre…"; diveQueue.orderBad = false;
+    try {
+      const resp = await fetch(`/api/queue/${encodeURIComponent(name)}/order`, {
+        method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ ids }),
+      });
+      const data = await resp.json().catch(() => null);
+      if (!resp.ok || !data?.ok) throw new Error(data?.error || (resp.status === 404 ? "serveur à redémarrer (route absente)" : `HTTP ${resp.status}`));
+      if (diveQueue.name !== name) return;
+      diveQueue.entries = data.entries || [];
+      diveQueue.depth = data.count;
+      const moved = (data.missing || []).length;
+      diveQueue.orderMsg = moved
+        ? `Ordre enregistré. ${moved} tâche(s) déjà partie(s) entre-temps : elle(s) ne figure(nt) plus dans la file.`
+        : "Ordre enregistré : la tâche en tête sera lancée la prochaine.";
+    } catch (err) {
+      diveQueue.orderMsg = `Ordre non enregistré : ${err.message || err}`;
+      diveQueue.orderBad = true;
+      diveQueue.depth = -1;
+      await loadDiveQueue(name);
+    }
+    qdrag.pendingPaint = false;
+    const el = diveEl();
+    if (el && dive.name === name) paintDiveQueue(el);
+    if (focusId) document.querySelector(`#dive [data-queue-open="${CSS.escape(focusId)}"]`)?.focus();
+    clearTimeout(diveQueue.orderMsgTimer);
+    diveQueue.orderMsgTimer = setTimeout(() => {
+      diveQueue.orderMsg = ""; const e2 = diveEl(); if (e2 && dive.name === name) paintDiveQueue(e2);
+    }, diveQueue.orderBad ? 8000 : 4000);
   }
 
   // ------------------------------------------------------------------------
@@ -1436,16 +1544,20 @@
     $(".dive-queue", el).addEventListener("click", (e) => {
       const b = e.target.closest("[data-queue-rm]");
       if (b) { removeQueued(b.dataset.queueRm); return; }
+      // A drag ends with a click on the row: it must not open the detail.
+      if (Date.now() < qdrag.suppressClickUntil) return;
       const o = e.target.closest("[data-queue-open]");
       if (o) openQueueDetail(o.dataset.queueOpen);
     });
     $(".dive-queue", el).addEventListener("keydown", (e) => {
-      if (e.key !== "Enter" && e.key !== " ") return;
       const o = e.target.closest("[data-queue-open]");
       if (!o || e.target !== o) return;
+      if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) { e.preventDefault(); moveQueueByKey(o, e.key === "ArrowUp" ? -1 : 1); return; }
+      if (e.key !== "Enter" && e.key !== " ") return;
       e.preventDefault();
       openQueueDetail(o.dataset.queueOpen);
     });
+    $(".dive-queue", el).addEventListener("pointerdown", onQueuePointerDown);
     $$(".dive-tab", el).forEach(b => b.addEventListener("click", () => {
       dive.tab = b.dataset.tab;
       renderDive();

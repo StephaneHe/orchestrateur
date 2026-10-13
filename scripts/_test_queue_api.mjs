@@ -72,10 +72,14 @@ ok(Q.dispatchQueue.get('Alpha').map(e => e.id).join() === idsFirstBoot.join(), '
 
 const app = express();
 // eslint-disable-next-line no-new-func
+// 0.86.0: the routes include POST /api/queue/:project/order (same origin,
+// scripts/queue-order.mjs); same-origin is checked elsewhere, passed through here.
+const { cleanQueueIds, reorderQueue } = await import('./queue-order.mjs');
 new Function('app', 'config', 'dispatchQueue', 'queueRemove', 'queueClear', 'queueEntryView',
-  'dispatchPidAliveAsync', 'console', 'debugLog', ROUTES_SRC)(
+  'dispatchPidAliveAsync', 'console', 'debugLog', 'express', 'sameOriginOnly', 'cleanQueueIds', 'reorderQueue', 'persistQueue', ROUTES_SRC)(
   app, config, Q.dispatchQueue, Q.queueRemove, Q.queueClear, Q.queueEntryView,
-  async (n) => (n === 'Alpha' ? 4242 : null), { log: () => {} }, () => {});
+  async (n) => (n === 'Alpha' ? 4242 : null), { log: () => {} }, () => {},
+  express, (req, res, next) => next(), cleanQueueIds, reorderQueue, Q.persistQueue);
 const server = await new Promise(r => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
 const PORT = server.address().port;
 
