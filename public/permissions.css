@@ -29,6 +29,12 @@
 .pc-branch { font-size: 0.6875rem; opacity: 0.8; }
 .pc-tool, .po-tool { font-family: "JetBrains Mono", monospace; color: #5ad1e8; font-weight: 600; }
 .pc-preview { font-family: "JetBrains Mono", monospace; font-size: 0.75rem; opacity: 0.9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40rem; }
+/* 0.78.0 — explanation in plain French under the command (full width, wraps). */
+.pc-explain { flex: 1 0 100%; font-size: 0.8125rem; line-height: 1.4; color: #f3e6d4; overflow-wrap: anywhere; }
+.po-explain { padding: 0.5rem 0.625rem; border-radius: 0.375rem; background: rgba(90, 209, 232, 0.1); border-left: 3px solid #5ad1e8; }
+.po-explain h4 { margin: 0 0 0.25rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: #5ad1e8; }
+.po-explain p { margin: 0.25rem 0 0; font-size: 0.875rem; line-height: 1.45; overflow-wrap: anywhere; }
+.po-explain-said, .po-explain-reason { font-size: 0.8125rem; opacity: 0.92; }
 .pc-left, .po-left { font-family: "JetBrains Mono", monospace; font-size: 0.8125rem; padding: 0.0625rem 0.375rem; border-radius: 0.25rem; background: rgba(255, 255, 255, 0.08); }
 .pc-left.is-urgent, .po-left.is-urgent { background: #ff5f56; color: #0a0908; }
 

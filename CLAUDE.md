@@ -2153,6 +2153,22 @@ Il faut donc attendre ma reponse pendant au moins 5 minutes avant de passer. »
     le vrai MCP) ;
   - HTTP `permission-prompt` ;
   - navigateur `permission-card`, `permission-deny` et `permission-mobile`.
+- **Explication de chaque demande** (0.78.0, demande « une demande
+  d'autorisation donne la commande à autiriser. Il faut aussi donner une
+  explication de celle-ci ») : `PermissionCore.explain(tool, input,
+  {lastText})` → `{what, said, reason, text}`. `what` est écrit **par le code
+  à partir de la commande** (étape par étape, en français, déterministe, aucun
+  model), `said` est la `description` de l'appel donnée par le musicien,
+  `reason` la fin de son dernier message ; secrets masqués. Champ
+  `explanation` de la demande : carte (`.pc-explain`), overlay
+  (`.po-explain`, en tête), log `system/permission_request`, notification de
+  bureau et message `[AUTORISATION EN ATTENTE]` au chef (« Explication : … »).
+  `dispatch.mjs` (`permissionExplainRule`) demande aux musiciens de remplir la
+  `description` de leurs appels Bash, PowerShell et Monitor dans la langue de
+  discussion. **L'app Android n'affiche pas encore l'explication** (champ
+  ignoré jusqu'à une mise à jour de l'app). Recettes :
+  `_test_permission_prompt.mjs` §9, HTTP `permission-prompt`, navigateur
+  `permission-explain`.
 
 ## Attachments
 

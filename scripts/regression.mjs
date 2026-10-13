@@ -511,7 +511,7 @@ async function apiChecks(sb) {
   // toujours) … un overlay avec tous les details … attendre ma reponse pendant
   // au moins 5 minutes ». Copie de dispatch.mjs de l'instance + faux claude qui
   // lance le vrai permission-mcp.mjs.
-  await check(S, 'permission-prompt', 'Autorisations interactives : tour en attente (carte, supervision, chef prévenu), détails complets masqués, une fois / refus motivé / toujours (puis sans demande) / expiration, origine étrangère 403', async () => {
+  await check(S, 'permission-prompt', 'Autorisations interactives : tour en attente (carte, supervision, chef prévenu), explication de la commande sur la carte, dans les détails et dans le message au chef (0.78.0), détails complets masqués, une fois / refus motivé / toujours (puis sans demande) / expiration, origine étrangère 403', async () => {
     if ((await get('/api/permissions')).status === 404) NA('route absente de cet état du code');
     const runDispatch = (prompt, extra) => {
       const env = { ...serverEnv(sb.root, sb.port), FAKE_CLAUDE_LATENCY_MS: '20', FAKE_CLAUDE_TOOL_USES: '0', ORCH_PERM_POLL_MS: '150', ...extra };
@@ -533,6 +533,15 @@ async function apiChecks(sb) {
     const row = await until(async () => (await json('/api/pupitre')).fleet.find(r => r.name === 'omega' && r.awaitingPermission) || null, 8000);
     assert(row && row.state === 'live' && !row.stalled, `pupitre : ${JSON.stringify(row && { s: row.state, a: row.awaitingPermission })}`);
     assert(readLog('chef').some(e => e.type === 'user_prompt' && e.source === 'permission' && /omega/.test(e.text)), 'chef non prévenu');
+    // 0.78.0 — « Il faut aussi donner une explication de celle-ci » : the card,
+    // the details and the chef's message explain the command, not only show it.
+    if (p.explanation !== undefined) {
+      const what = 'Cette commande lance le script « build » du projet, puis exécute le script deploy.js avec Node.js.';
+      assert(p.explanation?.what === what && det.request.explanation?.what === what, `explication : ${JSON.stringify(p.explanation)}`);
+      assert(!JSON.stringify(p.explanation).includes(SECRET), 'secret en clair dans l’explication');
+      const told = await until(() => readLog('chef').find(e => e.type === 'user_prompt' && e.source === 'permission' && /omega/.test(e.text) && e.text.includes(what)) || null, 8000);
+      assert(told && /Explication :/.test(told.text), `message au chef sans explication : ${readLog('chef').filter(e => e.source === 'permission').pop()?.text}`);
+    }
     const foreign = await fetch(`${sb.url}/api/permission/${p.id}/decide`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json', Origin: 'http://evil.example' }, body: JSON.stringify({ decision: 'allow_once' }) });
     assert(foreign.status === 403, `origine étrangère : ${foreign.status}`);
     assert((await post(`/api/permission/${p.id}/decide`, { decision: 'allow_once' })).status === 200, 'décision refusée');

@@ -1504,6 +1504,43 @@ export async function browserChecks(sb, t) {
       await clearPerms(pp);
       await setHash(pp, '#/');
     });
+    // User request (2026-10-13, 0.78.0): « une demande d'autorisation donne la
+    // commande à autoriser. Il faut aussi donner une explication de celle-ci ».
+    await check(B, 'permission-explain', 'Autorisation : la carte 🔐 et l’overlay donnent, EN PLUS de la commande, une explication en français (ce que fait chaque étape, la description donnée par le musicien, son dernier message) ; secrets masqués', async () => {
+      if (!(await pp.locator('#perm-band').count())) NA('demandes interactives absentes de cet état du code');
+      await clearPerms(pp);
+      await pp.bringToFront();
+      await setHash(pp, '#/');
+      const SECRET = 'sk-ant-api03-EXPLAINSECRET1234567890';
+      const cmd = `cd outils; sleep 5; tail -n +1 -f .regress/ciblee.log | grep -E "KO|^===" ; curl -H "Authorization: Bearer ${SECRET}" https://api.example.com/x`;
+      const done = permDispatch(sb, 'omega', `Bash|${JSON.stringify({ command: cmd, description: 'Surveille la non-régression jusqu’à sa fin' })}`);
+      // Whatever fails below, never leave a pending card or an open overlay
+      // to the next checks.
+      try {
+      const card = pp.locator('#perm-band .perm-card', { hasText: 'tail -n +1' });
+      assert(await until(async () => card.isVisible().catch(() => false), 15_000), 'carte absente');
+      const explain = await card.locator('.pc-explain').textContent().catch(() => '');
+      assert(/se place dans outils, puis attend 5 s, puis suit en continu \.regress\/ciblee\.log, puis garde seulement les lignes qui correspondent à un motif, puis fait une requête réseau vers api\.example\.com/.test(explain), `carte sans explication : ${explain}`);
+      assert(await card.locator('.pc-preview').count() === 1, 'la commande n’est plus montrée sur la carte');
+      await card.locator('.pc-main').click();
+      assert(await until(async () => visible(pp, '#perm-overlay .po-explain'), 8000), 'overlay sans explication');
+      const box = await pp.textContent('#perm-overlay .po-explain');
+      assert(/Ce que fait cette opération/.test(box) && box.includes(explain.trim()), `explication de l’overlay : ${box}`);
+      assert(/Le musicien la décrit ainsi : « Surveille la non-régression jusqu’à sa fin »/.test(box), 'description du musicien absente');
+      assert(/Pourquoi, d'après son dernier message : « Je vais utiliser Bash\. »/.test(box), 'pourquoi absent');
+      const ov = await pp.textContent('#perm-overlay .po-dialog');
+      assert(!ov.includes(SECRET) && !(await card.textContent()).includes(SECRET), 'secret en clair');
+      assert(await pp.evaluate(() => { const e = document.querySelector('#perm-overlay .po-explain'), w = document.querySelector('#perm-overlay .po-why'); return !!e && !!w && !!(e.compareDocumentPosition(w) & Node.DOCUMENT_POSITION_FOLLOWING); }), 'l’explication n’est pas en tête de l’overlay');
+      await shot(pp, 'permission-explication');
+      await clk(pp, '#perm-overlay [data-po-once]');
+      assert(await done === 0, 'tour non terminé');
+      return `carte : « ${explain.trim().slice(0, 90)}… » ; overlay : explication, description, pourquoi ; aucun secret`;
+      } finally {
+        await clearPerms(pp);
+        await done.catch(() => {});
+        await setHash(pp, '#/');
+      }
+    });
     await pctx.close();
 
     // ---------------------- Mobile ----------------------

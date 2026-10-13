@@ -85,7 +85,7 @@ export function createPermissionStore({ rulesFile, writeEvent, projectInfo, now 
       id: r.id, project: r.project, tool: r.tool, toolUseId: r.toolUseId, branch: r.branch || null,
       model: r.model || null, cwd: r.cwd || null, createdAt: r.createdAt, deadline: r.deadline,
       status: r.status, preview: r.preview, risk: r.risk, why: r.why, suggestions: r.suggestions,
-      decision: r.decision || null, step: r.step || null,
+      decision: r.decision || null, step: r.step || null, explanation: r.explanation || null,
     };
     if (full) {
       v.blocks = PC.detailBlocks(r.tool, r.input);
@@ -135,12 +135,16 @@ export function createPermissionStore({ rulesFile, writeEvent, projectInfo, now 
       preview: PC.preview(tool, input), risk: PC.riskOf(tool, input), why: PC.whyAsked(tool, input, ctx),
       suggestions: PC.suggestRules(tool, input, ctx),
     };
+    // 0.78.0 — « Il faut aussi donner une explication de celle-ci » : what the
+    // command does (described by code), the musician's description, its why.
+    r.explanation = PC.explain(tool, input, { lastText: r.lastText });
     byId.set(r.id, r);
     byKey.set(key, r.id);
     writeEvent(project, { type: 'system', subtype: 'permission_request', permission: {
       id: r.id, toolUseId, tool, preview: r.preview, risk: r.risk, why: r.why, deadline: r.deadline,
       createdAt: r.createdAt, model: r.model || null, ...(r.branch ? { branch: r.branch } : {}),
-    }, text: `🔐 ${project} attend une autorisation : ${tool} — ${r.preview}` });
+      explanation: r.explanation,
+    }, text: `🔐 ${project} attend une autorisation : ${tool} — ${r.preview}\n${r.explanation.text}` });
     try { onNew(view(r)); } catch { /* notification best-effort */ }
     return { ok: true, status: 'pending', id: r.id };
   }

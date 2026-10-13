@@ -11,6 +11,54 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.78.0] - 2026-10-13
+
+### Added
+
+- (server) Every interactive permission request explains the command, not
+  only shows it (user request: « une demande d'autorisation donne la commande
+  à autoriser. Il faut aussi donner une explication de celle-ci »).
+  - `PermissionCore.explain(tool, input, {lastText})` →
+    `{what, said, reason, text}`:
+    - `what`: what the operation does, described **by code from the command
+      itself**, step by step, in French (always available, deterministic, no
+      model call): e.g. « Cette commande se place dans …, puis attend 5 s,
+      puis suit en continu …, puis garde seulement les lignes qui
+      correspondent à un motif. » Shell (Bash, PowerShell, Monitor: cd, git
+      subcommands, node, npm, rm, curl host, redirections…) and the other
+      tools (Write, Edit, Read, Grep, Glob, WebFetch, WebSearch; any other
+      tool: « Utilise l’outil X »);
+    - `said`: the `description` the musician gave to the tool call, as is;
+    - `reason`: the last paragraph of the musician's last message before the
+      request (why it needs it).
+    Secrets are masked in all three.
+  - Stored with the request (`explanation`), returned by
+    `GET /api/permissions` and `/api/permission/:id/details`, written in the
+    musician's `system/permission_request` event and its text.
+  - Dashboard: the 🔐 card shows the explanation under the command
+    (`.pc-explain`); the overlay opens on a « Ce que fait cette opération »
+    block (`.po-explain`) with the musician's description and its why; the
+    desktop notification shows the explanation.
+  - The `[AUTORISATION EN ATTENTE]` message to the chef carries
+    « Explication : … » and asks to relay it to the user.
+  - `dispatch.mjs` asks every musician (`permissionExplainRule`) to always
+    fill the `description` of its Bash, PowerShell and Monitor calls, in the
+    discussion language, with what the command does and why.
+  - Not in this version: the Android app (it ignores the new field until
+    an app update, which needs a build and an APK publication).
+- Tests: `_test_permission_prompt.mjs` section 9 (the real request of the
+  day, 10 tools, secrets, end to end through the real MCP: card, musician
+  log, details, prompt rule, chef message, dashboard wiring), HTTP
+  `permission-prompt` (explanation on the card, in the details and in the
+  chef's message on the real server), new browser check `permission-explain`.
+
+### Security
+
+- (server) A permission request whose command contains a secret no longer
+  offers the « exactement cette commande » rule: that suggestion showed the
+  secret in clear in the overlay and would have written it to
+  `permission-rules.json`. Found by the new `permission-explain` check.
+
 ## [0.77.0] - 2026-10-13
 
 ### Added

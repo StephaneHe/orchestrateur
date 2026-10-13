@@ -2833,12 +2833,15 @@ const permissions = createPermissionStore({
   onNew(req) {
     const min = Math.max(1, Math.round((req.deadline - Date.now()) / 60000));
     console.log(`[autorisation] ${req.project} attend : ${req.tool} — ${req.preview} (${min} min)`);
-    inChatLanguage(`${req.project} attend une autorisation`, req.project).then(title => fireDesktopNotification(title, `${req.tool} : ${req.preview}`)).catch(() => {});
+    inChatLanguage(`${req.project} attend une autorisation`, req.project).then(title => fireDesktopNotification(title, req.explanation?.what || `${req.tool} : ${req.preview}`)).catch(() => {});
     // Le chef est prévenu pour le signaler à l'utilisateur (pas pour décider).
+    // 0.78.0 : avec l'explication (« Il faut aussi donner une explication »).
     if (!isConductorSlot(req.project)) {
       const text = `[AUTORISATION EN ATTENTE] ${req.project} attend la décision de l'utilisateur pour ${req.tool} : « ${req.preview} » ` +
-        `(risque ${req.risk.level} : ${req.risk.tags.join(', ')}). Son tour est en pause ${min} min, puis refus « expiré sans réponse ». ` +
-        `Signale-le à l'utilisateur : il décide depuis le dashboard (bandeau 🔐) ou l'app. Tu ne peux pas décider à sa place.`;
+        `(risque ${req.risk.level} : ${req.risk.tags.join(', ')}). ` +
+        (req.explanation?.text ? `Explication : ${req.explanation.text} ` : '') +
+        `Son tour est en pause ${min} min, puis refus « expiré sans réponse ». ` +
+        `Signale-le à l'utilisateur avec cette explication : il décide depuis le dashboard (bandeau 🔐) ou l'app. Tu ne peux pas décider à sa place.`;
       inChatLanguage(text).then((said) => {
         fs.appendFileSync(path.join(LOGS_DIR, `${conductorName()}.jsonl`), '\n' + JSON.stringify({ type: 'user_prompt', text: said, source: 'permission', timestamp: new Date().toISOString() }) + '\n');
       }).catch((e) => debugLog(`[autorisation] notification du chef impossible : ${e.message}`));

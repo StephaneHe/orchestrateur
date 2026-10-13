@@ -167,7 +167,10 @@
         if (words.length > 1 && TWO_WORD.has(words[0].toLowerCase()) && !words[1].startsWith("-")) prefix += " " + words[1];
         if (prefix && prefix !== cmd) out.push({ rule: `${tool}(${prefix}:*)`, scope: "pattern", label: `les commandes simples qui commencent par « ${prefix} »` });
       }
-      if (cmd && cmd.length <= 400 && !/[\r\n]/.test(cmd)) out.push({ rule: `${tool}(${cmd})`, scope: "exact", label: "exactement cette commande" });
+      // 0.78.0 : jamais de règle « exacte » qui contient un secret — elle
+      // l'afficherait en clair dans l'overlay et l'écrirait dans
+      // permission-rules.json.
+      if (cmd && cmd.length <= 400 && !/[\r\n]/.test(cmd) && maskSecrets(cmd) === cmd) out.push({ rule: `${tool}(${cmd})`, scope: "exact", label: "exactement cette commande" });
       out.push({ rule: tool, scope: "tool", label: `toutes les commandes ${tool} (déconseillé : y compris destructives)` });
       return out;
     }
@@ -233,6 +236,175 @@
     return false;
   }
 
+  // ── Explication en clair (0.78.0) ─────────────────────────────────────────
+  // Demande utilisateur (2026-10-13) : « une demande d'autorisation donne la
+  // commande à autoriser. Il faut aussi donner une explication de celle-ci ».
+  // Trois parties, de la plus fiable à la plus libre :
+  //  - what   : ce que fait la commande, décrit par CE code à partir de la
+  //             commande elle-même (déterministe, toujours en français) ;
+  //  - said   : la `description` que le musicien a donnée à son appel d'outil
+  //             (ses mots, tels quels ; dispatch.mjs lui demande de l'écrire
+  //             dans la langue de discussion) ;
+  //  - reason : la fin de son dernier message avant la demande (le pourquoi).
+  // Ce n'est jamais une décision : seulement de l'affichage.
+  const EXPLAIN_MAX = 420;
+  const clip = (s, n) => { const t = String(s || "").replace(/\s+/g, " ").trim(); return t.length > n ? t.slice(0, n - 1).trimEnd() + "…" : t; };
+
+  /** Coupe une commande en segments (; && || | saut de ligne) hors guillemets. */
+  function shellSegments(cmd) {
+    const segs = []; let cur = "", q = null;
+    for (let i = 0; i < cmd.length; i++) {
+      const c = cmd[i], n = cmd[i + 1];
+      if (q) { cur += c; if (c === q) q = null; continue; }
+      if (c === "'" || c === '"') { q = c; cur += c; continue; }
+      if (c === ";" || c === "\n" || c === "|" || (c === "&" && n === "&")) {
+        if (cur.trim()) segs.push(cur.trim());
+        cur = ""; if ((c === "|" && n === "|") || (c === "&" && n === "&")) i++;
+        continue;
+      }
+      cur += c;
+    }
+    if (cur.trim()) segs.push(cur.trim());
+    return segs;
+  }
+  function words(seg) {
+    const out = []; let cur = "", q = null, has = false;
+    for (const c of seg) {
+      if (q) { if (c === q) q = null; else cur += c; continue; }
+      if (c === "'" || c === '"') { q = c; has = true; continue; }
+      if (/\s/.test(c)) { if (cur || has) out.push(cur); cur = ""; has = false; continue; }
+      cur += c;
+    }
+    if (cur || has) out.push(cur);
+    return out;
+  }
+  const argsOf = (w) => w.slice(1).filter(a => !/^-/.test(a) && !/^[<>]|^\d?>/.test(a));
+  const short = (s) => clip(s, 70);
+  const hostOf = (w) => { for (const a of w) { try { if (/^https?:\/\//i.test(a)) return new URL(a).hostname; } catch { /* */ } } return ""; };
+
+  const GIT = {
+    status: "affiche l’état du dépôt git", log: "lit l’historique git", diff: "compare des versions avec git",
+    show: "affiche un commit git", add: "indexe des fichiers pour git", commit: "crée un commit git",
+    push: "envoie les commits vers le dépôt distant", pull: "récupère et fusionne le dépôt distant",
+    fetch: "récupère le dépôt distant sans rien fusionner", checkout: "change de branche ou restaure des fichiers",
+    switch: "change de branche", reset: "remet le dépôt dans un état antérieur", restore: "restaure des fichiers",
+    tag: "pose ou liste des tags git", stash: "met des modifications de côté", merge: "fusionne une branche",
+    rebase: "réécrit l’historique (rebase)", clone: "clone un dépôt", branch: "gère les branches",
+    clean: "supprime les fichiers non suivis", rm: "retire des fichiers du dépôt", "rev-parse": "lit une référence git",
+    "ls-remote": "liste les références du dépôt distant", "write-tree": "calcule l’empreinte de l’index",
+    remote: "gère les dépôts distants", worktree: "gère les copies de travail", "merge-base": "compare deux historiques",
+  };
+  function describeSegment(w) {
+    while (w.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w[0]) || /^(sudo|time|nohup|exec)$/i.test(w[0]))) w = w.slice(1);
+    if (!w.length) return null;
+    const prog = String(w[0]).replace(/^.*[\\/]/, "").replace(/\.(exe|cmd|bat|ps1)$/i, "").toLowerCase();
+    const a = argsOf(w), first = a[0] || "", last = a[a.length - 1] || "";
+    const has = (re) => w.slice(1).some(x => re.test(x));
+    switch (prog) {
+      case "cd": case "set-location": case "pushd": return `se place dans ${short(first || "le dossier personnel")}`;
+      case "sleep": case "start-sleep": return `attend ${first || "un moment"}${/^\d+$/.test(first) ? " s" : ""}`;
+      case "tail": return has(/^-\w*f/) ? `suit en continu ${short(last || "un fichier")}` : `affiche la fin de ${short(last || "un fichier")}`;
+      case "head": return `affiche le début de ${short(last || "un fichier")}`;
+      case "cat": case "type": case "get-content": case "gc": case "more": case "less": return `affiche le contenu de ${short(a.join(" ") || "un fichier")}`;
+      case "grep": case "egrep": case "rg": case "findstr": case "select-string": case "sls": return "garde seulement les lignes qui correspondent à un motif";
+      case "ls": case "dir": case "get-childitem": case "gci": case "tree": return `liste ${first ? short(first) : "le dossier courant"}`;
+      case "find": return `cherche des fichiers${first ? ` dans ${short(first)}` : ""}`;
+      case "wc": return "compte des lignes ou des mots"; case "sort": return "trie des lignes"; case "uniq": return "retire les doublons";
+      case "sed": case "awk": case "tr": case "cut": return "transforme du texte";
+      case "echo": case "printf": case "write-output": case "write-host": return "affiche un texte";
+      case "git": {
+        const sub = w.slice(1).find(x => !/^-/.test(x) && !/^-C$/.test(x)) || "";
+        const real = w[1] === "-C" ? w.slice(3).find(x => !/^-/.test(x)) || "" : sub;
+        return `${GIT[real] || `lance git ${real}`.trim()}${w[1] === "-C" && w[2] ? ` (dans ${short(w[2])})` : ""}`;
+      }
+      case "node": {
+        if (has(/^--check$/)) return `vérifie la syntaxe de ${short(last)}`;
+        if (has(/^(-e|--eval|-p)$/)) return "exécute un court programme Node.js";
+        return first ? `exécute le script ${short(first)} avec Node.js` : "lance Node.js";
+      }
+      case "npm": case "pnpm": case "yarn": {
+        if (/^(install|i|ci|add)$/.test(first)) return "installe des dépendances";
+        if (first === "test" || first === "t") return "lance les tests du projet";
+        if (first === "run") return `lance le script « ${a[1] || "?"} » du projet`;
+        return `lance ${prog} ${first}`.trim();
+      }
+      case "npx": return `lance l’outil ${short(first || "?")}`;
+      case "python": case "python3": case "py": return has(/^-m$/) ? `lance le module Python ${w[w.indexOf("-m") + 1] || ""}`.trim() : first ? `exécute le script Python ${short(first)}` : "lance Python";
+      case "rm": case "del": case "erase": case "rmdir": case "rd": case "remove-item": case "ri": return `supprime ${short(a.join(" ") || "des fichiers")}`;
+      case "mv": case "move": case "move-item": case "ren": case "rename-item": return `déplace ou renomme ${short(first || "un fichier")}${a[1] ? ` vers ${short(a[1])}` : ""}`;
+      case "cp": case "copy": case "copy-item": case "xcopy": case "robocopy": return `copie ${short(first || "des fichiers")}${a[1] ? ` vers ${short(a[1])}` : ""}`;
+      case "mkdir": case "md": case "new-item": case "ni": return `crée ${short(first || "un dossier")}`;
+      case "touch": return `crée ou met à jour ${short(first)}`;
+      case "set-content": case "out-file": case "add-content": case "tee": return `écrit dans ${short(first || "un fichier")}`;
+      case "curl": case "wget": case "invoke-webrequest": case "iwr": case "invoke-restmethod": case "irm": { const h = hostOf(w); return `fait une requête réseau${h ? ` vers ${h}` : ""}`; }
+      case "kill": case "taskkill": case "stop-process": case "pkill": return "arrête un processus";
+      case "start": case "start-process": return `lance ${short(first || "un programme")}`;
+      case "tasklist": case "ps": case "get-process": return "liste les processus en cours";
+      case "netstat": case "get-nettcpconnection": return "liste les connexions réseau";
+      case "gradle": case "gradlew": return `lance Gradle${first ? ` (${first})` : ""}`;
+      case "adb": return `pilote un appareil Android (adb ${first})`.replace(" ()", "");
+      case "docker": return `lance Docker${first ? ` (${first})` : ""}`;
+      case "ssh": case "scp": case "sftp": return "se connecte à une autre machine";
+      case "powershell": case "pwsh": case "cmd": case "bash": case "sh": return `ouvre un interpréteur ${prog}`;
+      case "chmod": case "icacls": case "chown": return "change des droits d’accès";
+      case "exit": return null;
+      default: return `lance « ${short(w[0])} »`;
+    }
+  }
+
+  /** « > fichier » / « >> fichier » d'un segment (pas 2>&1 ni /dev/null). */
+  function redirectOf(w) {
+    for (let i = 0; i < w.length; i++) {
+      const m = /^(\d?)(>>?)(.*)$/.exec(w[i]);
+      if (!m) continue;
+      const target = m[3] || w[i + 1] || "";
+      if (!target || /^&\d$/.test(target) || /^(\/dev\/null|\$null|nul)$/i.test(target)) continue;
+      return `${m[2] === ">>" ? "ajoute le résultat à" : "écrit le résultat dans"} ${short(target)}`;
+    }
+    return "";
+  }
+
+  function describeCommand(cmd, prefix = "Cette commande") {
+    const segs = shellSegments(String(cmd || ""));
+    const parts = segs.map(s => {
+      const w = words(s), d = describeSegment(w), r = redirectOf(w);
+      return d && r ? `${d} et ${r}` : d;
+    }).filter(Boolean);
+    if (!parts.length) return "";
+    const more = parts.length > 6 ? `, puis ${parts.length - 6} autre(s) étape(s)` : "";
+    return `${prefix} ${parts.slice(0, 6).join(", puis ")}${more}.`;
+  }
+
+  function lastParagraph(text) {
+    const t = String(text || "").replace(/```[\s\S]*?```/g, " ").replace(/[*_`#>]/g, "");
+    const paras = t.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+    return paras.length ? paras[paras.length - 1] : "";
+  }
+
+  /** → {what, said, reason, text} ; `text` = les trois en une phrase lisible. */
+  function explain(tool, input, ctx = {}) {
+    const m = maskDeep(input || {});
+    const file = filePathOf(m);
+    let what = "";
+    if (SHELL_TOOLS.has(tool) || (typeof m.command === "string" && tool === "Monitor")) {
+      what = describeCommand(m.command, tool === "Monitor" ? "Surveillance en arrière-plan : la commande" : "Cette commande");
+    } else if (tool === "Write") what = `Crée ou remplace entièrement le fichier ${file}${typeof m.content === "string" ? ` (${m.content.split("\n").length} lignes)` : ""}.`;
+    else if (tool === "Edit" || tool === "MultiEdit") what = `Modifie le fichier ${file}${Array.isArray(m.edits) ? ` (${m.edits.length} modifications)` : ""}.`;
+    else if (tool === "NotebookEdit") what = `Modifie le notebook ${file}.`;
+    else if (tool === "Read") what = `Lit le fichier ${file}.`;
+    else if (tool === "Grep") what = `Cherche « ${clip(m.pattern, 80)} » dans les fichiers${m.path ? ` de ${m.path}` : ""}.`;
+    else if (tool === "Glob") what = `Liste les fichiers qui correspondent à ${clip(m.pattern, 80)}.`;
+    else if (tool === "WebFetch") { let h = ""; try { h = new URL(m.url).hostname; } catch { /* */ } what = `Lit la page web ${h || clip(m.url, 80)}.`; }
+    else if (tool === "WebSearch") what = `Fait une recherche sur le web : « ${clip(m.query, 120)} ».`;
+    if (!what) what = `Utilise l’outil ${tool}.`;
+    const said = typeof m.description === "string" && m.description.trim() ? clip(m.description, 300) : null;
+    const reasonText = lastParagraph(maskSecrets(ctx.lastText || ""));
+    const reason = reasonText ? clip(reasonText, 300) : null;
+    what = clip(what, EXPLAIN_MAX);
+    const text = [what, said ? `Le musicien la décrit ainsi : « ${said} ».` : "", reason ? `Son dernier message : « ${reason} »` : ""].filter(Boolean).join(" ");
+    return { what, said, reason, text };
+  }
+
   // ── Présentation ──────────────────────────────────────────────────────────
   function preview(tool, input) {
     const s = commandOf(input) || filePathOf(input) || input?.url || input?.pattern || input?.query || input?.description || "";
@@ -285,5 +457,6 @@
   g.PermissionCore = {
     maskSecrets, maskDeep, riskOf, whyAsked, suggestRules, ruleMatches, parseRule, validRule,
     isSimpleCommand, compositeFeatures, preview, detailBlocks, fmtLeft, toolGranted, DECISION_TEXT,
+    explain, describeCommand,
   };
 })(typeof globalThis !== "undefined" ? globalThis : this);

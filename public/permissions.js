@@ -65,7 +65,7 @@
   // ── Notifications : bureau et voix ─────────────────────────────────────────
   function announce(p) {
     const title = `🔐 ${p.project} attend une autorisation`;
-    const body = `${p.tool} : ${p.preview}`;
+    const body = p.explanation?.what || `${p.tool} : ${p.preview}`;
     try {
       if (g.Notification && g.Notification.permission === "granted") {
         const n = new g.Notification(title, { body, tag: `perm-${p.id}`, requireInteraction: true });
@@ -92,6 +92,7 @@
         <span class="pc-lock">🔐</span>
         <span class="pc-who"><b>${esc(p.project)}</b>${p.branch ? ` <span class="pc-branch">branche ${esc(p.branch)}</span>` : ""} attend votre autorisation</span>
         <span class="pc-what"><span class="pc-tool">${esc(p.tool)}</span> <code class="pc-preview">${esc(p.preview || "—")}</code></span>
+        ${p.explanation?.what ? `<span class="pc-explain">${esc(p.explanation.what)}</span>` : ""}
         ${riskHtml(p.risk)}
         <span class="pc-left" data-left="${esc(p.id)}" title="Refus automatique « expiré sans réponse » à l'échéance">${esc(PC.fmtLeft(leftMs(p)))}</span>
       </button>
@@ -199,6 +200,18 @@
     return esc(b.text);
   }
 
+  // 0.78.0 — « Il faut aussi donner une explication de celle-ci » : what the
+  // operation does (described from the command), the musician's own words.
+  function explainHtml(x) {
+    if (!x || !x.what) return "";
+    return `<section class="po-explain" aria-label="Explication de l'opération">
+        <h4>Ce que fait cette opération</h4>
+        <p class="po-explain-what">${esc(x.what)}</p>
+        ${x.said ? `<p class="po-explain-said"><b>Le musicien la décrit ainsi :</b> « ${esc(x.said)} »</p>` : ""}
+        ${x.reason ? `<p class="po-explain-reason"><b>Pourquoi, d'après son dernier message :</b> « ${esc(x.reason)} »</p>` : ""}
+      </section>`;
+  }
+
   function detailsHtml(r) {
     const decided = r.status === "decided";
     const ms = leftMs(r);
@@ -226,6 +239,7 @@
         <button class="po-x" type="button" data-po-close aria-label="Fermer">✕</button>
       </header>
       <div class="po-body">
+        ${explainHtml(r.explanation)}
         <div class="po-why" data-kind="${esc(r.why?.kind || "")}"><b>Pourquoi cette demande :</b> ${esc(r.why?.text || "")}</div>
         <div class="po-riskline">Risque <b>${esc(r.risk?.level || "")}</b> ${riskHtml(r.risk)}</div>
         <dl class="po-meta">${meta}</dl>

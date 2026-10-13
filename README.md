@@ -4,7 +4,7 @@ A local Windows dashboard where one "conductor" AI session pilots a fleet of
 headless coding agents, one per project, with a live web viewer and an
 Android companion app.
 
-`version 0.77.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
+`version 0.78.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
 
 > **Status: active, personal project.** Built and used daily on a single
 > Windows machine. Pre-1.0: internal APIs and file formats can still change
@@ -182,7 +182,11 @@ same isolated instance, stopped at the end).
   (scoped rule, listed and revocable) or deny with a reason sent to the model.
   Clicking the card opens an overlay with the full call (command, diff of a
   write), the reason it was asked, a risk tag and the model's last message;
-  secrets are masked. With no answer, the request is denied as "expired"
+  secrets are masked. Next to the command, the card and the overlay explain
+  it in plain words (in French): what each step does, described from the
+  command itself, plus the agent's own description of the call and the end
+  of its last message (why it needs it). The conductor gets the same
+  explanation to relay. With no answer, the request is denied as "expired"
   and the model is told so. Works for every musician and the conductor, from
   the dashboard and the Android app.
 - **Android companion app** (Kotlin + Jetpack Compose): fleet overview,

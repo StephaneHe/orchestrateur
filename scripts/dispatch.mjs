@@ -1412,6 +1412,14 @@ function simpleCommandsRule() {
     `Sinon le CLI refuse l'appel en mode non interactif, sans recours possible.`;
 }
 
+// ---------- Authorisation requests explained (0.78.0) ------------------------
+function permissionExplainRule(langName) {
+  return `\n\n---\nAUTORISATIONS : pour chaque appel Bash, PowerShell ou Monitor, renseigne toujours le champ ` +
+    `« description » de l'outil, en ${langName}, en une phrase : ce que fait la commande et pourquoi tu en as besoin ` +
+    `(ex. « Lance la non-régression ciblée pour vérifier la correction avant le commit »). Si l'appel demande une ` +
+    `autorisation, c'est cette phrase que l'utilisateur lit, à côté de la commande, pour décider.`;
+}
+
 // ---------- TODO list (0.75.0) -----------------------------------------------
 // The dashboard shows each musician's TODO_LIST.md read-only, with the name of
 // the musician next to each done item. That name is recorded by todo.mjs from
@@ -1462,6 +1470,11 @@ const LANG_MODEL = modelOverride || (provider === 'claude' ? model
   : provider === 'codex' ? (project.codexModel || config.defaults?.codexModel || 'gpt (config codex)')
   : project[`${provider}Model`] || '');
 const LANG_WORK = langMod.workingLanguage(ROOT, LANG_MODEL, LANG_TARGET);
+// 0.78.0 — user request: « une demande d'autorisation donne la commande à
+// autoriser. Il faut aussi donner une explication de celle-ci ». The tool
+// call's `description` is shown to the user next to the command when the call
+// needs an authorisation: ask for it, in the discussion language.
+if (projectName !== CONDUCTOR) prompt = prompt + permissionExplainRule(langMod.LANGS[LANG_TARGET]?.name || 'français');
 prompt = prompt + langMod.languageRule(LANG_TARGET, LANG_WORK.working);
 // Le portier ne vérifie que ce qui est destiné à l'utilisateur : ni une branche
 // du mode double, ni un tour d'étape (le moteur vérifie le résultat final).

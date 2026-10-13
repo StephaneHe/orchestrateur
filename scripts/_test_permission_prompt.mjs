@@ -234,6 +234,58 @@ console.log('\n── 8. Câblage');
   t('permission-rules.json non versionné', /^permission-rules\.json$/m.test(fs.readFileSync(path.join(ROOT, '.gitignore'), 'utf8')));
 }
 
+// Exigence utilisateur (2026-10-13, 0.78.0) : « une demande d'autorisation
+// donne la commande à autoriser. Il faut aussi donner une explication de
+// celle-ci ».
+console.log('\n── 9. Chaque demande porte une explication EN PLUS de la commande');
+{
+  // The real request of the day that only showed the (cut) command.
+  const real = 'cd /i/Dev/orchestrateur-dev; sleep 5; tail -n +1 -f .regress/ciblee-0770.log | grep -E --line-buffered "^\\s+KO\\b|todo-item-overlay|Panneau TODO : chaque item|^===|^EXIT="';
+  const x = PC.explain('Monitor', { command: real, description: 'Surveille la ciblée 0.77.0 jusqu’à sa fin' }, { lastText: 'Bonjour.\n\nJe lance la ciblée pour vérifier la 0.77.0 avant le commit.' });
+  t('commande réelle : chaque étape décrite en français, dans l’ordre', /se place dans \/i\/Dev\/orchestrateur-dev, puis attend 5 s, puis suit en continu \.regress\/ciblee-0770\.log, puis garde seulement les lignes/.test(x.what), x.what);
+  t('les mots du musicien (description de l’appel) et son pourquoi (fin de son dernier message)', x.said === 'Surveille la ciblée 0.77.0 jusqu’à sa fin' && x.reason === 'Je lance la ciblée pour vérifier la 0.77.0 avant le commit.', JSON.stringify(x));
+  t('texte d’ensemble = explication + description + pourquoi', x.text.startsWith(x.what) && x.text.includes(x.said) && x.text.includes(x.reason));
+  const cases = [
+    ['Bash', { command: 'git push origin dev' }, /envoie les commits vers le dépôt distant/],
+    ['Bash', { command: 'node scripts/regression.mjs --targeted > .regress/r.log 2>&1' }, /exécute le script scripts\/regression\.mjs avec Node\.js et écrit le résultat dans \.regress\/r\.log/],
+    ['PowerShell', { command: 'Remove-Item -Recurse build' }, /supprime build/],
+    ['Bash', { command: 'curl https://api.example.com/v1/x' }, /requête réseau vers api\.example\.com/],
+    ['Write', { file_path: 'I:/p/a.js', content: 'a\nb' }, /Crée ou remplace entièrement le fichier I:\/p\/a\.js \(2 lignes\)/],
+    ['Edit', { file_path: 'I:/p/a.js', old_string: 'a', new_string: 'b' }, /Modifie le fichier I:\/p\/a\.js/],
+    ['WebFetch', { url: 'https://example.org/page' }, /Lit la page web example\.org/],
+    ['WebSearch', { query: 'node 24 release' }, /recherche sur le web : « node 24 release »/],
+    ['Bash', { command: 'monoutil --vite' }, /lance « monoutil »/],
+    ['SomeTool', {}, /Utilise l’outil SomeTool/],
+  ];
+  const bad = cases.filter(([tool, input, re]) => !re.test(PC.explain(tool, input).what));
+  t(`chaque outil a une explication (${cases.length} cas : git, redirection, suppression, réseau, Write, Edit, web, inconnu)`, !bad.length, bad.map(([tool, i]) => `${tool} → ${PC.explain(tool, i).what}`).join(' | '));
+  const sec = PC.explain('Bash', { command: 'curl -H "Authorization: Bearer sk-ant-api03-SECRETSECRETSECRETSECRET42" https://x.y', description: 'clé sk-ant-api03-SECRETSECRETSECRETSECRET42' });
+  t('aucun secret en clair dans l’explication', !JSON.stringify(sec).includes('SECRETSECRET'), JSON.stringify(sec));
+  const secSugg = PC.suggestRules('Bash', { command: 'curl -H "Authorization: Bearer sk-ant-api03-SECRETSECRETSECRETSECRET42" https://x.y' });
+  t('aucune règle « exactement cette commande » proposée quand la commande contient un secret (overlay, permission-rules.json)', !JSON.stringify(secSugg).includes('SECRETSECRET') && !secSugg.some(s => s.scope === 'exact') && PC.suggestRules('Bash', { command: 'npm test' }).some(s => s.scope === 'exact'), JSON.stringify(secSugg));
+  t('sans description ni message : explication quand même, sans champ vide', (() => { const e = PC.explain('Bash', { command: 'ls' }); return e.what === 'Cette commande liste le dossier courant.' && e.said === null && e.reason === null && e.text === e.what; })());
+
+  // End to end: the request created by the real MCP carries it everywhere.
+  const cmd = 'cd sous-dossier; tail -f journal.log | grep KO';
+  const d = dispatch('surveillance', { FAKE_CLAUDE_PERM: `Bash|${JSON.stringify({ command: cmd, description: 'Surveille le journal pour repérer un KO' })}` });
+  const p = await waitPending();
+  const e = p?.explanation;
+  t('carte (GET /api/permissions) : explication à côté de la commande', p && p.preview.includes('tail -f journal.log') && /se place dans sous-dossier, puis suit en continu journal\.log, puis garde seulement les lignes/.test(e?.what || '') && e.said === 'Surveille le journal pour repérer un KO' && /utiliser Bash/.test(e.reason || ''), JSON.stringify(p)?.slice(0, 400));
+  const ev = logOf('labo').reverse().find(x => x.subtype === 'permission_request' && x.permission?.id === p.id);
+  t('log du musicien : system/permission_request porte l’explication, aussi dans le texte', ev?.permission?.explanation?.what === e.what && ev.text.includes(e.what));
+  const det = await api('GET', `/api/permission/${p.id}/details`);
+  t('overlay (/details) : même explication', det.body?.request?.explanation?.what === e.what);
+  await api('POST', `/api/permission/${p.id}/decide`, { decision: 'allow_once' });
+  await d.done;
+
+  const disp = fs.readFileSync(DISPATCH, 'utf8');
+  t('dispatch.mjs : consigne aux musiciens d’écrire la description de l’appel dans la langue de discussion', /function permissionExplainRule\(langName\)/.test(disp) && /if \(projectName !== CONDUCTOR\) prompt = prompt \+ permissionExplainRule\(/.test(disp));
+  const srvJs = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  t('server.js : le message [AUTORISATION EN ATTENTE] au chef contient l’explication', /\[AUTORISATION EN ATTENTE\][\s\S]{0,400}Explication : \$\{req\.explanation\.text\}/.test(srvJs));
+  const ui = fs.readFileSync(path.join(ROOT, 'public', 'permissions.js'), 'utf8');
+  t('dashboard : explication sur la carte (.pc-explain) et dans l’overlay (.po-explain)', /class="pc-explain"/.test(ui) && /class="po-explain"/.test(ui) && /explainHtml\(r\.explanation\)/.test(ui));
+}
+
 srv.close();
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);
