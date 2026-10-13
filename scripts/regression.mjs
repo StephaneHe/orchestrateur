@@ -293,6 +293,40 @@ async function apiChecks(sb) {
     assert(refused.status === 3, `coché hors d’un tour : ${refused.status}`);
     return `${d.items.length} items (3 listes), faits puis non faits, nom affiché ; écriture : 404 ; coché par alpha pendant son tour → visible`;
   });
+  // 0.78.0 — user request (2026-10-13), part 2/5: « Possibilité d'y ajouter des notes ».
+  await check(S, 'todo-notes', 'Notes sur un item TODO : POST /api/notes/todo/:projet/:item (même origine) les enregistre dans todo-notes.json, GET /api/todo les rend avec l’item, le fichier relu à chaque changement (rien n’est gardé en mémoire seulement : survit au redémarrage) ; TODO_LIST.md jamais modifié ; refus : autre origine, projet ou item inconnu, note vide', async () => {
+    if (!fs.existsSync(path.join(sb.root, 'scripts', 'todo-notes.mjs'))) NA('notes absentes de cet état du code');
+    const alphaList = path.join(sb.root, 'projects', 'alpha', 'TODO_LIST.md');
+    const before = fs.readFileSync(alphaList);
+    const post = (proj, id, body, extra = {}) => fetch(`${sb.url}/api/notes/todo/${encodeURIComponent(proj)}/${encodeURIComponent(id)}`, {
+      method: 'POST', headers: { ...H, 'Content-Type': 'application/json', ...extra }, body: JSON.stringify(body),
+    });
+    // t-a10003 was ticked by todo.mjs in todo-api: its id, and so its notes, stay.
+    const r1 = await post('alpha', 't-a10003', { text: 'Note de recette\nsur deux lignes' });
+    const j1 = await r1.json();
+    assert(r1.status === 201 && j1.note?.text === 'Note de recette\nsur deux lignes' && j1.notes.length === 1, `ajout : ${r1.status} ${JSON.stringify(j1)}`);
+    const r2 = await post('alpha', 't-a10003', { text: 'Deuxième' }, { Origin: sb.url });
+    assert(r2.status === 201, `même origine explicite : ${r2.status}`);
+    const item = (await json('/api/todo?project=alpha')).items.find(i => i.id === 't-a10003');
+    assert(item?.notes?.map(n => n.text).join('|') === 'Note de recette\nsur deux lignes|Deuxième', `notes rendues avec l’item : ${JSON.stringify(item?.notes)}`);
+    assert(Buffer.compare(before, fs.readFileSync(alphaList)) === 0, 'TODO_LIST.md modifié par une note');
+    const notesFile = path.join(sb.root, 'todo-notes.json');
+    const disk = JSON.parse(fs.readFileSync(notesFile, 'utf8'));
+    assert(disk.notes?.alpha?.['t-a10003']?.length === 2, `todo-notes.json : ${JSON.stringify(disk)}`);
+    // The server holds nothing in memory alone: an edit of the file is served
+    // as is, so a restart (which only rereads it) loses nothing.
+    disk.notes.alpha['t-a10003'].push({ id: 'n-feedface', at: '2026-10-13T16:00', text: 'écrite sur le disque', by: 'utilisateur' });
+    fs.writeFileSync(notesFile, JSON.stringify(disk, null, 2) + '\n');
+    const again = (await json('/api/todo?project=alpha')).items.find(i => i.id === 't-a10003');
+    assert(again?.notes?.length === 3 && again.notes[2].text === 'écrite sur le disque', 'le serveur ne relit pas le fichier des notes');
+    assert((await post('alpha', 't-a10003', { text: 'x' }, { Origin: 'http://evil.example' })).status === 403, 'autre origine acceptée');
+    assert((await post('alpha', 't-inexistant', { text: 'x' })).status === 404, 'item inconnu accepté');
+    const unknownProj = await post('projet-inconnu', 't-a10003', { text: 'x' });
+    assert(unknownProj.status === 404 && /projet inconnu/.test((await unknownProj.json()).error || ''), 'projet hors liste accepté');
+    assert((await post('alpha', 't-a10003', { text: '   ' })).status === 400, 'note vide acceptée');
+    assert(JSON.parse(fs.readFileSync(notesFile, 'utf8')).notes.alpha['t-a10003'].length === 3, 'un refus a écrit une note');
+    return '2 notes ajoutées puis rendues avec l’item, fichier relu (survit au redémarrage), TODO_LIST.md intact ; refus : autre origine 403, item/projet inconnu 404, vide 400';
+  });
   await check(S, 'config', '/api/config : flotte, états hydratés, parcage, lecture', async () => {
     const c = await json('/api/config');
     const by = Object.fromEntries(c.projects.map(p => [p.name, p]));

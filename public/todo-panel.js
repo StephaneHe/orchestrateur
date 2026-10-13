@@ -48,6 +48,8 @@
     const added = `<span class="ti-added" title="${i.addedEstimated ? "Date d’entrée estimée (date du fichier)" : "Date d’entrée dans la liste"}">${i.addedEstimated ? "≈ " : ""}${esc(fmt(i.addedAt))}</span>`;
     const type = TYPE[i.type] ? `<span class="ti-type ti-type-${esc(i.type)}">${TYPE[i.type]}</span>` : "";
     const prog = i.status === "progress" ? `<span class="ti-prog" title="En cours">◐ en cours</span>` : "";
+    const nNotes = Array.isArray(i.notes) ? i.notes.length : 0;
+    const notes = nNotes ? `<span class="ti-notes" title="${nNotes} note${nNotes > 1 ? "s" : ""} — ouvrir l’item pour les lire">✎ ${nNotes}</span>` : "";
     const by = !done ? "" : i.doneBy
       ? `<span class="ti-by" title="Coché par ${esc(i.doneBy)}${i.doneAt ? ` le ${esc(fmt(i.doneAt))}` : ""}">✓ ${esc(i.doneBy)}</span>`
       : `<span class="ti-by is-unknown" title="Nom non enregistré : item coché à la main, hors de todo.mjs">✓ —</span>`;
@@ -55,7 +57,7 @@
       <input type="checkbox" class="ti-box" disabled ${done ? "checked" : ""} aria-label="${done ? "Fait" : "Non fait"} (lecture seule : seul le musicien coche)" title="Lecture seule : c’est le musicien qui coche">
       <div class="ti-main"><div class="ti-title">${esc(i.title)}</div>
         ${i.detail ? `<div class="ti-detail">${esc(i.detail)}</div>` : ""}
-        <div class="ti-meta">${by}<span class="ti-proj">${esc(i.project)}</span>${added}${type}${prog}</div></div></li>`;
+        <div class="ti-meta">${by}<span class="ti-proj">${esc(i.project)}</span>${added}${type}${prog}${notes}</div></div></li>`;
   }
 
   /* ---- Item overlay (0.77.0): the whole item, on click / Enter / Space ----
@@ -64,7 +66,8 @@
      send to the chef) plug in through TodoPanel.registerAction(); none is
      registered yet, so the action bar stays hidden. */
   const actions = [];
-  const ov = { el: null, id: null, returnFocus: null };
+  const ov = { el: null, id: null, returnFocus: null, drafts: {}, filledId: null, busy: false };
+  const NOTE_MAX = 4000;   // = scripts/todo-notes.mjs
   const STATUS = { todo: "○ Non fait", progress: "◐ En cours", done: "✓ Fait" };
 
   function overlayEl() {
@@ -77,7 +80,17 @@
       <section class="tov-dialog" role="dialog" aria-modal="true" aria-labelledby="tov-title">
         <header class="tov-head"><h2 id="tov-title" class="tov-title"></h2>
           <button type="button" class="tov-close" data-tov-close aria-label="Fermer" title="Fermer (Échap)">✕</button></header>
-        <div class="tov-body"></div>
+        <div class="tov-scroll"><div class="tov-body"></div>
+          <section class="tov-notes" aria-labelledby="tov-notes-h">
+            <h3 id="tov-notes-h" class="tov-notes-h">Notes <span class="tov-notes-n"></span></h3>
+            <ol class="tov-notes-list"></ol>
+            <form class="tov-note-form">
+              <label class="tov-note-label" for="tov-note-text">Ajouter une note</label>
+              <textarea id="tov-note-text" class="tov-note-text" rows="3" maxlength="${NOTE_MAX}" placeholder="Votre note sur cet item (Ctrl+Entrée pour enregistrer)"></textarea>
+              <div class="tov-note-bar"><span class="tov-note-msg" role="status" aria-live="polite"></span>
+                <button type="submit" class="tov-note-add">Ajouter la note</button></div>
+            </form>
+          </section></div>
         <section class="tov-confirm" hidden aria-labelledby="tov-confirm-h">
           <h3 id="tov-confirm-h" class="tov-confirm-h">Envoyer cet item au chef ?</h3>
           <p class="tov-hint">Ce message sera placé dans votre saisie au chef. Il partira quand vous l’enverrez (Entrée ou ➤), comme tout message au chef, qui en lancera l’exécution.</p>
@@ -93,6 +106,10 @@
     el.addEventListener("click", (e) => { if (e.target.closest("[data-tov-close]")) closeItem(); });
     el.querySelector(".tov-confirm-cancel").addEventListener("click", () => hideConfirm(true));
     el.querySelector(".tov-confirm-ok").addEventListener("click", () => confirmSend());
+    const form = el.querySelector(".tov-note-form"), area = el.querySelector(".tov-note-text");
+    form.addEventListener("submit", (e) => { e.preventDefault(); addNote(); });
+    area.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); addNote(); } });
+    area.addEventListener("input", () => { if (ov.id) ov.drafts[ov.id] = area.value; });
     el.querySelector(".tov-actions").addEventListener("click", (e) => {
       const b = e.target.closest("[data-tov-action]");
       const a = b && actions.find(x => x.id === b.dataset.tovAction);
@@ -128,6 +145,7 @@
       ${i.more ? `<div class="tov-text tov-more">${esc(i.more)}</div>` : ""}
       ${!full && !i.more ? `<p class="tov-hint">Aucun détail : l’item tient en son titre.</p>` : ""}
       <div class="tov-src">${esc(i.project)}/TODO_LIST.md, ligne ${esc(i.line)} · <code>${esc(i.id)}</code></div>`;
+    renderNotes(i);
     const bar = el.querySelector(".tov-actions");
     const usable = actions.filter(a => !a.when || a.when(i));
     bar.innerHTML = usable.map(a => `<button type="button" class="tov-action" data-tov-action="${esc(a.id)}"${a.title ? ` title="${esc(a.title)}"` : ""}>${esc(a.label)}</button>`).join("");
@@ -186,6 +204,67 @@
     globalThis.App.prepareChefMessage(text, { project: i.project, title: i.title, id: i.id });
   }
 
+  /* ---- Notes (0.78.0): « Possibilité d'y ajouter des notes ». Stored by the
+     server in todo-notes.json, never in the musician's TODO_LIST.md. The form
+     is built once: the 15 s refresh only redraws the list, never the draft. */
+  function renderNotes(i) {
+    const el = ov.el;
+    const notes = Array.isArray(i.notes) ? i.notes : [];
+    el.querySelector(".tov-notes-n").textContent = notes.length ? `(${notes.length})` : "";
+    el.querySelector(".tov-notes-list").innerHTML = notes.length
+      ? notes.map(n => `<li class="tov-note" data-note="${esc(n.id)}"><div class="tov-note-meta">${esc(fmt(n.at))}${n.by ? ` · ${esc(n.by)}` : ""}</div><div class="tov-note-body">${esc(n.text)}</div></li>`).join("")
+      : `<li class="tov-notes-empty">Aucune note pour l’instant.</li>`;
+    if (ov.filledId !== i.id) {
+      ov.filledId = i.id;
+      el.querySelector(".tov-note-text").value = ov.drafts[i.id] || "";
+      noteMsg("");
+    }
+  }
+
+  function noteMsg(text, bad) {
+    const m = ov.el.querySelector(".tov-note-msg");
+    m.textContent = text;
+    m.classList.toggle("is-error", !!bad);
+  }
+
+  async function addNote() {
+    const item = currentItem();
+    const area = ov.el.querySelector(".tov-note-text");
+    const text = area.value.trim();
+    if (!item || ov.busy) return;
+    if (!text) { noteMsg("La note est vide.", true); area.focus(); return; }
+    if (text.length > NOTE_MAX) { noteMsg(`Note trop longue (${text.length} caractères, ${NOTE_MAX} au plus).`, true); return; }
+    ov.busy = true;
+    const btn = ov.el.querySelector(".tov-note-add");
+    btn.disabled = true;
+    noteMsg("Enregistrement…");
+    try {
+      const r = await fetch(`/api/notes/todo/${encodeURIComponent(item.project)}/${encodeURIComponent(item.id)}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }),
+      });
+      const isJson = (r.headers.get("content-type") || "").includes("json");
+      const j = isJson ? await r.json() : null;
+      if (!r.ok || !j || !j.ok) {
+        noteMsg(j && j.error ? `Note non enregistrée : ${j.error}` : await SidePanel.explainFailure(r.status, "Notes"), true);
+        return;
+      }
+      item.notes = j.notes;
+      const live = findItem(item.id);
+      if (live) live.notes = j.notes;
+      delete ov.drafts[item.id];
+      area.value = "";
+      renderNotes(item);
+      noteMsg("Note enregistrée.");
+      if (st.pane) render();
+      area.focus();
+    } catch (e) {
+      noteMsg(`Note non enregistrée : ${e.message}`, true);
+    } finally {
+      ov.busy = false;
+      btn.disabled = false;
+    }
+  }
+
   function openItem(id) {
     const i = findItem(id);
     if (!i) return false;
@@ -203,6 +282,7 @@
     ov.el.hidden = true;
     ov.id = null;
     ov.el.querySelector(".tov-confirm").hidden = true;
+    ov.filledId = null;
     document.body.classList.remove("tov-open");
     const back = ov.returnFocus;
     ov.returnFocus = null;
@@ -220,7 +300,7 @@
       return;
     }
     if (e.key === "Tab") {
-      const f = [...ov.el.querySelectorAll("button:not([hidden]), [href], [tabindex]:not([tabindex='-1'])")].filter(x => x.offsetParent !== null);
+      const f = [...ov.el.querySelectorAll("button:not([hidden]), textarea, [href], [tabindex]:not([tabindex='-1'])")].filter(x => x.offsetParent !== null && !x.disabled);
       if (!f.length) return;
       const first = f[0], last = f[f.length - 1];
       if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }

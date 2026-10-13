@@ -75,6 +75,7 @@ import { readPending, dependencyResult, releaseReady, staleEntries, markNotified
 import { createModelRouting, incompatibility } from './scripts/model-routing.mjs';
 import { createRecommendations } from './scripts/model-reco.mjs';
 import { TODO_FILE, parseTodo, sortTodo, countTodo } from './scripts/todo-core.mjs';
+import { createNotesStore, NOTES_FILE, ITEM_ID_RE, NOTE_MAX } from './scripts/todo-notes.mjs';
 import { readGitGraph, GIT_N_DEFAULT, GIT_N_MAX } from './scripts/git-graph-core.mjs';
 import { mountGatewayRoutes } from './scripts/responses-gateway.mjs';
 // Clés NVIDIA / OpenRouter saisies dans la page Models (0.43.0).
@@ -2649,9 +2650,29 @@ app.get('/api/todo', (req, res) => {
     const items = todoOf(p);
     if (!items) continue;
     lists.push({ project: p.name, ...countTodo(items) });
-    all.push(...items);
+    all.push(...items.map(i => ({ ...i, notes: todoNotes.forItem(p.name, i.id) })));
   }
-  res.json({ ok: true, items: sortTodo(all), counts: countTodo(all), lists });
+  res.json({ ok: true, items: sortTodo(all), counts: countTodo(all), lists, notesError: todoNotes.error() || undefined });
+});
+
+// ── Notes on a TODO item (0.78.0) ───────────────────────────────────────────
+// User request (2026-10-13): « Possibilité d'y ajouter des notes ». The user's
+// notes go to todo-notes.json (orchestrator root, unversioned), never to the
+// musician's TODO_LIST.md, which stays written by the musicians only: this is
+// not a write route of the TODO list. Same origin only, like the other writes
+// of the page; project from config.json, item that exists in its list.
+const todoNotes = createNotesStore(path.join(__dirname, NOTES_FILE));
+app.post('/api/notes/todo/:project/:id', sameOriginOnly, express.json({ limit: '32kb' }), (req, res) => {
+  const p = (config.projects || []).find(x => x && x.name === req.params.project && x.path);
+  if (!p) return res.status(404).json({ ok: false, error: `projet inconnu : ${req.params.project}` });
+  if (!ITEM_ID_RE.test(req.params.id)) return res.status(400).json({ ok: false, error: 'identifiant d’item invalide' });
+  if (!(todoOf(p) || []).some(i => i.id === req.params.id)) return res.status(404).json({ ok: false, error: `item inconnu dans la liste de ${p.name}` });
+  try {
+    const r = todoNotes.add(p.name, req.params.id, req.body?.text);
+    res.status(201).json({ ok: true, ...r, max: NOTE_MAX });
+  } catch (e) {
+    res.status(e.status || 500).json({ ok: false, error: e.message });
+  }
 });
 
 // ── Git graph of each musician (0.76.0) ─────────────────────────────────────

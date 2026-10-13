@@ -11,6 +11,48 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.81.0] - 2026-10-13
+
+### Added
+
+- (server) Notes on a TODO item — part 2/5 of the user request « chaque item
+  doit être clickable et afficher une overlay qui présente l'item complet.
+  Possibilité d'y ajouter des notes, et de rejetter l'item. […] » (reject,
+  send to the chef and drag & drop come next).
+  - The item overlay has a "Notes" section: the item's notes (date, author,
+    text with its line breaks) and a field to add one ("Ajouter la note" or
+    Ctrl+Enter). An empty note is refused with a message; a draft is kept per
+    item and is never erased by the 15 s refresh. The list shows "✎ n" on an
+    item with notes.
+  - Kept by the server in `todo-notes.json` (orchestrator root,
+    unversioned): `{version, notes: {project: {itemId: [{id, at, text,
+    by}]}}}`, atomic write, reread when it changes, so the notes survive a
+    page reload and a server restart. A file that cannot be read is never
+    overwritten (writes refused with 409, last known notes still shown).
+  - `POST /api/notes/todo/:project/:id {text}` (same origin only; project of
+    config.json; the item must exist in its list; 4,000 characters and 200
+    notes per item at most). `GET /api/todo` returns each item's `notes`.
+  - The musicians' `TODO_LIST.md` files are never written by a note: they
+    stay written by the musicians only (`scripts/todo.mjs`), and
+    `/api/todo` itself still has no write route. A legacy item keeps its id
+    when it is ticked, so its notes stay attached.
+- Tests: new suite `_test_todo_notes.mjs` (add, reread by a new store = a
+  restart, refusals, unreadable file, wiring), HTTP `todo-notes` (POST →
+  GET, file reread, `TODO_LIST.md` byte-identical, other origin 403,
+  unknown project or item 404, empty 400), browser `todo-item-notes`
+  (button and Ctrl+Enter, notes back after a page reload, ✎ count, empty
+  refused, draft kept across the refresh and across items).
+
+### Changed
+
+- (server) The 0.75.0 requirement « the TODO panel sends nothing to the
+  server » is widened, with the user's explicit agreement (2026-10-13:
+  « J'autorise l'envoie de POST à partir de todo-panel.js »): `todo-panel.js`
+  may now POST, but only to the notes route `/api/notes/todo/:project/:id`.
+  `_test_todo.mjs` still refuses any other write from the panel (any other
+  URL, PUT / PATCH / DELETE), any write route on `/api/todo`, any write of
+  `TODO_LIST.md` by the server, and the checkboxes stay disabled.
+
 ## [0.80.0] - 2026-10-13
 
 ### Added

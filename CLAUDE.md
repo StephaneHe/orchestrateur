@@ -693,8 +693,22 @@ de la prod).
   brouillon remplacé ; Annuler / Échap n'y touchent pas. Confirmé : le
   message va dans la saisie du chef (`App.prepareChefMessage`, contexte
   « Item TODO de … ») et part quand l'utilisateur l'envoie, par le même
-  canal que tout message au chef. **Le panneau lui-même n'envoie toujours
-  rien au serveur** (exigence 0.75.0). Recette : navigateur `todo-send-chef`.
+  canal que tout message au chef. Cette action n'envoie rien au serveur elle-même. Recette : navigateur `todo-send-chef`.
+- **Notes d'un item** (0.81.0, partie 2/5, « Possibilité d'y ajouter des
+  notes ») : section « Notes » de l'overlay (bouton ou Ctrl+Entrée, brouillon
+  gardé par item, jamais effacé par le rafraîchissement ; « ✎ n » dans la
+  liste). Ce sont les notes de **l'utilisateur** : elles vont dans
+  `todo-notes.json` (racine, non versionné, `scripts/todo-notes.mjs`,
+  écriture atomique, relu quand il change, jamais réécrit s'il est
+  illisible), **jamais dans le `TODO_LIST.md` du musicien**. Route
+  `POST /api/notes/todo/:projet/:item {text}` (`sameOriginOnly`, projet de
+  config.json, item existant, 4 000 caractères et 200 notes par item au
+  plus) ; `GET /api/todo` joint `notes` à chaque item. `/api/todo` reste sans
+  route d'écriture. Exigence 0.75.0 élargie avec l'accord de
+  l'utilisateur (2026-10-13, « J'autorise l'envoie de POST à partir de
+  todo-panel.js ») : le panneau peut faire un POST, vers cette route
+  seulement (`_test_todo.mjs`). Recettes : `_test_todo_notes.mjs`, HTTP `todo-notes`,
+  navigateur `todo-item-notes`.
 - **Onglet ⎇ Git** (0.76.0, même demande, partie git) : l'arbre git de chaque
   musicien, en **lecture seule** (`public/git-panel.js`, pill `#btn-git`).
   - On choisit le musicien ; les projets sans dépôt sont listés, désactivés.

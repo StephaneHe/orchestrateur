@@ -163,7 +163,27 @@ try {
   const html = read(path.join(ROOT, 'public', 'index.html'));
   ok(/side-panel\.js/.test(html) && /todo-panel\.js/.test(html) && /id="btn-todo"[^>]*data-sp-open="todo"/.test(html), 'index.html : panneau, onglet TODO, pill');
   const tp = read(path.join(ROOT, 'public', 'todo-panel.js'));
-  ok(/type="checkbox" class="ti-box" disabled/.test(tp) && !/method:\s*["'](POST|PUT|PATCH|DELETE)/i.test(tp), 'cases désactivées, aucun envoi vers le serveur');
+  ok(/type="checkbox" class="ti-box" disabled/.test(tp), 'cases désactivées');
+  // 0.75.0 requirement « the panel sends nothing », widened with the user's
+  // explicit agreement (2026-10-13, « J'autorise l'envoie de POST à partir de
+  // todo-panel.js »): a POST is allowed to the notes route only. Every other
+  // write from the panel stays forbidden.
+  const calls = tp.split(/\bfetch\(/).slice(1).map(c => {
+    const url = (c.match(/^\s*([`"'])(.*?)\1/) || [])[2] || '?';
+    const body = c.slice(0, c.search(/\)\s*;/) + 1 || 600);
+    const method = ((body.match(/method:\s*["'`](\w+)/) || [])[1] || 'GET').toUpperCase();
+    return { url, method };
+  });
+  const writes = calls.filter(c => c.method !== 'GET');
+  ok(writes.length > 0 && writes.every(c => c.method === 'POST' && c.url.startsWith('/api/notes/todo/')),
+    `écritures du panneau : POST vers /api/notes/todo/ seulement (${JSON.stringify(writes)})`);
+  ok(!/XMLHttpRequest|sendBeacon|new\s+WebSocket|EventSource\([^)]*method/.test(tp), 'aucun autre canal d’envoi dans le panneau');
+  ok(!/\/api\/todo[^"'`]*["'`]\s*,\s*\{[^}]*method:\s*["'`](POST|PUT|PATCH|DELETE)/i.test(tp), 'aucune écriture vers /api/todo depuis le panneau');
+  const notesMod = read(path.join(ROOT, 'scripts', 'todo-notes.mjs'));
+  const noteWrites = notesMod.match(/\b(writeFileAtomic|writeFileSync|writeFile|appendFileSync|appendFile|renameSync|renameRetry|unlinkSync)\s*\([^,)]*/g) || [];
+  ok(noteWrites.length > 0 && noteWrites.every(w => /\(\s*file$/.test(w)) && !/TODO_FILE/.test(notesMod)
+    && /createNotesStore\(path\.join\(__dirname, NOTES_FILE\)\)/.test(srv) && /NOTES_FILE = 'todo-notes\.json'/.test(notesMod),
+    `les notes n’écrivent que todo-notes.json, jamais TODO_LIST.md (${JSON.stringify(noteWrites)})`);
   // 0.79.0, part 4/5 « lancer le contenu de l'item au chef » : through the
   // chef's composer (the user sends it), never a request from the panel.
   ok(/id: "send-chef"/.test(tp) && /App\.prepareChefMessage\(text/.test(tp) && /askSendToChef/.test(tp) && !/fetch\("\/api\/dispatch/.test(tp), 'envoi au chef : confirmation, puis la saisie du chef (aucune requête du panneau)');

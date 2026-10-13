@@ -477,6 +477,74 @@ export async function browserChecks(sb, t) {
       await sleep(500);
       return `alpha : « ${before.word} » → « ${during.word} » (${during.line.slice(0, 60)}…) → « ${(await card()).word} »`;
     });
+    // User request (2026-10-13), part 2/5: « Possibilité d'y ajouter des notes ».
+    const notesState = (pg) => pg.evaluate(() => {
+      const o = document.getElementById('todo-overlay');
+      return {
+        open: !!o && !o.hidden, id: o?.querySelector('.tov-dialog')?.dataset.id || null,
+        notes: [...(o?.querySelectorAll('.tov-note .tov-note-body') || [])].map(n => n.textContent),
+        count: o?.querySelector('.tov-notes-n')?.textContent || '', empty: !!o?.querySelector('.tov-notes-empty'),
+        draft: o?.querySelector('.tov-note-text')?.value ?? null, msg: o?.querySelector('.tov-note-msg')?.textContent || '',
+        msgError: !!o?.querySelector('.tov-note-msg.is-error'),
+      };
+    });
+    await check(B, 'todo-item-notes', 'Overlay d’un item TODO : ajouter des notes (bouton ou Ctrl+Entrée), enregistrées par le serveur et réaffichées après rechargement de la page ; compteur ✎ sur l’item de la liste ; note vide refusée ; brouillon jamais effacé par le rafraîchissement ni en changeant d’item', async () => {
+      if (!(await page.locator('#btn-todo').count())) NA('panneau TODO absent de cet état du code');
+      const api = await (await fetch(`${sb.url}/api/todo`, { headers: H })).json();
+      const it = api.items.find(i => i.project === 'beta' && i.title === 'Écrire la doc');
+      const other = api.items.find(i => i.id === 't-a10004');
+      if (!it || !('notes' in it)) NA('API sans notes dans cet état du code');
+      const before = it.notes.length;
+      await page.selectOption('#side-panel .todo-project', '').catch(() => {});
+      if (!(await todoState(page)).open) await page.click('#btn-todo');
+      const li = `#side-panel .todo-item[data-id="${it.id}"]`;
+      await page.locator(li).waitFor({ timeout: 8000 });
+      await page.click(`${li} .ti-title`);
+      assert(await until(async () => (await notesState(page)).open, 3000), 'overlay non ouverte');
+      let n = await notesState(page);
+      assert(n.notes.length === before && (before || n.empty), `notes au départ : ${JSON.stringify(n)}`);
+      await page.click('#todo-overlay .tov-note-add');
+      n = await notesState(page);
+      assert(n.msgError && /vide/.test(n.msg) && n.notes.length === before, `note vide : ${n.msg}`);
+      await page.fill('#todo-overlay .tov-note-text', 'Note du navigateur');
+      await page.evaluate(() => TodoPanel.reload());
+      await sleep(600);
+      assert((await notesState(page)).draft === 'Note du navigateur', 'le rafraîchissement a effacé le brouillon');
+      await page.click('#todo-overlay .tov-note-add');
+      assert(await until(async () => (await notesState(page)).notes.length === before + 1, 5000), `note non ajoutée : ${(await notesState(page)).msg}`);
+      n = await notesState(page);
+      assert(n.notes[before] === 'Note du navigateur' && n.draft === '' && !n.msgError && n.count === `(${before + 1})`, `après ajout : ${JSON.stringify(n)}`);
+      await page.fill('#todo-overlay .tov-note-text', 'Deuxième note\nsur deux lignes');
+      await page.press('#todo-overlay .tov-note-text', 'Control+Enter');
+      assert(await until(async () => (await notesState(page)).notes.length === before + 2, 5000), 'Ctrl+Entrée n’enregistre pas');
+      assert((await notesState(page)).notes[before + 1] === 'Deuxième note\nsur deux lignes', 'saut de ligne perdu');
+      // Draft kept per item: type, switch to another item, come back.
+      await page.fill('#todo-overlay .tov-note-text', 'brouillon gardé');
+      await page.keyboard.press('Escape');
+      await page.click(`#side-panel .todo-item[data-id="${other.id}"] .ti-title`);
+      assert(await until(async () => (await notesState(page)).id === other.id, 3000), 'autre item non ouvert');
+      assert((await notesState(page)).draft === '', 'le brouillon d’un item est passé sur un autre');
+      await page.keyboard.press('Escape');
+      await page.click(`${li} .ti-title`);
+      assert(await until(async () => (await notesState(page)).draft === 'brouillon gardé', 3000), 'brouillon perdu en changeant d’item');
+      await page.fill('#todo-overlay .tov-note-text', '');
+      await page.keyboard.press('Escape');
+      assert(await until(async () => (await page.textContent(`${li} .ti-notes`).catch(() => '')) === `✎ ${before + 2}`, 4000), 'compteur ✎ absent de la liste');
+      // Kept by the server: a reload of the page shows them again.
+      await page.reload(); await page.locator('.brand').waitFor();
+      if (!(await todoState(page)).open) await page.click('#btn-todo');
+      await page.locator(li).waitFor({ timeout: 8000 });
+      await page.click(`${li} .ti-title`);
+      assert(await until(async () => (await notesState(page)).notes.length === before + 2, 5000), 'notes perdues au rechargement');
+      n = await notesState(page);
+      assert(n.notes.slice(before).join('|') === 'Note du navigateur|Deuxième note\nsur deux lignes', `après rechargement : ${JSON.stringify(n.notes)}`);
+      const srv = (await (await fetch(`${sb.url}/api/todo?project=beta`, { headers: H })).json()).items.find(i => i.id === it.id);
+      assert(srv?.notes?.length === before + 2, 'le serveur n’a pas les notes');
+      assert(await overflowX(page) <= 0, `débordement horizontal ${await overflowX(page)} px`);
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('Escape');
+      return `« ${it.title} » : 2 notes (bouton, Ctrl+Entrée) gardées au rechargement, ✎ ${before + 2} dans la liste ; vide refusée ; brouillon gardé (rafraîchissement, changement d’item)`;
+    });
     const railHeads = () => page.evaluate(() => [...document.querySelectorAll('#rail-body .rail-group-head')].map(h => h.textContent.replace(/\s+/g, ' ').trim()));
     await check(B, 'rail', 'Rail PILOTAGE : À examiner + cadres des musiciens (ou dépliage « Tous » sans cadres)', async () => {
       const txt = await page.textContent('#rail-body');
