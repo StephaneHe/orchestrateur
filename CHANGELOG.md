@@ -11,6 +11,24 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.76.3] - 2026-10-13
+
+### Added
+
+- `README.md`: a **Screenshots** section (user request: « Si tu peux avant de
+  commit, fais des captures d'écran pour améliorer le README (qui doit être en
+  anglais) ») with three captures in `docs/screenshots/`: the dashboard
+  overview, the TODO tab of the side panel (open items on top, done items
+  below) and its Git tab. English captions and alt texts. The captures come
+  from the isolated test instance with fictional fixture projects: no real
+  project, log or address.
+- `scripts/readme-screenshots.mjs` regenerates them (test sandbox on a free
+  port, a small demo git history for the Git tab, Edge headless; the instance
+  is stopped and removed at the end; port 7777 is never contacted).
+- `scripts/_test_readme_images.mjs`: every image referenced by the README
+  exists, is a PNG of at most 400 KiB with an English alt text, the three
+  requested screens are shown, and `docs/screenshots/` holds no unused file.
+
 ## [0.76.2] - 2026-10-13
 
 ### Changed

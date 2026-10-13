@@ -4,7 +4,7 @@ A local Windows dashboard where one "conductor" AI session pilots a fleet of
 headless coding agents, one per project, with a live web viewer and an
 Android companion app.
 
-`version 0.76.2` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
+`version 0.76.3` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
 
 > **Status: active, personal project.** Built and used daily on a single
 > Windows machine. Pre-1.0: internal APIs and file formats can still change
@@ -36,6 +36,29 @@ question, which one hit a usage limit, what did each one actually do?
 orchestrateur gives each project its own headless agent and puts a single
 conductor session (the "chef") in charge of routing work and answers, with
 one screen to watch the whole fleet.
+
+## Screenshots
+
+The captures below come from the isolated test instance, with fictional
+fixture projects (`alpha`, `beta`, `omega`…) and a fake agent CLI: no real
+project, log or address appears. The dashboard's own interface is in French
+(the discussion language is a setting, see [Features](#features)).
+
+![Dashboard overview: the conductor thread with the activity of running agents, the attention band (open questions, lost process, stalled turn) and the Pilotage column with the items to review and one card per agent](docs/screenshots/dashboard-overview.png)
+
+*The main screen. Centre: the conversation with the conductor, then the
+agents currently working. Top: the attention band (questions waiting for you,
+a lost process, a turn without progress). Right, "Pilotage": what needs
+review (failures, open questions, each with a one-click "seen" or "answered"),
+then every agent as a card, running turns first.*
+
+| TODO tab of the side panel | Git tab of the side panel |
+| --- | --- |
+| ![Side panel, TODO tab: every agent's TODO list as read-only checkboxes, open items on top and done items below, each done item showing the agent that ticked it](docs/screenshots/side-panel-todo.png) | ![Side panel, Git tab: an agent's repository drawn as a commit graph with its branches, merges, tags and HEAD, read-only](docs/screenshots/side-panel-git.png) |
+| Open items on top ("Non faits"), done items below ("Faits"), newest entry first, with the name of the agent that closed each item. Read-only: only the agents write their list. | One agent's history: a lane per line of development, merges and branch points, branches (HEAD highlighted), tags, short SHA, author and date. Read-only: the server only runs `git log`. |
+
+Regenerate them with `node scripts/readme-screenshots.mjs` (Edge headless,
+same isolated instance, stopped at the end).
 
 ## Features
 
@@ -346,6 +369,9 @@ committed content; `node scripts/delivery-gate.mjs prod-check vX.Y.Z` checks
 a tag for production.
 
 Each suite can also run alone, e.g. `node scripts/_test_tools_resolution.mjs`.
+`_test_readme_images.mjs` checks that every image of this README exists, is a
+light PNG with an English alt text, and that `docs/screenshots/` holds no
+unused capture.
 
 Every feature request from the user is pinned by an automated test and
 recorded in [`docs/USER_REQUIREMENTS.md`](docs/USER_REQUIREMENTS.md) (date,
