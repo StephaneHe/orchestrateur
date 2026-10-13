@@ -459,9 +459,22 @@
     };
   }
 
+  /**
+   * 0.78.1 — « toute tâche qui tourne attachée à un musicien fait que le
+   * musicien est En cours […], pas Prêt ». The log ends the turn on its
+   * `result`, but the server snapshot (/api/pupitre, `lingering`) says when
+   * the turn's process still runs. → {state, held}: `held` is the log state
+   * kept aside while the musician is shown `live`, restored when it stops.
+   */
+  function reconcileBusy(cur, held, lingeringNow) {
+    if (lingeringNow && (cur === "idle" || cur === "unread")) return { state: "live", held: cur };
+    if (!lingeringNow && held && cur === "live") return { state: held, held: null };
+    return { state: cur, held: lingeringNow && cur === "live" ? held : null };
+  }
+
   g.TurnCore = {
     isAcknowledged, isQuestionResolved, isConductorStop, isPhantomResult,
-    isResultError, isTurnStart, stateAtTurnStart, stopInfo, stopWord, stopText, testInfo,
+    isResultError, isTurnStart, stateAtTurnStart, stopInfo, stopWord, stopText, testInfo, reconcileBusy,
     summarizePrompt, summarizeResult, cleanPrompt, createJournal, FULL_MAX,
   };
 })(typeof globalThis !== "undefined" ? globalThis : window);

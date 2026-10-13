@@ -382,6 +382,35 @@ export async function browserChecks(sb, t) {
       } finally { await mctx2.close(); }
       return `item « ${long.title} » : ${long.detailFull.length} car. de détail + ${long.more.split('\n').length} ligne(s) de suite ; clic, Entrée, Espace ; ✕, Échap, hors zone ; action essai OK ; mobile plein écran`;
     });
+    // 0.78.1 — user report (2026-10-13): « A partir du moment où quelque chose
+    // tourne, attaché à un projet, et que ça empêche le projet d'avancer (en
+    // l'occurence le musicien est affiché comme Prêt), alors c'est un problème ».
+    await check(B, 'busy-not-ready', 'Musicien dont le tour a écrit son result mais dont le processus vit encore : la carte du Pilotage dit « En cours » (jamais Prêt ni Terminé) et ce qui tourne ; le processus arrêté, son état revient', async () => {
+      if (!(await page.evaluate(() => !!window.TurnCore?.reconcileBusy))) NA('correction absente de cet état du code');
+      const pidFile = path.join(sb.root, 'logs', 'alpha.pid');
+      const card = () => page.evaluate(() => {
+        const c = document.querySelector('#rail-body .rail-card[data-name="alpha"]');
+        return c ? { state: c.dataset.state, word: c.querySelector('.rr-state')?.textContent.trim() || '', line: c.querySelector('.rc-line')?.textContent.trim() || '', model: window.App.musicians.get('alpha')?.state } : null;
+      });
+      const before = await card();
+      assert(before && before.state !== 'live', `carte alpha au départ : ${JSON.stringify(before)}`);
+      const keep = spawn(process.execPath, ['-e', 'setInterval(()=>{},1e6)'], { stdio: 'ignore', windowsHide: true });
+      let during;
+      try {
+        fs.writeFileSync(pidFile, String(keep.pid));
+        await page.evaluate(() => window.App.pollPupitre());
+        assert(await until(async () => { const c = await card(); return c?.state === 'live' && /processus encore actif/.test(c.line); }, 15_000), `carte jamais passée « En cours » : ${JSON.stringify(await card())}`);
+        during = await card();
+        assert(/En cours/.test(during.word) && !/Prêt|Terminé/.test(during.word) && during.model === 'live', `carte : ${JSON.stringify(during)}`);
+        await shot(page, 'busy-not-ready');
+      } finally {
+        keep.kill();
+        for (let i = 0; i < 20 && fs.existsSync(pidFile); i++) { try { fs.unlinkSync(pidFile); } catch { await sleep(150); } }
+      }
+      await page.evaluate(() => window.App.pollPupitre());
+      assert(await until(async () => { const c = await card(); return c && c.state === before.state; }, 15_000), `état non revenu : ${JSON.stringify(await card())}`);
+      return `alpha : « ${before.word} » → « ${during.word} » (${during.line.slice(0, 60)}…) → « ${(await card()).word} »`;
+    });
     const railHeads = () => page.evaluate(() => [...document.querySelectorAll('#rail-body .rail-group-head')].map(h => h.textContent.replace(/\s+/g, ' ').trim()));
     await check(B, 'rail', 'Rail PILOTAGE : À examiner + cadres des musiciens (ou dépliage « Tous » sans cadres)', async () => {
       const txt = await page.textContent('#rail-body');

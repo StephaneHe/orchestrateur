@@ -260,6 +260,51 @@ export function pidAlive(pid) {
   try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
 }
 
+// ── A turn whose process outlives its `result` (0.78.1) ────────────────────
+// User report (2026-10-13): « A partir du moment où quelque chose tourne,
+// attaché à un projet, et que ça empêche le projet d'avancer (en l'occurence
+// le musicien est affiché comme Prêt), alors c'est un problème » — « toute
+// tâche qui tourne attachée à un musicien fait que le musicien est En cours
+// […], pas Prêt ». The CLI keeps the turn's process alive after its `result`
+// while a background job it started still runs (e.g. a regression). The
+// server already treats that musician as busy (dispatchPidAlive holds its
+// queue): the displayed state must say the same. Same signal, same 12 h
+// staleness bound as server.js `dispatchPidAlive`.
+export const PID_STALE_MS = 12 * 3600_000;
+
+/** Process of the musician's turn, from logs/<p>.pid: {pid, alive, ageMs}. */
+export function turnProcess(project, logsDir = DEFAULT_LOGS) {
+  const file = path.join(logsDir, `${project}.pid`);
+  let st;
+  try { st = fs.statSync(file); } catch { return null; }
+  const pid = readPid(project, logsDir);
+  if (!pid) return null;
+  const ageMs = Date.now() - st.mtimeMs;
+  return { pid, alive: ageMs < PID_STALE_MS && pidAlive(pid), ageMs };
+}
+
+/** Background tasks started by the CLI and not finished yet, from its own
+ *  `system/task_started` (is_backgrounded) / `system/task_notification`. */
+export function openBackgroundTasks(lines) {
+  const open = new Map();
+  for (const line of lines) {
+    if (!line.includes('"task_')) continue;
+    let ev; try { ev = JSON.parse(line); } catch { continue; }
+    if (ev?.type !== 'system' || !ev.task_id) continue;
+    if (ev.subtype === 'task_started' && ev.is_backgrounded) {
+      open.set(ev.task_id, { id: ev.task_id, what: String(ev.description || ev.task_type || 'tâche en arrière-plan').slice(0, 160), type: ev.task_type || null, at: ev.timestamp ? Date.parse(ev.timestamp) : null });
+    } else if (ev.subtype === 'task_notification') {
+      open.delete(ev.task_id);
+    }
+  }
+  return [...open.values()].slice(-5);
+}
+
+/** The log says the turn is over, but its process still runs ⇒ busy. */
+export function stillRunning(logState, proc) {
+  return (logState === 'idle' || logState === 'unread') && !!proc?.alive;
+}
+
 export function fmtAge(ms) {
   if (!isFinite(ms) || ms < 0) return '—';
   const s = Math.floor(ms / 1000);
@@ -376,6 +421,10 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
     !(waitingProvider && waitingProvider.sinceMs < PROVIDER_WAIT_MAX_MS);
   const pid = readPid(name, logsDir);
   const alive = pid ? pidAlive(pid) : null;
+  // 0.78.1 — result written, process still alive: the musician is « En cours ».
+  const proc = !inFlight ? turnProcess(name, logsDir) : null;
+  const lingers = stillRunning(state, proc);
+  const background = lingers ? openBackgroundTasks(lines) : [];
   const lastKind = lastKindOf(last, tail);
   // Seulement si la question est ENCORE ouverte : avant 0.25.0 le texte de la
   // dernière question restait remonté pendant le tour suivant et après un
@@ -394,9 +443,20 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
     ? (String(missionEv.text || '').split('\n').map(s => s.trim()).find(Boolean) || '').slice(0, 120) || null
     : null;
 
+  const lingering = lingers ? {
+    pid: proc.pid,
+    sinceMs: lastTurn?.endedAt ? Math.max(0, now - lastTurn.endedAt) : null,
+    background,
+  } : null;
+
   return {
     name,
-    state,
+    // 0.78.1: `live` while the turn's process outlives its result (never
+    // « Prêt » while something attached to the musician runs). `logState`
+    // keeps what the log alone says.
+    state: lingering ? 'live' : state,
+    logState: state,
+    lingering,
     // Additive: finished but waiting on a chef decision (state stays `unread`).
     awaitingChef,
     // Additif 0.45.0 : {id, tool, preview, deadline, risk, count} tant qu'une
@@ -411,7 +471,10 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
     // separate stall signal (the child was SIGKILLed or crashed silently).
     deadInFlight: inFlight && pid != null && alive === false,
     lastKind,
-    activity: waitingProvider?.text ? `⏳ ${waitingProvider.text.replace(/depuis .*$/, `depuis ${fmtAge(waitingProvider.sinceMs)}`)}` : activityPreview(last, lastAssistantText),
+    activity: lingering
+      ? `⏳ tour terminé, processus encore actif${lingering.sinceMs != null ? ` depuis ${fmtAge(lingering.sinceMs)}` : ''}` +
+        (background.length ? ` : ${background.map(b => b.what).join(' · ')}` : ' (travail en arrière-plan)')
+      : waitingProvider?.text ? `⏳ ${waitingProvider.text.replace(/depuis .*$/, `depuis ${fmtAge(waitingProvider.sinceMs)}`)}` : activityPreview(last, lastAssistantText),
     silentMs,
     fileSilentMs,
     turnElapsedMs,

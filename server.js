@@ -2507,7 +2507,11 @@ app.get('/api/config', (req, res) => {
         provider: p.provider ?? defaults.provider ?? 'claude',
         attachedSession: sessions.get(p.name) || null,
         readAt: readMarker(p.name),
-        currentState: snap.state,
+        // 0.78.1 — never « Prêt » while the turn's process still runs after its
+        // result: the same signal (dispatchPidAlive) that holds the queue.
+        ...((snap.state === 'idle' || snap.state === 'unread') && dispatchPidAlive(p.name)
+          ? { currentState: 'live', heldState: snap.state }
+          : { currentState: snap.state }),
         lastLine: snap.lastLine,
         unreadCount: snap.unreadCount,
         questionResolved: snap.questionResolved || null,

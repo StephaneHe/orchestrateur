@@ -11,6 +11,42 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.78.1] - 2026-10-13
+
+### Fixed
+
+- (server) A musician whose turn's process still runs is never shown
+  « Prêt » (user reports: « A partir du moment où quelque chose tourne,
+  attaché à un projet, et que ça empêche le projet d'avancer (en l'occurence
+  le musicien est affiché comme Prêt), alors c'est un problème qu'il faut
+  corriger. » — « […] toute tâche qui tourne attachée à un musicien fait que
+  le musicien est En cours, ou en Reflexion, en tout cas,pas Prêt »).
+  - Cause: the CLI keeps the turn's process alive after its `result` while a
+    background job it started still runs (here, a targeted regression). Every
+    state reducer ended the turn on the `result` alone, so the musician went
+    « Terminé » then « Prêt », while the server, through the turn's process
+    (`logs/<p>.pid`, `dispatchPidAlive`), rightly held its queue.
+  - Fix, at the source and with that same signal: `scanProject`
+    (`/api/pupitre`, fleet-status, the Android app) returns `state: 'live'`
+    while the log says idle/unread but the turn's process is alive (`.pid`
+    under 12 h, the queue's own bound), with `logState` (what the log alone
+    says) and `lingering {pid, sinceMs, background}`. `background` lists the
+    CLI's own unfinished background tasks (`system/task_started` with
+    `is_backgrounded`, minus `system/task_notification`), and the activity
+    line says what runs: « ⏳ tour terminé, processus encore actif depuis …
+    : <task> ». `/api/config` gives `currentState: 'live'` (+ `heldState`)
+    from `dispatchPidAlive`. The dashboard reconciles every musician with
+    each `/api/pupitre` snapshot (`TurnCore.reconcileBusy`), so cards, rail,
+    panel and Projets view say « En cours », and the log state comes back
+    when the process stops. A question or a failure keeps its state. No
+    alarm, nothing is killed (it can be legitimate work).
+- Tests: new suite `_test_busy_never_ready.mjs` (the incident reproduced with
+  a real live process: live while alive, background task named, back to the
+  log state once stopped, stale `.pid`, question kept, client rule, wiring),
+  HTTP `busy-not-ready` (`/api/pupitre` and `/api/config` on the test
+  server), browser `busy-not-ready` (the rail card says « En cours » and
+  what runs, then its state again).
+
 ## [0.78.0] - 2026-10-13
 
 ### Added

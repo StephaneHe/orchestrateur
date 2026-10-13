@@ -383,6 +383,24 @@ réducteurs.
   relit jamais la question du tour précédent.
 - Recette : `scripts/_test_examine_after_chef.mjs`.
 
+**Processus vivant après le `result` = « En cours », jamais « Prêt » (0.78.1).**
+Signalement : « toute tâche qui tourne attachée à un musicien fait que le
+musicien est En cours, ou en Reflexion, en tout cas,pas Prêt ». Le CLI garde
+le processus du tour vivant après son `result` tant qu'une tâche qu'il a
+lancée en arrière-plan tourne ; le serveur retient alors la file
+(`dispatchPidAlive`). Même signal pour l'affichage :
+- `scanProject` (`/api/pupitre`, fleet-status, app Android) : `state: 'live'`
+  si le log dit idle/unread et que `logs/<p>.pid` (moins de 12 h) vit ;
+  `logState` = ce que dit le log seul ; `lingering {pid, sinceMs,
+  background}` (tâches `system/task_started` en arrière-plan sans
+  `task_notification`) ; activité « ⏳ tour terminé, processus encore actif… ».
+  Pas de `stalled`, aucune alarme, rien n'est tué.
+- `/api/config` : `currentState: 'live'` + `heldState`.
+- Client : `TurnCore.reconcileBusy(state, held, lingering)` appliqué à chaque
+  instantané `/api/pupitre` (`applyPupitreToCards`) ; l'état du log revient
+  quand le processus s'arrête. Une question ou un échec gardent leur état.
+- Recettes : `_test_busy_never_ready.mjs`, HTTP et navigateur `busy-not-ready`.
+
 ---
 
 ## Provider et model d'un dispatch (`dispatch.mjs`)

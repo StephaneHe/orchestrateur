@@ -92,6 +92,9 @@ class Musician {
     // on page load. SSE only streams NEW events, so without this every
     // musician would start at `idle` after reload regardless of actual state.
     this.state = project.currentState || "idle";
+    // 0.78.1 : `live` because the turn's process outlives its result — the log
+    // state to come back to when it stops.
+    this.heldState = project.heldState || null;
     // Dernier acquittement de question (« répondue via le chef »), 0.25.0.
     this.questionResolved = project.questionResolved
       ? { ts: Date.parse(project.questionResolved.ts) || 0, note: project.questionResolved.note || "" }
@@ -168,6 +171,7 @@ class Musician {
         this.lastLang = null;
         this.lastAssistantText = "";
         this.turnStartMs = Date.parse(raw.timestamp) || Date.now();
+        this.heldState = null;
         this.setState(window.TurnCore.stateAtTurnStart(this.state));
       }
       this.lastLine = stripReplyPrefixes(String(raw.text || "")).replace(/\s+/g, " ").trim().slice(0, 140);
@@ -187,6 +191,7 @@ class Musician {
         this.stopped = null;
         this.lastAssistantText = "";
         this.turnStartMs = Date.parse(raw.timestamp) || Date.now();
+        this.heldState = null;
         this.setState(window.TurnCore.stateAtTurnStart(this.state));
       }
     } else if (t === "notification" && raw.subtype === "question_resolved") {
@@ -314,6 +319,7 @@ class Musician {
   markRead() {
     this.unreadCount = 0;
     if (this.state === "unread") this.setState("idle");
+    if (this.heldState === "unread") this.heldState = "idle";
     const ts = new Date().toISOString();
     this.readAt = ts;
     // Fire-and-forget — persist on the server so reload / other clients
@@ -3444,6 +3450,16 @@ const App = {
     const snap = this.pupitreSnapshot;
     if (!snap || !Array.isArray(snap.fleet)) return;
     const S = window.Salle;
+    // 0.78.1 — « toute tâche qui tourne attachée à un musicien fait que le
+    // musicien est En cours […], pas Prêt » : the server knows when a turn's
+    // process outlives its result (`lingering`), the log stream does not.
+    for (const r of snap.fleet) {
+      const m = this.musicians.get(r.name);
+      if (!m || !window.TurnCore?.reconcileBusy) continue;
+      const next = window.TurnCore.reconcileBusy(m.state, m.heldState || null, !!r.lingering);
+      m.heldState = next.held;
+      if (next.state !== m.state) m.setState(next.state);
+    }
     window.Projets?.applyUi(snap.ui); window.Activite?.applyUi(snap.ui); window.Tts?.applyUi(snap.ui); window.Models?.applyUi(snap.ui); window.SidePanel?.applyUi(snap.ui);
     window.Projets?.render();
     S?.renderRail();

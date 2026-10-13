@@ -308,6 +308,32 @@ async function apiChecks(sb) {
     assert(by.lambda.questionResolved?.note === 'répondu via le chef', 'questionResolved lambda');
     assert(!JSON.stringify(c).includes(sb.token), 'le jeton fuit dans /api/config');
   });
+  // 0.78.1 — user report (2026-10-13): « toute tâche qui tourne attachée à un
+  // musicien fait que le musicien est En cours, ou en Reflexion, en tout cas,
+  // pas Prêt ». alpha's turn has its result; its process is made to live on.
+  await check(S, 'busy-not-ready', 'Tour terminé (result) mais processus encore vivant : /api/pupitre et /api/config disent « En cours » (live), jamais Prêt, avec ce qui tourne ; le processus arrêté, l’état du log revient ; rien n’est tué', async () => {
+    if (!fs.readFileSync(path.join(sb.root, 'scripts', 'fleet-status-core.mjs'), 'utf8').includes('stillRunning')) NA('correction absente de cet état du code');
+    const pidFile = path.join(sb.root, 'logs', 'alpha.pid');
+    assert(!fs.existsSync(pidFile), 'alpha.pid existe déjà');
+    const before = (await json('/api/pupitre')).fleet.find(r => r.name === 'alpha');
+    assert(before && before.state !== 'live' && !before.lingering, `alpha au départ : ${before?.state}`);
+    const keep = spawn(process.execPath, ['-e', 'setInterval(()=>{},1e6)'], { stdio: 'ignore', windowsHide: true });
+    try {
+      fs.writeFileSync(pidFile, String(keep.pid));
+      const row = await until(async () => (await json('/api/pupitre')).fleet.find(r => r.name === 'alpha' && r.lingering) || null, 8000);
+      assert(row && row.state === 'live' && row.logState === before.state && row.lingering.pid === keep.pid, `pupitre : ${JSON.stringify(row && { s: row.state, l: row.logState, g: row.lingering })}`);
+      assert(/processus encore actif/.test(row.activity || '') && !row.stalled && !row.deadInFlight, `activité / alarmes : ${row.activity}`);
+      const cfg = (await json('/api/config')).projects.find(p => p.name === 'alpha');
+      assert(cfg.currentState === 'live' && cfg.heldState === before.state, `config : ${JSON.stringify({ c: cfg.currentState, h: cfg.heldState })}`);
+      assert(keep.exitCode === null, 'le processus a été tué');
+    } finally {
+      keep.kill();
+      for (let i = 0; i < 20 && fs.existsSync(pidFile); i++) { try { fs.unlinkSync(pidFile); } catch { await new Promise(r => setTimeout(r, 150)); } }
+    }
+    const after = await until(async () => { const r = (await json('/api/pupitre')).fleet.find(x => x.name === 'alpha'); return r && !r.lingering ? r : null; }, 8000);
+    assert(after && after.state === before.state, `après l’arrêt : ${after?.state}`);
+    return `alpha : ${before.state} → live tant que le processus vit (pupitre et config) → ${after.state} après son arrêt`;
+  });
   await check(S, 'pupitre', '/api/pupitre : santé (stall, processus perdu, PID vivant), file, pool', async () => {
     const p = await json('/api/pupitre');
     const by = Object.fromEntries(p.fleet.map(r => [r.name, r]));
