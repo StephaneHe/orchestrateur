@@ -11,6 +11,37 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.84.0] - 2026-10-13
+
+### Added
+
+- (server) « TODO: » lines go to the TODO list, by the router's code — user
+  request « Dans ma requete, si je commence par TODO: , alors ce qui suit
+  doit etre ajoute dans la todo list. Ce doit etre une fonctionalite codee
+  dans le routeur. »
+  - Where: `dispatch.mjs`, at the entrance of the chef's turn, before the
+    Routage pipeline and before any model (`scripts/todo-capture.mjs`). Only
+    a user message to the chef (no `--source`): callbacks, relays, wake-ups
+    and messages to musicians are never captured.
+  - What: every line starting with `TODO:` (also `TODO :`, any case; only at
+    the start of a line; an empty one is dropped) becomes an item of the
+    chef's `TODO_LIST.md` — the list of the user's pending requests, shown
+    in the dashboard's TODO panel and read by the Routage context. Same
+    format as `scripts/todo.mjs`: `- [ ] (YYYY-MM-DD HH:MM) <text after the
+    prefix, verbatim> <!-- id:t-… -->`, open; same lock (`TODO_LIST.md.lock`)
+    and atomic write.
+  - Then: a message made only of TODO lines ends at once — user prompt,
+    synthetic answer « 📝 Ajouté(s) à la TODO list (chef/TODO_LIST.md) par le
+    routeur : … » and a closing result (`todo_capture: true`), no model and
+    no Routage run. A mixed message is routed without its TODO lines, with
+    a `[Routeur]` note saying what was captured. Event
+    `system/todo_capture {items, list}` in the chef's log.
+  - A failed write (list locked, folder missing) loses nothing: the whole
+    message goes on to the chef with the reason.
+- Tests: suite `_test_todo_capture.mjs` (parser, dated verbatim write, real
+  `dispatch.mjs`: TODO only without any model, plain chef and chef in
+  Routage; mixed message; callback and musician untouched; failed write).
+
 ## [0.83.0] - 2026-10-13
 
 ### Added

@@ -1170,6 +1170,42 @@ let pipelineBypass = null;   // trace d'un tour qui ne passe PAS par un pipeline
 if (horsPipelineArg != null && !PIPE_STEP) {
   pipelineBypass = { reason: String(horsPipelineArg).replace(/\s+/g, ' ').trim().slice(0, 300), by: 'hors-pipeline', enforced: ENFORCED || (CHEF_TARGET && ENFORCEMENT.chef) };
 }
+// ---------- « TODO: » lines of a user message (0.84.0) -----------------------
+// User request: « Dans ma requete, si je commence par TODO: , alors ce qui suit
+// doit etre ajoute dans la todo list. Ce doit etre une fonctionalite codee dans
+// le routeur. » Done here by code, before any routing and without a model: a
+// user message to the chef (no --source: not a callback, relay or wake) has
+// its « TODO: » lines added to the chef's TODO_LIST.md (scripts/todo-capture.mjs);
+// the rest is routed as usual, told what was captured. Nothing else ⇒ the turn
+// ends here.
+if (CHEF_TARGET && !sourceProject && !PIPE_STEP && !DUAL_BRANCH && !dualSynthesis) {
+  const cap = await import('./todo-capture.mjs');
+  const { todos, rest } = cap.splitTodoLines(prompt);
+  if (todos.length) {
+    const chefProject = config.projects.find(p => p.name === CONDUCTOR);
+    const chefLog = (ev) => { try { fs.appendFileSync(path.join(LOGS, `${projectName}.jsonl`), JSON.stringify({ orch_turn: TURN_ID, ...ev, timestamp: new Date().toISOString() }) + '\n'); } catch {} };
+    let added = [], error = null;
+    try {
+      if (!chefProject?.path) throw new Error(`projet « ${CONDUCTOR} » sans dossier dans config.json`);
+      added = cap.captureTodos(chefProject.path, todos);
+    } catch (e) { error = e.message; }
+    const text = error
+      ? `✕ TODO non ajouté${todos.length > 1 ? 's' : ''} (${error}) :\n${todos.map(t => `- ${t}`).join('\n')}`
+      : cap.captureText(added, `${CONDUCTOR}/TODO_LIST.md`);
+    chefLog({ type: 'system', subtype: 'todo_capture', items: added, ...(error ? { error, lines: todos } : {}), list: `${CONDUCTOR}/TODO_LIST.md` });
+    console.log(`[dispatch] ${text.split('\n')[0]}`);
+    if (!rest && !error) {
+      // Only TODO lines: the turn ends here, no model involved.
+      chefLog({ type: 'user_prompt', text: prompt, ...(testLabel ? { test: { label: testLabel } } : {}) });
+      chefLog({ type: 'assistant', message: { model: '<synthetic>', content: [{ type: 'text', text }] } });
+      chefLog({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, duration_ms: 1, duration_api_ms: 1,
+        stop_reason: 'end_turn', todo_capture: true, result: text });
+      process.exit(0);
+    }
+    // A failed write never loses the lines: the whole message goes on, with the reason.
+    prompt = error ? `${prompt}\n\n[Routeur] ${text}` : `${rest}\n\n[Routeur] ${text}`;
+  }
+}
 if (CHEF_ROUTED) {
   // Demande (message, question d'un musicien) ou réveil apportant des résultats.
   const mode = (sourceProject === 'wake' || /^\s*\[CALLBACK_WAKE/.test(prompt)) ? 'callback' : 'demande';

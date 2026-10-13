@@ -1604,6 +1604,26 @@ par le model de la case `routage.classifier`.**
 - Recettes : `_test_pipeline_onboard.mjs`, HTTP `pipeline-health`,
   navigateur `health-view`.
 
+## Routeur : les lignes « TODO: » vont dans la TODO list, par le code (0.84.0)
+
+Demande utilisateur (2026-10-13) : « Dans ma requete, si je commence par
+TODO: , alors ce qui suit doit etre ajoute dans la todo list. Ce doit etre une
+fonctionalite codee dans le routeur. »
+
+- `dispatch.mjs`, à l'entrée du tour du chef, **avant** le Routage et sans
+  model (`scripts/todo-capture.mjs`) : seulement un message de l'utilisateur
+  (pas de `--source` : ni callback, ni relais, ni réveil, ni musicien).
+- Chaque ligne qui commence par `TODO:` (aussi `TODO :`, toute casse) devient
+  un item du `TODO_LIST.md` **du chef** (celui du panneau TODO, lu par
+  `routingContext`) : format de `todo.mjs`, daté, texte verbatim, même verrou
+  et écriture atomique. Trace : `system/todo_capture`.
+- Message fait seulement de lignes TODO : le tour se termine aussitôt
+  (réponse synthétique « 📝 Ajouté… », result `todo_capture: true`), aucun
+  model, aucune exécution du Routage. Message mixte : le reste est routé avec
+  une note `[Routeur]`. Écriture impossible : le message entier part au chef,
+  avec la raison (rien n'est perdu).
+- Recette : `_test_todo_capture.mjs`.
+
 ## Routage : contexte, « suite », lacunes tardives (0.57.0)
 
 - **`routingContext`** (moteur) écrit `contexte.md` avant Lire. Il contient :
