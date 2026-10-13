@@ -327,6 +327,44 @@ async function apiChecks(sb) {
     assert(JSON.parse(fs.readFileSync(notesFile, 'utf8')).notes.alpha['t-a10003'].length === 3, 'un refus a écrit une note');
     return '2 notes ajoutées puis rendues avec l’item, fichier relu (survit au redémarrage), TODO_LIST.md intact ; refus : autre origine 403, item/projet inconnu 404, vide 400';
   });
+  // User request (2026-10-13), part 5/5: « Chaque item est drag & dropable, et
+  // les positions doivent persister. »
+  await check(S, 'todo-order', 'Ordre des items TODO : POST /api/order/todo (même origine) l’enregistre dans todo-order.json, GET /api/todo rend les items dans cet ordre (faits toujours en bas), le fichier relu à chaque changement (survit au redémarrage) ; TODO_LIST.md jamais modifié ; liste vide = tri par défaut ; refus : autre origine, clé invalide', async () => {
+    if (!fs.existsSync(path.join(sb.root, 'scripts', 'todo-order.mjs'))) NA('glisser-déposer absent de cet état du code');
+    const lists = ['alpha', 'chef', 'beta'].map(n => path.join(sb.root, 'projects', n, 'TODO_LIST.md'));
+    const before = lists.map(f => fs.readFileSync(f));
+    const send = (keys, extra = {}) => fetch(`${sb.url}/api/order/todo`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json', ...extra }, body: JSON.stringify({ keys }) });
+    const keysOf = (items) => items.map(i => `${i.project}/${i.id}`);
+    try {
+      const all0 = (await json('/api/todo')).items;
+      const open0 = keysOf(all0.filter(i => i.status !== 'done'));
+      assert(open0.length >= 3, `items non faits : ${open0.length}`);
+      const wanted = [...open0].reverse();
+      const r1 = await send([...wanted, ...keysOf(all0.filter(i => i.status === 'done')), 'alpha/t-inexistant']);
+      const j1 = await r1.json();
+      assert(r1.ok && j1.ok && !j1.order.includes('alpha/t-inexistant'), `enregistrement : ${r1.status} ${JSON.stringify(j1).slice(0, 200)}`);
+      const all1 = (await json('/api/todo')).items;
+      const open1 = keysOf(all1.filter(i => i.status !== 'done'));
+      assert(open1.join(' ') === wanted.join(' '), `ordre rendu : ${open1.join(' ')}`);
+      assert(all1.findIndex(i => i.status === 'done') === open1.length, 'un fait est remonté parmi les non faits');
+      const alphaOnly = keysOf((await json('/api/todo?project=alpha')).items.filter(i => i.status !== 'done'));
+      assert(alphaOnly.join(' ') === wanted.filter(k => k.startsWith('alpha/')).join(' '), 'vue d’un seul projet pas dans le même ordre');
+      // Nothing only in memory: an edit of the file is served as is (a restart
+      // only rereads it).
+      const orderFile = path.join(sb.root, 'todo-order.json');
+      const disk = JSON.parse(fs.readFileSync(orderFile, 'utf8'));
+      disk.order = [...open0];
+      fs.writeFileSync(orderFile, JSON.stringify(disk, null, 2) + '\n');
+      assert(keysOf((await json('/api/todo')).items.filter(i => i.status !== 'done')).join(' ') === open0.join(' '), 'le serveur ne relit pas todo-order.json');
+      assert((await send(wanted, { Origin: 'http://evil.example' })).status === 403, 'autre origine acceptée');
+      assert((await send(['../../etc/passwd'])).status === 400, 'clé invalide acceptée');
+      assert((await send('alpha/t-a10003')).status === 400, 'corps sans liste accepté');
+      lists.forEach((f, n) => assert(Buffer.compare(before[n], fs.readFileSync(f)) === 0, `${f} modifié par l’ordre`));
+      return `${open0.length} non faits inversés puis rendus dans cet ordre (vue complète et vue alpha), faits en bas, fichier relu ; TODO_LIST.md intacts ; refus 403 / 400`;
+    } finally {
+      await send([]);
+    }
+  });
   await check(S, 'config', '/api/config : flotte, états hydratés, parcage, lecture', async () => {
     const c = await json('/api/config');
     const by = Object.fromEntries(c.projects.map(p => [p.name, p]));

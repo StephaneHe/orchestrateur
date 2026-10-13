@@ -722,6 +722,19 @@ de la prod).
   todo-panel.js ») : le panneau peut faire un POST, vers cette route
   seulement (`_test_todo.mjs`). Recettes : `_test_todo_notes.mjs`, HTTP `todo-notes`,
   navigateur `todo-item-notes`.
+- **Glisser-déposer** (0.83.0, partie 5/5, « Chaque item est drag & dropable,
+  et les positions doivent persister ») : souris n'importe où sur l'item
+  (seuil 6 px), doigt sur la poignée `.ti-grip` (44 px sur mobile), ou
+  Alt+↑/↓. Un item ne quitte jamais sa partie (non faits en haut, faits en
+  bas). Le glisser n'ouvre pas l'overlay (`suppressClickUntil`), le clic simple
+  si. Ordre de **l'utilisateur** : `todo-order.json` (racine, non versionné,
+  `scripts/todo-order.mjs`, écriture atomique, relu quand il change, jamais
+  réécrit s'il est illisible), **jamais dans un `TODO_LIST.md`**. Un seul
+  ordre global de clés `<projet>/<id>` ; `POST /api/order/todo {keys}`
+  (`sameOriginOnly`, liste vide = tri par défaut) ; `GET /api/todo` applique
+  `applyOrder` (items jamais placés d'abord). `_test_todo.mjs` autorise ce
+  POST en plus des notes (même accord de l'utilisateur). Recettes :
+  `_test_todo_order.mjs`, HTTP `todo-order`, navigateur `todo-item-drag`.
 - **Onglet ⎇ Git** (0.76.0, même demande, partie git) : l'arbre git de chaque
   musicien, en **lecture seule** (`public/git-panel.js`, pill `#btn-git`).
   - On choisit le musicien ; les projets sans dépôt sont listés, désactivés.

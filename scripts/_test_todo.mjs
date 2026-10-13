@@ -166,8 +166,9 @@ try {
   ok(/type="checkbox" class="ti-box" disabled/.test(tp), 'cases désactivées');
   // 0.75.0 requirement « the panel sends nothing », widened with the user's
   // explicit agreement (2026-10-13, « J'autorise l'envoie de POST à partir de
-  // todo-panel.js »): a POST is allowed to the notes route only. Every other
-  // write from the panel stays forbidden.
+  // todo-panel.js »): a POST is allowed to the notes route (0.81.0) and, under
+  // the same agreement, to the order route of the drag and drop (0.83.0,
+  // part 5/5). Every other write from the panel stays forbidden.
   const calls = tp.split(/\bfetch\(/).slice(1).map(c => {
     const url = (c.match(/^\s*([`"'])(.*?)\1/) || [])[2] || '?';
     const body = c.slice(0, c.search(/\)\s*;/) + 1 || 600);
@@ -175,8 +176,13 @@ try {
     return { url, method };
   });
   const writes = calls.filter(c => c.method !== 'GET');
-  ok(writes.length > 0 && writes.every(c => c.method === 'POST' && c.url.startsWith('/api/notes/todo/')),
-    `écritures du panneau : POST vers /api/notes/todo/ seulement (${JSON.stringify(writes)})`);
+  ok(writes.length > 0 && writes.every(c => c.method === 'POST' && (c.url.startsWith('/api/notes/todo/') || c.url === '/api/order/todo')),
+    `écritures du panneau : POST vers /api/notes/todo/ et /api/order/todo seulement (${JSON.stringify(writes)})`);
+  const orderMod = read(path.join(ROOT, 'scripts', 'todo-order.mjs'));
+  const orderWrites = orderMod.match(/\b(writeFileAtomic|writeFileSync|writeFile|appendFileSync|appendFile|renameSync|renameRetry|unlinkSync)\s*\([^,)]*/g) || [];
+  ok(orderWrites.length > 0 && orderWrites.every(w => /\(\s*file$/.test(w)) && !/TODO_FILE/.test(orderMod)
+    && /createOrderStore\(path\.join\(__dirname, ORDER_FILE\)\)/.test(srv) && /ORDER_FILE = 'todo-order\.json'/.test(orderMod),
+    `l’ordre n’écrit que todo-order.json, jamais TODO_LIST.md (${JSON.stringify(orderWrites)})`);
   ok(!/XMLHttpRequest|sendBeacon|new\s+WebSocket|EventSource\([^)]*method/.test(tp), 'aucun autre canal d’envoi dans le panneau');
   ok(!/\/api\/todo[^"'`]*["'`]\s*,\s*\{[^}]*method:\s*["'`](POST|PUT|PATCH|DELETE)/i.test(tp), 'aucune écriture vers /api/todo depuis le panneau');
   const notesMod = read(path.join(ROOT, 'scripts', 'todo-notes.mjs'));

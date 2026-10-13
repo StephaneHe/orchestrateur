@@ -545,6 +545,89 @@ export async function browserChecks(sb, t) {
       await page.keyboard.press('Escape');
       return `« ${it.title} » : 2 notes (bouton, Ctrl+Entrée) gardées au rechargement, ✎ ${before + 2} dans la liste ; vide refusée ; brouillon gardé (rafraîchissement, changement d’item)`;
     });
+    // User request (2026-10-13), part 5/5: « Chaque item est drag & dropable, et
+    // les positions doivent persister. »
+    await check(B, 'todo-item-drag', 'Panneau TODO : chaque item se déplace par glisser-déposer ; l’ordre obtenu est enregistré par le serveur et revient après rechargement de la page ; le glisser n’ouvre pas l’overlay, le clic simple l’ouvre toujours ; Alt+↑/↓ au clavier ; un item ne quitte jamais sa partie (non faits en haut, faits en bas) ; poignée de 44 px sur mobile', async () => {
+      if (!(await page.evaluate(() => !!window.TodoPanel?.isDragging))) NA('glisser-déposer absent de cet état du code');
+      const reset = () => fetch(`${sb.url}/api/order/todo`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ keys: [] }) });
+      const keysIn = (pg, sec) => pg.evaluate((s) => [...document.querySelectorAll(`#side-panel .todo-sec[data-sec="${s}"] .todo-item`)].map(li => li.dataset.key), sec);
+      const serverOpen = async () => (await (await fetch(`${sb.url}/api/todo`, { headers: H })).json()).items.filter(i => i.status !== 'done').map(i => `${i.project}/${i.id}`);
+      const overlayOpen = (pg) => pg.evaluate(() => !!window.TodoPanel?.isItemOpen());
+      const dragTo = async (pg, fromSel, toSel, where = 'top') => {
+        const box = async (sel) => {
+          const l = pg.locator(sel);
+          await l.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+          await l.scrollIntoViewIfNeeded().catch(() => {});
+          const bb = await l.boundingBox();
+          if (!bb) throw new Error(`élément invisible : ${sel} (onglet du panneau : ${await pg.evaluate(() => document.querySelector('#side-panel [aria-selected="true"]')?.textContent || '?')}, panneau ouvert : ${await pg.evaluate(() => !!document.querySelector('#side-panel.is-open'))})`);
+          return bb;
+        };
+        let a = await box(fromSel); const b = await box(toSel);
+        a = (await pg.locator(fromSel).boundingBox()) || a;   // the second scroll may have moved it
+        await pg.mouse.move(a.x + a.width / 2, a.y + 8);
+        await pg.mouse.down();
+        const ty = where === 'top' ? b.y + 3 : b.y + b.height - 3;
+        for (let k = 1; k <= 8; k++) await pg.mouse.move(a.x + a.width / 2, a.y + 8 + (ty - a.y - 8) * k / 8);
+        await pg.mouse.up();
+      };
+      try {
+        await reset();
+        await page.evaluate(() => { try { localStorage.removeItem('todo.filter.project'); } catch {} });
+        // Another tab (Git) may be the one left open: open the TODO tab itself.
+        await page.evaluate(() => SidePanel.open('todo'));
+        await page.selectOption('#side-panel .todo-project', '').catch(() => {});
+        await page.evaluate(() => window.TodoPanel.reload());
+        assert(await until(async () => (await keysIn(page, 'open')).length >= 3, 8000), 'moins de 3 items non faits');
+        const open0 = await keysIn(page, 'open');
+        const li = (k) => `#side-panel .todo-item[data-key="${k}"]`;
+        // 1. Drag the third open item above the first one.
+        await dragTo(page, `${li(open0[2])} .ti-title`, li(open0[0]), 'top');
+        const want = [open0[2], open0[0], open0[1], ...open0.slice(3)];
+        assert(await until(async () => (await keysIn(page, 'open')).join(' ') === want.join(' '), 3000), `ordre affiché : ${(await keysIn(page, 'open')).join(' ')}`);
+        await sleep(500);
+        assert(!(await overlayOpen(page)), 'le glisser a ouvert l’overlay');
+        assert(await until(async () => (await serverOpen()).join(' ') === want.join(' '), 5000), `ordre du serveur : ${(await serverOpen()).join(' ')}`);
+        // 2. Persisted: back after a page reload.
+        await page.reload(); await page.locator('.brand').waitFor();
+        await page.evaluate(() => SidePanel.open('todo'));
+        assert(await until(async () => (await keysIn(page, 'open')).join(' ') === want.join(' '), 8000), `après rechargement : ${(await keysIn(page, 'open')).join(' ')}`);
+        // 3. A simple click still opens the overlay.
+        await page.click(`${li(want[1])} .ti-title`);
+        assert(await until(() => overlayOpen(page), 3000), 'le clic simple n’ouvre plus l’overlay');
+        await page.keyboard.press('Escape');
+        // 4. Keyboard: Alt+↓ moves the focused item one place down, saved.
+        await page.focus(li(want[0]));
+        await page.keyboard.press('Alt+ArrowDown');
+        const want2 = [want[1], want[0], ...want.slice(2)];
+        assert(await until(async () => (await serverOpen()).join(' ') === want2.join(' '), 5000), `Alt+↓ : ${(await serverOpen()).join(' ')}`);
+        assert(await page.evaluate((k) => document.activeElement?.dataset?.key === k, want[0]), 'focus perdu après Alt+↓');
+        // 5. A done item dragged into the open part stays among the done ones.
+        const done0 = await keysIn(page, 'done');
+        if (done0.length) {
+          await dragTo(page, `${li(done0[0])} .ti-title`, li(want2[0]), 'top');
+          await sleep(500);
+          assert((await keysIn(page, 'open')).join(' ') === want2.join(' ') && (await keysIn(page, 'done')).includes(done0[0]), 'un fait est passé parmi les non faits');
+          assert(!(await overlayOpen(page)), 'le glisser d’un fait a ouvert l’overlay');
+        }
+        await shot(page, 'todo-drag');
+        // 6. Mobile: a 44 px grip (a finger drags from it, the list still scrolls).
+        const mctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'fr-FR' });
+        try {
+          const m = await mctx.newPage();
+          await m.goto(`${sb.url}/?token=${sb.token}`); await m.locator('.brand').waitFor();
+          await m.evaluate(() => SidePanel.open('todo'));
+          await m.locator('#side-panel .todo-item .ti-grip').first().waitFor({ timeout: 8000 });
+          const g = await m.locator('#side-panel .todo-item .ti-grip').first().boundingBox();
+          assert(g && g.width >= 44 && g.height >= 44, `poignée mobile ${JSON.stringify(g)}`);
+          assert((await keysIn(m, 'open')).join(' ') === want2.join(' '), 'mobile : ordre enregistré non repris');
+        } finally { await mctx.close(); }
+        return `glisser : ${open0[2]} en tête, enregistré, revenu après rechargement ; clic simple → overlay ; Alt+↓ ; un fait reste en bas ; poignée mobile 44 px`;
+      } finally {
+        await reset();
+        await page.evaluate(() => window.TodoPanel?.reload()).catch(() => {});
+        if ((await todoState(page)).open) await page.keyboard.press('Escape').catch(() => {});
+      }
+    });
     const railHeads = () => page.evaluate(() => [...document.querySelectorAll('#rail-body .rail-group-head')].map(h => h.textContent.replace(/\s+/g, ' ').trim()));
     await check(B, 'rail', 'Rail PILOTAGE : À examiner + cadres des musiciens (ou dépliage « Tous » sans cadres)', async () => {
       const txt = await page.textContent('#rail-body');

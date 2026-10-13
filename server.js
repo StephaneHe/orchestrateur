@@ -77,6 +77,7 @@ import { createModelRouting, incompatibility } from './scripts/model-routing.mjs
 import { createRecommendations } from './scripts/model-reco.mjs';
 import { TODO_FILE, parseTodo, sortTodo, countTodo } from './scripts/todo-core.mjs';
 import { createNotesStore, NOTES_FILE, ITEM_ID_RE, NOTE_MAX } from './scripts/todo-notes.mjs';
+import { createOrderStore, ORDER_FILE, applyOrder, cleanOrder } from './scripts/todo-order.mjs';
 import { readGitGraph, GIT_N_DEFAULT, GIT_N_MAX } from './scripts/git-graph-core.mjs';
 import { mountGatewayRoutes } from './scripts/responses-gateway.mjs';
 // Clés NVIDIA / OpenRouter saisies dans la page Models (0.43.0).
@@ -2699,7 +2700,8 @@ app.get('/api/todo', (req, res) => {
     lists.push({ project: p.name, ...countTodo(items) });
     all.push(...items.map(i => ({ ...i, notes: todoNotes.forItem(p.name, i.id) })));
   }
-  res.json({ ok: true, items: sortTodo(all), counts: countTodo(all), lists, notesError: todoNotes.error() || undefined });
+  res.json({ ok: true, items: applyOrder(sortTodo(all), todoOrder.order()), counts: countTodo(all), lists,
+    notesError: todoNotes.error() || undefined, orderError: todoOrder.error() || undefined });
 });
 
 // ── Notes on a TODO item (0.78.0) ───────────────────────────────────────────
@@ -2717,6 +2719,24 @@ app.post('/api/notes/todo/:project/:id', sameOriginOnly, express.json({ limit: '
   try {
     const r = todoNotes.add(p.name, req.params.id, req.body?.text);
     res.status(201).json({ ok: true, ...r, max: NOTE_MAX });
+  } catch (e) {
+    res.status(e.status || 500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Order of the TODO items (0.83.0) ────────────────────────────────────────
+// User request (2026-10-13, part 5/5): « Chaque item est drag & dropable, et
+// les positions doivent persister. » The user's order goes to todo-order.json
+// (orchestrator root, unversioned), never to a musician's TODO_LIST.md. The
+// body is the whole ranked list of "<project>/<id>" keys; unknown items are
+// dropped, an empty list goes back to the default sort.
+const todoOrder = createOrderStore(path.join(__dirname, ORDER_FILE));
+app.post('/api/order/todo', sameOriginOnly, express.json({ limit: '256kb' }), (req, res) => {
+  try {
+    const byName = new Map((config.projects || []).filter(p => p && p.name && p.path).map(p => [p.name, p]));
+    const keys = cleanOrder(req.body?.keys, (project, id) => byName.has(project) && (todoOf(byName.get(project)) || []).some(i => i.id === id));
+    const data = todoOrder.set(keys);
+    res.json({ ok: true, order: data.order, updatedAt: data.updatedAt });
   } catch (e) {
     res.status(e.status || 500).json({ ok: false, error: e.message });
   }

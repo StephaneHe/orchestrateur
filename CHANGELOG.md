@@ -11,6 +11,45 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.83.0] - 2026-10-13
+
+### Added
+
+- (server) TODO panel: drag and drop of the items — part 5/5 of the user
+  request « chaque item doit être clickable […] Chaque item est drag &
+  dropable, et les positions doivent persister. »
+  - Each item can be moved inside its part of the list: with the mouse from
+    anywhere on the item (past a 6 px threshold), with a finger from the ⋮⋮
+    grip (44 px on mobile, the list still scrolls), or with Alt+↑ / Alt+↓.
+    Open items always stay above done ones (user request of 0.76.2): an item
+    never crosses to the other part.
+  - A drag never opens the item overlay; a simple click (or Enter / Space)
+    still does.
+  - The order is the user's: kept by the server in `todo-order.json`
+    (orchestrator root, unversioned, atomic write, reread when it changes, so
+    it survives a page reload and a server restart; never rewritten when it
+    cannot be read), never in a musician's `TODO_LIST.md`.
+    `POST /api/order/todo {keys}` (same origin; "<project>/<id>" keys,
+    unknown items dropped, an empty list goes back to the default sort);
+    `GET /api/todo` returns the items in that order (`applyOrder` of
+    `scripts/todo-order.mjs`). Items never placed (new ones) come first in
+    their part, newest first as before. One global order, so the « all
+    projects » view and a single-project view agree.
+- Tests: suite `_test_todo_order.mjs` (order rules, validation, store reread
+  = restart, unreadable file, wiring), HTTP `todo-order` (order served, done
+  items below, file reread, `TODO_LIST.md` byte-identical, other origin 403,
+  invalid key 400), browser `todo-item-drag` (drag, no overlay, saved,
+  back after reload, simple click, Alt+↓, a done item stays below, 44 px grip
+  on mobile).
+
+### Changed
+
+- (server) `_test_todo.mjs` allows the panel's POST to `/api/order/todo` in
+  addition to the notes route, under the user's agreement of 2026-10-13
+  (« J'autorise l'envoie de POST à partir de todo-panel.js »). Any other
+  write from the panel, any write route on `/api/todo` and any write of a
+  `TODO_LIST.md` stay refused.
+
 ## [0.82.0] - 2026-10-13
 
 ### Added

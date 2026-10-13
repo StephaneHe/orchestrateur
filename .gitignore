@@ -91,3 +91,5 @@ docs/**/captures/
 # TODO list: a local working note, never versioned (user, 2026-10-12:
 # "Une TODO list ne devrait pas etre dans git"). prod-jump keeps it on disk.
 TODO_LIST.md
+todo-order.json
+todo-order.json.tmp

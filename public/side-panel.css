@@ -89,6 +89,21 @@
 .todo-item { cursor: pointer; border-radius: 4px; }
 .todo-item:hover { background: rgba(232, 161, 92, 0.05); }
 .todo-item:focus-visible { outline: 1px solid var(--st-unread); outline-offset: 1px; }
+/* Drag and drop (0.83.0): grip column, the dragged item stands out. */
+.todo-item { grid-template-columns: 1rem 1.25rem 1fr; }
+.ti-grip {
+  color: var(--fg-3); font-size: 0.75rem; line-height: 1; padding-top: 0.25rem; cursor: grab;
+  user-select: none; touch-action: none; letter-spacing: -0.15em; text-align: center;
+}
+.todo-item:hover .ti-grip { color: var(--fg-1); }
+.todo-item.is-dragging { background: rgba(95, 212, 255, 0.1); outline: 1px dashed var(--st-unread); cursor: grabbing; opacity: 0.9; }
+.todo-dragging, .todo-dragging * { cursor: grabbing !important; user-select: none; }
+.todo-order-msg { font-size: 0.6875rem; color: var(--fg-2); margin: 0 0 0.4rem; }
+.todo-order-msg.is-error { color: var(--st-error); }
+@media (max-width: 767.98px) {
+  .todo-item { grid-template-columns: 2.75rem 1.25rem 1fr; }
+  .ti-grip { min-height: 2.75rem; font-size: 1rem; display: flex; align-items: center; justify-content: center; padding-top: 0; }
+}
 
 /* --- TODO item overlay (0.77.0) --- above the side panel (60, mobile 200),
    below the permission overlay (10000). */

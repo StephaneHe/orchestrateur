@@ -6,8 +6,9 @@
    newest first by entry date; read-only
    for the user (the musician of the item ticks it, with scripts/todo.mjs);
    the musician's name next to each done item. Each item opens an overlay
-   with the whole item (0.77.0).
-   Reads GET /api/todo (no write route exists). Refreshed every 15 s while the
+   with the whole item (0.77.0). Items are reordered by drag and drop, the
+   order kept by the server in todo-order.json (0.83.0).
+   Reads GET /api/todo (no write route on the lists themselves). Refreshed every 15 s while the
    tab is open; the open-items count of the pill every 60 s.
    ========================================================================== */
 (function () {
@@ -53,7 +54,8 @@
     const by = !done ? "" : i.doneBy
       ? `<span class="ti-by" title="Coché par ${esc(i.doneBy)}${i.doneAt ? ` le ${esc(fmt(i.doneAt))}` : ""}">✓ ${esc(i.doneBy)}</span>`
       : `<span class="ti-by is-unknown" title="Nom non enregistré : item coché à la main, hors de todo.mjs">✓ —</span>`;
-    return `<li class="todo-item${done ? " is-done" : ""}" data-id="${esc(i.id)}" data-status="${esc(i.status)}" data-project="${esc(i.project)}" data-added="${esc(i.addedAt || "")}" tabindex="0" role="button" aria-haspopup="dialog" title="Voir l’item complet">
+    return `<li class="todo-item${done ? " is-done" : ""}" data-key="${esc(i.project + "/" + i.id)}" data-id="${esc(i.id)}" data-status="${esc(i.status)}" data-project="${esc(i.project)}" data-added="${esc(i.addedAt || "")}" tabindex="0" role="button" aria-haspopup="dialog" title="Voir l’item complet">
+      <span class="ti-grip" aria-hidden="true" title="Glisser pour déplacer (clavier : Alt+↑ / Alt+↓)">⋮⋮</span>
       <input type="checkbox" class="ti-box" disabled ${done ? "checked" : ""} aria-label="${done ? "Fait" : "Non fait"} (lecture seule : seul le musicien coche)" title="Lecture seule : c’est le musicien qui coche">
       <div class="ti-main"><div class="ti-title">${esc(i.title)}</div>
         ${i.detail ? `<div class="ti-detail">${esc(i.detail)}</div>` : ""}
@@ -313,6 +315,7 @@
   function render() {
     const pane = st.pane;
     if (!pane) return;
+    if (drag.on) { drag.pendingRender = true; return; }
     const d = st.data;
     const sel = pane.querySelector(".todo-project");
     if (!d) {
@@ -326,14 +329,123 @@
     sel.innerHTML = `<option value="">Tous les projets (${d.lists.length})</option>` +
       names.map(n => `<option value="${esc(n)}"${n === project ? " selected" : ""}>${esc(n)}</option>`).join("");
     const items = d.items.filter(i => !project || i.project === project);
+    const orderMsg = d.orderError ? `<p class="todo-order-msg is-error" role="status">Ordre personnalisé illisible : ${esc(d.orderError)}</p>` : (st.orderMsg ? `<p class="todo-order-msg${st.orderBad ? " is-error" : ""}" role="status">${esc(st.orderMsg)}</p>` : "");
     const done = items.filter(i => i.status === "done"), open = items.filter(i => i.status !== "done");
-    pane.querySelector(".todo-body").innerHTML = !items.length
+    pane.querySelector(".todo-body").innerHTML = orderMsg + (!items.length
       ? `<p class="todo-empty">Aucun item${project ? ` pour ${esc(project)}` : ""}.</p>`
       : `<section class="todo-sec" data-sec="open"><h3 class="todo-sec-h">Non faits <span class="todo-n">${open.length}</span></h3><ul class="todo-list">${open.map(itemHtml).join("")}</ul></section>
-         <section class="todo-sec" data-sec="done"><h3 class="todo-sec-h">Faits <span class="todo-n">${done.length}</span></h3><ul class="todo-list">${done.map(itemHtml).join("")}</ul></section>`;
+         <section class="todo-sec" data-sec="done"><h3 class="todo-sec-h">Faits <span class="todo-n">${done.length}</span></h3><ul class="todo-list">${done.map(itemHtml).join("")}</ul></section>`);
     // Keep an open overlay in step with the 15 s refresh (an item that left
     // the list stays shown as it was).
     if (ov.el && !ov.el.hidden) { const i = findItem(ov.id); if (i) fillOverlay(i); }
+  }
+
+  /* ---- Drag and drop (0.83.0, part 5/5): « Chaque item est drag & dropable,
+     et les positions doivent persister. » Pointer events, so mouse, pen and
+     touch share one path: a mouse drags from anywhere on the item past a
+     6 px threshold (below it, the click opens the overlay as before); a
+     finger drags from the ⋮⋮ grip only, so the list still scrolls. An item
+     moves inside its own part: open items stay on top, done ones below
+     (0.76.2). The new order is saved by POST /api/order/todo. */
+  const drag = { on: false, li: null, pointer: null, before: null, x: 0, y: 0, suppressClickUntil: 0, pendingRender: false };
+  const DRAG_THRESHOLD = 6;
+  const listKeys = (ul) => [...ul.querySelectorAll(":scope > .todo-item")].map(x => x.dataset.key);
+
+  function onPointerDown(e) {
+    if (e.button !== 0 || drag.li) return;
+    const li = e.target.closest(".todo-item");
+    if (!li) return;
+    if (e.pointerType !== "mouse" && !e.target.closest(".ti-grip")) return;
+    Object.assign(drag, { li, x: e.clientX, y: e.clientY, pointer: e.pointerId, on: false, before: listKeys(li.parentElement) });
+    document.addEventListener("pointermove", onPointerMove);
+    document.addEventListener("pointerup", onPointerUp);
+    document.addEventListener("pointercancel", onPointerCancel);
+  }
+
+  function onPointerMove(e) {
+    if (e.pointerId !== drag.pointer || !drag.li) return;
+    if (!drag.on) {
+      if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < DRAG_THRESHOLD) return;
+      drag.on = true;
+      drag.li.classList.add("is-dragging");
+      st.pane.classList.add("todo-dragging");
+    }
+    e.preventDefault();
+    const list = drag.li.parentElement;
+    // Only the items of the same part are targets.
+    const others = [...list.children].filter(x => x !== drag.li);
+    const next = others.find(x => { const r = x.getBoundingClientRect(); return e.clientY < r.top + r.height / 2; });
+    if (next) { if (drag.li.nextElementSibling !== next) list.insertBefore(drag.li, next); }
+    else if (list.lastElementChild !== drag.li && e.clientY <= list.getBoundingClientRect().bottom + 24) list.appendChild(drag.li);
+  }
+
+  function endDrag() {
+    document.removeEventListener("pointermove", onPointerMove);
+    document.removeEventListener("pointerup", onPointerUp);
+    document.removeEventListener("pointercancel", onPointerCancel);
+    if (drag.li) drag.li.classList.remove("is-dragging");
+    if (st.pane) st.pane.classList.remove("todo-dragging");
+    const out = { was: drag.on, li: drag.li, before: drag.before };
+    Object.assign(drag, { on: false, li: null, pointer: null, before: null });
+    return out;
+  }
+
+  function onPointerUp(e) {
+    if (e.pointerId !== drag.pointer) return;
+    const { was, li, before } = endDrag();
+    if (!was) return;
+    drag.suppressClickUntil = Date.now() + 400;
+    if (listKeys(li.parentElement).join("|") !== before.join("|")) saveOrder(li.parentElement);
+    else if (drag.pendingRender) { drag.pendingRender = false; render(); }
+  }
+
+  function onPointerCancel(e) {
+    if (e.pointerId !== drag.pointer) return;
+    if (endDrag().was) { drag.pendingRender = false; render(); }   // back to the saved order
+  }
+
+  function moveByKey(li, dir) {
+    const sib = dir < 0 ? li.previousElementSibling : li.nextElementSibling;
+    if (!sib) return;
+    li.parentElement.insertBefore(li, dir < 0 ? sib : sib.nextElementSibling);
+    li.focus();
+    saveOrder(li.parentElement, li.dataset.key);
+  }
+
+  /** The visible part (maybe filtered on one project) gives its new order,
+   *  merged into the whole list: the slots of the visible items, in the
+   *  global order, are refilled in the new order. */
+  async function saveOrder(ul, focusKey) {
+    const d = st.data;
+    if (!d) return;
+    const visible = listKeys(ul);
+    const shown = new Set(visible);
+    const keyOf = (i) => i.project + "/" + i.id;
+    let k = 0;
+    const keys = d.items.map(i => (shown.has(keyOf(i)) ? visible[k++] : keyOf(i)));
+    const byKey = new Map(d.items.map(i => [keyOf(i), i]));
+    d.items = keys.map(x => byKey.get(x)).filter(Boolean);
+    st.orderMsg = "Enregistrement de l’ordre…"; st.orderBad = false;
+    try {
+      const r = await fetch("/api/order/todo", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ keys }) });
+      const isJson = (r.headers.get("content-type") || "").includes("json");
+      const j = isJson ? await r.json() : null;
+      if (!r.ok || !j || !j.ok) {
+        st.orderMsg = j && j.error ? `Ordre non enregistré : ${j.error}` : await SidePanel.explainFailure(r.status, "Ordre");
+        st.orderBad = true;
+        drag.pendingRender = false;
+        await load();
+        return;
+      }
+      st.orderMsg = "Ordre enregistré."; st.orderBad = false;
+      clearTimeout(st.orderMsgTimer);
+      st.orderMsgTimer = setTimeout(() => { st.orderMsg = null; render(); }, 4000);
+    } catch (e) {
+      st.orderMsg = `Ordre non enregistré : ${e.message}`; st.orderBad = true;
+    }
+    drag.pendingRender = false;
+    render();
+    if (focusKey && st.pane) st.pane.querySelector(`.todo-item[data-key="${CSS.escape(focusKey)}"]`)?.focus();
   }
 
   SidePanel.register({
@@ -346,13 +458,18 @@
       pane.querySelector(".todo-project").addEventListener("change", (e) => { lsSet(LS_PROJECT, e.target.value); render(); });
       const body = pane.querySelector(".todo-body");
       body.addEventListener("click", (e) => {
+        // A drag ends with a click on the item: it must not open the overlay.
+        if (Date.now() < drag.suppressClickUntil) { e.preventDefault(); e.stopPropagation(); return; }
         const li = e.target.closest(".todo-item");
         if (li) openItem(li.dataset.id);
       });
       body.addEventListener("keydown", (e) => {
         const li = e.target.closest(".todo-item");
-        if (li && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openItem(li.dataset.id); }
+        if (!li) return;
+        if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) { e.preventDefault(); moveByKey(li, e.key === "ArrowUp" ? -1 : 1); return; }
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openItem(li.dataset.id); }
       });
+      body.addEventListener("pointerdown", onPointerDown);
     },
     onOpen() { load(); clearInterval(st.timer); st.timer = setInterval(load, 15_000); },
     onClose() { clearInterval(st.timer); st.timer = null; closeItem(); },
@@ -377,5 +494,5 @@
     title: "Prépare un message au chef avec le contenu complet de l’item, pour qu’il en lance l’exécution (confirmation d’abord)",
     run: (i) => askSendToChef(i),
   });
-  globalThis.TodoPanel = { reload: load, openItem, closeItem, registerAction, chefMessage, isItemOpen: () => !!(ov.el && !ov.el.hidden) };
+  globalThis.TodoPanel = { reload: load, openItem, closeItem, registerAction, chefMessage, isItemOpen: () => !!(ov.el && !ov.el.hidden), isDragging: () => drag.on };
 })();
