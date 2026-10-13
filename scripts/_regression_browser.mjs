@@ -711,6 +711,39 @@ export async function browserChecks(sb, t) {
         await page.click('#dive .dive-back').catch(() => {});
       }
     });
+    // User report (2026-10-13): « A partir du moment où quelque chose tourne,
+    // attaché à un projet, et que ça empêche le projet d'avancer […] » — the
+    // queue held by a lingering process is visible on the card and in the pane.
+    await check(B, 'queue-held', 'File retenue par un processus vivant après le result : pastille « ⏸ n retenue » sur le cadre du musicien et bandeau explicatif dans sa file (PID, depuis quand, la suite partira seule, comment débloquer) ; rien n’est tué', async () => {
+      if (!fs.existsSync(path.join(sb.root, 'scripts', 'queue-hold.mjs'))) NA('détection absente de cet état du code');
+      const pidFile = path.join(sb.root, 'logs', 'alpha.pid');
+      const keep = spawn(process.execPath, ['-e', 'setInterval(()=>{},1e6)'], { stdio: 'ignore', windowsHide: true });
+      let qid = null;
+      try {
+        fs.writeFileSync(pidFile, String(keep.pid));
+        await until(async () => (await api('/api/pupitre')).fleet.find(r => r.name === 'alpha' && r.lingering) || null, 8000);
+        const d = await fetch(`${sb.url}/api/dispatch`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ project: 'alpha', prompt: 'tâche retenue (navigateur)', queueIfBusy: true }) });
+        qid = (await d.json()).id;
+        assert(qid, 'mise en file impossible');
+        await page.evaluate(() => window.App.pollPupitre());
+        if (!(await page.locator('#rail-body .rail-card').count()) && await page.locator('#rail-body [data-fold="cards"]').count()) await page.click('#rail-body [data-fold="cards"]');
+        const chip = '#rail-body .rail-card[data-name="alpha"] [data-queue-held]';
+        assert(await until(async () => (await page.locator(chip).count()) > 0, 10_000), 'pastille « retenue » absente du cadre');
+        assert(/1 retenue/.test(await page.locator(chip).first().textContent()), 'texte de la pastille');
+        await setHash(page, '#/m/alpha');
+        assert(await until(async () => (await page.locator('#dive .dq-held').count()) === 1, 10_000), 'bandeau absent de la file');
+        const txt = await page.textContent('#dive .dq-held');
+        assert(new RegExp(`PID ${keep.pid}`).test(txt) && /partira d'elle-même/.test(txt) && /kill-stalled\.mjs alpha/.test(txt), `bandeau : ${txt}`);
+        await shot(page, 'queue-held');
+        assert(keep.exitCode === null, 'le processus a été tué');
+        return `alpha : pastille et bandeau (PID ${keep.pid})`;
+      } finally {
+        if (qid) await fetch(`${sb.url}/api/queue/alpha/${encodeURIComponent(qid)}`, { method: 'DELETE', headers: H }).catch(() => {});
+        keep.kill();
+        for (let i = 0; i < 20 && fs.existsSync(pidFile); i++) { try { fs.unlinkSync(pidFile); } catch { await sleep(150); } }
+        await page.click('#dive .dive-back').catch(() => {});
+      }
+    });
     await check(B, 'search', 'Annuaire / recherche : filtrer puis Entrée ouvre le volet', async () => {
       await page.click('#btn-search');
       assert(await visible(page, '#overlay-search'), 'overlay');

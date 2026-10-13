@@ -16,6 +16,8 @@
 //   node scripts/fleet-status.mjs              # human-readable table
 //   node scripts/fleet-status.mjs --json       # machine-readable
 //   node scripts/fleet-status.mjs --stalled    # only stalled musicians (exit 2 if any)
+//   node scripts/fleet-status.mjs --held       # only queues held by a process that
+//                                              # outlived its turn (exit 2 if any)
 //
 // "Stalled" = state is live/think AND no non-partial event for >= 60s AND
 // no terminal `result` event has been written. These are the turns the
@@ -26,6 +28,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scanProject, fmtAge } from './fleet-status-core.mjs';
+import { holdLine } from './queue-hold.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -46,6 +49,8 @@ function renderTable(rows) {
     // restart-when-idle du chef y lisent « occupé ») ; la note le précise.
     ['NOTE',      r => r.awaitingPermission
       ? `ATTEND AUTORISATION : ${r.awaitingPermission.tool} — ${String(r.awaitingPermission.preview || '').slice(0, 60)}${r.awaitingPermission.deadline ? ` (reste ${fmtAge(r.awaitingPermission.deadline - Date.now())})` : ''} — ne pas tuer`
+      // 0.82.0: the turn is over but its process lives on and holds the queue.
+      : r.queueHeld ? `FILE RETENUE — ${holdLine(r.queueHeld)} — ne pas tuer sans décision`
       : r.needsInput ? `needs: ${r.needsInput}`
       : r.stalled ? 'STALL — consider intervention'
       // 0.47.2 : attente d'un fournisseur lent et tours d'essai, sans alarme.
@@ -62,22 +67,25 @@ function main() {
   const args = process.argv.slice(2);
   const wantJson    = args.includes('--json');
   const onlyStalled = args.includes('--stalled');
+  const onlyHeld    = args.includes('--held');
 
   const config = loadConfig();
   const rows = config.projects.map(p => scanProject(p.name));
-  const filtered = onlyStalled ? rows.filter(r => r.stalled) : rows;
+  const filtered = onlyStalled ? rows.filter(r => r.stalled) : onlyHeld ? rows.filter(r => r.queueHeld) : rows;
 
   if (wantJson) {
     process.stdout.write(JSON.stringify({ now: new Date().toISOString(), fleet: filtered }, null, 2) + '\n');
   } else {
-    if (!filtered.length && onlyStalled) {
+    if (!filtered.length && onlyHeld) {
+      console.log('aucune file retenue');
+    } else if (!filtered.length && onlyStalled) {
       console.log('no stalled musicians — fleet healthy');
     } else {
       console.log(renderTable(filtered));
     }
   }
   // Non-zero exit when --stalled finds something — lets the conductor gate on it.
-  process.exit(onlyStalled && filtered.length ? 2 : 0);
+  process.exit((onlyStalled || onlyHeld) && filtered.length ? 2 : 0);
 }
 
 main();

@@ -17,7 +17,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import '../public/turn-core.js';   // pose globalThis.TurnCore
+import '../public/turn-core.js';
+import { queueLengthOf, queueHoldOf } from './queue-hold.mjs';   // pose globalThis.TurnCore
 
 const TurnCore = globalThis.TurnCore;
 
@@ -448,6 +449,8 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
     sinceMs: lastTurn?.endedAt ? Math.max(0, now - lastTurn.endedAt) : null,
     background,
   } : null;
+  // 0.82.0 — that process also holds the musician's queue: say so.
+  const queueHeld = lingering ? queueHoldOf(lingering, queueLengthOf(name, logsDir)) : null;
 
   return {
     name,
@@ -457,6 +460,9 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
     state: lingering ? 'live' : state,
     logState: state,
     lingering,
+    // Additive 0.82.0: {pid, sinceMs, queueLength, background} while queued
+    // tasks wait for that lingering process (scripts/queue-hold.mjs).
+    queueHeld,
     // Additive: finished but waiting on a chef decision (state stays `unread`).
     awaitingChef,
     // Additif 0.45.0 : {id, tool, preview, deadline, risk, count} tant qu'une
@@ -473,7 +479,8 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
     lastKind,
     activity: lingering
       ? `⏳ tour terminé, processus encore actif${lingering.sinceMs != null ? ` depuis ${fmtAge(lingering.sinceMs)}` : ''}` +
-        (background.length ? ` : ${background.map(b => b.what).join(' · ')}` : ' (travail en arrière-plan)')
+        (background.length ? ` : ${background.map(b => b.what).join(' · ')}` : ' (travail en arrière-plan)') +
+        (queueHeld ? ` — ⏸ file retenue : ${queueHeld.queueLength} tâche(s) en attente` : '')
       : waitingProvider?.text ? `⏳ ${waitingProvider.text.replace(/depuis .*$/, `depuis ${fmtAge(waitingProvider.sinceMs)}`)}` : activityPreview(last, lastAssistantText),
     silentMs,
     fileSilentMs,

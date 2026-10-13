@@ -492,6 +492,11 @@
 .dq-meta { font-family: var(--font-mono); font-size: 0.625rem; color: var(--fg-2); flex-shrink: 0; }
 .dq-rm { font-family: var(--font-mono); font-size: 0.625rem; padding: 3px 8px; border-radius: 5px; border: 1px solid var(--card-border); color: var(--fg-1); flex-shrink: 0; }
 .dq-rm:hover { background: var(--card-bg-hover); color: var(--st-error); border-color: var(--st-error); }
+/* Queue held by a process that outlived its turn (0.82.0): neutral, not red. */
+.dq-held { font-size: 0.75rem; line-height: 1.45; color: var(--fg-1); padding: 6px 8px; border: 1px solid var(--st-think); border-radius: 7px; background: rgba(90, 209, 232, 0.06); }
+.dq-held b { color: var(--st-think); }
+.dq-held-how { margin-top: 4px; font-size: 0.6875rem; color: var(--fg-2); overflow-wrap: anywhere; }
+.rc-chip-held { color: var(--st-think); border-color: var(--st-think); }
 .dq-item[data-queue-open] { cursor: pointer; }
 .dq-item[data-queue-open]:hover, .dq-item[data-queue-open]:focus-visible { border-color: var(--st-unread); background: var(--card-bg-hover); outline: none; }
 

@@ -64,6 +64,7 @@ import { detectOverride } from './src/message_router.mjs';
 // (scripts/fleet-status.mjs) uses, so the live desk view (/api/pupitre) can
 // never diverge from `node scripts/fleet-status.mjs`.
 import { scanProject as scanFleetMember, isPhantomResult, isQuestionResolved, isAcknowledged, isConductorStop, stopInfo, createJournal } from './scripts/fleet-status-core.mjs';
+import { queueHoldPolicy, holdReportDue, holdReport } from './scripts/queue-hold.mjs';
 // Registre /downloads relu à chaud depuis downloads.json (0.23.0).
 import { createDownloadsRegistry, VERSION_NAME_RE } from './scripts/downloads-registry.mjs';
 import { trustWorkspace } from './scripts/workspace-trust.mjs';
@@ -957,6 +958,52 @@ function sweepQueues() {
   }
 }
 setInterval(sweepQueues, QUEUE_SWEEP_MS).unref();
+
+// ---------- Queue held by a process that outlived its turn (0.82.0) ---------
+// The turn's process lives on after its result while a background task runs;
+// dispatchPidAlive then holds the queue (rightly). This sweep makes the hold
+// visible: journaled in the musician's log, reported to the chef and the
+// desktop after queueHoldAlertMin, repeated every queueHoldRepeatMin, and
+// closed by a release event. It never kills anything (scripts/queue-hold.mjs).
+const QUEUE_HOLD_SWEEP_MS = Number(process.env.ORCH_QUEUE_HOLD_SWEEP_MS) || 30_000;
+const queueHolds = new Map();   // name → {pid, at (last report), firstSeen, reported}
+function appendLogEvent(name, ev) {
+  try { fs.appendFileSync(path.join(LOGS_DIR, `${name}.jsonl`), '\n' + JSON.stringify(ev) + '\n'); } catch (e) { debugLog(`[queue-held] ${name} : écriture du log impossible : ${e.message}`); }
+}
+function sweepQueueHolds() {
+  const now = Date.now();
+  const names = new Set([...dispatchQueue.keys(), ...queueHolds.keys()]);
+  for (const name of names) {
+    let hold = null;
+    try { if (dispatchQueue.get(name)?.length) hold = scanFleetMember(name, LOGS_DIR).queueHeld; } catch (e) { debugLog(`[queue-held] ${name} : ${e.message}`); }
+    const prev = queueHolds.get(name);
+    if (!hold || (prev && prev.pid !== hold.pid)) {
+      if (prev?.reported) {
+        const heldMs = now - prev.firstSeen;
+        appendLogEvent(name, { type: 'notification', subtype: 'queue_hold_released', pid: prev.pid, held_ms: heldMs,
+          text: `▶ File de ${name} libérée : le processus ${prev.pid} s'est terminé, la suite peut partir.`, timestamp: new Date().toISOString() });
+        const m = `[queue-held] ${name} : libérée (processus ${prev.pid}, retenue ≈ ${Math.round(heldMs / 1000)} s)`; console.log(m); debugLog(m);
+      }
+      queueHolds.delete(name);
+      if (!hold) continue;
+    }
+    const cur = queueHolds.get(name) || { pid: hold.pid, at: 0, firstSeen: now - (hold.sinceMs || 0), reported: false };
+    queueHolds.set(name, cur);
+    // A result without timestamp (older CLI) gives no end time: count from first sight.
+    if (hold.sinceMs == null) hold = { ...hold, sinceMs: now - cur.firstSeen };
+    const due = holdReportDue(hold, queueHoldPolicy(config, name), cur.reported ? { pid: cur.pid, at: cur.at } : null, now);
+    if (!due) continue;
+    cur.at = now; cur.reported = true;
+    const text = holdReport(name, hold, due);
+    appendLogEvent(name, { type: 'notification', subtype: 'queue_held', pid: hold.pid, since_ms: hold.sinceMs, queue_length: hold.queueLength,
+      background: hold.background, repeat: due === 'repeat', text, timestamp: new Date().toISOString() });
+    appendLogEvent(conductorName(), { type: 'user_prompt', text, source: 'queue-held', project: name, timestamp: new Date().toISOString() });
+    try { fireDesktopNotification('queue-held', text.split('\n')[0]); } catch {}
+    const m = `[queue-held] ${name} : ${hold.queueLength} en file retenue(s) par le processus ${hold.pid} depuis ≈ ${Math.round((hold.sinceMs || 0) / 1000)} s (${due === 'repeat' ? 'rappel' : 'signalé'})`;
+    console.log(m); debugLog(m);
+  }
+}
+setInterval(sweepQueueHolds, QUEUE_HOLD_SWEEP_MS).unref();
 
 // ---------- Tâches du Routage en attente : filet de sécurité (0.58.0) ---------
 // dispatch.mjs libère les tâches en attente à la fin de chaque tour ; ce

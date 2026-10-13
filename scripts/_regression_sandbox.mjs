@@ -319,6 +319,9 @@ export function serverEnv(root, port) {
     MODEL_CATALOG_FIXTURES: path.join(root, '.model-catalog-fixtures'),
     // Terminal central (0.52.0) : une doublure interactive, jamais le vrai claude.exe.
     ORCH_CENTRAL_CMD: JSON.stringify([process.execPath, path.join(root, 'tests', 'fake_claude', 'fake_claude.mjs'), '--orch-fake-interactive']),
+    // Queue held by a lingering process (0.82.0): seconds instead of minutes.
+    ORCH_QUEUE_HOLD_SWEEP_MS: '1000',
+    ORCH_QUEUE_HOLD_ALERT_MS: '2000',
   });
   return env;
 }

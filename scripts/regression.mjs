@@ -368,6 +368,47 @@ async function apiChecks(sb) {
     assert(after && after.state === before.state, `après l’arrêt : ${after?.state}`);
     return `alpha : ${before.state} → live tant que le processus vit (pupitre et config) → ${after.state} après son arrêt`;
   });
+  // 0.82.0 — same report, second part: a process alive after its turn's result
+  // that holds tasks in the queue is detected, journaled, reported to the chef
+  // and visible in fleet-status — never killed automatically.
+  await check(S, 'queue-held', 'File retenue : tour terminé, processus encore vivant et tâches en file ⇒ détecté (/api/pupitre queueHeld), journalisé dans le log du musicien, signalé au chef avec les actions possibles, visible dans fleet-status --held ; rien n’est tué ; libération journalisée', async () => {
+    if (!fs.existsSync(path.join(sb.root, 'scripts', 'queue-hold.mjs'))) NA('détection absente de cet état du code');
+    const logs = path.join(sb.root, 'logs');
+    const pidFile = path.join(logs, 'alpha.pid');
+    const readLog = (n) => { try { return fs.readFileSync(path.join(logs, `${n}.jsonl`), 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return {}; } }); } catch { return []; } };
+    const keep = spawn(process.execPath, ['-e', 'setInterval(()=>{},1e6)'], { stdio: 'ignore', windowsHide: true });
+    let qid = null;
+    try {
+      fs.writeFileSync(pidFile, String(keep.pid));
+      await until(async () => (await json('/api/pupitre')).fleet.find(r => r.name === 'alpha' && r.lingering) || null, 8000);
+      const d = await post('/api/dispatch', { project: 'alpha', prompt: 'tâche retenue de recette', queueIfBusy: true });
+      const dj = await d.json();
+      assert(d.status === 202 && dj.queued === true, `mise en file : ${d.status} ${JSON.stringify(dj)}`);
+      qid = dj.id;
+      const row = await until(async () => (await json('/api/pupitre')).fleet.find(r => r.name === 'alpha' && r.queueHeld) || null, 8000);
+      assert(row && row.queueHeld.pid === keep.pid && row.queueHeld.queueLength === 1 && row.state === 'live', `pupitre : ${JSON.stringify(row?.queueHeld)}`);
+      assert(/file retenue/.test(row.activity || '') && !row.stalled, `activité : ${row.activity}`);
+      const ev = await until(async () => readLog('alpha').find(e => e.type === 'notification' && e.subtype === 'queue_held' && e.pid === keep.pid) || null, 10_000);
+      assert(ev && ev.queue_length === 1 && /kill-stalled\.mjs alpha/.test(ev.text) && /Rien n'est arrêté automatiquement/.test(ev.text), `événement du musicien : ${JSON.stringify(ev)}`);
+      const chef = readLog('chef').find(e => e.type === 'user_prompt' && e.source === 'queue-held' && e.project === 'alpha');
+      assert(chef && /File bloquée — alpha/.test(chef.text), 'signalement au chef absent');
+      const fsr = spawnSync(process.execPath, [path.join(sb.root, 'scripts', 'fleet-status.mjs'), '--held'], { cwd: sb.root, encoding: 'utf8', windowsHide: true });
+      assert(fsr.status === 2 && /alpha/.test(fsr.stdout) && /FILE RETENUE/.test(fsr.stdout), `fleet-status --held : exit ${fsr.status} ${fsr.stdout.slice(0, 300)}`);
+      await sleep(2500);
+      assert(readLog('alpha').filter(e => e.subtype === 'queue_held').length === 1, 'signalé plus d’une fois avant le délai de rappel');
+      assert(keep.exitCode === null, 'le processus a été tué');
+      const del = await fetch(`${sb.url}/api/queue/alpha/${encodeURIComponent(qid)}`, { method: 'DELETE', headers: H });
+      assert(del.ok, `DELETE ${del.status}`);
+      qid = null;
+      const rel = await until(async () => readLog('alpha').find(e => e.type === 'notification' && e.subtype === 'queue_hold_released' && e.pid === keep.pid) || null, 10_000);
+      assert(rel, 'libération non journalisée');
+      return `alpha : PID ${keep.pid} vivant après le result, 1 tâche en file ⇒ pupitre, log du musicien, chef, fleet-status --held (exit 2) ; un seul signalement ; rien n’est tué ; libération journalisée`;
+    } finally {
+      if (qid) await fetch(`${sb.url}/api/queue/alpha/${encodeURIComponent(qid)}`, { method: 'DELETE', headers: H }).catch(() => {});
+      keep.kill();
+      for (let i = 0; i < 20 && fs.existsSync(pidFile); i++) { try { fs.unlinkSync(pidFile); } catch { await new Promise(r => setTimeout(r, 150)); } }
+    }
+  });
   await check(S, 'pupitre', '/api/pupitre : santé (stall, processus perdu, PID vivant), file, pool', async () => {
     const p = await json('/api/pupitre');
     const by = Object.fromEntries(p.fleet.map(r => [r.name, r]));

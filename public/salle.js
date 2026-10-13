@@ -570,7 +570,9 @@
       age = mn < 1 ? "tour < 1 min" : mn < 60 ? `tour ${mn} min` : `tour ${Math.floor(mn / 60)} h ${String(mn % 60).padStart(2, "0")}`;
     }
     if (snapStale()) age += " · données anciennes";
-    const q = r?.queueDepth > 0 ? `<span class="rc-chip" title="tâches en file derrière son tour">⏳ ${r.queueDepth}</span>` : "";
+    const q = r?.queueHeld
+      ? `<span class="rc-chip rc-chip-held" data-queue-held title="File retenue : le tour est terminé mais son processus ${esc(r.queueHeld.pid)} vit encore — la suite attend sa fin">⏸ ${r.queueHeld.queueLength} retenue${r.queueHeld.queueLength > 1 ? "s" : ""}</span>`
+      : r?.queueDepth > 0 ? `<span class="rc-chip" title="tâches en file derrière son tour">⏳ ${r.queueDepth}</span>` : "";
     let line = "";
     if (m.state === "error" && m.stopped) line = m.stopped.reason || "arrêté par la supervision du chef";
     else if (m.state === "input") line = r?.needsInput || m.lastLine || "";
@@ -1168,6 +1170,7 @@
     }).join("");
     box.innerHTML =
       `<div class="dq-title">⏸ En file derrière son tour (${list.length})</div>` +
+      heldBannerHtml(snapRow(diveQueue.name)) +
       (diveQueue.error ? `<div class="dq-err">file illisible : ${esc(diveQueue.error)}</div>` : "") +
       rows;
     if (queueDetail.id) paintQueueDetail();
@@ -1291,6 +1294,18 @@
     const bar = ov.querySelector(".qdv-actions");
     bar.innerHTML = acts.map(a => `<button type="button" class="qdv-action" data-qdv-action="${esc(a.id)}">${esc(a.label)}</button>`).join("");
     bar.hidden = !acts.length;
+  }
+
+  // 0.82.0 — the turn is over but its process lives on and holds the queue.
+  function heldBannerHtml(r) {
+    const h = r?.queueHeld;
+    if (!h) return "";
+    const what = (h.background || []).map(b => b.what).filter(Boolean).join(" · ") || "un travail lancé en arrière-plan";
+    return `<div class="dq-held" role="status" data-queue-held="${esc(h.pid)}">
+        <b>File retenue</b> — le tour est terminé${h.sinceMs != null ? ` depuis ${esc(fmtAge(h.sinceMs))}` : ""}, mais son processus (PID ${esc(h.pid)}) vit encore : ${esc(what)}.
+        La suite partira d'elle-même à sa fin ; rien n'est arrêté automatiquement.
+        <div class="dq-held-how">Pour débloquer sans attendre (le travail en cours sera perdu) : <code>node scripts/kill-stalled.mjs ${esc(diveQueue.name)} --by utilisateur --reason "file retenue"</code></div>
+      </div>`;
   }
 
   async function removeQueued(id) {

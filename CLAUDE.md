@@ -409,6 +409,19 @@ lancée en arrière-plan tourne ; le serveur retient alors la file
   instantané `/api/pupitre` (`applyPupitreToCards`) ; l'état du log revient
   quand le processus s'arrête. Une question ou un échec gardent leur état.
 - Recettes : `_test_busy_never_ready.mjs`, HTTP et navigateur `busy-not-ready`.
+- **File retenue** (0.82.0, partie 2/2) : ce processus retient aussi la file
+  (à raison). `scripts/queue-hold.mjs` : `scanProject` pose `queueHeld {pid,
+  sinceMs, queueLength, background}` si la file sur disque n'est pas vide ;
+  pastille « ⏸ n retenue » du cadre, bandeau de la file, note `FILE RETENUE`
+  de fleet-status et `--held` (exit 2). Le balayage `sweepQueueHolds`
+  (30 s) écrit `notification/queue_held` dans le log du musicien et un
+  message `queue-held` au chef après `queueHoldAlertMin` (projet, puis
+  `defaults`, 5 min), rappel tous les `queueHoldRepeatMin` (30, 0 = jamais),
+  puis `queue_hold_released`. **Rien n'est tué automatiquement** ; actions
+  proposées : attendre, `kill-stalled.mjs <p> --by utilisateur`, retirer.
+  Tests : `ORCH_QUEUE_HOLD_SWEEP_MS`, `ORCH_QUEUE_HOLD_ALERT_MS`,
+  `ORCH_QUEUE_HOLD_REPEAT_MS`. Recettes : `_test_queue_held.mjs`, HTTP et
+  navigateur `queue-held`.
 
 ---
 

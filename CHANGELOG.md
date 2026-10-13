@@ -11,6 +11,46 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.82.0] - 2026-10-13
+
+### Added
+
+- (server) Queue held by a process that outlived its turn — part 2/2 of the
+  user report « A partir du moment où quelque chose tourne, attaché à un
+  projet, et que ça empêche le projet d'avancer (en l'occurence le musicien
+  est affiché comme Prêt), alors c'est un problème qu'il faut corriger. »
+  (incident: a turn's process stayed alive ~10 min after its result, held by
+  a background regression run, and 2 queued tasks waited without any signal).
+  - Detection, for every project (`scripts/queue-hold.mjs`, used by
+    `scanProject`): the log says the turn is over, `logs/<p>.pid` is alive,
+    and the persisted queue is not empty ⇒ `queueHeld {pid, sinceMs,
+    queueLength, background}` in `/api/pupitre`, `fleet-status --json` and
+    the Android snapshot; the activity text says « ⏸ file retenue : n
+    tâche(s) en attente ».
+  - Visible at once: « ⏸ n retenue(s) » chip on the musician's card, and a
+    banner in its queue (PID, since when, what it waits for, the queue will
+    restart on its own, how to unblock). `fleet-status` shows « FILE RETENUE
+    … ne pas tuer sans décision »; `fleet-status --held` lists only held
+    queues (exit 2 if any).
+  - Reported: a server sweep (every 30 s) writes `notification/queue_held`
+    in the musician's log and a `queue-held` message to the chef, plus a
+    desktop notification, once the hold has lasted `queueHoldAlertMin`
+    (project, then `defaults`; 5 min by default), then again every
+    `queueHoldRepeatMin` (30 min by default, 0 = never) while it lasts. The
+    report gives the manual choices: wait, stop the process
+    (`kill-stalled.mjs <p> --by utilisateur`, the running work is lost), or
+    remove queued tasks.
+  - Released: `notification/queue_hold_released` is journaled when the
+    process ends (or the queue empties); the queue drains as before.
+  - Policy: nothing is ever killed automatically — the background work is
+    usually legitimate (in the incident, a regression run), and the hold
+    itself is correct (launching the next turn would race it).
+- Tests: suite `_test_queue_held.mjs` (policy, timing, the incident
+  reproduced on a real live process, wiring, no kill in the sweep), HTTP
+  `queue-held` (pupitre, musician log, chef, `fleet-status --held`, one
+  report only, nothing killed, release), browser `queue-held` (card chip,
+  queue banner).
+
 ## [0.81.0] - 2026-10-13
 
 ### Added
