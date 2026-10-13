@@ -3,8 +3,9 @@
 // ============================================================================
 //
 // User request (2026-10-13): the dashboard shows each musician's TODO list,
-// read-only, done items first then open ones, each part newest first by entry
-// date, with the name of the musician who ticked each done item.
+// read-only, each part newest first by entry date, with the name of the
+// musician who ticked each done item. Order of the parts (0.76.2, user request
+// of 2026-10-13 replacing "done first"): OPEN items on top, DONE items below.
 //
 // Format (Markdown, compatible with the existing files):
 //   - [ ] (2026-10-13 09:12) [correction] Title <!-- id:t-7f3a1c -->
@@ -91,9 +92,9 @@ export function parseTodo(text, { project = '', fileMtime = null } = {}) {
   return items;
 }
 
-/** Done items first, then open ones (in progress + to do); each part newest entry first. */
+/** Open items first (in progress + to do), then done ones; each part newest entry first. */
 export function sortTodo(items) {
-  const rank = (s) => (s === 'done' ? 0 : 1);
+  const rank = (s) => (s === 'done' ? 1 : 0);
   return [...items].sort((a, b) => rank(a.status) - rank(b.status)
     || String(b.addedAt || '').localeCompare(String(a.addedAt || ''))
     // Same date (estimated, or same minute): later in the file = added later.

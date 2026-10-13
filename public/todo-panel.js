@@ -1,8 +1,9 @@
 /* ==========================================================================
    public/todo-panel.js — "☑ TODO" tab of the side panel (0.75.0)
    --------------------------------------------------------------------------
-   User request (2026-10-13): each musician's TODO list, as checkboxes, done
-   items first then open ones, each part newest first by entry date; read-only
+   User request (2026-10-13): each musician's TODO list, as checkboxes, OPEN
+   items on top then DONE ones below (0.76.2, replaces "done first"), each part
+   newest first by entry date; read-only
    for the user (the musician of the item ticks it, with scripts/todo.mjs);
    the musician's name next to each done item.
    Reads GET /api/todo (no write route exists). Refreshed every 15 s while the
@@ -70,8 +71,8 @@
     const done = items.filter(i => i.status === "done"), open = items.filter(i => i.status !== "done");
     pane.querySelector(".todo-body").innerHTML = !items.length
       ? `<p class="todo-empty">Aucun item${project ? ` pour ${esc(project)}` : ""}.</p>`
-      : `<section class="todo-sec" data-sec="done"><h3 class="todo-sec-h">Faits <span class="todo-n">${done.length}</span></h3><ul class="todo-list">${done.map(itemHtml).join("")}</ul></section>
-         <section class="todo-sec" data-sec="open"><h3 class="todo-sec-h">Non faits <span class="todo-n">${open.length}</span></h3><ul class="todo-list">${open.map(itemHtml).join("")}</ul></section>`;
+      : `<section class="todo-sec" data-sec="open"><h3 class="todo-sec-h">Non faits <span class="todo-n">${open.length}</span></h3><ul class="todo-list">${open.map(itemHtml).join("")}</ul></section>
+         <section class="todo-sec" data-sec="done"><h3 class="todo-sec-h">Faits <span class="todo-n">${done.length}</span></h3><ul class="todo-list">${done.map(itemHtml).join("")}</ul></section>`;
   }
 
   SidePanel.register({

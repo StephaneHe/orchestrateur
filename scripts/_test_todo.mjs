@@ -55,13 +55,17 @@ try {
   ok(by('icônes').doneBy === null && by('icônes').manual && by('coché à la main').doneBy === null, 'coché à la main / ancien format : aucun nom inventé');
   ok(new Set(items.map(i => i.id)).size === items.length && parseTodo(FIXTURE, { project: 'chef' }).map(i => i.id).join() === items.map(i => i.id).join(), 'identifiants uniques et stables');
 
-  console.log('\n── 2. Ordre : FAITS en haut, puis NON FAITS ; chacun du plus récent au plus ancien (date d’entrée)');
+  // 0.76.2 — user request (2026-10-13), replacing "done first": « Panel git sur
+  // orchestrateur : en haut les tâches non faites, en bas les tâches faites ».
+  console.log('\n── 2. Ordre : NON FAITS en haut, puis FAITS ; chacun du plus récent au plus ancien (date d’entrée)');
   const s = sortTodo(items);
-  const firstOpen = s.findIndex(i => i.status !== 'done');
-  ok(s.slice(0, firstOpen).every(i => i.status === 'done') && s.slice(firstOpen).every(i => i.status !== 'done'), 'faits d’abord, non faits ensuite ([~] avec les non faits)');
+  const firstDone = s.findIndex(i => i.status === 'done');
+  ok(firstDone > 0 && s.slice(0, firstDone).every(i => i.status !== 'done') && s.slice(firstDone).every(i => i.status === 'done'), 'non faits d’abord ([~] avec eux), faits ensuite');
   const desc = (part) => part.every((x, k) => k === 0 || String(part[k - 1].addedAt) >= String(x.addedAt));
-  ok(desc(s.slice(0, firstOpen)) && desc(s.slice(firstOpen)), 'chaque partie : date d’entrée décroissante', s.map(i => `${i.status}:${i.addedAt}`).join(' '));
-  ok(s[0].title === 'Instance de dev séparée' && s[firstOpen].title === 'Limite de session relancée', `têtes de partie : ${s[0].title} / ${s[firstOpen].title}`);
+  ok(desc(s.slice(0, firstDone)) && desc(s.slice(firstDone)), 'chaque partie : date d’entrée décroissante', s.map(i => `${i.status}:${i.addedAt}`).join(' '));
+  ok(s[0].title === 'Limite de session relancée' && s[firstDone].title === 'Instance de dev séparée', `têtes de partie : ${s[0].title} / ${s[firstDone].title}`);
+  const panel = fs.readFileSync(path.join(ROOT, 'public', 'todo-panel.js'), 'utf8');
+  ok(panel.indexOf('data-sec="open"') > 0 && panel.indexOf('data-sec="open"') < panel.indexOf('data-sec="done"'), 'panneau : section « Non faits » rendue avant « Faits »');
   const same = sortTodo(parseTodo('- [ ] a\n- [ ] b\n- [ ] c', { project: 'p', fileMtime: mtime }));
   ok(same.map(i => i.title).join('') === 'cba', 'même date : plus bas dans le fichier = plus récent');
   const c = countTodo(items);

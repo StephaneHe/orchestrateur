@@ -4,7 +4,7 @@ A local Windows dashboard where one "conductor" AI session pilots a fleet of
 headless coding agents, one per project, with a live web viewer and an
 Android companion app.
 
-`version 0.57.0` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
+`version 0.76.2` · `license MIT` · `platform Windows 10/11` · `Node.js ≥ 20` · `Android 10+ (companion)`
 
 > **Status: active, personal project.** Built and used daily on a single
 > Windows machine. Pre-1.0: internal APIs and file formats can still change
@@ -14,14 +14,17 @@ Android companion app.
 
 ## ⚠ Security first
 
-**As shipped, the dashboard has no authentication and lets anyone who
-reaches it run commands on the host machine.** The dispatch API starts
-sub-agents with `Read,Edit,Write,Bash…` in each project folder, and the
-server listens on `0.0.0.0:7777`. Run it only on a network you fully trust
-(localhost, home LAN, a private VPN/tailnet). **Never expose it to the
-Internet**: no port forwarding, no public tunnel, no public Wi-Fi.
+**The dashboard lets whoever reaches it run commands on the host machine.**
+The dispatch API starts sub-agents with `Read,Edit,Write,Bash…` in each
+project folder. The server listens on `0.0.0.0:7777`, but a network guard
+(first middleware, and on every WebSocket upgrade) only serves loopback
+(`127.0.0.0/8`, `::1`) and Tailscale (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`):
+the home LAN gets `403`. The token gate is off by default, so this guard is
+the access control. **Never expose the port to the Internet**: no port
+forwarding, no public tunnel.
 
-See [Security](#security) for the token gate and what stays out of git.
+See [Security](#security) for the guard, the token gate and what stays out
+of git.
 
 ---
 
@@ -88,20 +91,45 @@ one screen to watch the whole fleet.
   lists come from the codex model cache, the public NVIDIA / OpenRouter
   catalogues and the tools actually installed. Choices are saved, with history,
   to a local `model-routing.json`. Keys are never displayed: only "present /
-  absent" is shown. The choices are recorded only; dispatch does not use them
-  yet. Phase 1 of pipeline enforcement (observation) is live. Every entry is
-  classified (pipeline and mode) and logged, with no change in behaviour, and
-  the result is shown in an "Observation" panel. Entries include the composer,
-  direct messages, the Android app, CLI dispatches, wakes, relays, notify and
-  the interactive terminal. NVIDIA and OpenRouter are limited to judgement
-  steps until their agent harness ships. A request that fits no pipeline is
-  never forced into one. It is handled as a discussion, and a "gap" is reported
-  with a concrete proposal (new pipeline, step or variant, or attaching it to
-  an existing one). Accepting it adds the task, after which you pick its model.
-  An "API keys" section stores the NVIDIA and OpenRouter keys in the local
-  `.env`, with save, test and delete. A key's value is never returned or
-  logged (only its last 4 characters are shown), and no child process inherits
-  it.
+  absent" is shown. A request that fits no pipeline is never forced into one:
+  a "gap" is reported with a concrete proposal (new pipeline, step or variant),
+  and accepting it adds the task. An "API keys" section stores the NVIDIA and
+  OpenRouter keys in the local `.env`, with save, test and delete. A key's
+  value is never returned or logged (only its last 4 characters are shown),
+  and no child process inherits it.
+- **Mandatory pipelines.** On the projects put in service
+  (`scripts/pipeline-enforce.mjs`), every entry (composer, direct message,
+  Android app, CLI dispatch, wake, relay, interactive terminal) runs as a
+  pipeline execution, never as a free turn. The pipeline is chosen by the
+  model assigned to the `routage.classifier` step, by meaning, never by
+  keywords; an explicit prefix (`/dev /complet /discussion…`) or flag still
+  wins. The engine (`scripts/pipeline-engine.mjs`) runs each step on its own
+  model and **checks each step's criteria in code** (tests red then green,
+  suite green, files really produced, read-only steps unchanged…); a refused
+  attempt is rolled back. Full development runs a TDD loop item by item, with
+  a review and a commit per item; any defect found blocks the delivery and is
+  reported at once. Limits (items, duration, review rounds) pause the run with
+  a plain-language question and four answers (continue, simplify, change the
+  model, abandon). Launch errors back off progressively, with "test the model /
+  retry" choices. The conductor's own turn can be a "Routage" pipeline:
+  understand the request, split it into unit tasks, classify **each task** on
+  its own, then dispatch them (or run the conductor's own whitelisted actions);
+  tasks ordered "after" another one are released mechanically when it ends.
+- **Side panel: TODO lists and git graphs.** A full-height toggle drawer
+  (pill, `t` key, edge tab, Escape; full screen on a phone) with two tabs,
+  both **read-only**:
+  - **TODO**: every agent's `TODO_LIST.md`, read from disk, as disabled
+    checkboxes, open items on top and done items below, each part newest entry
+    first, with the name of the agent that ticked each done item. Only the
+    agents write their list, through `scripts/todo.mjs`, which records their
+    name from the turn itself (refused outside a turn).
+  - **Git**: each agent's repository as an SVG graph (commits, branches with
+    HEAD highlighted, remote branches, tags, merges). The server only runs
+    `git log` (GET routes only, the index is never rewritten).
+- **Discussion language.** A fixed discussion language (default and per
+  project) is injected into every prompt; a final answer in the wrong
+  language is detected and rephrased. Code and technical docs stay in
+  English.
 - **Dual model.** Each step can have a principal and an optional second model.
   `dispatch.mjs --model A --second-model B` runs both in parallel, each in its
   own git worktree. The principal then reviews both results, merges the best
@@ -147,7 +175,7 @@ one screen to watch the whole fleet.
 | Node.js | 20 or later |
 | Claude Code CLI | `claude` on `PATH`, logged in with a Max/Pro subscription |
 | OpenAI Codex CLI | optional, `codex` on `PATH` |
-| NVIDIA API key | optional, only for the limit failover leg |
+| NVIDIA / OpenRouter API keys | optional: NVIDIA and OpenRouter models (pipeline steps, failover leg) |
 | Android app | optional: JDK 17 + Android SDK to build, device on Android 10+ (minSdk 29) |
 | Browser for the regression suite | Microsoft Edge (driven headless by `playwright-core`) |
 
@@ -167,13 +195,19 @@ copy config.example.json config.json   # then list your own projects
 | `config.json` | Fleet definition: conductor name, defaults (`model`, `provider`, `allowedTools`), the `projects[]` list (`name`, `path`, optional `tools`, `model`, `codexModel`), and `ui` flags. Hot-reloaded. | no — copy [`config.example.json`](config.example.json) |
 | `downloads.json` | Registry of the `/downloads` page (apps and docs). Hot-reloaded; an invalid file is rejected as a whole and the last valid version keeps being served. | yes |
 | `.token` | 32-byte hex token for the optional token gate. Generated locally by `start.ps1` or the server. | no |
-| `.env` | Optional, holds `NVIDIA_API_KEY` for the failover leg. | no |
+| `.env` | Optional, holds `NVIDIA_API_KEY` and `OPENROUTER_API_KEY` (written by the "API keys" section). | no |
+| `model-routing.json` | Model per pipeline step, history, gap decisions, and which projects/pipelines are in service (`enforcement`). Written by the server and `pipeline-enforce.mjs`. | no |
+| `language-settings.json` | Discussion language (default, per project, per model). Written by the server. | no |
+| `permission-rules.json` | "Always allow" rules of the interactive permission requests. | no |
+| `TODO_LIST.md` | Each project's TODO list (format in `scripts/todo-core.mjs`), shown read-only in the side panel. Not versioned. | no |
 
 Environment variables (names and roles only):
 
 | Variable | Role |
 | --- | --- |
-| `NVIDIA_API_KEY` | API key for the NVIDIA failover leg (also read from `.env`). |
+| `NVIDIA_API_KEY`, `OPENROUTER_API_KEY` | Provider keys (also read from `.env`); removed from the server's environment at boot and never inherited by child processes. |
+| `ORCH_ALLOW_CIDRS` | Emergency widening of the network guard (server environment, add-only). |
+| `ORCH_REGRESS_JOBS` | Number of test suites run in parallel by `regression.mjs` (default: a quarter of the CPUs, 1 to 4). |
 | `CLAUDE_BIN`, `CODEX_BIN` | Override the `claude` / `codex` executables (used by tests). |
 | `CODEX_HOME` | Codex configuration directory, honoured when Codex picks its own model. |
 | `LOG_POLL_MS` | Log watcher polling interval (default 300 ms). |
@@ -216,13 +250,24 @@ node scripts/new-project.mjs <name> [--path <dir>]   # register a project, ready
 node scripts/trust-projects.mjs [<name>...] [--dry-run]   # trust + permissions retrofit
 node scripts/kill-stalled.mjs <project> [--reason "…"]   # stop a stalled turn ("stopped by the conductor")
 node scripts/notify.mjs <project> --file <summary.md> --source <from>   # post a callback
+
+# Pipelines
+node scripts/pipeline-enforce.mjs on|off <project> | --chef | --terminal | --all
+node scripts/dispatch.mjs <project> "…" --pipeline dev --mode leger|complet   # explicit choice
+node scripts/routage-pending.mjs list | release | drop …   # Routage tasks waiting for another one
+node scripts/model-backoff.mjs <run> status|retry|test     # a run backing off after launch errors
+
+# TODO list (agents only: done/start are refused outside a turn)
+node scripts/todo.mjs add [--type correction] "<title>" | start <id> | done <id> | list
 ```
 
 Main HTTP endpoints: `GET /api/version`, `GET /api/config`,
 `GET /api/pupitre` (fleet health snapshot), `GET /api/sse/fleet` (live
 stream), `POST /api/dispatch`, `POST /api/notify`,
 `POST /api/question/:project/resolve`, `POST /api/ack/:project` (mark seen),
-`GET /api/project/:name/journal` (activity journal), `GET /downloads`.
+`GET /api/project/:name/journal` (activity journal), `GET /api/pipeline-runs`
+(pipeline executions), `GET /api/todo` (TODO lists, read-only),
+`GET /api/git-graph[/:project]` (git graphs, read-only), `GET /downloads`.
 
 ## Architecture
 
@@ -236,8 +281,9 @@ stream), `POST /api/dispatch`, `POST /api/notify`,
         pump: question relay, queue drain, conductor wake-ups
                            │ spawns (argv arrays, sanitised env)
                            ▼
-        scripts/dispatch.mjs — one turn per call
-        claude -p … --resume <sid>   |   codex exec …   |   NVIDIA failover
+        scripts/dispatch.mjs — one turn per call (gate: pipeline or not)
+        scripts/pipeline-engine.mjs — steps, criteria checked in code
+        claude -p … --resume <sid>   |   codex exec … (codex, NVIDIA, OpenRouter)
                            │
                            ▼
         logs/<project>.jsonl (append-only stream-json)
@@ -271,24 +317,33 @@ Further reading: [`docs/project-brief.md`](docs/project-brief.md),
 ## Tests and non-regression
 
 ```powershell
-node scripts/regression.mjs                 # full run, non-zero exit on any KO
+node scripts/regression.mjs --targeted [--since <tag>]   # during development
+node scripts/regression.mjs --ref vX.Y.Z                 # full run on a tag, required before production
 node scripts/regression.mjs --no-browser    # skip the Edge stage
-node scripts/regression.mjs --ref <tag> --out .regress/report-before.json
+node scripts/regression.mjs --jobs 1        # suites one at a time (default: in parallel)
 node scripts/regression.mjs --compare before.json after.json --md report.md
 ```
 
-`regression.mjs` runs three stages:
+`regression.mjs` runs three stages, with a non-zero exit on any KO:
 
-1. every `scripts/_test_*.mjs` suite (queue, tool resolution, explicit
-   model, permission denial, conductor pool, downloads hot-reload, Projects
-   view…), except `_test_phase2*` which write to the real `logs/`;
+1. every `scripts/_test_*.mjs` suite, in parallel (timing-sensitive ones run
+   alone), except `_test_phase2.mjs` (dead code, real model calls); the full
+   output of a failed suite is kept under `.regress/suite-output/`;
 2. an **isolated test instance** in `.regress/` on a free port, with
    fixture projects and a fake `claude` CLI (`tests/fake_claude`), exercised
    through its HTTP routes — port 7777 is rewritten and checked absent, so
    production is never contacted;
 3. headless browser journeys (thread and input, attention band, queue,
    search, briefing, attachments, real-time updates, mobile layout,
-   Projects view).
+   Projects view, Models page, side panel…).
+
+**Targeted** runs select, deterministically, the base suites plus the suites
+and stages that cover the changed files (a changed file covered by nothing
+triggers the full run). The **full** run is required before production. A git
+`pre-commit` hook (`node scripts/delivery-gate.mjs install-hook`) refuses a
+delivery commit (version changed) without a green report made on exactly the
+committed content; `node scripts/delivery-gate.mjs prod-check vX.Y.Z` checks
+a tag for production.
 
 Each suite can also run alone, e.g. `node scripts/_test_tools_resolution.mjs`.
 
@@ -306,6 +361,16 @@ the before/after reports, so any regression is visible and revertible.
   (`nssm.exe` expected in `tools/`). Edit the paths at the top of the script
   for your machine.
 - **Restart**: `node scripts/restart-orchestrateur.mjs`.
+- **Development and production** (see [`docs/DEV-PROD.md`](docs/DEV-PROD.md)):
+  production runs from its own checkout, frozen on a version tag; development
+  continues in an independent clone (branch `dev`), whose live instance only
+  runs in the test sandbox (`node scripts/regression.mjs --keep --no-suites
+  --no-browser --port 7778`). Production moves by **jumps**: tag `vX.Y.Z` in
+  the dev, full green run on that tag, then
+  `node scripts/prod-jump.mjs --tag vX.Y.Z --prod <production checkout>`
+  checks everything and prints the plan; `--apply` tags `prod-before-vX.Y.Z`
+  and fast-forwards (never restarts). Rollback: `git reset --hard
+  prod-before-vX.Y.Z`, restart, regression.
 - **Android app**: from `android/`, `./gradlew assembleDebug` (JDK 17). The
   APK lands in `app/build/outputs/apk/debug/`. In the app, enter the server
   URL and, only if the token gate is on, the token. Details in
@@ -323,22 +388,32 @@ Every release has a matching entry in [`CHANGELOG.md`](CHANGELOG.md)
 
 ## Roadmap
 
-From [`TODO_LIST.md`](TODO_LIST.md):
+The live list is each project's local `TODO_LIST.md` (not versioned since
+0.74.2), shown read-only in the dashboard's side panel. Open topics include:
 
-- conductor pool of three (`chef-2`/`chef-3` slots, affinity, delegation);
-- mobile and `/pupitre` follow-ups, metrics, accessibility;
-- tool use during the NVIDIA failover leg (currently single-shot);
-- validate the full failover chain under a real usage limit.
+- free a conductor slot as soon as its turn exits without a result (today it
+  waits for the lost-process sweep);
+- route the other files the server may read while they are written through
+  the retrying atomic write (`scripts/atomic-file.mjs`);
+- per-commit details (changed files, diff) in the git tab, read-only;
+- mobile and `/pupitre` follow-ups, metrics, accessibility.
 
 Known limitations: Windows only; some scripts still assume the author's
 install paths and need adjusting; no automatic cleanup of `attachments/`.
 
 ## Security
 
+- **Network guard.** `scripts/network-guard.mjs` serves only loopback and
+  Tailscale addresses (HTTP and WebSocket); everything else gets `403`.
+  `ORCH_ALLOW_CIDRS` (server environment) can only add ranges. There is no
+  port proxy.
 - **Token gate.** `TOKEN_GATE_ENABLED = false` in `server.js` is a
-  deliberate choice for a trusted private network. Set it to `true` to
-  require the token from `.token` on every HTTP route and WebSocket upgrade,
-  sent as `?token=<hex>` or the `X-Orchestrator-Token` header.
+  deliberate choice behind the network guard. Set it to `true` to require
+  the token from `.token` on every HTTP route and WebSocket upgrade, sent as
+  `?token=<hex>` or the `X-Orchestrator-Token` header.
+- **Read-only views.** The TODO and git tabs have no write route: TODO lists
+  are written only by the agents (`scripts/todo.mjs`), and the git graph only
+  runs `git log`.
 - **Out of git**: `logs/`, `attachments/`, `builds/`, `.token`, `.env`,
   `secrets/`, `config.json` and UI screenshots. Logs embed file contents and
   conversation text; never sync them to a cloud folder.
@@ -355,8 +430,9 @@ install paths and need adjusting; no automatic cleanup of `attachments/`.
 
 This is a personal tool, but issues and pull requests are welcome. Please
 keep to the conventions in [`CLAUDE.md`](CLAUDE.md) (ES modules, no
-front-end framework, no database), run `node scripts/regression.mjs` before
-submitting, and add a [`CHANGELOG.md`](CHANGELOG.md) entry.
+front-end framework, no database), run `node scripts/regression.mjs
+--targeted` before submitting (the full run before a release), and add a
+[`CHANGELOG.md`](CHANGELOG.md) entry with the version bump.
 
 ## License
 

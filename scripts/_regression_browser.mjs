@@ -145,7 +145,7 @@ export async function browserChecks(sb, t) {
           .map(({ box, ...x }) => x),
       };
     });
-    await check(B, 'todo-panel', 'Panneau à bascule pleine hauteur + TODO des musiciens : pill, touche t, onglet du bord, Échap ; faits en haut puis non faits, chacun du plus récent au plus ancien ; nom du musicien à côté de chaque fait ; cases en lecture seule ; mémorisé ; ?todo=0', async () => {
+    await check(B, 'todo-panel', 'Panneau à bascule pleine hauteur + TODO des musiciens : pill, touche t, onglet du bord, Échap ; non faits en haut puis faits, chacun du plus récent au plus ancien ; nom du musicien à côté de chaque fait ; cases en lecture seule ; mémorisé ; ?todo=0', async () => {
       if (!(await page.locator('#btn-todo').count())) NA('panneau absent de cet état du code');
       await page.goto(`${sb.url}/?token=${sb.token}`); await page.locator('.brand').waitFor();
       assert(await until(async () => visible(page, '#btn-todo'), 8000), 'pill ☑ TODO absente');
@@ -156,16 +156,18 @@ export async function browserChecks(sb, t) {
       assert(await until(async () => (await todoState(page)).items.length >= 9, 8000), 'items absents');
       const s = await todoState(page);
       assert(Math.abs(s.top - s.barBottom) <= 2 && Math.abs(s.bottom - s.vh) <= 2, `pas pleine hauteur sous la barre : ${s.top}-${s.bottom} (barre ${s.barBottom}, fenêtre ${s.vh})`);
-      assert(s.secs.join() === 'done,open', `sections : ${s.secs.join()}`);
-      const k = s.items.findIndex(i => i.status !== 'done');
-      assert(k > 0 && s.items.slice(0, k).every(i => i.status === 'done') && s.items.slice(k).every(i => i.status !== 'done'), 'faits pas en haut');
-      for (const part of [s.items.slice(0, k), s.items.slice(k)]) part.forEach((x, n) => assert(n === 0 || part[n - 1].added >= x.added, `ordre par date d’entrée : ${part.map(i => i.added).join(' ')}`));
-      assert(s.items.slice(0, k).every(i => i.by && /^✓ /.test(i.by)), 'un fait sans nom affiché à côté');
+      // 0.76.2: open items on top, done ones below (user request replacing "done first").
+      assert(s.secs.join() === 'open,done', `sections : ${s.secs.join()}`);
+      const k = s.items.findIndex(i => i.status === 'done');
+      const openPart = s.items.slice(0, k), donePart = s.items.slice(k);
+      assert(k > 0 && openPart.every(i => i.status !== 'done') && donePart.every(i => i.status === 'done'), 'non faits pas en haut');
+      for (const part of [openPart, donePart]) part.forEach((x, n) => assert(n === 0 || part[n - 1].added >= x.added, `ordre par date d’entrée : ${part.map(i => i.added).join(' ')}`));
+      assert(donePart.every(i => i.by && /^✓ /.test(i.by)), 'un fait sans nom affiché à côté');
       assert(s.items.find(i => i.id === 't-a10001')?.by === '✓ alpha', `nom du musicien : ${JSON.stringify(s.items.find(i => i.id === 't-a10001'))}`);
-      assert(s.items.slice(k).every(i => !i.by), 'un non fait porte un nom');
-      assert(s.items.every(i => i.disabled) && s.items.slice(0, k).every(i => i.checked) && s.items.slice(k).every(i => !i.checked), 'cases non désactivées ou mal cochées');
+      assert(openPart.every(i => !i.by), 'un non fait porte un nom');
+      assert(s.items.every(i => i.disabled) && donePart.every(i => i.checked) && openPart.every(i => !i.checked), 'cases non désactivées ou mal cochées');
       await page.evaluate(() => document.querySelector('#side-panel .todo-item[data-status="todo"] .ti-box')?.click());
-      assert((await todoState(page)).items.filter(i => i.checked).length === k, 'une case a pu être cochée');
+      assert((await todoState(page)).items.filter(i => i.checked).length === donePart.length, 'une case a pu être cochée');
       assert(await overflowX(page) <= 0, `débordement horizontal ${await overflowX(page)} px`);
       await shot(page, 'todo-panel-desktop');
       await page.reload(); await page.locator('.brand').waitFor();
@@ -191,7 +193,7 @@ export async function browserChecks(sb, t) {
       // Leave the page as the next checks expect it: plain URL, rail filled.
       await page.goto(`${sb.url}/?token=${sb.token}`); await page.locator('.brand').waitFor();
       await until(async () => /À examiner/.test(await page.textContent('#rail-body') || ''), 15_000);
-      return `${s.items.length} items : ${k} faits (avec nom) puis ${s.items.length - k} non faits, ordre par date d’entrée, panneau ${s.width}px × pleine hauteur`;
+      return `${s.items.length} items : ${k} non faits puis ${s.items.length - k} faits (avec nom), ordre par date d’entrée, panneau ${s.width}px × pleine hauteur`;
     });
     // ---------------- Git graph tab (0.76.0) ----------------
     const gitState = (pg) => pg.evaluate(() => {

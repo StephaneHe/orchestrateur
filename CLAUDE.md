@@ -624,8 +624,10 @@ de la prod).
   tout élément `[data-sp-open="<id>"]` l'ouvre. L'onglet Git des musiciens
   viendra s'y brancher.
 - **TODO** (`public/todo-panel.js`) : la liste de chaque musicien, en cases
-  à cocher **désactivées**. Les faits sont en haut, puis les non faits ; dans
-  chaque partie, du plus récent au plus ancien par date d'entrée. Le nom du
+  à cocher **désactivées**. Les **non faits sont en haut, les faits en bas**
+  (0.76.2, demande « en haut les tâches non faites, en bas les tâches
+  faites », qui remplace l'ordre de 0.75.0) ; dans chaque partie, du plus
+  récent au plus ancien par date d'entrée. Le nom du
   musicien est à côté de chaque fait.
 - **Lecture** : `GET /api/todo[?project=]`. Le `TODO_LIST.md` de chaque
   projet de `config.json` est lu sur le **disque**, jamais par git, avec un

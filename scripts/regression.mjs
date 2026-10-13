@@ -260,13 +260,14 @@ async function apiChecks(sb) {
     return `v${v.version}`;
   });
   // 0.75.0 — TODO lists of the musicians, read-only (side panel).
-  await check(S, 'todo-api', 'TODO des musiciens : GET /api/todo lit le disque (projets de config.json seulement), faits puis non faits, chacun du plus récent au plus ancien, nom du musicien sur les faits ; aucune route d’écriture ; un item coché par todo.mjs pendant un tour apparaît avec son nom', async () => {
+  await check(S, 'todo-api', 'TODO des musiciens : GET /api/todo lit le disque (projets de config.json seulement), non faits puis faits, chacun du plus récent au plus ancien, nom du musicien sur les faits ; aucune route d’écriture ; un item coché par todo.mjs pendant un tour apparaît avec son nom', async () => {
     if (!fs.existsSync(path.join(sb.root, 'scripts', 'todo-core.mjs'))) NA('TODO absente de cet état du code');
     const d = await json('/api/todo');
     const lists = Object.fromEntries(d.lists.map(l => [l.project, l]));
     assert(lists.chef?.total === 3 && lists.alpha?.total === 4 && lists.beta?.total === 2 && d.items.length === 9, `listes : ${JSON.stringify(d.lists)}`);
-    const k = d.items.findIndex(i => i.status !== 'done');
-    assert(k > 0 && d.items.slice(0, k).every(i => i.status === 'done') && d.items.slice(k).every(i => i.status !== 'done'), 'faits pas en premier');
+    // 0.76.2: open items on top, done ones below (user request replacing "done first").
+    const k = d.items.findIndex(i => i.status === 'done');
+    assert(k > 0 && d.items.slice(0, k).every(i => i.status !== 'done') && d.items.slice(k).every(i => i.status === 'done'), 'non faits pas en premier');
     for (const part of [d.items.slice(0, k), d.items.slice(k)]) part.forEach((x, n) => assert(n === 0 || String(part[n - 1].addedAt) >= String(x.addedAt), `ordre : ${part.map(i => i.addedAt).join(' ')}`));
     const a1 = d.items.find(i => i.id === 't-a10001');
     assert(a1?.doneBy === 'alpha' && a1.doneAt === '2026-10-13T10:02', `nom du musicien : ${JSON.stringify(a1)}`);

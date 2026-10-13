@@ -11,6 +11,32 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.76.2] - 2026-10-13
+
+### Changed
+
+- (server) TODO tab of the side panel: **open items on top, done items
+  below** (user request: « Panel git sur orchestrateur : en haut les tâches
+  non faites, en bas les tâches faites »), replacing the "done first" order of
+  0.75.0. Each part keeps its order (newest entry first); `[~]` items stay
+  with the open ones. Same order from `GET /api/todo` (`sortTodo`). The git
+  tab has no done / not-done list and is unchanged. Tests updated:
+  `_test_todo.mjs` (sort and panel section order), HTTP `todo-api`, browser
+  `todo-panel`.
+- `README.md` brought up to date with the project (user request: « Mets à
+  jour le README de orchestrateur-dev ») — documentation only, no code
+  change: version 0.76.2; the network guard (loopback and Tailscale only)
+  instead of "no authentication"; mandatory pipelines (classification by the
+  classifier model, engine checking each step in code, TDD loop, defects
+  block delivery, pauses, back-off, Routage of the conductor); the side panel
+  (read-only TODO lists written only by the agents through `todo.mjs`,
+  read-only git graphs); discussion language; local configuration files
+  (`model-routing.json`, `language-settings.json`, `permission-rules.json`,
+  unversioned `TODO_LIST.md`); new scripts and endpoints; targeted vs full
+  non-regression, parallel suites and the delivery hook; dev/prod jumps with
+  `prod-jump.mjs`; the roadmap no longer links the unversioned
+  `TODO_LIST.md`.
+
 ## [0.76.0] - 2026-10-13
 
 ### Added
