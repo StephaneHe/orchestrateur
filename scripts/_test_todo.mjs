@@ -164,23 +164,11 @@ try {
   ok(/side-panel\.js/.test(html) && /todo-panel\.js/.test(html) && /id="btn-todo"[^>]*data-sp-open="todo"/.test(html), 'index.html : panneau, onglet TODO, pill');
   const tp = read(path.join(ROOT, 'public', 'todo-panel.js'));
   ok(/type="checkbox" class="ti-box" disabled/.test(tp), 'cases désactivées');
-  // 0.75.0 requirement « the panel sends nothing », widened with the user's
-  // explicit agreement (2026-10-13, « J'autorise l'envoie de POST à partir de
-  // todo-panel.js »): a POST is allowed to the notes route (0.81.0) and, under
-  // the same agreement, to the order route of the drag and drop (0.83.0,
-  // part 5/5), and to the reject route (0.85.0, part 3/5: « L'accord POST
-  // couvre toutes les requetes necessaires a cette fonctionalite »; the user
-  // chose that a rejection is written in the musician's TODO_LIST.md). Every
-  // other write from the panel stays forbidden.
-  const calls = tp.split(/\bfetch\(/).slice(1).map(c => {
-    const url = (c.match(/^\s*([`"'])(.*?)\1/) || [])[2] || '?';
-    const body = c.slice(0, c.search(/\)\s*;/) + 1 || 600);
-    const method = ((body.match(/method:\s*["'`](\w+)/) || [])[1] || 'GET').toUpperCase();
-    return { url, method };
-  });
-  const writes = calls.filter(c => c.method !== 'GET');
-  ok(writes.length > 0 && writes.every(c => c.method === 'POST' && (c.url.startsWith('/api/notes/todo/') || c.url === '/api/order/todo' || c.url.startsWith('/api/reject/todo/'))),
-    `écritures du panneau : POST vers /api/notes/todo/, /api/order/todo et /api/reject/todo/ seulement (${JSON.stringify(writes)})`);
+  // 0.75.0 requirement « the panel sends nothing »: lifted entirely by the
+  // user (2026-10-13, « L'accord POST couvre toutes les requetes necessaires a
+  // cette fonctionalite. L'interdication peut donc finalement etre entierement
+  // levee. »). The panel may send what its features need; what each route
+  // writes is still checked below.
   // The reject route writes only the rejected line (todo-core rejectItem), under the list's lock.
   const rejectRoute = srv.slice(srv.indexOf("app.post('/api/reject/todo/"), srv.indexOf('// ── Order of the TODO items'));
   ok(/sameOriginOnly/.test(rejectRoute) && /rejectItem\(text, \{ id: req\.params\.id \}/.test(rejectRoute) && /withListLock\(file/.test(rejectRoute) && /writeFileAtomic\(file, next/.test(rejectRoute),
@@ -190,16 +178,14 @@ try {
   ok(orderWrites.length > 0 && orderWrites.every(w => /\(\s*file$/.test(w)) && !/TODO_FILE/.test(orderMod)
     && /createOrderStore\(path\.join\(__dirname, ORDER_FILE\)\)/.test(srv) && /ORDER_FILE = 'todo-order\.json'/.test(orderMod),
     `l’ordre n’écrit que todo-order.json, jamais TODO_LIST.md (${JSON.stringify(orderWrites)})`);
-  ok(!/XMLHttpRequest|sendBeacon|new\s+WebSocket|EventSource\([^)]*method/.test(tp), 'aucun autre canal d’envoi dans le panneau');
-  ok(!/\/api\/todo[^"'`]*["'`]\s*,\s*\{[^}]*method:\s*["'`](POST|PUT|PATCH|DELETE)/i.test(tp), 'aucune écriture vers /api/todo depuis le panneau');
   const notesMod = read(path.join(ROOT, 'scripts', 'todo-notes.mjs'));
   const noteWrites = notesMod.match(/\b(writeFileAtomic|writeFileSync|writeFile|appendFileSync|appendFile|renameSync|renameRetry|unlinkSync)\s*\([^,)]*/g) || [];
   ok(noteWrites.length > 0 && noteWrites.every(w => /\(\s*file$/.test(w)) && !/TODO_FILE/.test(notesMod)
     && /createNotesStore\(path\.join\(__dirname, NOTES_FILE\)\)/.test(srv) && /NOTES_FILE = 'todo-notes\.json'/.test(notesMod),
     `les notes n’écrivent que todo-notes.json, jamais TODO_LIST.md (${JSON.stringify(noteWrites)})`);
   // 0.79.0, part 4/5 « lancer le contenu de l'item au chef » : through the
-  // chef's composer (the user sends it), never a request from the panel.
-  ok(/id: "send-chef"/.test(tp) && /App\.prepareChefMessage\(text/.test(tp) && /askSendToChef/.test(tp) && !/fetch\("\/api\/dispatch/.test(tp), 'envoi au chef : confirmation, puis la saisie du chef (aucune requête du panneau)');
+  // chef's composer (the user sends it).
+  ok(/id: "send-chef"/.test(tp) && /App\.prepareChefMessage\(text/.test(tp) && /askSendToChef/.test(tp), 'envoi au chef : confirmation, puis la saisie du chef');
   const sp = read(path.join(ROOT, 'public', 'side-panel.js'));
   ok(/register\(def\)/.test(sp) && /\[data-sp-open\]/.test(sp) && /globalThis\.SidePanel = \{ register, open, close, toggle/.test(sp), 'panneau générique (register / data-sp-open) réutilisable pour l’onglet git');
   const disp = read(path.join(ROOT, 'scripts', 'dispatch.mjs'));

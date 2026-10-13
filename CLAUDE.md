@@ -717,10 +717,12 @@ de la prod).
   `POST /api/notes/todo/:projet/:item {text}` (`sameOriginOnly`, projet de
   config.json, item existant, 4 000 caractères et 200 notes par item au
   plus) ; `GET /api/todo` joint `notes` à chaque item. `/api/todo` reste sans
-  route d'écriture. Exigence 0.75.0 élargie avec l'accord de
-  l'utilisateur (2026-10-13, « J'autorise l'envoie de POST à partir de
-  todo-panel.js ») : le panneau peut faire un POST, vers cette route
-  seulement (`_test_todo.mjs`). Recettes : `_test_todo_notes.mjs`, HTTP `todo-notes`,
+  route d'écriture. Interdiction de POST du panneau (exigence
+  0.75.0) **entièrement levée** par l'utilisateur (2026-10-13, 0.85.1 : « L'accord
+  POST couvre toutes les requetes necessaires a cette fonctionalite.
+  L'interdication peut donc finalement etre entierement levee. ») ;
+  `_test_todo.mjs` vérifie ce qu'écrit chaque route, plus ce qu'envoie le
+  panneau. Recettes : `_test_todo_notes.mjs`, HTTP `todo-notes`,
   navigateur `todo-item-notes`.
 - **Rejet d'un item** (0.85.0, partie 3/5 ; choix de l'utilisateur : « le
   rejet est marqué dans le TODO_LIST.md du musicien. Dans l'UI passe le dans
@@ -745,8 +747,7 @@ de la prod).
   réécrit s'il est illisible), **jamais dans un `TODO_LIST.md`**. Un seul
   ordre global de clés `<projet>/<id>` ; `POST /api/order/todo {keys}`
   (`sameOriginOnly`, liste vide = tri par défaut) ; `GET /api/todo` applique
-  `applyOrder` (items jamais placés d'abord). `_test_todo.mjs` autorise ce
-  POST en plus des notes (même accord de l'utilisateur). Recettes :
+  `applyOrder` (items jamais placés d'abord).  Recettes :
   `_test_todo_order.mjs`, HTTP `todo-order`, navigateur `todo-item-drag`.
 - **Onglet ⎇ Git** (0.76.0, même demande, partie git) : l'arbre git de chaque
   musicien, en **lecture seule** (`public/git-panel.js`, pill `#btn-git`).

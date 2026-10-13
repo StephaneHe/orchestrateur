@@ -11,6 +11,24 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.85.1] - 2026-10-13
+
+### Changed
+
+- (server) The 0.75.0 rule « the TODO panel sends nothing to the server » is
+  lifted entirely, by the user's decision (2026-10-13, verbatim: « L'accord
+  POST couvre toutes les requetes necessaires a cette fonctionalite.
+  L'interdication peut donc finalement etre entierement levee. »).
+  `_test_todo.mjs` no longer restricts what `todo-panel.js` may send: the
+  allowlist of POST routes (notes, order, reject), the « no other sending
+  channel » check, the « no write to /api/todo from the panel » check and the
+  « no request from the panel » clause of the send-to-chef check are removed.
+  Every other check stays: no write route on `/api/todo` itself, notes and
+  order never written in a `TODO_LIST.md`, the reject route rewriting only the
+  rejected line under the list's lock, checkboxes disabled, send-to-chef
+  through a confirmation then the chef's composer. The decision is recorded
+  in `docs/USER_REQUIREMENTS.md`, on the 0.75.0 line.
+
 ## [0.85.0] - 2026-10-13
 
 ### Added

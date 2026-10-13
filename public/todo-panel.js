@@ -171,9 +171,8 @@
 
   /* ---- « Envoyer au chef » (0.79.0, part 4/5) ----------------------------
      User request: « Possilité aussi de lancer le contenu de l'item au chef,
-     pour lancer l'execution ». The panel itself still sends nothing to the
-     server (the TODO stays read-only here, 0.75.0): after a confirmation
-     showing the exact message, the message goes into the chef's composer
+     pour lancer l'execution ». After a confirmation showing the exact
+     message, the message goes into the chef's composer
      and leaves through it when the user sends it — the same channel as any
      message to the chef. */
   function chefMessage(i) {
