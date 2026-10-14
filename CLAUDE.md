@@ -1835,6 +1835,13 @@ plus ancienne reçoit à l'affichage un titre de repli tiré de `rattache`
 (`titleOf`, « titre de repli »), sans réécriture. Recette :
 `_test_routage_titles.mjs`.
 
+**Titres ambigus refusés** (0.90.0, tâche 2/4) : `ambiguityProblem` de
+`routage-pending.mjs`, appelé par `validateUnitTasks`, refuse dans une même
+exécution deux tâches au même titre (casse, espaces, accents ignorés) ou au
+même début affiché (`displayedHead`, `DISPLAY_HEAD` = 140, la coupe de
+`list`), en nommant chaque paire en conflit. Recette :
+`_test_routage_ambiguous.mjs`.
+
 
 Signalement utilisateur : « A nouveau, orchestrateur est termine, et plus rien
 ne se passe. Il faut corriger la situation ».

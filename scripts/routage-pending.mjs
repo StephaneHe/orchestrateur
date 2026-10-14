@@ -128,6 +128,39 @@ export function titleOf(t) {
   const cut = src.length > TITLE_MAX - 2 ? `${src.slice(0, TITLE_MAX - 3).replace(/\s+\S*$/, '')}…` : src;
   return { titre: `↳ ${cut || 'sans titre'}`, fallback: true };
 }
+// --- ambiguous tasks (0.90.0) -----------------------------------------------
+// Task 2/4 of the same mechanism: within ONE Routage run, two tasks must not
+// look alike where they are shown — neither the same title (case, spacing and
+// accents ignored) nor the same displayed start of text (the cut used by
+// `list`; the chef's context shows more, so equal here means equal there too).
+export const DISPLAY_HEAD = 140;
+/** Start of a task's text exactly as `routage-pending.mjs list` shows it. */
+export const displayedHead = (text) => String(text || '').replace(/\s+/g, ' ').trim().slice(0, DISPLAY_HEAD);
+export const titleKey = (s) => cleanTitle(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+/**
+ * null when the tasks are told apart, else why — naming every conflicting
+ * pair (1-based task numbers) so the step can fix exactly those.
+ */
+export function ambiguityProblem(tasks) {
+  const list = Array.isArray(tasks) ? tasks : [];
+  const out = [];
+  for (let i = 0; i < list.length; i++) {
+    for (let j = i + 1; j < list.length; j++) {
+      const a = list[i] || {}, b = list[j] || {};
+      const sameTitle = titleKey(a.titre) && titleKey(a.titre) === titleKey(b.titre);
+      const sameHead = displayedHead(a.demande) && displayedHead(a.demande) === displayedHead(b.demande);
+      if (!sameTitle && !sameHead) continue;
+      out.push(`tâches ${i + 1} et ${j + 1} : ${[
+        sameTitle && `même titre (« ${cleanTitle(a.titre)} »)`,
+        sameHead && `même début de texte affiché (« ${displayedHead(a.demande).slice(0, 80)}… »)`,
+      ].filter(Boolean).join(' et ')}`);
+    }
+  }
+  if (!out.length) return null;
+  return `tâches ambiguës — ${out.join(' ; ')}. Donne à chacune un titre distinct qui dit ce qui la distingue, ` +
+    `et fais commencer sa demande par ce qui la distingue (les ${DISPLAY_HEAD} premiers caractères sont ce que l’on voit dans la liste)`;
+}
+
 /** `id « titre »`: the only way an id is shown. */
 export function pendingLabel(t) {
   const id = idOf(t);
@@ -372,7 +405,7 @@ function withLock(logsDir, fn) {
 function describe(logsDir, t) {
   const dep = t.after ? dependencyResult(logsDir, t.after) : null;
   const state = !t.after ? 'sans dépendance' : !dep ? `attend ${t.after.projet}` : dep.is_error ? `${t.after.projet} a échoué` : `prête (${t.after.projet} a fini)`;
-  return `${pendingLabel(t).text}  ${t.projet}${t.reprise ? ` — reprise ${t.reprise}` : ''}  [${state}]  depuis ${t.createdAt || '?'}  (routage ${t.run || '?'})\n    ${String(t.demande || '').replace(/\s+/g, ' ').slice(0, 140)}`;
+  return `${pendingLabel(t).text}  ${t.projet}${t.reprise ? ` — reprise ${t.reprise}` : ''}  [${state}]  depuis ${t.createdAt || '?'}  (routage ${t.run || '?'})\n    ${displayedHead(t.demande)}`;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -11,6 +11,31 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.90.0] - 2026-10-14
+
+### Added
+
+- (server) Ambiguous Routage tasks are refused at the Decomposer — task 2/4 of
+  the mechanism validated after the chef confused two waiting tasks of the
+  same request on 2026-10-13 (user answer, verbatim: « Lances les taches »;
+  relaunched on 2026-10-14: « Relances les taches necessaires »).
+  - `ambiguityProblem` (`scripts/routage-pending.mjs`), called by
+    `validateUnitTasks`: within one run, two tasks with the same title
+    (case, spacing and accents ignored) or the same displayed start of text
+    (`displayedHead`, the first `DISPLAY_HEAD` = 140 characters shown by
+    `routage-pending.mjs list`; the chef's context shows more) are refused.
+    The reason names every conflicting pair (« tâches 1 et 3 : même titre… »)
+    and says how to fix it: a distinct title, and a request that starts with
+    what sets it apart.
+  - `routage-pending.mjs list` uses the same `displayedHead`.
+  - Decomposer instructions updated accordingly.
+  - Test: `scripts/_test_routage_ambiguous.mjs` (the 2026-10-13 shape is
+    refused end to end, nothing dispatched or queued; distinct titles and
+    starts go through). `_test_routage_dedupe.mjs` (section 5) and
+    `_test_routage_titles.mjs` (section 3) decomposed two tasks with the
+    same opening in one run, now refused by design: their tasks start with
+    what sets them apart; the full-text identity they check is unchanged.
+
 ## [0.89.0] - 2026-10-14
 
 ### Added

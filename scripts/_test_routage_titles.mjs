@@ -85,6 +85,10 @@ const ID_ALONE = /\b[0-9a-f]{8}\b(?! «)/;
 const HEAD = 'Contexte : le chef a confondu deux tâches en attente du Routage nées de la même demande, dont le texte commence par la même longue phrase ; ce qui les distingue n’apparaît qu’après environ quatre cents caractères, alors que chaque affichage coupait le texte vers le cent quarantième caractère et que les identifiants ne disent rien du sujet. ';
 const T_EDIT = `${HEAD}TÂCHE : rendre éditable un élément de la file d’attente tant qu’il n’est pas traité.`;
 const T_DRAG = `${HEAD}TÂCHE : glisser-déposer les éléments de la file d’attente.`;
+// Since 0.90.0 (task 2/4) one Routage run refuses two tasks with the same
+// displayed start: the decomposed tasks of section 3 put what differs first.
+const R_EDIT = `Édition d’un élément de file. ${T_EDIT}`;
+const R_DRAG = `Glisser-déposer de la file. ${T_DRAG}`;
 
 // ---------------------------------------------------------------------------
 section('1. Découper : un titre court est exigé par le code pour chaque tâche');
@@ -116,12 +120,12 @@ ok(RP.readPending(LOGS).length === 0, 'aucune tâche mise en attente');
 section('3. Avec titres : titre gardé dans l’attente et affiché avec l’identifiant (dispatch.json, rapport, liste, contexte)');
 x = chefTurn('Glisser-déposer puis édition de la file', {
   FAKE_PIPE_JSON: JSON.stringify({ comprendre: { nature: 'taches', sens: 'deux travaux sur Q', raison: 'x' },
-    decomposer: { taches: [{ projet: 'Q', titre: 'file : glisser-déposer', demande: T_DRAG }, { projet: 'Q', titre: 'file : édition', demande: T_EDIT, apres: 1, rattache: 'tâches 1 à 4' }] } }),
+    decomposer: { taches: [{ projet: 'Q', titre: 'file : glisser-déposer', demande: R_DRAG }, { projet: 'Q', titre: 'file : édition', demande: R_EDIT, apres: 1, rattache: 'tâches 1 à 4' }] } }),
   FAKE_CLAUDE_CLASSIFY_MAP: JSON.stringify({ 'glisser-déposer les éléments': { pipeline: 'dev', mode: 'leger', nature: 'comportement', raison: 'r' }, 'rendre éditable': { pipeline: 'dev', mode: 'leger', nature: 'comportement', raison: 'r' } }),
 });
 ok(x.code === 0 && statusOf(x.st) === 'lire:ok comprendre:ok decomposer:ok classifier:ok affecter:ok dispatcher:ok rapporter:ok', `exécution : ${statusOf(x.st)}`, x.out.slice(-900));
 const pend = RP.readPending(LOGS);
-ok(pend.length === 1 && pend[0].titre === 'file : édition' && pend[0].demande === T_EDIT, 'l’entrée en attente garde son titre (et sa demande entière)', JSON.stringify(pend));
+ok(pend.length === 1 && pend[0].titre === 'file : édition' && pend[0].demande === R_EDIT, 'l’entrée en attente garde son titre (et sa demande entière)', JSON.stringify(pend));
 const id = pend[0]?.id;
 const disp = x.read('dispatch.json');
 ok(disp?.waiting?.[0]?.id === id && disp.waiting[0].titre === 'file : édition', 'dispatch.json : identifiant et titre de la tâche en attente', JSON.stringify(disp?.waiting));

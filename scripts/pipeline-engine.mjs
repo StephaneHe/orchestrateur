@@ -39,7 +39,7 @@ import { renameRetry, writeFileAtomic } from './atomic-file.mjs';
 import { readBranchLog } from './dual-run.mjs';
 import { languageFor, languageGate, localize, workingLanguage } from './language.mjs';
 import { CATALOG_PIPELINES, catalogOf, catalogSteps } from './pipeline-catalog.mjs';
-import { readPending, addPending, releaseReady, launchTask, detectReprise, logOffset, taskKey, textHash, duplicatesText, RUN_ID_RE, titleProblem, pendingLabel, cleanTitle } from './routage-pending.mjs';
+import { readPending, addPending, releaseReady, launchTask, detectReprise, logOffset, taskKey, textHash, duplicatesText, RUN_ID_RE, titleProblem, pendingLabel, cleanTitle, ambiguityProblem } from './routage-pending.mjs';
 export { readPending };
 import { backoffConfig, isLaunchFailure, dispatchRefusal, tierAfter, delayFor, waitBackoff, runDirOf } from './model-backoff.mjs';
 import { runModelTest } from './model-test.mjs';
@@ -711,6 +711,12 @@ export function validateUnitTasks(root, tasks) {
     const why = t && typeof t === 'object' ? titleProblem(t.titre) : null;
     if (why) return `tâche ${i + 1} : ${why}`;
     if (t?.renvoi_chef != null) { const h = handoffProblem(t); if (h) return `tâche ${i + 1} : ${h}`; }
+  }
+  // 0.90.0 (task 2/4): two tasks of this run that look alike where they are
+  // shown would be confused again, as on 2026-10-13.
+  const ambiguous = ambiguityProblem(tasks);
+  if (ambiguous) return ambiguous;
+  for (const [i, t] of tasks.entries()) {
     if (t?.hors_pipeline == null) continue;
     const h = t.hors_pipeline;
     // 0.71.2 (n° 10): an off-pipeline task must quote the user's authorization.

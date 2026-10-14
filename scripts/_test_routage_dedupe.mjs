@@ -137,11 +137,16 @@ section('5. De bout en bout (vrai dispatch.mjs, Routage du chef) : tâches 3 et 
   const env = { ...process.env, DISPATCH_ROOT_FOR_TESTS: R, CLAUDE_BIN: FAKE, FAKE_CLAUDE_PIPELINE: '1', FAKE_CLAUDE_ECHO_MODEL: '1', FAKE_CLAUDE_LATENCY_MS: '5',
     ORCH_PERM_DISABLE: '1', ORCH_PORT: String(srv.address().port), ORCH_PIPE_PROGRESS_MS: '200', ORCH_NO_PENDING_RELEASE: '1' };
   for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'ORCH_TURN_PROJECT', 'ORCH_TURN_STEP', 'ORCH_STEP_TOKEN', 'ORCH_OBS_ID', 'DISPATCH_SLOT', 'DISPATCH_TICKET', 'DISPATCH_REPORT_ONLY', 'ORCH_TEST_LABEL', 'CODEX_HOME']) delete env[k];
+  // 0.90.0 (task 2/4): ONE run may no longer hold two tasks with the same
+  // displayed start (refused at the Decomposer, see _test_routage_ambiguous.mjs);
+  // the distinguishing words now come first. The shared 200-character opening
+  // is still there, so full-text identity is still what keeps them apart.
+  const E3 = `[revue par item] ${TASK3}`, E4 = `[livraison par item] ${TASK4}`;
   const tasks = [
     { projet: 'Q', titre: 'tâche de test 5', pipeline: 'discussion', demande: 'Explique pourquoi la suite de tests passe.' },
     { projet: 'O', titre: 'tâche de test 6', pipeline: 'discussion', demande: 'Résume l’état du dépôt.', apres: 1 },
-    { projet: 'O', titre: 'tâche de test 7', pipeline: 'discussion', demande: TASK3, apres: 1 },
-    { projet: 'O', titre: 'tâche de test 8', pipeline: 'discussion', demande: TASK4, apres: 1 },
+    { projet: 'O', titre: 'tâche de test 7', pipeline: 'discussion', demande: E3, apres: 1 },
+    { projet: 'O', titre: 'tâche de test 8', pipeline: 'discussion', demande: E4, apres: 1 },
   ];
   const fakeJson = JSON.stringify({ comprendre: { nature: 'taches', sens: 'enchaînement de tâches', raison: 'enchaînement' }, decomposer: { taches: tasks } });
   // Async: the notification listener lives in THIS process (spawnSync would block it).
@@ -159,7 +164,7 @@ section('5. De bout en bout (vrai dispatch.mjs, Routage du chef) : tâches 3 et 
   };
   let x = await chefTurn();
   const pend = RP.readPending(path.join(R, 'logs'));
-  ok(x.code === 0 && pend.length === 3 && pend.some(t => t.demande === TASK3) && pend.some(t => t.demande === TASK4), `les tâches 2, 3 et 4 attendent la tâche 1 — la 4 n’est plus confondue avec la 3 (${pend.length} en attente)`, x.out.slice(-900));
+  ok(x.code === 0 && pend.length === 3 && pend.some(t => t.demande === E3) && pend.some(t => t.demande === E4), `les tâches 2, 3 et 4 attendent la tâche 1 — la 4 n’est plus confondue avec la 3 (${pend.length} en attente)`, x.out.slice(-900));
   ok(x.disp?.waiting?.map(w => w.n).join(',') === '2,3,4' && !x.disp.duplicates, `dispatch.json : « waiting » = ce qui est vraiment en file (${x.disp?.waiting?.map(w => w.n).join(',')})`);
   ok(pend.every(t => t.after?.hash && Number.isInteger(t.n) && t.run === x.run), 'chaque attente porte sa référence (Routage + numéro) et l’empreinte de la tâche attendue');
   const k0 = notices.length;
