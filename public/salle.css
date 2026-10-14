@@ -536,6 +536,24 @@
   font-family: var(--font-mono, monospace); font-size: 0.75rem;
   background: rgba(232, 161, 92, 0.04); border: 1px solid rgba(232, 161, 92, 0.1); border-radius: 5px; padding: 0.55rem 0.7rem;
 }
+.qdv-req { display: flex; flex-direction: column; gap: 0.45rem; }
+.qdv-edit {
+  width: 100%; box-sizing: border-box; min-height: 10rem; resize: vertical; color: var(--fg-0); line-height: 1.5;
+  font-family: var(--font-mono, monospace); font-size: 0.75rem;
+  background: rgba(232, 161, 92, 0.06); border: 1px solid var(--st-unread); border-radius: 5px; padding: 0.55rem 0.7rem;
+}
+.qdv-req[data-gone="1"] .qdv-edit { border-color: var(--card-border); opacity: 0.8; }
+.qdv-edit-msg { color: var(--fg-2); font-size: 0.75rem; min-height: 1em; }
+.qdv-req[data-gone="1"] .qdv-edit-msg { color: var(--st-think); }
+.qdv-edit-bar { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+.qdv-edit-bar button {
+  min-height: 2.25rem; padding: 0 0.9rem; font-size: 0.8125rem; cursor: pointer;
+  background: transparent; color: var(--fg-1); border: 1px solid var(--card-border); border-radius: 5px;
+}
+.qdv-edit-bar .qdv-save { border-color: var(--st-unread); color: var(--fg-0); }
+.qdv-edit-bar button:disabled { opacity: 0.45; cursor: not-allowed; }
+.qdv-edit-hint { font-size: 0.6875rem; }
+@media (max-width: 760px) { .qdv-edit-bar button { min-height: 44px; } .qdv-edit-hint { display: none; } }
 .qdv-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: flex-end; padding: 0.7rem 1rem; border-top: 1px solid var(--card-border); }
 .qdv-actions[hidden] { display: none; }
 .qdv-action {

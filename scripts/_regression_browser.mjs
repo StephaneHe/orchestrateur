@@ -778,7 +778,7 @@ export async function browserChecks(sb, t) {
           open: !!ov && !ov.hidden, text: ov?.querySelector('.qdv-text')?.textContent ?? null,
           pos: q('dd.qdv-pos'), id: q('dd.qdv-id'), when: q('dd.qdv-when'), model: q('dd.qdv-model'), pipeline: q('dd.qdv-pipeline'),
           callback: q('dd.qdv-callback'), fresh: q('dd.qdv-newsession'), bold: !!ov?.querySelector('.qdv-text b'),
-          actionsHidden: ov?.querySelector('.qdv-actions')?.hidden, focusIn: !!ov && ov.contains(document.activeElement),
+          actionsHidden: ov?.querySelector('.qdv-actions')?.hidden, actions: [...(ov?.querySelectorAll('.qdv-action') || [])].map(b => b.textContent), focusIn: !!ov && ov.contains(document.activeElement),
           rect: r ? { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) } : null,
           vw: innerWidth, vh: innerHeight, closeSize: Math.round(ov?.querySelector('.qdv-close')?.getBoundingClientRect().height || 0),
           diveOpen: !document.getElementById('dive').hidden,
@@ -799,7 +799,8 @@ export async function browserChecks(sb, t) {
         assert(/claude-sonnet-5/.test(s.model) && /claude/.test(s.model), `model : ${s.model}`);
         assert(/dev/.test(s.pipeline) && /complet/.test(s.pipeline), `pipeline : ${s.pipeline}`);
         assert(/chef/.test(s.callback) && /^oui/.test(s.fresh), `callback / session neuve : ${s.callback} / ${s.fresh}`);
-        assert(s.actionsHidden === true && s.focusIn, `barre d’actions visible sans action, ou focus hors du détail`);
+        // 0.89.0: the edit part of the same request adds « Modifier la demande… ».
+        assert(s.focusIn && (s.actions.length ? s.actionsHidden === false && s.actions.join() === 'Modifier la demande…' : s.actionsHidden === true), `barre d’actions ${JSON.stringify(s.actions)} (masquée : ${s.actionsHidden}), ou focus hors du détail`);
         await page.keyboard.press('Escape');
         let a = await ovState(page);
         assert(!a.open && a.diveOpen, `Échap : détail ${a.open ? 'ouvert' : 'fermé'}, volet ${a.diveOpen ? 'ouvert' : 'fermé'}`);
@@ -846,6 +847,72 @@ export async function browserChecks(sb, t) {
       } finally {
         await page.evaluate(() => window.Salle?.closeQueueDetail?.()).catch(() => {});
         await fetch(`${sb.url}/api/queue/eps/${encodeURIComponent(pj.id)}`, { method: 'DELETE', headers: H }).catch(() => {});
+        await page.click('#dive .dive-back').catch(() => {});
+      }
+    });
+    // User request (2026-10-13): « tant qu'ils ne sont pas traités ils sont éditables ».
+    await check(B, 'queue-edit', 'File d’un musicien : depuis le détail, « Modifier la demande… » ouvre le texte en édition ; Enregistrer (ou Ctrl+Entrée) le remplace dans la file du serveur ; Échap annule sans fermer le détail ; une tâche partie pendant l’édition n’est plus modifiable (enregistrement désactivé, texte gardé pour copie)', async () => {
+      if (!(await page.evaluate(() => typeof window.Salle?.openQueueDetail === 'function')) || !fs.readFileSync(path.join(sb.root, 'public', 'salle.js'), 'utf8').includes('saveQueueEdit')) NA('modification d’une entrée de file absente de cet état du code');
+      const ORIG = 'Recette d’édition de file : texte d’origine';
+      const NEW = 'Recette d’édition de file : texte MODIFIÉ\ndeuxième ligne';
+      const add = async (t) => (await (await fetch(`${sb.url}/api/dispatch`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ project: 'eps', prompt: t, queueIfBusy: true }) })).json()).id;
+      // The pane reloads its queue when the queue LENGTH changes (snapshot
+      // depth); the previous check added then removed one entry, so two are
+      // added here to make the length differ from what the pane last saw.
+      const id = await add(ORIG);
+      const filler = await add('Recette d’édition de file : entrée de remplissage');
+      const row = `#dive .dq-item[data-queue-open="${id}"]`;
+      const st = () => page.evaluate(() => {
+        const ov = document.getElementById('queue-overlay');
+        return { open: !!ov && !ov.hidden, text: ov?.querySelector('.qdv-text')?.textContent ?? null, editing: !!ov?.querySelector('.qdv-edit'),
+          value: ov?.querySelector('.qdv-edit')?.value ?? null, saveDisabled: ov?.querySelector('.qdv-save')?.disabled ?? null,
+          msg: ov?.querySelector('.qdv-edit-msg')?.textContent || '', edited: ov?.querySelector('dd.qdv-edited')?.textContent || '',
+          actions: [...(ov?.querySelectorAll('.qdv-action') || [])].map(b => b.textContent), focusEdit: document.activeElement?.classList?.contains('qdv-edit') };
+      });
+      try {
+        // The previous check leaves through « ← » (history.back, asynchronous):
+        // let it land, then (re)open the pane until the new entry shows.
+        await page.waitForTimeout(400);
+        let tries = 0;
+        assert(await until(async () => {
+          if ((await page.locator(row).count()) === 1) return true;
+          if (tries++ % 6 === 0) await setHash(page, tries > 1 ? '#/' : '#/m/eps').then(() => tries > 1 && setHash(page, '#/m/eps'));
+          return false;
+        }, 15_000), `entrée absente du volet (hash ${await page.evaluate(() => location.hash)}, file serveur ${(await api('/api/queue/eps')).entries.map(e => e.id).join()})`);
+        await page.click(row);
+        assert(await until(async () => (await st()).open, 3000), 'détail non ouvert');
+        assert((await st()).actions.includes('Modifier la demande…'), `action absente : ${JSON.stringify((await st()).actions)}`);
+        await page.locator('#queue-overlay [data-qdv-action="edit"]').click();
+        let s = await st();
+        assert(s.editing && s.value === ORIG && s.focusEdit && !s.actions.length, `édition : ${JSON.stringify(s).slice(0, 200)}`);
+        // Escape cancels the edit, the detail stays open, nothing is sent.
+        await page.fill('#queue-overlay .qdv-edit', 'brouillon abandonné');
+        await page.keyboard.press('Escape');
+        s = await st();
+        assert(s.open && !s.editing && s.text === ORIG, `Échap : ${JSON.stringify(s).slice(0, 200)}`);
+        assert((await api('/api/queue/eps')).entries.find(e => e.id === id)?.text === ORIG, 'Échap a modifié la file');
+        // Edit and save with Ctrl+Enter.
+        await page.locator('#queue-overlay [data-qdv-action="edit"]').click();
+        await page.fill('#queue-overlay .qdv-edit', NEW);
+        await page.keyboard.press('Control+Enter');
+        assert(await until(async () => { const x = await st(); return !x.editing && x.text === NEW; }, 5000), `enregistrement : ${JSON.stringify(await st()).slice(0, 240)}`);
+        assert((await api('/api/queue/eps')).entries.find(e => e.id === id)?.text === NEW, 'la file du serveur ne porte pas le texte modifié');
+        assert(/\d{2}\/\d{2}\/\d{4}/.test((await st()).edited), `« Modifiée » absent : ${(await st()).edited}`);
+        // The entry leaves the queue while it is being edited: no longer editable.
+        await page.locator('#queue-overlay [data-qdv-action="edit"]').click();
+        await page.fill('#queue-overlay .qdv-edit', 'texte qui arrive trop tard');
+        await fetch(`${sb.url}/api/queue/eps/${encodeURIComponent(id)}`, { method: 'DELETE', headers: H });
+        // Whichever comes first: the live refresh sees it gone, or the save gets 409.
+        await page.locator('#queue-overlay .qdv-save').click().catch(() => {});
+        assert(await until(async () => { const x = await st(); return x.saveDisabled === true && /n'est plus modifiable/.test(x.msg); }, 15_000), `tâche partie : ${JSON.stringify(await st()).slice(0, 260)}`);
+        s = await st();
+        assert(s.value === 'texte qui arrive trop tard', 'le texte saisi est perdu');
+        await shot(page, 'queue-edit');
+        return `entrée ${id} : édition, Échap sans effet, enregistrement (Ctrl+Entrée) dans la file du serveur, tâche partie : enregistrement désactivé, texte gardé`;
+      } finally {
+        await page.evaluate(() => window.Salle?.closeQueueDetail?.()).catch(() => {});
+        await fetch(`${sb.url}/api/queue/eps/${encodeURIComponent(id)}`, { method: 'DELETE', headers: H }).catch(() => {});
+        await fetch(`${sb.url}/api/queue/eps/${encodeURIComponent(filler)}`, { method: 'DELETE', headers: H }).catch(() => {});
         await page.click('#dive .dive-back').catch(() => {});
       }
     });

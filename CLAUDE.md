@@ -363,6 +363,16 @@ non visible » du journal d'activité).
   `ORCH_QUEUE_STALL_MS`). Recettes : `_test_queue_order.mjs` (instance
   privée : les tours partent dans l'ordre déposé ; suite en série), HTTP
   `queue-order`, navigateur `queue-drag`.
+- **Modifier une entrée en attente** (0.89.0, même demande, « tant qu'ils ne
+  sont pas traités ils sont éditables ») : « Modifier la demande… » dans le
+  détail (Enregistrer / Ctrl+Entrée, Annuler / Échap). `POST
+  /api/queue/:projet/:id {text}` (`sameOriginOnly`, `editQueueEntry` de
+  `scripts/queue-order.mjs`) remplace le **texte seul** dans la file en
+  mémoire puis réécrit le fichier ; c'est ce texte qui est lancé. Le drain
+  retire la tête de façon synchrone : une entrée partie ou retirée donne
+  **409** (`alreadyStarted`), l'interface la montre non modifiable et garde le
+  texte saisi. Recettes : `_test_queue_edit.mjs` (instance privée, suite en
+  série), HTTP `queue-edit`, navigateur `queue-edit`.
 
 ---
 

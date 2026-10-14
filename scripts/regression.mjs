@@ -549,6 +549,32 @@ async function apiChecks(sb) {
       await send(ids0);
     }
   });
+  // User request (2026-10-13): « tant qu'ils ne sont pas traités ils sont éditables ».
+  await check(S, 'queue-edit', 'File : POST /api/queue/:projet/:id {text} (même origine) modifie la demande d’une entrée EN ATTENTE (mémoire et fichier réécrit, autres champs gardés) ; une entrée partie ou retirée : 409 ; refus : texte vide, autre origine, projet inconnu', async () => {
+    if (!fs.readFileSync(path.join(sb.root, 'server.js'), 'utf8').includes('editQueueEntry')) NA('modification d’une entrée de file absente de cet état du code');
+    const d = await post('/api/dispatch', { project: 'eps', prompt: 'Recette de modification : texte d’origine', queueIfBusy: true, callback: 'chef' });
+    const dj = await d.json();
+    assert(d.status === 202 && dj.queued === true, `mise en file : ${d.status}`);
+    const send = (id, text, extra = {}) => fetch(`${sb.url}/api/queue/eps/${encodeURIComponent(id)}`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json', ...extra }, body: JSON.stringify({ text }) });
+    try {
+      const NEW = 'Recette de modification : texte MODIFIÉ\nsur deux lignes';
+      const r = await send(dj.id, NEW);
+      const j = await r.json();
+      assert(r.ok && j.changed && j.entry?.text === NEW && j.entry.callback === 'chef' && j.entry.edits === 1, `modification : ${r.status} ${JSON.stringify(j).slice(0, 200)}`);
+      assert((await json('/api/queue/eps')).entries.find(e => e.id === dj.id)?.text === NEW, 'la file du serveur ne porte pas le texte modifié');
+      const side = JSON.parse(fs.readFileSync(path.join(sb.root, 'logs', 'queue', 'eps.json'), 'utf8')).find(e => e.id === dj.id);
+      assert(side?.prompt === NEW, 'fichier de la file non réécrit');
+      assert((await send(dj.id, '   ')).status === 400, 'texte vide accepté');
+      assert((await send(dj.id, 'x', { Origin: 'http://evil.example' })).status === 403, 'autre origine acceptée');
+      assert((await fetch(`${sb.url}/api/queue/nope/${dj.id}`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: '{"text":"x"}' })).status === 404, 'projet inconnu accepté');
+      await fetch(`${sb.url}/api/queue/eps/${encodeURIComponent(dj.id)}`, { method: 'DELETE', headers: H });
+      const gone = await send(dj.id, 'trop tard');
+      assert(gone.status === 409 && (await gone.json()).alreadyStarted === true, `entrée retirée encore modifiable : ${gone.status}`);
+      return 'demande modifiée en attente (mémoire et fichier), autres champs gardés ; retirée : 409 ; refus 400 / 403 / 404';
+    } finally {
+      await fetch(`${sb.url}/api/queue/eps/${encodeURIComponent(dj.id)}`, { method: 'DELETE', headers: H }).catch(() => {});
+    }
+  });
   // User request (2026-10-13): queue entries open a detail view with the whole entry.
   await check(S, 'queue-detail', 'File : GET /api/queue/:projet donne le texte INTÉGRAL de chaque entrée (sauts de ligne compris, jamais tronqué) et tous ses champs', async () => {
     const text = 'Recette du détail.\n\n' + 'ligne longue '.repeat(60) + '\nFIN';

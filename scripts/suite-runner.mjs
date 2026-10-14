@@ -51,6 +51,7 @@ export const SERIAL_SUITES = new Set([
   '_test_pool_p0a.mjs',            // idem
   '_test_queue_api.mjs',           // queue.mjs in the repository root
   '_test_queue_order.mjs',         // own server instance under .regress/ (timed drain)
+  '_test_queue_edit.mjs',          // own server instance under .regress/ (timed drain)
 ]);
 
 /** Default parallelism: ORCH_REGRESS_JOBS, else a quarter of the CPUs, 1 to 4. */

@@ -47,3 +47,36 @@ export function reorderQueue(entries, ids) {
   const changed = next.some((e, i) => e !== entries[i]);
   return { entries: next, missing, appended: appended.map(e => e.id), changed };
 }
+
+// ---------------------------------------------------------------------------
+// Editing a waiting entry (0.89.0). Same request: « tant qu'ils ne sont pas
+// traités ils sont éditables ». Only the request text changes: the other
+// fields (model, pipeline, callback, session…) are decisions of whoever queued
+// the entry and stay as they are. An entry is editable exactly as long as it
+// is in the in-memory queue: the drain removes the head synchronously when it
+// launches it, so an edit is either applied before the launch (and the edited
+// text is what runs) or refused after it — never half-applied.
+// ---------------------------------------------------------------------------
+export const QUEUE_TEXT_MAX = 100_000;
+
+/** Validated request text, or throws {status, message}. */
+export function cleanQueueText(text) {
+  const fail = (status, message) => Object.assign(new Error(message), { status });
+  if (typeof text !== 'string') throw fail(400, 'texte « text » attendu');
+  if (!text.trim()) throw fail(400, 'la demande ne peut pas être vide');
+  if (text.length > QUEUE_TEXT_MAX) throw fail(413, `${QUEUE_TEXT_MAX} caractères au plus`);
+  return text.replace(/\r\n/g, '\n');
+}
+
+/** entries + id + text → {entry, changed} (entry mutated in place), or null when the id is no longer queued. */
+export function editQueueEntry(entries, id, text) {
+  const entry = (entries || []).find(e => e.id === id);
+  if (!entry) return null;
+  const changed = entry.prompt !== text;
+  if (changed) {
+    entry.prompt = text;
+    entry.editedAt = new Date().toISOString();
+    entry.edits = (entry.edits || 0) + 1;
+  }
+  return { entry, changed };
+}

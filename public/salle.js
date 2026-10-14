@@ -1289,7 +1289,7 @@
   // Later parts of the same request (edit, reorder) plug in through
   // registerQueueAction({id, label, when?, run(entry, {project, close, reload})}).
   // ------------------------------------------------------------------------
-  const queueDetail = { project: null, id: null, entry: null, gone: false, returnFocus: null };
+  const queueDetail = { project: null, id: null, entry: null, gone: false, returnFocus: null, editing: false, saving: false, editMsg: "" };
   const queueActions = [];
 
   function registerQueueAction(a) {
@@ -1325,7 +1325,12 @@
     // Capture phase: Escape closes the detail only, never the musician pane.
     document.addEventListener("keydown", (e) => {
       if (ov.hidden) return;
-      if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); closeQueueDetail(); return; }
+      if (e.key === "Escape") {
+        e.preventDefault(); e.stopImmediatePropagation();
+        if (queueDetail.editing && !queueDetail.gone) { cancelQueueEdit(); return; }
+        closeQueueDetail(); return;
+      }
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && e.target.closest?.(".qdv-edit")) { e.preventDefault(); saveQueueEdit(); return; }
       if (e.key === "Tab") {
         const f = [...ov.querySelectorAll("button, [href], [tabindex]:not([tabindex='-1'])")].filter(x => !x.disabled && x.offsetParent);
         if (!f.length) return;
@@ -1340,7 +1345,7 @@
   function openQueueDetail(id) {
     const entry = diveQueue.entries.find(x => x.id === id);
     if (!entry) return;
-    Object.assign(queueDetail, { project: dive.name, id, entry, gone: false, returnFocus: document.activeElement });
+    Object.assign(queueDetail, { project: dive.name, id, entry, gone: false, returnFocus: document.activeElement, editing: false, saving: false, editMsg: "" });
     const ov = queueOverlayEl();
     paintQueueDetail();
     ov.hidden = false;
@@ -1351,7 +1356,7 @@
     const ov = document.getElementById("queue-overlay");
     if (ov) ov.hidden = true;
     const back = queueDetail.returnFocus;
-    Object.assign(queueDetail, { project: null, id: null, entry: null, gone: false, returnFocus: null });
+    Object.assign(queueDetail, { project: null, id: null, entry: null, gone: false, returnFocus: null, editing: false, saving: false, editMsg: "" });
     const row = back?.dataset?.queueOpen ? document.querySelector(`[data-queue-open="${CSS.escape(back.dataset.queueOpen)}"]`) : back;
     if (row && row.isConnected) row.focus();
   }
@@ -1381,7 +1386,9 @@
       ? esc(e.pipeline) + (e.pipelineMode ? ` · ${esc(e.pipelineMode === "leger" ? "léger" : e.pipelineMode)}` : "")
       : e.pipelineResume ? `reprise de l'exécution <code>${esc(e.pipelineResume)}</code>` : null;
     ov.querySelector(".qdv-title").textContent = `Tâche en file — ${queueDetail.project}`;
-    ov.querySelector(".qdv-body").innerHTML =
+    const body = ov.querySelector(".qdv-body");
+    if (!body.querySelector(".qdv-meta")) body.innerHTML = `<div class="qdv-meta"></div><div class="qdv-req"></div>`;
+    body.querySelector(".qdv-meta").innerHTML =
       (queueDetail.gone ? `<div class="qdv-gone" role="status">Cette tâche n'est plus dans la file (lancée ou retirée). Dernier contenu connu :</div>` : "") +
       `<dl class="qdv-fields">` +
         row("Position", queueDetail.gone ? "—" : `${e.position} sur ${total}`, "qdv-pos") +
@@ -1395,14 +1402,91 @@
         row("Session neuve", e.newSession ? "oui — le tour repartira sans --resume" : "non", "qdv-newsession") +
         row("Origine", e.source ? esc(e.source) : null, "qdv-source") +
         row("Pièces jointes", e.attachments ? String(e.attachments) : null, "qdv-att") +
-      `</dl>` +
-      `<div class="qdv-label">Demande${full ? "" : " <span class=\"qdv-dim\">(aperçu : ce serveur ne fournit pas encore le texte complet, il doit être redémarré)</span>"}</div>` +
-      `<pre class="qdv-text">${esc(text)}</pre>`;
-    const acts = queueActions.filter(a => !a.when || a.when(e, { gone: queueDetail.gone }));
+        row("Modifiée", e.edits ? `${esc(fmtWhen(e.editedAt))}${e.edits > 1 ? ` (${esc(e.edits)} fois)` : ""}` : null, "qdv-edited") +
+      `</dl>`;
+    paintQueueRequest(body.querySelector(".qdv-req"), e, full, text);
+    const acts = queueDetail.editing ? [] : queueActions.filter(a => !a.when || a.when(e, { gone: queueDetail.gone }));
     const bar = ov.querySelector(".qdv-actions");
     bar.innerHTML = acts.map(a => `<button type="button" class="qdv-action" data-qdv-action="${esc(a.id)}">${esc(a.label)}</button>`).join("");
     bar.hidden = !acts.length;
   }
+
+  // 0.89.0 — « tant qu'ils ne sont pas traités ils sont éditables ». The textarea
+  // is built once per edit: a live refresh never wipes the draft nor the caret.
+  function paintQueueRequest(box, e, full, text) {
+    if (!queueDetail.editing) {
+      box.innerHTML = `<div class="qdv-label">Demande${full ? "" : " <span class=\"qdv-dim\">(aperçu : ce serveur ne fournit pas encore le texte complet, il doit être redémarré)</span>"}</div>` +
+      `<pre class="qdv-text">${esc(text)}</pre>`;
+      return;
+    }
+    if (!box.querySelector(".qdv-edit")) {
+      box.innerHTML = `<label class="qdv-label" for="qdv-edit">Demande — modification</label>
+        <textarea id="qdv-edit" class="qdv-edit" rows="10" spellcheck="true"></textarea>
+        <div class="qdv-edit-msg" role="status" aria-live="polite"></div>
+        <div class="qdv-edit-bar">
+          <button type="button" class="qdv-save">Enregistrer</button>
+          <button type="button" class="qdv-cancel">Annuler</button>
+          <span class="qdv-dim qdv-edit-hint">Ctrl+Entrée enregistre · Échap annule</span>
+        </div>`;
+      const ta = box.querySelector(".qdv-edit");
+      ta.value = text;
+      box.querySelector(".qdv-save").addEventListener("click", saveQueueEdit);
+      box.querySelector(".qdv-cancel").addEventListener("click", cancelQueueEdit);
+      ta.focus();
+    }
+    const gone = queueDetail.gone;
+    box.querySelector(".qdv-save").disabled = gone || queueDetail.saving;
+    box.querySelector(".qdv-cancel").textContent = gone ? "Fermer la modification" : "Annuler";
+    box.querySelector(".qdv-edit-msg").textContent = gone
+      ? "Cette tâche a quitté la file (lancée ou retirée) : elle n'est plus modifiable. Votre texte reste ci-dessous pour être copié."
+      : queueDetail.editMsg;
+    box.dataset.gone = gone ? "1" : "0";
+  }
+
+  function startQueueEdit() {
+    if (!queueDetail.id || queueDetail.gone) return;
+    Object.assign(queueDetail, { editing: true, saving: false, editMsg: "" });
+    paintQueueDetail();
+  }
+  function cancelQueueEdit() {
+    Object.assign(queueDetail, { editing: false, saving: false, editMsg: "" });
+    paintQueueDetail();
+    document.querySelector("#queue-overlay .qdv-close")?.focus();
+  }
+  async function saveQueueEdit() {
+    const ov = document.getElementById("queue-overlay");
+    const ta = ov?.querySelector(".qdv-edit");
+    if (!ta || queueDetail.saving || queueDetail.gone) return;
+    const text = ta.value;
+    if (!text.trim()) { queueDetail.editMsg = "La demande ne peut pas être vide."; paintQueueDetail(); return; }
+    const { project, id } = queueDetail;
+    Object.assign(queueDetail, { saving: true, editMsg: "Enregistrement…" });
+    paintQueueDetail();
+    let r = null, j = null;
+    try {
+      r = await fetch(`/api/queue/${encodeURIComponent(project)}/${encodeURIComponent(id)}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+      j = await r.json().catch(() => null);
+    } catch { r = null; }
+    if (queueDetail.id !== id) return;
+    queueDetail.saving = false;
+    if (r && r.ok && j?.ok) {
+      if (j.entry) queueDetail.entry = { ...queueDetail.entry, ...j.entry };
+      Object.assign(queueDetail, { editing: false, editMsg: "" });
+      diveQueue.depth = -1;
+      await loadDiveQueue(project);
+      paintQueueDetail();
+      document.querySelector("#queue-overlay .qdv-close")?.focus();
+      return;
+    }
+    if (r && r.status === 409) { queueDetail.gone = true; queueDetail.editMsg = ""; }
+    else if (r && r.status === 404) queueDetail.editMsg = "Le serveur ne connaît pas encore la modification d'une tâche en file : il doit être redémarré. Rien n'a été changé.";
+    else queueDetail.editMsg = `Échec de l'enregistrement${j?.error ? ` : ${j.error}` : ""}. Rien n'a été changé.`;
+    paintQueueDetail();
+  }
+
+  registerQueueAction({ id: "edit", label: "Modifier la demande…",
+    when: (e, { gone }) => !gone && typeof e.text === "string", run: () => startQueueEdit() });
 
   // 0.82.0 — the turn is over but its process lives on and holds the queue.
   function heldBannerHtml(r) {

@@ -77,7 +77,7 @@ import { createModelRouting, incompatibility } from './scripts/model-routing.mjs
 import { createRecommendations } from './scripts/model-reco.mjs';
 import { TODO_FILE, parseTodo, sortTodo, countTodo, rejectItem } from './scripts/todo-core.mjs';
 import { withListLock } from './scripts/todo-capture.mjs';
-import { cleanQueueIds, reorderQueue } from './scripts/queue-order.mjs';
+import { cleanQueueIds, reorderQueue, cleanQueueText, editQueueEntry } from './scripts/queue-order.mjs';
 import { writeFileAtomic } from './scripts/atomic-file.mjs';
 import { createNotesStore, NOTES_FILE, ITEM_ID_RE, NOTE_MAX } from './scripts/todo-notes.mjs';
 import { createOrderStore, ORDER_FILE, applyOrder, cleanOrder } from './scripts/todo-order.mjs';
@@ -406,6 +406,7 @@ function queueEntryView(e, i) {
     callback: e.callback || null, source: e.source || null,
     attachments: (e.attachmentPaths?.length || 0) + (e.videoPaths?.length || 0),
     newSession: !!e.newSession,
+    editedAt: e.editedAt || null, edits: e.edits || 0,
     pipeline: e.pipeline || null, pipelineResume: e.pipelineResume || null, horsPipeline: e.horsPipeline || null, pipelineMode: e.pipelineMode || null,
   };
 }
@@ -3306,6 +3307,26 @@ app.post('/api/queue/:project/order', sameOriginOnly, express.json({ limit: '64k
     console.log(msg); debugLog(msg);
   }
   res.json({ ok: true, project: name, changed: r.changed, missing: r.missing, appended: r.appended, count: r.entries.length, entries: r.entries.map(queueEntryView) });
+});
+
+// 0.89.0 — « tant qu'ils ne sont pas traités ils sont éditables »: the request
+// text of a WAITING entry is edited in the in-memory queue, then the sidecar
+// is rewritten from it. The drain takes the head synchronously, so an edit
+// lands before the launch (the edited text runs) or gets 409 after it.
+app.post('/api/queue/:project/:id', sameOriginOnly, express.json({ limit: '512kb' }), (req, res) => {
+  const name = queueProjectOr404(req, res);
+  if (!name) return;
+  let text;
+  try { text = cleanQueueText(req.body?.text); } catch (e) { return res.status(e.status || 400).json({ ok: false, error: e.message }); }
+  const q = dispatchQueue.get(name) ?? [];
+  const r = editQueueEntry(q, String(req.params.id || ''), text);
+  if (!r) return res.status(409).json({ ok: false, alreadyStarted: true, error: `l’entrée « ${req.params.id} » n’est plus en attente dans la file de ${name} (déjà lancée ou retirée) : elle ne peut plus être modifiée` });
+  if (r.changed) {
+    persistQueue(name);
+    const msg = `[queue] ${name} : entrée ${r.entry.id} modifiée (${text.length} caractères, modification n° ${r.entry.edits})`;
+    console.log(msg); debugLog(msg);
+  }
+  res.json({ ok: true, project: name, changed: r.changed, entry: queueEntryView(r.entry, q.indexOf(r.entry)) });
 });
 
 app.delete('/api/queue/:project/:id', (req, res) => {

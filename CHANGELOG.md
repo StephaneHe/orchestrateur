@@ -11,6 +11,38 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.89.0] - 2026-10-14
+
+### Added
+
+- (server) A waiting entry of a musician's queue can be edited — the
+  « tant qu'ils ne sont pas traités ils sont éditables » part of the user
+  request « il faut pouvoir drag & drop les éléments de la file d'attente,
+  […] Les éléments de la file d'attente doivent être clickable pour voir leurs
+  détails, tant qu'ils ne sont pas traités ils sont éditables » (2026-10-13;
+  detail in 0.80.0, drag and drop in 0.86.0).
+  - `POST /api/queue/:project/:id {text}` (`sameOriginOnly`) replaces the
+    request text of the entry in the server's in-memory queue, then rewrites
+    `logs/queue/<project>.json` from it (never edited by hand). The other
+    fields (model, pipeline, callback, session…) stay as they are. The entry
+    records `editedAt` and `edits` (shown « Modifiée » in the detail).
+  - No race with the drain: the drain removes the head synchronously when it
+    launches it, so an edit lands before (the edited text runs) or gets
+    **409** `alreadyStarted` after. Empty text: 400; over 100 000
+    characters: 413; another origin: 403; unknown project: 404.
+  - Dashboard: « Modifier la demande… » in the queue detail overlay
+    (`Salle.registerQueueAction`): textarea prefilled with the whole text,
+    Enregistrer or Ctrl+Enter, Annuler or Escape (the detail stays open). The
+    textarea survives live refreshes. An entry that leaves the queue during the
+    edit is shown as no longer editable: save disabled, the typed text kept for
+    copying. A server not yet restarted (404) is said so.
+  - The Android app only shows the queue length: nothing to edit there.
+  - Tests: `scripts/_test_queue_edit.mjs` (private instance: the edited text
+    is the one that runs; once started, the edit is refused; serial suite),
+    HTTP `queue-edit`, browser `queue-edit`. The browser check
+    `queue-item-detail` now expects « Modifier la demande… » in the action
+    bar it used to expect empty.
+
 ## [0.88.0] - 2026-10-14
 
 ### Added
