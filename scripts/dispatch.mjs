@@ -1459,6 +1459,19 @@ function simpleCommandsRule() {
     `Sinon le CLI refuse l'appel en mode non interactif, sans recours possible.`;
 }
 
+// ---------- Stale test runs are stopped, not awaited (0.94.0) ----------------
+// User, 2026-10-14: « si un test est detecte comme inutile, on aurait pu
+// l'arreter pour ne pas perdre de temps et commencer l'autre ? Si oui, il faut
+// en faire une regle ». A run on content changed since its start proves
+// nothing about the content to deliver. Only the run the musician started
+// itself may be stopped: never a shared process, a server or another turn.
+function staleTestRule() {
+  return `\n\n---\nTEST PÉRIMÉ : si tu modifies le contenu testé pendant qu'un test ou une non-régression que TU as ` +
+    `lancé tourne encore, son résultat est périmé. Arrête-le immédiatement (TaskStop, ou taskkill /T de SON PID) et ` +
+    `relance-le sur le contenu final, au lieu d'attendre sa fin. N'arrête JAMAIS autre chose que ce lancement : ni un ` +
+    `serveur (7777 ou autre), ni un processus partagé, ni le tour d'un autre musicien.`;
+}
+
 // ---------- Authorisation requests explained (0.78.0) ------------------------
 function permissionExplainRule(langName) {
   return `\n\n---\nAUTORISATIONS : pour chaque appel Bash, PowerShell ou Monitor, renseigne toujours le champ ` +
@@ -1502,6 +1515,7 @@ if (projectName !== CONDUCTOR) prompt = prompt + backgroundRule(callbackProject 
 if (projectName !== CONDUCTOR) prompt = prompt + userRequirementsRule();
 if (projectName !== CONDUCTOR) prompt = prompt + simpleCommandsRule();
 if (projectName !== CONDUCTOR) prompt = prompt + todoRule();
+if (projectName !== CONDUCTOR) prompt = prompt + staleTestRule();
 
 // ---------- langue de discussion (0.51.0) ------------------------------------
 // Demande utilisateur : « La langue de la discussion doit pouvoir etre fixee et

@@ -11,6 +11,38 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.94.0] - 2026-10-14
+
+### Added
+
+- (server) A test run gone stale is stopped at once, not awaited — user
+  request « Je ne comprends pas, si un test est detecte comme inutile, on
+  aurait pu l'arreter pour ne pas perdre de temps et commencer l'autre ? Si
+  oui, il faut en faire une regle » (2026-10-14), after a targeted run was
+  left to finish on content changed since its start.
+  - `scripts/regression.mjs` (working tree only, not `--ref` / `--dir`):
+    the tested content (git tree, `worktreeTree`) is taken at the START and
+    sampled every 15 s (`ORCH_REGRESS_STALE_MS`). A change confirmed on two
+    consecutive samples (a file written and removed within one interval, like
+    a callback file, never counts) stops the run at once: it kills only the
+    suites IT started (`liveSuites` of `suite-runner.mjs`, process tree) and
+    its own sandbox instance, prints the changed files and « relancez-la sur
+    le contenu final », writes a report marked `stale` and exits with code 3.
+    A last sample at the end catches a change in the final interval.
+    `--no-stale-stop` disables the watch. New module `scripts/stale-run.mjs`.
+  - The report's `tree` is now the tree the run STARTED on (it was taken at
+    the end, so a run could be recorded against content it never tested).
+  - The delivery gate (`checkReport`) refuses a `stale` report.
+  - Musicians' prompt (`staleTestRule`, `dispatch.mjs`, ordinary and
+    pipeline step turns, not the chef): stop a test you started yourself as
+    soon as you change the content it tests, relaunch it on the final content;
+    never stop a server, a shared process or another musician's turn. Rule
+    n° 7 of the new-project template. The pipeline engine itself runs its
+    checks after the step's turn has ended, so its 4a/4b/4c/Review checks can
+    never go stale while they run.
+  - Test: `scripts/_test_stale_run.mjs` (serial suite: the real
+    regression.mjs on a private repository).
+
 ## [0.93.0] - 2026-10-14
 
 ### Fixed

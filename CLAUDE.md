@@ -672,6 +672,25 @@ pendant le développement, et la complète seulement avant une mise en prod ».
   obligatoires.
 - Recette : `_test_targeted_regression.mjs`.
 
+## Un test périmé s'arrête aussitôt (0.94.0)
+
+Demande utilisateur (2026-10-14) : « si un test est detecte comme inutile, on
+aurait pu l'arreter pour ne pas perdre de temps et commencer l'autre ? Si oui,
+il faut en faire une regle ».
+
+- `regression.mjs` (arbre de travail) prend l'arbre testé **au départ**,
+  l'échantillonne toutes les 15 s (`ORCH_REGRESS_STALE_MS`) ; un changement
+  vu deux fois de suite arrête le lancement : ses suites (`liveSuites`) et son
+  instance de test seulement, rapport `stale` (refusé par `checkReport`),
+  code 3. `--no-stale-stop` coupe la surveillance. Module
+  `scripts/stale-run.mjs`.
+- **Règle de travail** (aussi `staleTestRule` dans le prompt des musiciens,
+  règle n° 7 du modèle de projet) : si tu modifies le contenu pendant qu'un
+  test que TU as lancé tourne, arrête-le tout de suite et relance sur le
+  contenu final. Jamais un serveur, un processus partagé ni le tour d'un autre
+  musicien.
+- Recette : `_test_stale_run.mjs`.
+
 ## Panneau latéral et TODO des musiciens (0.75.0)
 
 Demande utilisateur (2026-10-13) : « Sur dev, je veux que l'on reprenne

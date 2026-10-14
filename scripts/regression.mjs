@@ -37,6 +37,8 @@
 //   node scripts/regression.mjs --port <n>           port fixe de l'instance (jamais 7777, refusé s'il est occupé) :
 //                                                    instance de dev durable, ex. --keep --no-suites --no-browser --port 7778
 //   node scripts/regression.mjs --out <fichier.json> rapport JSON (défaut .regress/report-<label>.json)
+//   node scripts/regression.mjs --no-stale-stop      ne s'arrête pas si le contenu change en cours de route
+//                                                    (par défaut, 0.94.0 : arrêt immédiat, rapport `stale`, code 3)
 //   node scripts/regression.mjs --compare avant.json apres.json [--md sortie.md]
 //
 // Statuts : OK · KO · NA (fonction absente de l'état testé, ex. la vue Projets
@@ -52,7 +54,11 @@ import { REPO, REGRESS_DIR, extractCode, startSandbox, waitUp, serverEnv } from 
 import { snapshotRepo } from './_regression_sandbox.mjs';
 import { worktreeTree, readKnownKo, checkReport } from './delivery-gate.mjs';
 import { runNode, runSuite } from './suite-runner.mjs';
-import { runPool, SERIAL_SUITES, defaultJobs } from './suite-runner.mjs';
+import { runPool, SERIAL_SUITES, defaultJobs, liveSuites } from './suite-runner.mjs';
+import { createStaleWatch, changedPaths, staleMessage, killOwnTree } from './stale-run.mjs';
+
+// Exit code of a run stopped because the tested content changed (0.94.0).
+const STALE_EXIT = 3;
 
 // Marqueurs du tour qui lance la recette (0.48.0) : jamais transmis aux suites
 // ni à l'instance de test, sinon leurs dispatches passeraient pour ce tour.
@@ -1726,10 +1732,46 @@ async function restartCheck(sb) {
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
+// Stale run (0.94.0): the tested content is taken at the START. If it changes
+// while the run goes on, the verdict would be about content nobody delivers:
+// the run stops at once — only its own suites and sandbox — and says to
+// relaunch on the final content, instead of finishing for nothing.
+let sbPromise = null;
+let staleWatch = null;
+const t0 = Date.now();
+function writeReport(tree, extra = {}) {
+  const c = { OK: 0, KO: 0, NA: 0 };
+  for (const r of results) c[r.status]++;
+  const out = opt('--out') || path.join(REGRESS_DIR, `report-${safeLabel}.json`);
+  const narrowed = selection && !selection.full;
+  const commit = (spawnSync('git', ['-C', REPO, 'rev-parse', source.ref || 'HEAD'], { encoding: 'utf8' }).stdout || '').trim() || null;
+  // "full" = every stage on every suite: the only kind a production jump accepts.
+  const mode = narrowed ? 'targeted' : (flag('--no-suites') || flag('--no-browser')) ? 'partial' : 'full';
+  const report = { label, at: new Date().toISOString(), durationS: Math.round((Date.now() - t0) / 1000), tree, commit, mode,
+    ...(selection ? { selection: { since: selection.since, changed: selection.changed, full: !!selection.full, reason: selection.reason || null,
+      suites: selection.suites || null, http: selection.http ?? true, browser: selection.browser ?? true } } : {}),
+    ...extra, counts: c, results };
+  fs.writeFileSync(out, JSON.stringify(report, null, 2));
+  return { report, out, c, mode };
+}
+async function abortStale(info) {
+  const diff = changedPaths(REPO, info.start, info.current);
+  console.log(`\n${staleMessage(diff)}`);
+  for (const c of liveSuites) killOwnTree(c.pid);
+  try { const sb = await sbPromise; if (sb && !flag('--keep')) await sb.stop(); } catch { /* not started */ }
+  const { out } = writeReport(info.start, { stale: { ...info, changed: diff.paths, more: diff.more } });
+  console.log(`=== PÉRIMÉE : arrêtée après ${Math.round((Date.now() - t0) / 1000)} s — rapport (refusé à la livraison) : ${out}`);
+  console.log('=== LIVRAISON : REFUSÉE — contenu modifié pendant l’exécution, relancer sur le contenu final');
+  process.exit(STALE_EXIT);
+}
+
 async function main() {
   fs.mkdirSync(REGRESS_DIR, { recursive: true });
   console.log(`\n=== Non-régression — état testé : ${label} ===\n`);
-  const t0 = Date.now();
+  if (source.worktree && !flag('--no-stale-stop')) {
+    staleWatch = createStaleWatch({ read: () => worktreeTree(REPO), onStale: (info) => { abortStale(info); } });
+    if (staleWatch.start) console.log(`   contenu testé : arbre ${staleWatch.start.slice(0, 10)} — arrêt immédiat s’il change en cours de route`);
+  }
   if (!flag('--no-suites')) { console.log('── 1. Suites node'); await runSuites(); }
 
   const narrowed = selection && !selection.full;
@@ -1739,7 +1781,8 @@ async function main() {
   else console.log('\n── 2. Instance de test (autre port, fixtures, faux claude)');
   let sb = null;
   if (runHttp) try {
-    sb = await startSandbox(source, safeLabel, { port: opt('--port') || null });
+    sbPromise = startSandbox(source, safeLabel, { port: opt('--port') || null });
+    sb = await sbPromise;
     console.log(`   instance : ${sb.url}  (${sb.root})`);
     record('http', 'boot', 'Démarrage de server.js sur une instance isolée', 'OK', `port ${sb.port}`);
   } catch (e) {
@@ -1760,21 +1803,17 @@ async function main() {
     }
   }
 
-  const c = { OK: 0, KO: 0, NA: 0 };
-  for (const r of results) c[r.status]++;
-  const out = opt('--out') || path.join(REGRESS_DIR, `report-${safeLabel}.json`);
   // The tested content is recorded: a delivery is checked against EXACTLY this
-  // tree by scripts/delivery-gate.mjs (0.71.3).
-  const tree = source.worktree ? worktreeTree(REPO)
-    : source.ref ? (spawnSync('git', ['-C', REPO, 'rev-parse', `${source.ref}^{tree}`], { encoding: 'utf8' }).stdout || '').trim() || null : null;
-  const commit = (spawnSync('git', ['-C', REPO, 'rev-parse', source.ref || 'HEAD'], { encoding: 'utf8' }).stdout || '').trim() || null;
-  // "full" = every stage on every suite: the only kind a production jump accepts.
-  const mode = narrowed ? 'targeted' : (flag('--no-suites') || flag('--no-browser')) ? 'partial' : 'full';
-  const report = { label, at: new Date().toISOString(), durationS: Math.round((Date.now() - t0) / 1000), tree, commit, mode,
-    ...(selection ? { selection: { since: selection.since, changed: selection.changed, full: !!selection.full, reason: selection.reason || null,
-      suites: selection.suites || null, http: selection.http ?? true, browser: selection.browser ?? true } } : {}),
-    counts: c, results };
-  fs.writeFileSync(out, JSON.stringify(report, null, 2));
+  // tree by scripts/delivery-gate.mjs (0.71.3). Since 0.94.0 it is the tree the
+  // run STARTED on; one last sample catches a change in the final interval.
+  if (staleWatch) {
+    staleWatch.stop();
+    const end = worktreeTree(REPO);
+    if (staleWatch.start && end && end !== staleWatch.start) await abortStale({ start: staleWatch.start, current: end, at: new Date().toISOString() });
+  }
+  const tree = staleWatch?.start || (source.worktree ? worktreeTree(REPO)
+    : source.ref ? (spawnSync('git', ['-C', REPO, 'rev-parse', `${source.ref}^{tree}`], { encoding: 'utf8' }).stdout || '').trim() || null : null);
+  const { report, out, c, mode } = writeReport(tree);
   console.log(`\n=== ${mode === 'full' ? 'COMPLÈTE' : mode === 'targeted' ? 'CIBLÉE' : 'PARTIELLE'} : ${c.OK} OK · ${c.KO} KO · ${c.NA} NA — ${Math.round((Date.now() - t0) / 1000)} s — rapport : ${out}`);
   const gate = checkReport(report, { knownKo: readKnownKo(REPO) });
   for (const k of gate.accepted) console.log(`KO accepté (docs/known-ko.json) : ${k.id} — ${k.reason}`);

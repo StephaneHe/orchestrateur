@@ -61,6 +61,13 @@ automatisé** à la suite de non-régression du projet et trace-le dans
   test qui ouvre un chapitre et vérifie qu'une seule image est affichée,
   rejoué à chaque évolution.
 
+**7 — Un test devenu périmé s'arrête aussitôt.**
+Si tu modifies le contenu testé pendant qu'un test que **tu** as lancé
+tourne encore, son résultat ne prouve plus rien : arrête **ce lancement**
+tout de suite et relance-le sur le contenu final, sans attendre sa fin.
+N'arrête jamais un serveur, un processus partagé ni le tour d'un autre
+musicien.
+
 ---
 
 ## Definition of Done

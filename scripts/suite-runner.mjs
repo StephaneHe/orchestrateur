@@ -15,15 +15,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 
+// Suites started by THIS process and still running: a stale run (0.94.0,
+// scripts/stale-run.mjs) stops exactly these, never anything else.
+export const liveSuites = new Set();
+
 /** Runs `file` with node in `cwd`; → {code, out} (stdout + stderr interleaved). */
 export function runNode(file, cwd, timeoutMs = 300_000) {
   return new Promise((resolve) => {
     const c = spawn(process.execPath, [file], { cwd, env: { ...process.env, ANTHROPIC_API_KEY: '' }, windowsHide: true });
+    liveSuites.add(c);
     let out = '';
     c.stdout.on('data', d => { out += d; });
     c.stderr.on('data', d => { out += d; });
     const t = setTimeout(() => { try { c.kill(); } catch {} }, timeoutMs);
-    c.on('close', (code) => { clearTimeout(t); resolve({ code, out }); });
+    c.on('close', (code) => { clearTimeout(t); liveSuites.delete(c); resolve({ code, out }); });
   });
 }
 
@@ -52,6 +57,7 @@ export const SERIAL_SUITES = new Set([
   '_test_queue_api.mjs',           // queue.mjs in the repository root
   '_test_queue_order.mjs',         // own server instance under .regress/ (timed drain)
   '_test_queue_edit.mjs',          // own server instance under .regress/ (timed drain)
+  '_test_stale_run.mjs',           // runs regression.mjs on a private repo, timed stop
 ]);
 
 /** Default parallelism: ORCH_REGRESS_JOBS, else a quarter of the CPUs, 1 to 4. */
