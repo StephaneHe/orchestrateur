@@ -337,6 +337,10 @@ export function launchTask(root, t, dispatchScript) {
     // The nature found when the task was classified on its own (0.69.0).
     if (t.pipeline === 'dev' && ['simple', 'bugfix', 'mecanique'].includes(t.kind)) args.push('--kind', t.kind);
   }
+  // Fresh session asked for this task (0.95.0): a real flag, never words in the
+  // demand. dispatch.mjs carries it into the queue entry when the musician is
+  // busy, and ignores it (saying so) with codex or inside a pipeline run.
+  if (t.sessionNeuve === true) args.push('--new-session');
   const env = { ...process.env };
   for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'ORCH_TURN_PROJECT', 'ORCH_TURN_STEP', 'ORCH_STEP_TOKEN', 'ORCH_OBS_ID']) delete env[k];
   let pid = null;
@@ -349,7 +353,7 @@ export function launchTask(root, t, dispatchScript) {
     pid = c.pid || null;
   } catch { pid = null; }
   return { projet: t.projet, ...(cleanTitle(t.titre) ? { titre: cleanTitle(t.titre) } : {}), pipeline: t.reprise ? t.pipeline || null : t.served ? t.pipeline : null, mode: t.mode || null, ...(t.horsPipeline ? { horsPipeline: t.horsPipeline } : {}),
-    reprise: t.reprise || null, pid, at: new Date().toISOString(), offset, key: taskKey(t.demande), hash: textHash(t.demande) };
+    reprise: t.reprise || null, ...(t.sessionNeuve === true ? { sessionNeuve: true } : {}), pid, at: new Date().toISOString(), offset, key: taskKey(t.demande), hash: textHash(t.demande) };
 }
 
 /**

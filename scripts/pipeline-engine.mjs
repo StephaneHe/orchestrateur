@@ -712,6 +712,12 @@ export function validateUnitTasks(root, tasks) {
     const why = t && typeof t === 'object' ? titleProblem(t.titre) : null;
     if (why) return `tâche ${i + 1} : ${why}`;
     if (t?.renvoi_chef != null) { const h = handoffProblem(t); if (h) return `tâche ${i + 1} : ${h}`; }
+    // 0.95.0: a fresh session is a flag for dispatch.mjs (--new-session), so it
+    // must be a real boolean, and it means nothing for a resumed run.
+    if (t?.session_neuve != null) {
+      if (t.session_neuve !== true && t.session_neuve !== false) return `tâche ${i + 1} : « session_neuve » doit valoir true (ou être absent)`;
+      if (t.session_neuve && t.reprise) return `tâche ${i + 1} : « session_neuve » et « reprise » s’excluent (une reprise continue l’exécution en pause)`;
+    }
   }
   // 0.90.0 (task 2/4): two tasks of this run that look alike where they are
   // shown would be confused again, as on 2026-10-13.
@@ -807,7 +813,7 @@ export function handoffPrompt(run, tasks) {
 function handoffProblem(t) {
   const h = t.renvoi_chef;
   if (typeof h !== 'object' || h == null || typeof h.raison !== 'string' || h.raison.trim().length < 8) return '« renvoi_chef » doit être {"raison": "pourquoi le chef doit agir lui-même"}';
-  for (const k of ['impose', 'hors_pipeline', 'reprise', 'ne_pas_dispatcher']) if (t[k]) return `« renvoi_chef » et « ${k} » s’excluent`;
+  for (const k of ['impose', 'hors_pipeline', 'reprise', 'ne_pas_dispatcher', 'session_neuve']) if (t[k]) return `« renvoi_chef » et « ${k} » s’excluent`;
   if (t.apres != null) return '« renvoi_chef » ne peut pas attendre une autre tâche (« apres ») : le chef agit à la fin de ce tour';
   return null;
 }
@@ -1002,7 +1008,7 @@ const CODE_STEPS = {
     for (const [i, t] of units.entries()) {
       const n = i + 1;
       const imp = t.impose && typeof t.impose === 'object' ? t.impose : {};
-      const base = { n, projet: t.projet, titre: cleanTitle(t.titre), demande: t.demande, ...(t.rattache ? { rattache: t.rattache } : {}), ...(t.apres ? { apres: t.apres } : {}), ...(t.reprise ? { reprise: t.reprise } : {}), ...(t.ne_pas_dispatcher ? { ne_pas_dispatcher: true } : {}) };
+      const base = { n, projet: t.projet, titre: cleanTitle(t.titre), demande: t.demande, ...(t.rattache ? { rattache: t.rattache } : {}), ...(t.apres ? { apres: t.apres } : {}), ...(t.reprise ? { reprise: t.reprise } : {}), ...(t.ne_pas_dispatcher ? { ne_pas_dispatcher: true } : {}), ...(t.session_neuve === true ? { sessionNeuve: true } : {}) };
       // Explicitly marked « not for a musician » (0.71.0, n° 8): never dispatched,
       // not even classified — the user says what it is (never guess).
       if (t.ne_pas_dispatcher) {
@@ -1113,7 +1119,7 @@ const CODE_STEPS = {
       }
       const served = !!t.pipeline && isEnforced(enf, t.projet) && enf.pipelines.includes(t.pipeline);
       const steps = served ? planSteps(t.pipeline, { mode: t.mode || 'leger' }).filter(s => s.chain?.length && s.kind !== 'code').map(s => ({ id: s.id, ...resolveCase(assignments, s.chain) })) : [];
-      rows.push(`| ${t.projet} | ${t.horsPipeline ? `hors pipeline, autorisé par l’utilisateur (« ${t.autorisation || '?'} ») : ${t.horsPipeline}` : served ? `${pipelineLabel(t.pipeline, t.mode)}` : t.reprise ? `reprise de ${t.reprise}` : `${t.pipeline} — projet hors service : tour ordinaire`} | ${steps.map(s => `${s.id}: ${s.model || 'défaut du projet'}`).join(', ') || '—'} |`);
+      rows.push(`| ${t.projet} | ${t.horsPipeline ? `hors pipeline, autorisé par l’utilisateur (« ${t.autorisation || '?'} ») : ${t.horsPipeline}` : served ? `${pipelineLabel(t.pipeline, t.mode)}` : t.reprise ? `reprise de ${t.reprise}` : `${t.pipeline} — projet hors service : tour ordinaire`}${t.sessionNeuve ? ' — session neuve' : ''} | ${steps.map(s => `${s.id}: ${s.model || 'défaut du projet'}`).join(', ') || '—'} |`);
       return { ...t, served };
     });
     fs.writeFileSync(path.join(artDir, 'affectation.md'), `# Affectation (page Models)\n\n| projet | pipeline | models par étape |\n|---|---|---|\n${rows.join('\n')}\n`);
@@ -1146,7 +1152,7 @@ const CODE_STEPS = {
         // WHOLE text (0.67.x: a shared opening sentence no longer matches).
         // `n` + `run` identify this Routage task (deduplication, 0.68.0).
         return { run, n: w.n, projet: w.projet, ...(w.titre ? { titre: w.titre } : {}), pipeline: w.pipeline, mode: w.mode || null, ...(w.kind ? { kind: w.kind } : {}), ...(w.horsPipeline ? { horsPipeline: w.horsPipeline } : {}), served: w.served, demande: w.demande, rattache: w.rattache || null,
-          ...(w.reprise ? { reprise: w.reprise } : {}),
+          ...(w.reprise ? { reprise: w.reprise } : {}), ...(w.sessionNeuve === true ? { sessionNeuve: true } : {}),
           after: { projet: w.after, offset: dep ? dep.offset : logOffset(logsDir, w.after), key: taskKey(depTask.demande), hash: textHash(depTask.demande), since: dep?.at || new Date().toISOString() } };
       });
       const res = addPending(logsDir, entries);

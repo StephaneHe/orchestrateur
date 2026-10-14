@@ -1821,6 +1821,21 @@ chef pour qu'il agisse lui meme ».
   aucun tour réel sans `ORCH_CHEF_HANDOFF_TEST=1`.
 - Recettes : `_test_chef_handoff.mjs`, section 5 de `_test_no_dispatch_chef.mjs`.
 
+## Routage : session neuve par le vrai drapeau (0.95.0)
+
+Demande utilisateur (2026-10-14) : « demande à orchestrateur-dev de faire
+passer --new-session par le Routage. »
+
+- **Découper** : `"session_neuve": true` sur une tâche (session neuve demandée,
+  ou session devenue trop longue). Booléen seulement ; exclusif avec
+  `reprise` et `renvoi_chef`. Écrire « --new-session » dans la demande n'a
+  aucun effet.
+- Le champ suit la tâche (`sessionNeuve`) ; `launchTask` ajoute
+  `--new-session` (tour ordinaire, hors pipeline, tâche en attente libérée) ;
+  un musicien occupé reçoit l'entrée de file avec `newSession`. codex :
+  ignoré par `dispatch.mjs`.
+- Recette : `_test_routage_new_session.mjs`.
+
 ## Dossier du chef : rien n'est annulé pendant le Routage (0.71.1)
 
 Suivi `docs/ROUTAGE-PROBLEMES.md`, n° 18.

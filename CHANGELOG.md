@@ -11,6 +11,32 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.95.0] - 2026-10-14
+
+### Added
+
+- (server) The chef's Routage passes `--new-session` to `dispatch.mjs` for a
+  task that asks for a fresh session — user request « demande à
+  orchestrateur-dev de faire passer --new-session par le Routage. »
+  (2026-10-14), after a relaunch asked « in a fresh session » went out with
+  « --new-session » copied into the task's text only: the queue entry did not
+  carry « SESSION NEUVE » and the musician's session was not archived.
+  - Decomposer: a task may carry `"session_neuve": true` — when the user asks
+    for a fresh session, or when the musician's session has grown too long.
+    Its instructions say so, and that writing « --new-session » in the demand
+    has no effect. `validateUnitTasks` refuses a non-boolean value and the
+    combination with `reprise`; `renvoi_chef` excludes it too.
+  - The field follows the task (`sessionNeuve`: classification, Affecter
+    table « — session neuve », `dispatch.json`, waiting entries of
+    `logs/routage-pending.json`), and `launchTask` (`routage-pending.mjs`)
+    adds `--new-session` to the `dispatch.mjs` call: ordinary, off-pipeline
+    and later-released tasks alike. A busy musician's task is queued with
+    `newSession` (shown « SESSION NEUVE »); `dispatch.mjs` still ignores the
+    flag with codex and notes it inside a pipeline run.
+  - Test: `scripts/_test_routage_new_session.mjs` (a real chef Routage turn:
+    free musician → fresh session and archived sidecar; busy musician →
+    queued with newSession; task without the field → session resumed).
+
 ## [0.94.0] - 2026-10-14
 
 ### Added
