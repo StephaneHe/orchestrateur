@@ -1179,6 +1179,29 @@ async function apiChecks(sb) {
       return `omega : départ v1.0.0 (tag), puis ${d.counts.ready} entrées prêtes et ${d.counts.progress} en cours ; note sans l’en-cours`;
     } finally { g('tag', '-d', 'v1.0.0'); fs.rmSync(cl, { force: true }); }
   });
+  // 0.100.0 — « Je parle de voir comment une requete utilisateur a ete decoupee
+  // en taches atomiques, et voir le progres de ces taches, meme detachees ».
+  await check(S, 'requests-map', 'Vue par requête : GET /api/requests et /api/requests/:run relient chaque requête au chef à toutes ses tâches atomiques (titre, musicien, « après », colonne) et donnent l’état de chacune là où elle est maintenant — terminée, détachée en cours, en attente, en file, renvoi au chef refusé, question, pipeline en pause avec sa progression — ; réveils exclus ; lecture seule', async () => {
+    const fxFile = path.join(sb.root, 'tests', 'request-fixture.mjs');
+    if (!fs.existsSync(path.join(sb.root, 'scripts', 'request-map.mjs')) || !fs.existsSync(fxFile)) NA('vue par requête absente de cet état du code');
+    const FX = await import(pathToFileURL(fxFile).href);
+    const logsDir = path.join(sb.root, 'logs'), chefDir = path.join(sb.root, 'projects', 'chef');
+    FX.writeRequestFixture({ logsDir, chefDir });
+    try {
+      const d = await json('/api/requests?n=40');
+      const r = d.requests.find(x => x.run === FX.REQ_RUN);
+      assert(r && r.total === 7 && r.request.startsWith('REQ-FIX-REQUEST'), `requête absente : ${JSON.stringify(d.requests.map(x => x.run))}`);
+      const bad = Object.entries(FX.EXPECTED).filter(([n, e]) => { const t = r.tasks.find(x => x.n === +n); return !t || t.state !== e.state || t.level !== e.level; });
+      assert(!bad.length, `états : ${r.tasks.map(t => `${t.n}:${t.state}/L${t.level}`).join(' ')}`);
+      assert(r.tasks.find(t => t.n === 2).released && r.tasks.find(t => t.n === 7).pipelineRun?.done === 2, 'détachée ou progression du pipeline absente');
+      assert(!d.requests.some(x => x.run === FX.CALLBACK_RUN) && d.states?.terminee?.label, 'réveil listé, ou libellés absents');
+      const one = await json(`/api/requests/${FX.REQ_RUN}`);
+      assert(one.request?.tasks?.length === 7, 'GET /api/requests/:run');
+      assert((await get('/api/requests/pas-un-run')).status === 400 && (await get('/api/requests/p-20200101T000000-000000')).status === 404, 'identifiant invalide ou inconnu accepté');
+      for (const method of ['POST', 'PUT', 'DELETE']) assert((await fetch(sb.url + `/api/requests/${FX.REQ_RUN}`, { method, headers: H })).status === 404, `${method} accepté`);
+      return `${FX.REQ_RUN} : ${r.tasks.map(t => `${t.n} ${t.state}`).join(', ')}`;
+    } finally { FX.removeRequestFixture({ logsDir, chefDir }); }
+  });
   // 0.56.0 — phase 7 : relevé de la mise en service générale (« une semaine sans contournement »).
   await check(S, 'pipeline-health', 'Pipelines, phase 7 : relevé de la mise en service — exécutions, tours hors pipeline, tours ordinaires, refus (moteur et porte), pauses, jours complets sans contournement', async () => {
     if (!fs.existsSync(path.join(sb.root, 'scripts', 'pipeline-health.mjs'))) NA('relevé absent de cet état du code');

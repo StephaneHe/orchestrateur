@@ -858,6 +858,31 @@ Module `scripts/context-policy.mjs`.
   déjà calibré (0.93.0) et n'est pas touché.
 - Recette : `_test_context_calibration.mjs`.
 
+## Onglet « 🧭 Requêtes » : découpage et progrès de chaque requête (0.100.0)
+
+Demande utilisateur (2026-10-14) : « Je parle de voir comment une requete
+utilisateur a ete decoupee en taches atomiques, et voir le progres de ces
+taches, meme detachees ». Forme : la « carte du Routage » recommandée par la
+recherche du 2026-10-14 (colonnes reliées par les dépendances).
+
+- `scripts/request-map.mjs`, **lecture seule, sans model** : une requête =
+  une exécution du Routage du chef (`logs/runs/<run>/run.json`, réveils
+  exclus) ; chaque tâche est suivie là où elle est : son tour dans le log du
+  musicien (`findTurn` : empreinte du texte complet après l'offset de
+  lancement, fantômes ignorés, tour suivi d'un autre tour sans result =
+  interrompu), sa file, `routage-pending.json`, son exécution de pipeline
+  (`plan`/`index`), le tour du chef renvoyé ou son refus dans
+  `logs/chef-actions.log`, ou ce qu'a noté le Routage.
+- **Tâches détachées** : `releaseReady` ajoute chaque libération à
+  `logs/routage-released.ndjson` (run, n, offset, empreinte).
+- Routes GET `/api/requests[?n=]`, `/api/requests/:run`. Onglet
+  `public/requests-panel.js`, pill `#btn-requests`, fenêtre
+  `#requests-overlay`, rafraîchi toutes les 10 s ; colonnes empilées sur
+  mobile. App Android non touchée.
+- Recettes : `_test_request_map.mjs` (jeu de données partagé
+  `tests/request-fixture.mjs`), HTTP `requests-map`, navigateur
+  `requests-panel` et `requests-panel-mobile`.
+
 ## Onglet « 📰 Release » : la liste qui mène à la release note (0.97.0)
 
 Demande utilisateur (2026-10-14) : « Je dois voir comme TODO ou GIT, une liste

@@ -11,6 +11,37 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.100.0] - 2026-10-14
+
+### Added
+
+- (server) « 🧭 Requêtes » tab of the side panel: each request to the chef, how
+  the Routage split it into atomic tasks, and the state of every task now, even
+  detached ones — user request « Je parle de voir comment une requete
+  utilisateur a ete decoupee en taches atomiques, et voir le progres de ces
+  taches, meme detachees. On avait fait le contstat qu'elles n'etaient pas
+  visible actuellement » (2026-10-14).
+  - New module `scripts/request-map.mjs` (`listRequests`, `buildRequest`,
+    `findTurn`, `pipelineRunState`), read-only, no model. A request is a
+    Routage run (`logs/runs/<run>/run.json`, wake-ups excluded); each task is
+    followed to where it is now: its turn in the musician's log (whole-text
+    fingerprint after the launch offset, phantom results ignored, a turn
+    without result followed by another turn = interrupted), its queue entry,
+    `routage-pending.json`, a pipeline run (progress from `plan`/`index`), the
+    chef's hand-back turn or its refusal in `logs/chef-actions.log`, or what
+    the Routage recorded (question, gap, duplicate, chef action).
+  - Detached tasks: `releaseReady` now appends each release to
+    `logs/routage-released.ndjson` (run, task number, log offset, fingerprint),
+    so a task launched after the chef's turn is still followed.
+  - Routes `GET /api/requests[?n=]` and `GET /api/requests/:run` (no write
+    route). Panel `public/requests-panel.js`, pill `#btn-requests`: one map per
+    request — a column per dependency level, a line to the awaited task, one
+    colour per state, pipeline progress bar, « détachée » mark; requests
+    without tasks and relays hidden unless « tout afficher »; click a task or
+    the request for its full detail (`#requests-overlay`); refreshed every
+    10 s; stacked columns with « après n° k » on a phone. Dashboard only (the
+    Android app is not changed).
+
 ## [0.99.0] - 2026-10-14
 
 ### Changed

@@ -331,3 +331,88 @@
 @media (max-width: 767.98px) {
   .tov-reject-ok, .tov-reject-cancel { min-height: 2.75rem; }
 }
+
+/* Requests and their atomic tasks (0.100.0): one map per request, a column per
+   dependency level, one colour per state (Argo-like: grey waiting, cyan
+   running, green done, magenta failed, orange waiting for an answer). */
+.rq-filters { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; font-size: 0.75rem; color: var(--fg-2); }
+.rq-f { display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer; }
+.rq-ro { margin-left: auto; border: 1px solid var(--card-border); border-radius: 4px; padding: 0 0.35rem; }
+.rq-empty, .rq-none, .rq-hidden { color: var(--fg-2); font-size: 0.8125rem; padding: 0.6rem 0; margin: 0; }
+.rq-hidden { font-size: 0.6875rem; color: var(--fg-3); }
+.rq-request { border: 1px solid var(--card-border); border-radius: 6px; margin-top: 0.7rem; overflow: hidden; }
+.rq-request[data-open="0"] { opacity: 0.86; }
+.rq-head {
+  display: grid; grid-template-columns: auto 1fr; gap: 0.15rem 0.6rem; width: 100%; text-align: left; cursor: pointer;
+  background: rgba(255, 255, 255, 0.02); color: var(--fg-1); border: 0; border-bottom: 1px solid var(--card-border); padding: 0.45rem 0.6rem; font: inherit;
+}
+.rq-head:hover, .rq-head:focus-visible { background: rgba(95, 212, 255, 0.07); outline: none; }
+.rq-when { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--fg-3); white-space: nowrap; }
+.rq-text { font-size: 0.8125rem; color: var(--fg-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rq-meta { grid-column: 1 / -1; font-size: 0.6875rem; color: var(--fg-2); display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+.rq-relay { font-size: 0.625rem; border: 1px solid var(--card-border); border-radius: 4px; padding: 0 0.25rem; color: var(--fg-3); }
+.rq-sum { border-radius: 4px; padding: 0 0.3rem; border: 1px solid currentColor; }
+.rq-map { position: relative; display: flex; gap: 1.6rem; padding: 0.6rem; overflow-x: auto; align-items: flex-start; }
+.rq-links { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
+.rq-link { fill: none; stroke: var(--fg-3); stroke-width: 1.4; }
+.rq-arrow { fill: var(--fg-3); }
+.rq-col { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 0.5rem; flex: 0 0 13.5rem; min-width: 0; }
+.rq-task {
+  display: flex; flex-direction: column; gap: 0.2rem; text-align: left; cursor: pointer; font: inherit; color: var(--fg-1);
+  background: var(--bg-1); border: 1px solid var(--card-border); border-left: 4px solid var(--tone, var(--fg-3)); border-radius: 6px; padding: 0.4rem 0.5rem;
+}
+.rq-task:hover, .rq-task:focus-visible { outline: 1px solid var(--tone, var(--fg-2)); }
+.rq-task-head { display: flex; gap: 0.35rem; align-items: baseline; min-width: 0; }
+.rq-icon { color: var(--tone, var(--fg-2)); font-weight: 700; flex: 0 0 auto; }
+.rq-n { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--fg-3); flex: 0 0 auto; }
+.rq-title { font-size: 0.8125rem; color: var(--fg-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rq-task-meta { display: flex; gap: 0.35rem; flex-wrap: wrap; font-size: 0.6875rem; }
+.rq-project { font-family: var(--font-mono); color: var(--fg-2); }
+.rq-state { color: var(--tone, var(--fg-2)); }
+.rq-detached, .rq-after { font-size: 0.625rem; color: var(--fg-3); border: 1px dashed var(--card-border); border-radius: 4px; padding: 0 0.25rem; align-self: flex-start; }
+.rq-detail { font-size: 0.6875rem; color: var(--fg-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.rq-progress { display: flex; align-items: center; gap: 0.4rem; font-size: 0.625rem; color: var(--fg-2); }
+.rq-bar { flex: 1 1 auto; height: 0.3rem; background: rgba(255, 255, 255, 0.08); border-radius: 3px; overflow: hidden; }
+.rq-bar > span { display: block; height: 100%; background: var(--tone, var(--st-unread)); }
+.rq-steps { white-space: nowrap; font-family: var(--font-mono); }
+:where(.rq-request, #requests-overlay) [data-tone="ok"] { --tone: var(--st-live); }
+:where(.rq-request, #requests-overlay) [data-tone="live"] { --tone: var(--st-unread); }
+:where(.rq-request, #requests-overlay) [data-tone="input"] { --tone: var(--st-input); }
+:where(.rq-request, #requests-overlay) [data-tone="wait"] { --tone: var(--st-idle); }
+:where(.rq-request, #requests-overlay) [data-tone="chef"] { --tone: var(--st-think); }
+:where(.rq-request, #requests-overlay) [data-tone="bad"] { --tone: var(--st-error); }
+:where(.rq-request, #requests-overlay) [data-tone="neutral"] { --tone: var(--fg-3); }
+.rq-sum[data-tone], .rqo-chip[data-tone] { color: var(--tone); }
+.rq-link[data-tone] { stroke: var(--tone); }
+#requests-overlay { position: fixed; inset: 0; z-index: 260; }
+#requests-overlay[hidden] { display: none; }
+.rqo-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.55); }
+.rqo-box {
+  position: absolute; left: 50%; top: 6vh; transform: translateX(-50%); width: min(50rem, 94vw); max-height: 88vh; overflow: auto;
+  background: var(--bg-1); color: var(--fg-1); border: 1px solid var(--card-border); border-radius: 8px; padding: 0.8rem 1rem;
+}
+.rqo-head { display: flex; align-items: center; gap: 0.6rem; }
+.rqo-title { flex: 1 1 auto; margin: 0; font-size: 0.9375rem; color: var(--fg-0); }
+.rqo-close { cursor: pointer; background: transparent; color: var(--fg-1); border: 1px solid var(--card-border); border-radius: 6px; font-size: 0.875rem; padding: 0.1rem 0.5rem; }
+.rqo-meta { font-size: 0.75rem; color: var(--fg-2); margin: 0.4rem 0; }
+.rqo-nav { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.5rem; }
+.rqo-chip, .rqo-link { cursor: pointer; font: inherit; font-size: 0.75rem; background: transparent; border: 1px solid var(--card-border); border-radius: 4px; padding: 0.05rem 0.4rem; color: var(--fg-1); }
+.rqo-cur { border-color: currentColor; font-weight: 700; }
+.rqo-sub { font-size: 0.6875rem; color: var(--fg-3); text-transform: uppercase; letter-spacing: 0.05em; margin: 0.7rem 0 0.2rem; }
+.rqo-text { font-size: 0.8125rem; color: var(--fg-0); overflow-wrap: anywhere; }
+.rqo-task { border-left: 3px solid var(--tone, var(--fg-3)); padding: 0.2rem 0 0.4rem 0.7rem; margin-top: 0.8rem; }
+.rqo-task h4 { margin: 0 0 0.3rem; font-size: 0.875rem; color: var(--fg-0); }
+.rqo-dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 0.7rem; margin: 0; font-size: 0.75rem; }
+.rqo-dl dt { color: var(--fg-3); }
+.rqo-dl dd { margin: 0; color: var(--fg-1); overflow-wrap: anywhere; }
+.rqo-q { font-size: 0.8125rem; margin: 0; padding-left: 1.2rem; }
+
+@media (max-width: 767.98px) {
+  /* Phone: the columns stack, « après n° k » says the dependency. */
+  .rq-map { flex-direction: column; gap: 0.5rem; }
+  .rq-col { flex: 0 0 auto; width: 100%; }
+  .rq-links { display: none; }
+  .rq-task, .rq-head, .rqo-close, .rqo-chip, .rqo-link { min-height: 44px; }
+  .rqo-close, .rqo-chip { min-width: 44px; }
+  .rqo-box { inset: 0; left: 0; top: 0; transform: none; width: 100vw; max-height: none; height: 100%; border-radius: 0; }
+}

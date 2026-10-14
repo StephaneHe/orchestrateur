@@ -51,6 +51,7 @@ import { fileURLToPath } from 'node:url';
 export const PENDING_FILE = 'routage-pending.json';
 export const RUN_ID_RE = /\bp-\d{8}T\d{6}-[0-9a-f]{6}\b/g;
 export const DUPLICATES_FILE = 'routage-pending-duplicates.ndjson';
+export const RELEASED_FILE = 'routage-released.ndjson';
 // Only a short, human-readable label now (logs, CLI): never an identity.
 const KEY_LEN = 120;
 
@@ -405,8 +406,17 @@ export function releaseReady({ root, logsDir = path.join(root, 'logs'), dispatch
     // field (entries written before 0.58.0): never a second, new run.
     const reprise = detectReprise(logsDir, t);
     if (t.reprise && !reprise) return { id: t.id, label: pendingLabel(t).text, projet: t.projet, skipped: `exécution ${t.reprise} plus en pause : rien relancé` };
-    return { id: t.id, label: pendingLabel(t).text, ...launch(root, { ...t, reprise }, dispatchScript), after: t.after?.projet };
+    return { id: t.id, run: t.run || null, n: t.n ?? null, label: pendingLabel(t).text, ...launch(root, { ...t, reprise }, dispatchScript), after: t.after?.projet };
   });
+  // A released task leaves the pending file: its launch (log offset, text
+  // fingerprint) is kept so the request map still follows it (0.100.0).
+  const traced = launched.filter(l => !l.skipped && l.run);
+  if (traced.length) {
+    try {
+      fs.appendFileSync(path.join(logsDir, RELEASED_FILE), traced.map(l => JSON.stringify({ at: l.at || new Date().toISOString(), run: l.run, n: l.n, id: l.id,
+        projet: l.projet, offset: l.offset ?? null, hash: l.hash || null, pid: l.pid ?? null, titre: l.titre || null })).join('\n') + '\n');
+    } catch { /* never blocks a release */ }
+  }
   return { launched, blocked, still, duplicates: twins };
 }
 

@@ -83,6 +83,7 @@ import { createNotesStore, NOTES_FILE, ITEM_ID_RE, NOTE_MAX } from './scripts/to
 import { createOrderStore, ORDER_FILE, applyOrder, cleanOrder } from './scripts/todo-order.mjs';
 import { readGitGraph, GIT_N_DEFAULT, GIT_N_MAX } from './scripts/git-graph-core.mjs';
 import { releaseList, lastRelease } from './scripts/release-notes.mjs';
+import { listRequests, buildRequest, TASK_STATES } from './scripts/request-map.mjs';
 import { mountGatewayRoutes } from './scripts/responses-gateway.mjs';
 // Clés NVIDIA / OpenRouter saisies dans la page Models (0.43.0).
 import { createApiKeys } from './scripts/api-keys.mjs';
@@ -2840,6 +2841,29 @@ app.get('/api/release/:project', (req, res) => {
   } catch (e) { body = { ok: true, project: p.name, changelog: true, error: e.message, items: [], note: '' }; }
   releaseCache.set(p.name, { key, at: Date.now(), body });
   res.json(body);
+});
+
+// ── Requests and their atomic tasks (0.100.0) ───────────────────────────────
+// User request (2026-10-14): « Je parle de voir comment une requete utilisateur
+// a ete decoupee en taches atomiques, et voir le progres de ces taches, meme
+// detachees ». READ-ONLY: each Routage run of the chef, its tasks, and where
+// each task is now (scripts/request-map.mjs). GET only.
+let requestsCache = null;
+const REQUESTS_TTL_MS = 5_000;
+app.get('/api/requests', (req, res) => {
+  const limit = Math.max(1, Math.min(60, parseInt(req.query.n, 10) || 20));
+  if (requestsCache && requestsCache.limit === limit && Date.now() - requestsCache.at < REQUESTS_TTL_MS) return res.json(requestsCache.body);
+  let body;
+  try { body = { ok: true, states: TASK_STATES, requests: listRequests(__dirname, { logsDir: LOGS_DIR, limit }) }; }
+  catch (e) { body = { ok: false, error: e.message, requests: [] }; }
+  requestsCache = { limit, at: Date.now(), body };
+  res.json(body);
+});
+app.get('/api/requests/:run', (req, res) => {
+  if (!/^p-\d{8}T\d{6}-[0-9a-f]{6}$/.test(req.params.run)) return res.status(400).json({ ok: false, error: 'identifiant d’exécution invalide' });
+  const r = buildRequest(__dirname, { logsDir: LOGS_DIR, run: req.params.run });
+  if (!r) return res.status(404).json({ ok: false, error: `requête inconnue : ${req.params.run}` });
+  res.json({ ok: true, states: TASK_STATES, request: r });
 });
 
 // ── Models par tâche (0.39.0) ───────────────────────────────────────────────

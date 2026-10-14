@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { serverEnv } from './_regression_sandbox.mjs';
 
 /** Tour réel (copie de dispatch.mjs de l'instance + faux claude) qui demande
@@ -313,6 +314,73 @@ export async function browserChecks(sb, t) {
       } finally {
         fs.rmSync(cl, { force: true });
         await page.evaluate(() => { window.ReleasePanel?.closeDetail?.(); if (window.SidePanel?.isOpen()) window.SidePanel.close(); });
+      }
+    });
+    // 0.100.0 — user request (2026-10-14): « Je parle de voir comment une
+    // requete utilisateur a ete decoupee en taches atomiques, et voir le
+    // progres de ces taches, meme detachees ».
+    const requestFx = async () => {
+      const f = path.join(sb.root, 'tests', 'request-fixture.mjs');
+      return fs.existsSync(f) ? import(pathToFileURL(f).href) : null;
+    };
+    const rqState = (pg, run) => pg.evaluate((run) => {
+      const pane = document.querySelector('#side-panel [data-sp-pane="requests"]');
+      const req = pane?.querySelector(`.rq-request[data-run="${run}"]`);
+      const box = (el) => { const r = el?.getBoundingClientRect(); return r ? { x: r.left, y: r.top, w: r.width, h: r.height } : null; };
+      return { visible: !!pane && pane.offsetParent !== null, runs: pane ? [...pane.querySelectorAll('.rq-request')].map(r => r.dataset.run) : [],
+        tasks: req ? [...req.querySelectorAll('.rq-task')].map(t => ({ n: +t.dataset.n, state: t.dataset.state, level: +t.closest('.rq-col').dataset.level, text: t.textContent.replace(/\s+/g, ' '), box: box(t) })) : [],
+        links: req ? req.querySelectorAll('.rq-links .rq-link').length : 0, linksShown: req ? getComputedStyle(req.querySelector('.rq-links')).display !== 'none' : false,
+        head: req?.querySelector('.rq-head')?.textContent.replace(/\s+/g, ' ') || '' };
+    }, run);
+    const rqOv = (pg) => pg.evaluate(() => { const o = document.getElementById('requests-overlay'); return { open: !!o && !o.hidden, title: o?.querySelector('.rqo-title')?.textContent || '', text: o?.querySelector('.rqo-body')?.textContent.replace(/\s+/g, ' ') || '', tasks: o ? o.querySelectorAll('.rqo-task').length : 0 }; });
+    await check(B, 'requests-panel', 'Onglet « 🧭 Requêtes » : chaque requête au chef avec la carte de son découpage en tâches atomiques (une colonne par niveau de dépendance, un trait vers la tâche attendue, une couleur par état) et l’état de chacune, même détachée, mis à jour en direct ; clic sur une tâche ou la requête : détail complet ; Échap ferme la fenêtre, pas l’onglet ; requêtes sans tâche masquées par défaut ; lecture seule', async () => {
+      if (!(await page.locator('#btn-requests').count())) NA('onglet Requêtes absent de cet état du code');
+      const FX = await requestFx();
+      if (!FX) NA('jeu de données des requêtes absent de cet état du code');
+      const logsDir = path.join(sb.root, 'logs'), chefDir = path.join(sb.root, 'projects', 'chef');
+      FX.writeRequestFixture({ logsDir, chefDir });
+      try {
+        await page.evaluate(() => localStorage.removeItem('requests.all'));
+        assert(await until(async () => visible(page, '#btn-requests'), 6000), 'pill 🧭 Requêtes absente');
+        await page.click('#btn-requests');
+        assert(await until(async () => (await rqState(page, FX.REQ_RUN)).tasks.length === 7, 10_000), `carte absente : ${JSON.stringify(await rqState(page, FX.REQ_RUN))}`);
+        let s = await rqState(page, FX.REQ_RUN);
+        const bad = Object.entries(FX.EXPECTED).filter(([n, e]) => { const t = s.tasks.find(x => x.n === +n); return !t || t.state !== e.state || t.level !== e.level; });
+        assert(!bad.length, `états / colonnes : ${s.tasks.map(t => `${t.n}:${t.state}/L${t.level}`).join(' ')}`);
+        assert(s.links >= 2 && s.linksShown, `traits de dépendance : ${s.links}`);
+        const t1 = s.tasks.find(t => t.n === 1), t2 = s.tasks.find(t => t.n === 2);
+        assert(t2.box.x > t1.box.x + t1.box.w, 'la tâche 2 (après 1) doit être à droite de la tâche 1');
+        assert(/2\/5/.test(s.tasks.find(t => t.n === 7).text) && /détachée/.test(t2.text) && /REQ-FIX-REQUEST/.test(s.head), 'progression du pipeline, marque « détachée » ou requête absentes');
+        assert(!s.runs.includes(FX.NOTASK_RUN) && !s.runs.includes(FX.RELAY_RUN) && !s.runs.includes(FX.CALLBACK_RUN), `requêtes sans tâche affichées par défaut : ${s.runs.join(' ')}`);
+        await page.check('#side-panel .rq-all');
+        assert(await until(async () => (await rqState(page, FX.REQ_RUN)).runs.includes(FX.NOTASK_RUN), 3000), '« tout afficher » sans effet');
+        assert(!(await rqState(page, FX.REQ_RUN)).runs.includes(FX.CALLBACK_RUN), 'un réveil du chef est affiché comme une requête');
+        await page.uncheck('#side-panel .rq-all');
+        await page.click(`#side-panel .rq-task[data-run="${FX.REQ_RUN}"][data-n="5"]`);
+        assert(await until(async () => (await rqOv(page)).open, 3000), 'détail de la tâche non ouvert');
+        let o = await rqOv(page);
+        assert(/Tâche 5/.test(o.title) && /code 65/.test(o.text) && /REQ-FIX tâche 5/.test(o.text), `détail tâche 5 : ${o.title} — ${o.text.slice(0, 300)}`);
+        await page.click('#requests-overlay .rqo-chip[data-rqo-task="7"]');
+        assert(await until(async () => /Tâche 7/.test((await rqOv(page)).title) && /liste-tests/.test((await rqOv(page)).text), 3000), 'navigation vers la tâche 7');
+        await shot(page, 'requests-panel-detail');
+        await page.keyboard.press('Escape');
+        assert(await until(async () => !(await rqOv(page)).open, 3000) && await page.evaluate(() => window.SidePanel.isOpen()), 'Échap : la fenêtre doit se fermer, l’onglet rester ouvert');
+        await page.click(`#side-panel .rq-head[data-rq-request="${FX.REQ_RUN}"]`);
+        assert(await until(async () => (await rqOv(page)).open, 3000), 'détail de la requête non ouvert');
+        o = await rqOv(page);
+        assert(/REQ-FIX-REQUEST/.test(o.text) && /REQ-FIX-SENS/.test(o.text) && o.tasks === 7, `détail de la requête : ${o.tasks} tâches`);
+        await page.click('#requests-overlay .rqo-backdrop', { position: { x: 5, y: 5 } });
+        assert(await until(async () => !(await rqOv(page)).open, 3000), 'clic hors zone : fenêtre non fermée');
+        // The detached task finishes: the map follows it without reopening.
+        fs.appendFileSync(path.join(logsDir, `${FX.MUS_B}.jsonl`), JSON.stringify({ orch_turn: 't-fix-2', type: 'result', subtype: 'success', num_turns: 2, duration_api_ms: 40, result: 'REQ-FIX-DONE-2', timestamp: new Date().toISOString() }) + '\n');
+        assert(await until(async () => { await page.evaluate(() => window.RequestsPanel.reload()); return (await rqState(page, FX.REQ_RUN)).tasks.find(t => t.n === 2)?.state === 'terminee'; }, 12_000), 'la tâche détachée ne passe pas à « terminée »');
+        assert(await overflowX(page) <= 0, `débordement horizontal ${await overflowX(page)} px`);
+        await shot(page, 'requests-panel-desktop');
+        s = await rqState(page, FX.REQ_RUN);
+        return `${FX.REQ_RUN} : ${s.tasks.map(t => `${t.n} ${t.state}`).join(', ')} ; ${s.links} traits ; détail, Échap, mise à jour en direct`;
+      } finally {
+        FX.removeRequestFixture({ logsDir, chefDir });
+        await page.evaluate(() => { localStorage.removeItem('requests.all'); window.RequestsPanel?.closeDetail?.(); if (window.SidePanel?.isOpen()) window.SidePanel.close(); });
       }
     });
     // User report (2026-10-13): « le pan git et vide, et sa liste de musiciens
@@ -2296,6 +2364,35 @@ export async function browserChecks(sb, t) {
       await m.click('#side-panel [data-sp-tab="todo"]');
       await m.click('#side-panel .sp-close');
       assert(await until(async () => !(await gitState(m)).open, 3000), 'ne se ferme pas');
+    });
+    await check(B, 'requests-panel-mobile', 'Requêtes · mobile : onglet du panneau plein écran, colonnes empilées avec « après n° k » (pas de traits), tâches et fenêtre ≥ 44 px, aucun débordement', async () => {
+      if (!(await m.locator('#btn-requests').count())) NA('onglet Requêtes absent de cet état du code');
+      const FX = await requestFx();
+      if (!FX) NA('jeu de données des requêtes absent de cet état du code');
+      const logsDir = path.join(sb.root, 'logs'), chefDir = path.join(sb.root, 'projects', 'chef');
+      FX.writeRequestFixture({ logsDir, chefDir });
+      try {
+        await setHash(m, '#/');
+        await m.click('#sp-edge');
+        await m.click('#side-panel [data-sp-tab="requests"]');
+        assert(await until(async () => (await rqState(m, FX.REQ_RUN)).tasks.length === 7, 10_000), 'carte absente sur mobile');
+        const s = await rqState(m, FX.REQ_RUN);
+        const t1 = s.tasks.find(t => t.n === 1), t2 = s.tasks.find(t => t.n === 2);
+        assert(Math.abs(t1.box.x - t2.box.x) <= 1 && t2.box.y > t1.box.y && /après n° 1/.test(t2.text), `colonnes non empilées : ${JSON.stringify([t1.box, t2.box])}`);
+        assert(!s.linksShown, 'traits affichés sur mobile');
+        assert(s.tasks.every(t => t.box.h >= 44), `cibles < 44 px : ${s.tasks.map(t => t.box.h).join(',')}`);
+        assert(await m.evaluate(() => document.documentElement.scrollWidth - window.innerWidth) <= 0, 'débordement horizontal');
+        await shot(m, 'requests-panel-mobile');
+        await m.click(`#side-panel .rq-task[data-run="${FX.REQ_RUN}"][data-n="3"]`);
+        assert(await until(async () => (await rqOv(m)).open, 3000), 'détail non ouvert sur mobile');
+        const close = await m.locator('#requests-overlay .rqo-close').boundingBox();
+        assert(close.height >= 44 && close.width >= 44, `✕ : ${close.width}×${close.height}`);
+        await m.click('#requests-overlay .rqo-close');
+        assert(await until(async () => !(await rqOv(m)).open, 3000), 'fenêtre non fermée');
+      } finally {
+        FX.removeRequestFixture({ logsDir, chefDir });
+        await m.evaluate(() => { window.RequestsPanel?.closeDetail?.(); if (window.SidePanel?.isOpen()) window.SidePanel.close(); });
+      }
     });
     await check(B, 'mobile-journal', 'Mobile : cadres dans la feuille Pilotage, journal plein écran, aucun débordement', async () => {
       if (!(await m.evaluate(() => !!window.Activite))) NA('fonction absente de cet état du code');

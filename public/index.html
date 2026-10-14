@@ -23,7 +23,7 @@
 <!-- v0.45.0 — demandes d'autorisation interactives -->
 <link rel="stylesheet" href="./permissions.css?v=0.45.0">
 <!-- v0.75.0 — panneau latéral à bascule (TODO ; désactivable : ui.sidePanel=false ou ?todo=0) -->
-<link rel="stylesheet" href="./side-panel.css?v=0.98.0">
+<link rel="stylesheet" href="./side-panel.css?v=0.100.0">
 </head>
 <body data-theme="cinematic">
 
@@ -57,6 +57,8 @@
               title="Arbre git de chaque musicien, lecture seule">⎇ Git</button>
       <button id="btn-release" class="pill pill-sp" type="button" aria-pressed="false" data-sp-open="release" hidden
               title="Liste de ce qui est en cours et prêt, et release note, lecture seule">📰 Release</button>
+      <button id="btn-requests" class="pill pill-sp" type="button" aria-pressed="false" data-sp-open="requests" hidden
+              title="Chaque requête au chef, son découpage en tâches et l’état de chacune, lecture seule">🧭 Requêtes</button>
       <button id="btn-search" class="pill" title="Chercher un musicien">Musiciens / chercher</button>
       <span id="conn-status" class="pill conn-ok" title="État du flux temps réel">
         <span class="conn-dot"></span><span class="conn-text">connexion…</span>
@@ -410,6 +412,7 @@
 <script src="./todo-panel.js?v=0.75.0"></script>
 <script src="./git-panel.js?v=0.76.0"></script>
 <script src="./release-panel.js?v=0.98.0"></script>
+<script src="./requests-panel.js?v=0.100.0"></script>
 <script src="./app.js?v=0.58.0"></script>
 </body>
 </html>
