@@ -107,6 +107,25 @@ node scripts/regression.mjs
 Every production version is a pushed tag, so any of them can be restored the
 same way.
 
+### Jump without a push (0.85.1 → 0.95.0, 2026-10-14)
+
+The user ordered this jump without any push, so `v0.95.0` was never on
+`origin`: production fetched it from the local dev clone instead
+(`git -C I:\orchestrateur fetch I:\Dev\orchestrateur-dev tag v0.95.0`, which
+also brings the dev tags reachable from it), then
+`git merge --ff-only v0.95.0`. The rollback tag was named
+`pre-prod-0.95.0` (on `60392e1`, 0.85.1). Rollback:
+```
+git -C I:\orchestrateur reset --hard pre-prod-0.95.0   # back to 0.85.1 (60392e1)
+node I:\orchestrateur\scripts\restart-orchestrateur.mjs # chef, user's agreement
+node I:\orchestrateur\scripts\regression.mjs
+```
+Checked before relying on it, on a throwaway clone of production (never on the
+live checkout, whose server reads `public/` and the scripts from disk):
+`9d3b678` 0.95.0 → `reset --hard pre-prod-0.95.0` → `60392e1` 0.85.1, clean
+tree → `merge --ff-only v0.95.0` → `9d3b678` 0.95.0 again. `TODO_LIST.md` is
+untracked on both sides, so it is left as is.
+
 Removing the dev instance:
 1. remove the `orchestrateur-dev` entry from `config.json` ;
 2. `forgetWorkspace()` of `scripts/workspace-trust.mjs` ;
