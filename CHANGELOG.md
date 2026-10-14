@@ -11,6 +11,42 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.99.0] - 2026-10-14
+
+### Changed
+
+- (server) Each model request carries the context its task needs, not the
+  history of every other development — user request « Il faut qu'on mette en
+  place une gestion plus fine des contextes : a chaque requete, il faut que
+  soit fait un travail sur le context necessaire et minimal a envoyer a chaque
+  requete vers un model » (TODO t-182fa2), with the precision « […] pas
+  fiorcement l'historique, par exemple, de tous les developpements
+  differents. Sauf peut-etre si ces developpements font parti de la meme
+  tache initiale » (2026-10-14). New module `scripts/context-policy.mjs`.
+  - Ordinary musician turn (`dispatch.mjs`, `sessionDecision`): the session is
+    resumed only when the request continues the session's task — answer to the
+    musician's own question (state `input`, `[CHEF_ANSWER]`), task marked
+    `meme_tache` by the Routage, direct dialogue with the user (no source), or
+    `--resume-session`. Any other request (new task from the chef, the queue…)
+    starts a fresh session; the old one is archived as
+    `.session.bak-<stamp>`, never deleted. The chef, slots, pipeline steps,
+    dual branches and codex are unchanged.
+  - A continuation whose last request exceeded `ORCH_CONTEXT_MAX_TOKENS`
+    (150 000 by default, measured on the last assistant `usage`) starts fresh
+    with the current task regenerated from the log (`taskBrief`: last three
+    requests and answers, cuts announced). The thread shows the request only.
+  - Trace: `user_prompt.context {resume, reason, regenerated?}` and
+    `archivedSession`.
+  - Pipelines: step sessions per item for 4a/4b/4c, per reviewed group for the
+    review, and a session of its own for Livrer (`stepSessionGroup`); steps of
+    the Development and Discussion pipelines only get the rules they can use
+    (`stepRules`), other pipelines keep them all.
+  - Routage: the Decomposer may mark a task `"meme_tache": true` (boolean,
+    exclusive with `session_neuve`); `launchTask` passes `--meme-tache`, and
+    the server queue carries `sameTask` / `resumeSession` to the drain.
+  - Covers the chef's paused request « Vide les contextes trop long, et
+    regenere un contexte necessaire a la tache courante » for musicians.
+
 ## [0.98.0] - 2026-10-14
 
 ### Changed

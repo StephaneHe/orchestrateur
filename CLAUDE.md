@@ -824,6 +824,40 @@ de la prod).
   vide, et sa liste de musiciens aussi »). Recettes : navigateur
   `git-panel-musicians` et `todo-panel-musicians`.
 
+## Contexte calibré par requête (0.99.0)
+
+Demande utilisateur (TODO t-182fa2, précisée le 2026-10-14) : le contexte de
+chaque requête doit contenir ce dont le model a besoin, « mais pas
+fiorcement l'historique […] de tous les developpements differents. Sauf
+peut-etre si ces developpements font parti de la meme tache initiale ».
+Module `scripts/context-policy.mjs`.
+
+- **Tour ordinaire d'un musicien** (`dispatch.mjs`, `sessionDecision`) : la
+  session (`--resume`) n'est reprise que pour la **même tâche** :
+  - réponse à sa question (état `input`) ou réponse du chef (`[CHEF_ANSWER]`,
+    `awaitingChef`) ;
+  - tâche marquée `"meme_tache": true` par l'étape Découper du Routage
+    (`--meme-tache`, exclusif avec `session_neuve`) ;
+  - dialogue direct de l'utilisateur (pas de `--source`) ;
+  - `--resume-session` (forçage).
+
+  Toute autre demande (nouvelle tâche du chef, file…) part en **session
+  neuve** : l'ancienne est archivée en `.session.bak-<horodatage>`, jamais
+  effacée. Hors champ : le chef, les slots, les étapes, le mode double, codex.
+- **Session trop longue** : si la dernière requête dépassait
+  `ORCH_CONTEXT_MAX_TOKENS` (150 000, `usage` du dernier `assistant`), même
+  pour la même tâche, le tour part en session neuve avec le contexte de la
+  tâche régénéré depuis le log (`taskBrief` : les trois derniers échanges,
+  coupes annoncées), envoyé au model mais pas affiché dans le fil.
+- Trace : `user_prompt.context {resume, reason, regenerated?}`.
+- **Pipelines** : `stepSessionGroup` (une session par item pour 4a/4b/4c, par
+  groupe relu pour la Revue, la sienne pour Livrer) ; `stepRules` (les étapes
+  du Développement et de la Discussion ne reçoivent que les consignes utiles,
+  les autres pipelines les gardent toutes).
+- La file transporte `sameTask` / `resumeSession`. Le Routage du chef était
+  déjà calibré (0.93.0) et n'est pas touché.
+- Recette : `_test_context_calibration.mjs`.
+
 ## Onglet « 📰 Release » : la liste qui mène à la release note (0.97.0)
 
 Demande utilisateur (2026-10-14) : « Je dois voir comme TODO ou GIT, une liste

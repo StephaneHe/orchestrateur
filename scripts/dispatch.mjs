@@ -310,6 +310,15 @@ if (dualSynthesis && !DUAL_RUN_RE.test(dualSynthesis)) die(`--dual-synthesis inv
 const newSessionIdx = argv.indexOf('--new-session');
 if (newSessionIdx !== -1) argv.splice(newSessionIdx, 1);
 const NEW_SESSION = newSessionIdx !== -1;
+// Context calibration (0.99.0, scripts/context-policy.mjs): a musician's
+// session is resumed only when the request continues its task. --meme-tache:
+// the Routage says so (decided by the model); --resume-session: forced by hand.
+const sameTaskIdx = argv.indexOf('--meme-tache');
+if (sameTaskIdx !== -1) argv.splice(sameTaskIdx, 1);
+const SAME_TASK = sameTaskIdx !== -1;
+const resumeSessionIdx = argv.indexOf('--resume-session');
+if (resumeSessionIdx !== -1) argv.splice(resumeSessionIdx, 1);
+const FORCE_RESUME = resumeSessionIdx !== -1;
 
 const poolAssignIdx = argv.indexOf('--pool-assign');
 if (poolAssignIdx !== -1) argv.splice(poolAssignIdx, 1);
@@ -1044,6 +1053,9 @@ function postQueueIfBusy() {
     if (providerOverride)  payload.provider = providerOverride;
     // --new-session voyage avec l'entrée de file : il prendra effet au lancement.
     if (NEW_SESSION)       payload.newSession = true;
+    // The context decision is taken when the turn really runs (0.99.0).
+    if (SAME_TASK)         payload.sameTask = true;
+    if (FORCE_RESUME)      payload.resumeSession = true;
     // L'origine (quel tour de chef attend ce résultat) voyage avec l'entrée de
     // file : une demande qui patiente ne doit pas perdre à qui elle répond.
     if (CHEF_SLOT != null) payload.slot   = CHEF_SLOT;
@@ -1424,6 +1436,43 @@ if (NEW_SESSION && provider === 'claude') {
   console.log(`[dispatch] --new-session ignoré avec --provider ${provider} (pas de session à reprendre)`);
 }
 
+// ---------- calibrated context (0.99.0, scripts/context-policy.mjs) ----------
+// An ordinary musician turn resumes its session only when the request
+// continues the session's task; otherwise it starts fresh, without the history
+// of the other developments. A continuation whose session grew too long starts
+// fresh too, with the current task's context regenerated from the log. Not for
+// the chef (Routage: its own calibrated context), steps, dual branches, codex.
+let contextDecision = null;
+let regeneratedBrief = '';
+if (provider === 'claude' && !NEW_SESSION && projectName !== CONDUCTOR && !CHEF_TARGET
+    && !PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && sessionId) {
+  try {
+    const cp = await import('./context-policy.mjs');
+    const fsc = await import('./fleet-status-core.mjs');
+    const { lines } = fsc.tailLines(path.join(LOGS, `${projectName}.jsonl`));
+    const st = fsc.deriveState(lines);
+    contextDecision = cp.sessionDecision({
+      hasSession: true, forceResume: FORCE_RESUME, sameTask: SAME_TASK, source: sourceProject || null,
+      prompt, state: st.state, awaitingChef: !!st.awaitingChef,
+      contextTokens: cp.lastContextTokens(lines), maxTokens: cp.contextMaxTokens(),
+    });
+    if (contextDecision.regenerate) regeneratedBrief = cp.taskBrief(lines);
+    if (!contextDecision.resume) {
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      archivedSession = `${sessionPath}.bak-${stamp}`;
+      try { fs.renameSync(sessionPath, archivedSession); } catch (e) {
+        die(`contexte calibré : archivage de ${sessionPath} impossible (${e.message}) — tour annulé plutôt que de reprendre l'ancienne session`, 66);
+      }
+      sessionId = null;
+    }
+    console.log(`[dispatch] contexte : ${contextDecision.resume ? 'session reprise' : 'session neuve'} — ${contextDecision.reason}`);
+  } catch (e) {
+    // The policy never blocks a turn: on any error, the turn resumes as before.
+    console.error(`[dispatch] contexte calibré indisponible (${e.message}) — session reprise`);
+    contextDecision = null;
+  }
+}
+
 // ---------- règle de fin de tour : pas d'attente sur l'arrière-plan (0.24.1) --
 //
 // Un tour `claude -p` se termine au `result` et ses tâches d'arrière-plan sont
@@ -1510,6 +1559,9 @@ function todoRule() {
 // promptForLog = original prompt shown in the viewer (no boilerplate).
 // prompt       = what actually reaches claude (with injected callback instruction).
 const promptForLog = prompt;
+// Calibrated context (0.99.0): a session too long to resume is replaced by the
+// current task's context, regenerated from the log — sent to the model only.
+if (regeneratedBrief) prompt = `${regeneratedBrief}\n\n${prompt}`;
 if (callbackProject) {
   // 0.37.2 — le résumé passe par un FICHIER. L'ancienne consigne (variable
   // shell multi-ligne RESUME="…" puis printf | node notify.mjs --stdin) était
@@ -1523,11 +1575,22 @@ if (callbackProject) {
 }
 // Seul `prompt` (ce que reçoit claude) porte la règle ; `promptForLog` reste le
 // texte d'origine, donc le fil et le panneau n'affichent pas ce bloc.
+const promptBeforeRules = prompt;
 if (projectName !== CONDUCTOR) prompt = prompt + backgroundRule(callbackProject || CONDUCTOR);
 if (projectName !== CONDUCTOR) prompt = prompt + userRequirementsRule();
 if (projectName !== CONDUCTOR) prompt = prompt + simpleCommandsRule();
 if (projectName !== CONDUCTOR) prompt = prompt + todoRule();
 if (projectName !== CONDUCTOR) prompt = prompt + staleTestRule();
+// Calibrated context (0.99.0): a pipeline step gets only the rules it can use
+// (scripts/context-policy.mjs, stepRules) — not the TODO rule of a whole turn,
+// nor the requirements rule at a step that writes neither tests nor delivery.
+if (PIPE_STEP && projectName !== CONDUCTOR) {
+  const { stepRules } = await import('./context-policy.mjs');
+  const keep = new Set(stepRules(PIPE_STEP.key.replace(/^\d+-/, '')));
+  const RULE_TEXT = { background: () => backgroundRule(callbackProject || CONDUCTOR), requirements: userRequirementsRule,
+    commands: simpleCommandsRule, todo: todoRule, stale: staleTestRule };
+  prompt = promptBeforeRules + ['background', 'requirements', 'commands', 'todo', 'stale'].filter(r => keep.has(r)).map(r => RULE_TEXT[r]()).join('');
+}
 
 // ---------- langue de discussion (0.51.0) ------------------------------------
 // Demande utilisateur : « La langue de la discussion doit pouvoir etre fixee et
@@ -1679,6 +1742,12 @@ async function gateFinalText(text) {
 if (NEW_SESSION && provider === 'claude') {
   userPromptEvent.newSession = true;
   if (archivedSession) userPromptEvent.archivedSession = path.basename(archivedSession);
+}
+// Trace of the calibrated context (0.99.0): resumed or fresh, and why.
+if (contextDecision) {
+  userPromptEvent.context = { resume: contextDecision.resume, reason: contextDecision.reason,
+    ...(regeneratedBrief ? { regenerated: true } : {}) };
+  if (!contextDecision.resume && archivedSession) userPromptEvent.archivedSession = path.basename(archivedSession);
 }
 // POOL (0.22.0) — stampage d'origine, même mécanisme que wakeGen.
 //

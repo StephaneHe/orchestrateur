@@ -407,6 +407,7 @@ function queueEntryView(e, i) {
     callback: e.callback || null, source: e.source || null,
     attachments: (e.attachmentPaths?.length || 0) + (e.videoPaths?.length || 0),
     newSession: !!e.newSession,
+    sameTask: !!e.sameTask, resumeSession: !!e.resumeSession,
     editedAt: e.editedAt || null, edits: e.edits || 0,
     pipeline: e.pipeline || null, pipelineResume: e.pipelineResume || null, horsPipeline: e.horsPipeline || null, pipelineMode: e.pipelineMode || null,
   };
@@ -830,6 +831,9 @@ function spawnDirectDispatch(name, prompt, attachmentPaths = [], videoPaths = []
   if (opts.noQueueIfBusy) args.push('--no-queue-if-busy');
   // Session neuve demandée (0.27.0) : le flag a voyagé avec l'entrée de file.
   if (opts.newSession) args.push('--new-session');
+  // Calibrated context (0.99.0): the task's « same task » mark travels too.
+  if (opts.sameTask) args.push('--meme-tache');
+  if (opts.resumeSession) args.push('--resume-session');
   // Mode double model (0.44.0) : la demande garde ses deux models jusqu'au lancement.
   if (typeof opts.secondModel === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/@+~-]{0,159}$/.test(opts.secondModel)) {
     args.push('--second-model', opts.secondModel);
@@ -920,7 +924,7 @@ function drainAttempt(name, reason) {
     return;
   }
   drainPending.delete(name);
-  const { id, prompt, attachmentPaths, videoPaths, callback, source, model, provider, slot, ticket, newSession, obsId, secondModel, secondProvider, dualMode, pipeline, pipelineResume, horsPipeline, pipelineMode } = q.shift();
+  const { id, prompt, attachmentPaths, videoPaths, callback, source, model, provider, slot, ticket, newSession, sameTask, resumeSession, obsId, secondModel, secondProvider, dualMode, pipeline, pipelineResume, horsPipeline, pipelineMode } = q.shift();
   if (q.length === 0) dispatchQueue.delete(name);
   persistQueue(name);
   drainLaunchedAt.set(name, Date.now());
@@ -929,7 +933,7 @@ function drainAttempt(name, reason) {
     ` attente-pid=${Date.now() - since}ms`;
   console.log(msg); debugLog(msg);
   spawnDirectDispatch(name, prompt, attachmentPaths, videoPaths,
-    { callback, source, model, provider, slot, ticket, newSession, obsId, secondModel, secondProvider, dualMode, pipeline, pipelineResume, horsPipeline, pipelineMode, noQueueIfBusy: true });
+    { callback, source, model, provider, slot, ticket, newSession, sameTask, resumeSession, obsId, secondModel, secondProvider, dualMode, pipeline, pipelineResume, horsPipeline, pipelineMode, noQueueIfBusy: true });
 }
 
 const DRAIN_WAIT_STEP_MS = 1000;
@@ -5354,6 +5358,8 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
       ticket:   typeof req.body?.ticket   === 'string' ? req.body.ticket   : undefined,
       // --new-session : ne prend effet qu'au LANCEMENT de l'entrée (0.27.0).
       newSession: req.body?.newSession === true ? true : undefined,
+      sameTask: req.body?.sameTask === true ? true : undefined,
+      resumeSession: req.body?.resumeSession === true ? true : undefined,
       obsId: obsId || undefined,
       secondModel:    typeof req.body?.secondModel === 'string' ? req.body.secondModel : undefined,
       secondProvider: typeof req.body?.secondProvider === 'string' ? req.body.secondProvider : undefined,

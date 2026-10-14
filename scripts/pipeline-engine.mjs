@@ -41,6 +41,7 @@ import { languageFor, languageGate, localize, workingLanguage } from './language
 import { CATALOG_PIPELINES, catalogOf, catalogSteps } from './pipeline-catalog.mjs';
 import { checkReportIds } from './report-check.mjs';
 import { readPending, addPending, releaseReady, launchTask, detectReprise, logOffset, taskKey, textHash, duplicatesText, RUN_ID_RE, titleProblem, pendingLabel, cleanTitle, ambiguityProblem, distinctExcerpts } from './routage-pending.mjs';
+import { stepSessionGroup } from './context-policy.mjs';
 export { readPending };
 import { backoffConfig, isLaunchFailure, dispatchRefusal, tierAfter, delayFor, waitBackoff, runDirOf } from './model-backoff.mjs';
 import { runModelTest } from './model-test.mjs';
@@ -718,6 +719,12 @@ export function validateUnitTasks(root, tasks) {
       if (t.session_neuve !== true && t.session_neuve !== false) return `tâche ${i + 1} : « session_neuve » doit valoir true (ou être absent)`;
       if (t.session_neuve && t.reprise) return `tâche ${i + 1} : « session_neuve » et « reprise » s’excluent (une reprise continue l’exécution en pause)`;
     }
+    // 0.99.0: « meme_tache » = this task continues the musician's current task,
+    // so its session (that task's history) is resumed; without it, fresh.
+    if (t?.meme_tache != null) {
+      if (t.meme_tache !== true && t.meme_tache !== false) return `tâche ${i + 1} : « meme_tache » doit valoir true (ou être absent)`;
+      if (t.meme_tache && t.session_neuve) return `tâche ${i + 1} : « meme_tache » et « session_neuve » s’excluent`;
+    }
   }
   // 0.90.0 (task 2/4): two tasks of this run that look alike where they are
   // shown would be confused again, as on 2026-10-13.
@@ -813,7 +820,7 @@ export function handoffPrompt(run, tasks) {
 function handoffProblem(t) {
   const h = t.renvoi_chef;
   if (typeof h !== 'object' || h == null || typeof h.raison !== 'string' || h.raison.trim().length < 8) return '« renvoi_chef » doit être {"raison": "pourquoi le chef doit agir lui-même"}';
-  for (const k of ['impose', 'hors_pipeline', 'reprise', 'ne_pas_dispatcher', 'session_neuve']) if (t[k]) return `« renvoi_chef » et « ${k} » s’excluent`;
+  for (const k of ['impose', 'hors_pipeline', 'reprise', 'ne_pas_dispatcher', 'session_neuve', 'meme_tache']) if (t[k]) return `« renvoi_chef » et « ${k} » s’excluent`;
   if (t.apres != null) return '« renvoi_chef » ne peut pas attendre une autre tâche (« apres ») : le chef agit à la fin de ce tour';
   return null;
 }
@@ -1008,7 +1015,7 @@ const CODE_STEPS = {
     for (const [i, t] of units.entries()) {
       const n = i + 1;
       const imp = t.impose && typeof t.impose === 'object' ? t.impose : {};
-      const base = { n, projet: t.projet, titre: cleanTitle(t.titre), demande: t.demande, ...(t.rattache ? { rattache: t.rattache } : {}), ...(t.apres ? { apres: t.apres } : {}), ...(t.reprise ? { reprise: t.reprise } : {}), ...(t.ne_pas_dispatcher ? { ne_pas_dispatcher: true } : {}), ...(t.session_neuve === true ? { sessionNeuve: true } : {}) };
+      const base = { n, projet: t.projet, titre: cleanTitle(t.titre), demande: t.demande, ...(t.rattache ? { rattache: t.rattache } : {}), ...(t.apres ? { apres: t.apres } : {}), ...(t.reprise ? { reprise: t.reprise } : {}), ...(t.ne_pas_dispatcher ? { ne_pas_dispatcher: true } : {}), ...(t.session_neuve === true ? { sessionNeuve: true } : {}), ...(t.meme_tache === true ? { memeTache: true } : {}) };
       // Explicitly marked « not for a musician » (0.71.0, n° 8): never dispatched,
       // not even classified — the user says what it is (never guess).
       if (t.ne_pas_dispatcher) {
@@ -1152,7 +1159,7 @@ const CODE_STEPS = {
         // WHOLE text (0.67.x: a shared opening sentence no longer matches).
         // `n` + `run` identify this Routage task (deduplication, 0.68.0).
         return { run, n: w.n, projet: w.projet, ...(w.titre ? { titre: w.titre } : {}), pipeline: w.pipeline, mode: w.mode || null, ...(w.kind ? { kind: w.kind } : {}), ...(w.horsPipeline ? { horsPipeline: w.horsPipeline } : {}), served: w.served, demande: w.demande, rattache: w.rattache || null,
-          ...(w.reprise ? { reprise: w.reprise } : {}), ...(w.sessionNeuve === true ? { sessionNeuve: true } : {}),
+          ...(w.reprise ? { reprise: w.reprise } : {}), ...(w.sessionNeuve === true ? { sessionNeuve: true } : {}), ...(w.memeTache === true ? { memeTache: true } : {}),
           after: { projet: w.after, offset: dep ? dep.offset : logOffset(logsDir, w.after), key: taskKey(depTask.demande), hash: textHash(depTask.demande), since: dep?.at || new Date().toISOString() } };
       });
       const res = addPending(logsDir, entries);
@@ -2193,7 +2200,9 @@ export async function runPipeline(o) {
     const info = resolveCase(readAssignments(root), step.chain);
     const n = String(state.steps.length + 1).padStart(2, '0');
     const key = `${n}-${step.id}`;
-    const sessionGroup = `${step.group}-${(info.model || 'defaut').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30)}`.replace(/-+$/, '');
+    // Calibrated context (0.99.0): a TDD step's session is its item's, the
+    // review's is its group's, Livrer has its own — not the whole run's history.
+    const sessionGroup = stepSessionGroup({ step, model: info.model, item: ctx.item, reviewGroup: state.reviewGroup ?? ctx.reviewScope?.group ?? null });
     const token = signStepToken(root, { run, key, project: projectName, model: info.model, provider: info.provider, second: info.second, exp: Date.now() + 6 * 3600_000 });
     const args = [projectName, '--prompt-stdin', '--pipeline-step', `${run}:${key}`, '--pipeline-session', sessionGroup, '--no-queue-if-busy'];
     if (info.model) args.push('--model', info.model, '--provider', info.provider);

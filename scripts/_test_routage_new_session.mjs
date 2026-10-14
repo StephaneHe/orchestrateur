@@ -135,7 +135,13 @@ ok(rq && rq.newSession === true && rq.queueIfBusy === true, 'tâche avec session
 ok(backups('R').length === 0 && fs.readFileSync(path.join(LOGS, 'R.session'), 'utf8') === 'old-R', '… sans rien archiver avant son lancement réel');
 
 const sUp = logOf('S').find(e => e.type === 'user_prompt');
-ok(sUp && !sUp.newSession && backups('S').length === 0, 'tâche sans le champ : session reprise, rien archivé', JSON.stringify(sUp));
+// 0.99.0 (contexte calibré, t-182fa2): a task without the field never gets
+// --new-session; being a new task from the chef, dispatch.mjs's context policy
+// starts it fresh by itself (the old session archived, intact). The same task
+// (« meme_tache ») resumes it: _test_context_calibration.mjs.
+ok(sUp && !sUp.newSession && sUp.context?.resume === false && /nouvelle tâche/.test(sUp.context.reason || '')
+  && backups('S').length === 1 && fs.readFileSync(path.join(LOGS, backups('S')[0]), 'utf8') === 'old-S',
+  'tâche sans le champ : jamais --new-session ; nouvelle tâche ⇒ session neuve décidée par la politique de contexte, ancienne archivée intacte', JSON.stringify(sUp));
 
 const disp = art ? JSON.parse(fs.readFileSync(path.join(art, 'dispatch.json'), 'utf8')) : null;
 const dq = disp?.dispatched?.find(d => d.projet === 'Q'), ds = disp?.dispatched?.find(d => d.projet === 'S');
