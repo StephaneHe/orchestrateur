@@ -1750,6 +1750,32 @@ j'accepte ».
   et `noDispatch`.
 - Recette : `_test_no_dispatch_chef.mjs`.
 
+## Routage : renvoi au chef, qui agit lui-même (0.88.0)
+
+Demande utilisateur (2026-10-14) : « IL faut que le routage puisse renvoyer au
+chef pour qu'il agisse lui meme ».
+
+- **Découper** : une tâche peut porter `renvoi_chef: {raison}` (projet : le
+  chef ou le projet concerné). Sans lui, une tâche au chef reste refusée
+  (« le chef ne se délègue pas de tâche »). Exclusif avec `apres`,
+  `impose`, `hors_pipeline`, `reprise`, `ne_pas_dispatcher` ; aucune
+  tâche ne peut attendre une tâche renvoyée.
+- **Classer** : le model doit répondre `chef`. S'il voit un pipeline (travail
+  de projet : code, git, build), le renvoi est refusé et devient une question.
+  Action de la liste blanche : exécutée par le code, comme avant ; `chef:
+  "autre"` : renvoyée au chef (ce n'est plus une question).
+- **Dispatcher** : UN tour du chef pour toutes les tâches renvoyées, lancé
+  détaché par `chef-action-deferred.mjs --handoff logs/runs/<run>/handoff.json`
+  après la fin du tour du Routage, hors Routage : `dispatch.mjs <chef>
+  --chef-handoff <run>#<n,…>` signé par `ORCH_HANDOFF_TOKEN`
+  (`handoffToken` / `verifyHandoff`). Sans le bon jeton : 65 ; vers un
+  musicien : 64.
+- **Traces** : `system/chef_handoff`, `dispatch.json.handoff`,
+  `user_prompt.chefHandoff`, ligne du rapport écrite par le code. Le relevé
+  de mise en service ne le compte pas comme contournement. Racine de test :
+  aucun tour réel sans `ORCH_CHEF_HANDOFF_TEST=1`.
+- Recettes : `_test_chef_handoff.mjs`, section 5 de `_test_no_dispatch_chef.mjs`.
+
 ## Dossier du chef : rien n'est annulé pendant le Routage (0.71.1)
 
 Suivi `docs/ROUTAGE-PROBLEMES.md`, n° 18.

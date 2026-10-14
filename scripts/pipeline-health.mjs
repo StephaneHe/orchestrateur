@@ -51,6 +51,7 @@ export function countLog(lines, since, add) {
     if (e.type === 'user_prompt') {
       flush();
       if (e.pipeline?.answer) continue;                       // answer to a pause: not a new entry
+      if (e.chefHandoff) continue;                           // hand-off decided by a Routage run (0.88.0): no bypass
       if (e.pipeline) { add(day(ts), 'runs'); continue; }
       pending = { day: day(ts), kind: e.pipelineBypass ? 'hors' : 'ordinaires' };
     } else if (e.type === 'result' && e.subtype === 'error_pipeline_refused') {

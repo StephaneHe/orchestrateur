@@ -11,6 +11,43 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.88.0] - 2026-10-14
+
+### Added
+
+- (server) The Routage can hand a task back to the chef, who acts itself —
+  user request « IL faut que le routage puisse renvoyer au chef pour qu'il
+  agisse lui meme » (2026-10-14), after a « nettoyage des exécutions en
+  pause » task was refused with « le chef ne se délègue pas de tâche » and the
+  only fallback (`ne_pas_dispatcher`) ended in a question
+  (p-20261014T044834-2601c2, p-20261014T070908-f73a62).
+  - Decomposer: a task may carry `renvoi_chef: {raison}` (its project may
+    then be the chef, or the project concerned); without it, a task for the
+    chef is still refused. Refused combinations: no reason, `apres`,
+    `impose`, `hors_pipeline`, `reprise`, `ne_pas_dispatcher`, and a
+    task waiting (`apres`) for a handed-back task.
+  - Classify: the classifier model must confirm it is chef work (`chef`);
+    if it sees a project pipeline (code, git, build), the hand-off is refused
+    and becomes a question — the chef never does project work. An allowlisted
+    action still runs by the code; a chef action outside the allowlist
+    (`chef: "autre"`) is now handed back instead of becoming a question.
+  - Dispatcher: ONE chef turn for all handed-back tasks, launched detached by
+    `chef-action-deferred.mjs --handoff` once the Routage turn has ended
+    (never two chef turns on the same session), with the tasks and the rules
+    in its prompt. It runs out of the Routage with `dispatch.mjs
+    --chef-handoff <run>#<n,…>`, signed by an HMAC token
+    (`ORCH_HANDOFF_TOKEN`, `handoffToken`/`verifyHandoff`); a missing or
+    wrong token is refused (65), a musician target too (64).
+  - Traced: `system/chef_handoff`, `dispatch.json.handoff`,
+    `user_prompt.chefHandoff`, the Affecter table and a line of the
+    Routage report written by the code. The health report does not count the
+    hand-off turn as a bypass. A test root never starts a real chef turn
+    without `ORCH_CHEF_HANDOFF_TEST=1`.
+  - Decomposer instructions and JSON example describe `renvoi_chef`.
+  - Test: `scripts/_test_chef_handoff.mjs`. `_test_no_dispatch_chef.mjs`
+    section 5 now expects the hand-off instead of the question (behaviour
+    changed by this request).
+
 ## [0.87.0] - 2026-10-14
 
 ### Added

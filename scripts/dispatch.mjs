@@ -246,6 +246,11 @@ const pipelineResumeArg = takeFlagValue('--pipeline-resume');
 const pipelineStepArg   = takeFlagValue('--pipeline-step');
 const pipelineSession   = takeFlagValue('--pipeline-session');
 const horsPipelineArg   = takeFlagValue('--hors-pipeline');
+// --chef-handoff <run>#<n,…> (0.88.0): a chef turn the Routage handed back to
+// the chef (it acts itself), out of the Routage, signed by ORCH_HANDOFF_TOKEN.
+const chefHandoffArg    = takeFlagValue('--chef-handoff');
+const HANDOFF_TOKEN = process.env.ORCH_HANDOFF_TOKEN || null;
+delete process.env.ORCH_HANDOFF_TOKEN;
 // --mode leger|complet (0.49.0) : force le mode du Développement ; sinon la classification.
 const pipelineModeArg   = takeFlagValue('--mode');
 if (pipelineModeArg && !['leger', 'complet'].includes(pipelineModeArg)) die(`--mode leger|complet (reçu « ${pipelineModeArg} »)`);
@@ -444,7 +449,13 @@ const ENFORCED = pipeEngine.isEnforced(ENFORCEMENT, projectName);
 // quand `enforcement.chef` est en service. Aucun musicien ne le lance.
 const CHEF_TARGET = projectName === CONDUCTOR || new RegExp(`^${CONDUCTOR}-\\d+$`).test(projectName);
 if (pipelineArg === 'routage' && !CHEF_TARGET) gateDie(`--pipeline routage : réservé au tour du chef (« ${CONDUCTOR} »)`, 64, 'routage-musicien');
-const CHEF_ROUTED = CHEF_TARGET && ENFORCEMENT.chef && !PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && horsPipelineArg == null;
+let CHEF_HANDOFF = null;
+if (chefHandoffArg != null) {
+  if (!CHEF_TARGET) gateDie(`--chef-handoff : réservé au chef (« ${CONDUCTOR} »)`, 64, 'handoff-musicien');
+  CHEF_HANDOFF = pipeEngine.verifyHandoff(ROOT, chefHandoffArg, HANDOFF_TOKEN);
+  if (!CHEF_HANDOFF) gateDie('--chef-handoff : jeton absent ou invalide (seul le Routage renvoie une tâche au chef)', 65, 'handoff-jeton');
+}
+const CHEF_ROUTED = CHEF_TARGET && ENFORCEMENT.chef && !PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && horsPipelineArg == null && !CHEF_HANDOFF;
 if (CHEF_ROUTED && (modelOverride || secondModel)) {
   gateDie(`le tour du chef est en service (pipeline Routage) : les models viennent des cases routage.* de la page Models. ` +
     `Retire --model/--second-model, ou utilise --hors-pipeline "<raison>" (tracé et visible).`, 64, 'model-chef');
@@ -1178,7 +1189,7 @@ if (horsPipelineArg != null && !PIPE_STEP) {
 // its « TODO: » lines added to the chef's TODO_LIST.md (scripts/todo-capture.mjs);
 // the rest is routed as usual, told what was captured. Nothing else ⇒ the turn
 // ends here.
-if (CHEF_TARGET && !sourceProject && !PIPE_STEP && !DUAL_BRANCH && !dualSynthesis) {
+if (CHEF_TARGET && !sourceProject && !PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && !CHEF_HANDOFF) {
   const cap = await import('./todo-capture.mjs');
   const { todos, rest } = cap.splitTodoLines(prompt);
   if (todos.length) {
@@ -1669,6 +1680,7 @@ if (DUAL_BRANCH) userPromptEvent.dual = { run: DUAL_BRANCH.run, role: DUAL_BRANC
 if (PIPE_STEP) userPromptEvent.pipelineStep = { run: PIPE_STEP.run, key: PIPE_STEP.key, model, provider, modelSource: EXPLICIT_MODEL ? 'pipeline' : 'project-default' };
 // Tour hors pipeline : la raison est écrite, donc visible (décision n° 1).
 if (pipelineBypass) userPromptEvent.pipelineBypass = pipelineBypass;
+if (CHEF_HANDOFF) userPromptEvent.chefHandoff = CHEF_HANDOFF;
 if (dualSynthesis) {
   logStream.write(JSON.stringify({
     type: 'system', subtype: 'dual_review_start', dual: { run: dualSynthesis, role: 'relecture' },

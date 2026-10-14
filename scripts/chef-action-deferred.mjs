@@ -12,6 +12,7 @@
 // Usage:
 //   node scripts/chef-action-deferred.mjs --wait-pid <pid> --script restart-orchestrateur.mjs
 //        [--log <file>] [--max-wait-ms <n>] [--dry-run]
+//   node scripts/chef-action-deferred.mjs --wait-pid <pid> --handoff <logs/runs/<run>/handoff.json> (0.88.0)
 // Only scripts of the allowlist below, from this very directory, can run.
 // ============================================================================
 
@@ -37,12 +38,27 @@ function log(msg) {
 }
 const alive = (p) => { try { process.kill(p, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 
-if (!ALLOWED.has(script)) { log(`refused: script « ${script} » is not allowlisted`); process.exit(64); }
+const handoffFile = opt('--handoff');
+if (!handoffFile && !ALLOWED.has(script)) { log(`refused: script « ${script} » is not allowlisted`); process.exit(64); }
 if (!Number.isInteger(pid) || pid <= 0) { log('refused: --wait-pid <pid> required'); process.exit(64); }
 
 const t0 = Date.now();
-while (alive(pid) && Date.now() - t0 < maxWait) await new Promise(r => setTimeout(r, 1000));
-if (alive(pid)) log(`process ${pid} still alive after ${maxWait} ms — running anyway`);
+const limit = handoffFile ? Math.max(maxWait, 30 * 60_000) : maxWait;
+while (alive(pid) && Date.now() - t0 < limit) await new Promise(r => setTimeout(r, 1000));
+if (alive(pid)) log(`process ${pid} still alive after ${limit} ms — running anyway`);
+
+// Hand-off to the chef (0.88.0): one chef turn out of the Routage, signed by
+// ORCH_HANDOFF_TOKEN (inherited), only once the Routage turn has ended.
+if (handoffFile) {
+  let h = null;
+  try { h = JSON.parse(fs.readFileSync(handoffFile, 'utf8')); } catch (e) { log(`handoff: unreadable ${handoffFile}: ${e.message}`); process.exit(65); }
+  if (dryRun) { log(`dry-run: would hand ${h.ref} to ${h.conductor}`); process.exit(0); }
+  log(`handoff ${h.ref} → ${h.conductor} (turn ${pid} ended after ${Date.now() - t0} ms)`);
+  const r = spawnSync(process.execPath, [path.join(HERE, 'dispatch.mjs'), h.conductor || 'chef', '--prompt-stdin', '--chef-handoff', h.ref],
+    { input: h.prompt, encoding: 'utf8', windowsHide: true, cwd: path.resolve(HERE, '..') });
+  log(`handoff ${h.ref} exited with ${r.status}: ${`${r.stdout || ''}${r.stderr || ''}`.trim().slice(-800)}`);
+  process.exit(r.status ?? 1);
+}
 const target = path.join(HERE, script);
 if (dryRun) { log(`dry-run: would run ${target}`); process.exit(0); }
 log(`running ${script} (turn ${pid} ended after ${Date.now() - t0} ms)`);

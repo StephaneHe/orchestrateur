@@ -680,7 +680,10 @@ export function validateTasks(root, tasks) {
     const n = `tâche ${i + 1}`;
     if (!t || typeof t !== 'object') return `${n} illisible`;
     if (!names.has(t.projet)) return `${n} : projet inconnu « ${t.projet} »`;
-    if (t.projet === conductor || new RegExp(`^${conductor}-\\d+$`).test(t.projet)) return `${n} : le chef ne se délègue pas de tâche`;
+    // A task handed back to the chef (0.88.0) is the chef's own work: it may name
+    // the chef; any other task never does.
+    if (!t.renvoi_chef && (t.projet === conductor || new RegExp(`^${conductor}-\\d+$`).test(t.projet))) return `${n} : le chef ne se délègue pas de tâche (s’il doit agir lui-même : « renvoi_chef »)`;
+    if (t.apres != null && tasks[t.apres - 1]?.renvoi_chef) return `${n} : « apres » ne peut pas désigner une tâche renvoyée au chef (elle part à la fin de ce tour)`;
     if (!ENGINE_PIPELINES.includes(t.pipeline) || t.pipeline === 'routage') return `${n} : pipeline inconnu « ${t.pipeline} »`;
     if (t.mode != null && !['leger', 'complet'].includes(t.mode)) return `${n} : mode « ${t.mode} » (leger ou complet)`;
     if (typeof t.demande !== 'string' || t.demande.trim().length < 8) return `${n} : demande absente ou trop courte`;
@@ -707,6 +710,7 @@ export function validateUnitTasks(root, tasks) {
     // confused (2026-10-13); every task is named here, where it is decided.
     const why = t && typeof t === 'object' ? titleProblem(t.titre) : null;
     if (why) return `tâche ${i + 1} : ${why}`;
+    if (t?.renvoi_chef != null) { const h = handoffProblem(t); if (h) return `tâche ${i + 1} : ${h}`; }
     if (t?.hors_pipeline == null) continue;
     const h = t.hors_pipeline;
     // 0.71.2 (n° 10): an off-pipeline task must quote the user's authorization.
@@ -759,6 +763,68 @@ export function validateChefActions(root, actions) {
     if (def.deferred && (i !== actions.length - 1 || actions.filter(x => x?.action === a.action).length > 1)) return `${n} (${a.action}) : une seule fois, et en dernier`;
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Hand-off to the chef (0.88.0). User, 2026-10-14: « IL faut que le routage
+// puisse renvoyer au chef pour qu'il agisse lui meme ». A task the chef must do
+// ITSELF on the orchestration (close paused runs, manage a queue, …) that the
+// code allowlist (CHEF_ACTIONS) does not cover used to be refused (« le chef ne
+// se délègue pas de tâche ») or end as a question. Now the Decomposer marks it
+// `renvoi_chef`, the classifier model confirms it is chef work (never project
+// work: code, git, build), and ONE chef turn — out of the Routage, signed by a
+// token — is launched once this Routage turn has ended.
+// ---------------------------------------------------------------------------
+const HANDOFF_REF_RE = /^(p-\d{8}T\d{6}-[0-9a-f]{6})#(\d{1,2}(?:,\d{1,2}){0,5})$/;
+export function handoffToken(root, ref) {
+  return crypto.createHmac('sha256', derivedToken(root, 'chef-handoff')).update(String(ref)).digest('hex');
+}
+/** {run, tasks} when `token` signs `ref`, else null. */
+export function verifyHandoff(root, ref, token) {
+  const m = HANDOFF_REF_RE.exec(String(ref || ''));
+  if (!m || typeof token !== 'string' || !/^[0-9a-f]{64}$/.test(token)) return null;
+  const want = Buffer.from(handoffToken(root, ref), 'hex');
+  const got = Buffer.from(token, 'hex');
+  if (want.length !== got.length || !crypto.timingSafeEqual(want, got)) return null;
+  return { run: m[1], tasks: m[2].split(',').map(Number) };
+}
+/** Prompt of the hand-off turn: the tasks, and what the chef may (not) do. */
+export function handoffPrompt(run, tasks) {
+  return `[RENVOI_CHEF ${run}] Le Routage t’a renvoyé ${tasks.length > 1 ? 'ces tâches' : 'cette tâche'} : tu agis TOI-MÊME, sans la confier à un musicien.\n\n` +
+    tasks.map(t => `## Tâche ${t.n} « ${t.titre} »${t.projet ? ` (projet concerné : ${t.projet})` : ''}\n\n${t.demande}\n\nPourquoi c’est pour toi : ${t.raison}`).join('\n\n') +
+    '\n\nRègles : seulement l’infrastructure d’orchestration (exécutions de pipeline, files, tâches en attente du Routage, questions, avec les scripts de l’orchestrateur) ; ' +
+    'jamais de travail de projet (code, git, build, livraison) ni de dispatch vers toi-même. Si une tâche est en réalité du travail de projet ou demande une décision, ' +
+    'ne la fais pas : termine par « NEEDS_USER_INPUT: <question> ». Termine par un compte rendu court de ce que tu as fait.';
+}
+/** null when the `renvoi_chef` of a decomposed task is valid, else why. */
+function handoffProblem(t) {
+  const h = t.renvoi_chef;
+  if (typeof h !== 'object' || h == null || typeof h.raison !== 'string' || h.raison.trim().length < 8) return '« renvoi_chef » doit être {"raison": "pourquoi le chef doit agir lui-même"}';
+  for (const k of ['impose', 'hors_pipeline', 'reprise', 'ne_pas_dispatcher']) if (t[k]) return `« renvoi_chef » et « ${k} » s’excluent`;
+  if (t.apres != null) return '« renvoi_chef » ne peut pas attendre une autre tâche (« apres ») : le chef agit à la fin de ce tour';
+  return null;
+}
+/** Launches the hand-off chef turn once `waitPid` (this Routage turn) has exited. */
+function launchHandoff({ root, logsDir, scriptsDir, run, tasks, waitPid, env = process.env }) {
+  const ref = `${run}#${tasks.map(t => t.n).join(',')}`;
+  const file = path.join(logsDir, 'runs', run, 'handoff.json');
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ ref, conductor: conductorOf(root), prompt: handoffPrompt(run, tasks), tasks: tasks.map(t => ({ n: t.n, titre: t.titre, projet: t.projet })) }, null, 2));
+  } catch (e) { return { ref, status: 'failed', why: e.message }; }
+  // A test root never starts a real chef turn unless the test asks for it.
+  if (env.DISPATCH_ROOT_FOR_TESTS && env.ORCH_CHEF_HANDOFF_TEST !== '1') return { ref, status: 'refused', why: 'racine de test sans ORCH_CHEF_HANDOFF_TEST=1 : aucun tour réel', file };
+  const childEnv = { ...env, ORCH_HANDOFF_TOKEN: handoffToken(root, ref) };
+  for (const k of ['ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'ORCH_TURN_PROJECT', 'ORCH_TURN_STEP', 'ORCH_STEP_TOKEN', 'ORCH_OBS_ID']) delete childEnv[k];
+  try {
+    // Detached like a musician task (launchTask): it outlives this turn, then
+    // waits for it — two chef turns never resume the same session at once.
+    const c = spawn(process.execPath, [path.join(scriptsDir, 'chef-action-deferred.mjs'), '--wait-pid', String(waitPid), '--handoff', file,
+      '--log', path.join(logsDir, 'chef-actions.log')], { cwd: root, env: childEnv, detached: true, stdio: 'ignore', windowsHide: true });
+    c.on('error', () => {});
+    c.unref();
+    return { ref, status: c.pid ? 'scheduled' : 'failed', pid: c.pid || null, file };
+  } catch (e) { return { ref, status: 'failed', why: e.message }; }
 }
 
 /** argv (after the script path) of one validated chef action. */
@@ -911,6 +977,15 @@ const CODE_STEPS = {
       if (t.reprise) { out.push({ ...base, route: true, pipeline: imp.pipeline || null, mode: imp.mode || null, kind: null, classifier: 'reprise', raison: `reprise de l’exécution ${t.reprise}` }); continue; }
       const c = await classifyTask({ root, logsDir, task: t, fixed: { pipeline: imp.pipeline || null, mode: imp.mode || null } });
       if (c.model) models.add(c.model);
+      // Handed back to the chef (0.88.0): the classifier model must see chef
+      // work too — project work (code, git, build) is never done by the chef.
+      if (t.renvoi_chef && !c.chef) {
+        const seen = c.failed ? `le classement a échoué (${c.why})` : c.question ? `le classement hésite : ${c.question}` : c.pipeline ? `le classement y voit du travail de projet (pipeline ${c.pipeline})` : 'le classement n’y voit pas une action du chef';
+        const q = `Tâche ${n} « ${base.titre} » : le découpage la renvoie au chef pour qu’il agisse lui-même, mais ${seen}. Le chef ne fait jamais de travail de projet : faut-il la confier à un musicien, ou est-ce bien au chef d’agir ?`;
+        questions.push(q);
+        out.push({ ...base, route: false, question: q, refused: 'renvoi au chef non confirmé par le classement', classifier: c.classifier || null });
+        continue;
+      }
       if (c.chef) {
         const def = CHEF_ACTIONS[c.chef];
         const cand = def ? { action: c.chef, ...(def.project ? { projet: t.projet } : {}), ...(def.needs ? { [def.needs]: String(c.raison || t.demande).slice(0, 300) } : {}), ...(c.chef === 'resolve-question' && c.raison ? { note: String(c.raison).slice(0, 300) } : {}) } : null;
@@ -922,6 +997,11 @@ const CODE_STEPS = {
         if (cand && !why) {
           extraActions.push(cand);
           out.push({ ...base, route: false, chefAction: cand.action, raison: c.raison || null, classifier: c.classifier });
+        } else if (!cand && !t.apres) {
+          // No allowlisted script fits: the chef acts itself, in a turn of its
+          // own after this one (0.88.0) — no longer a question to the user.
+          const raison = String(t.renvoi_chef?.raison || c.raison || 'action directe du chef hors de la liste des actions exécutées par le code').replace(/\s+/g, ' ').trim().slice(0, 300);
+          out.push({ ...base, route: false, chefHandoff: true, raison, classifier: c.classifier });
         } else {
           const q = `Tâche ${n} (${t.projet}) : c’est une action du chef (« ${c.chef} »), qui n’est confiée à aucun musicien, mais elle ne peut pas être faite automatiquement (${why}). Que faut-il faire ?`;
           questions.push(q);
@@ -972,7 +1052,7 @@ const CODE_STEPS = {
     const rows = [];
     state.tasks = state.tasks.map((t) => {
       if (!t.route) {
-        rows.push(`| ${t.projet} | non lancée — ${t.chefAction && !t.refused ? `action du chef « ${t.chefAction} », exécutée par le code` : t.lacune ? `lacune : ${t.lacune}` : t.blocked ? `attend la tâche ${t.blocked}, non lancée` : `question : ${t.question || t.why || '?'}`} | — |`);
+        rows.push(`| ${t.projet} | non lancée — ${t.chefHandoff ? `renvoyée au chef, qui agit lui-même après ce tour : ${t.raison || ''}` : t.chefAction && !t.refused ? `action du chef « ${t.chefAction} », exécutée par le code` : t.lacune ? `lacune : ${t.lacune}` : t.blocked ? `attend la tâche ${t.blocked}, non lancée` : `question : ${t.question || t.why || '?'}`} | — |`);
         return t;
       }
       const served = !!t.pipeline && isEnforced(enf, t.projet) && enf.pipelines.includes(t.pipeline);
@@ -1030,18 +1110,28 @@ const CODE_STEPS = {
           text: `⚙ action du chef ${a.action}${a.projet ? ` (${a.projet})` : ''} : ${{ done: 'faite', scheduled: 'programmée après la fin de ce tour', failed: `échec (code ${a.code})`, refused: `refusée — ${a.why}` }[a.status] || a.status}` });
       }
     }
+    // Tasks handed back to the chef (0.88.0): ONE chef turn, after this one.
+    const handTasks = tasks.filter(t => t.chefHandoff);
+    let handoff = null;
+    if (handTasks.length) {
+      handoff = launchHandoff({ root, logsDir, scriptsDir: path.dirname(dispatchScript), run, tasks: handTasks, waitPid: process.pid });
+      writeEvent?.({ type: 'system', subtype: 'chef_handoff', pipeline: { run }, ref: handoff.ref, status: handoff.status, tasks: handTasks.map(t => ({ n: t.n, titre: t.titre, projet: t.projet })),
+        text: `↩ renvoyé au chef (il agit lui-même, après ce tour) : ${handTasks.map(t => `tâche ${t.n} « ${t.titre} »`).join(', ')} — ${handoff.status === 'scheduled' ? 'tour du chef programmé' : `non lancé (${handoff.why || '?'})`}` });
+    }
     // « waiting » = what is REALLY queued (it was computed before addPending, so
     // a task dropped as a duplicate still showed as waiting); duplicates apart.
     fs.writeFileSync(path.join(artDir, 'dispatch.json'), JSON.stringify({ dispatched: done,
       waiting: queued.map(q => ({ id: q.id, titre: pendingLabel(q).titre, n: q.n, projet: q.projet, apres: waiting.find(w => w.n === q.n)?.apres ?? null, after: q.after?.projet || null, ...(q.reprise ? { reprise: q.reprise } : {}) })),
       ...(duplicates.length ? { duplicates } : {}),
       ...(actions.length ? { actions } : {}),
+      ...(handoff ? { handoff: { ...handoff, tasks: handTasks.map(t => ({ n: t.n, titre: t.titre, projet: t.projet, raison: t.raison })) } } : {}),
       ...(tj.aucun_dispatch && !done.length && !waiting.length ? { aucun_dispatch: String(tj.aucun_dispatch).slice(0, 500) } : {}) }, null, 2));
     // A duplicate is never dropped silently (user rule): the chef is told at once.
     if (duplicates.length) {
       await postNotify(root, conductorOf(root), `[ROUTAGE ${run}] ${duplicates.length} tâche(s) écartée(s) comme doublon d’une tâche déjà en attente — rien n’est perdu, voici lesquelles et pourquoi :\n${duplicatesText(duplicates)}`, 'routage-duplicate');
     }
     const lost = done.filter(d => !d.pid);
+    if (handoff && handoff.status === 'failed') lost.push({ projet: `chef (renvoi : ${handoff.why || 'lancement impossible'})` });
     return lost.length ? { ok: false, why: `lancement impossible pour : ${lost.map(d => d.projet).join(', ')}` } : { ok: true };
   },
   /** Réveil : lance les tâches dont la tâche attendue a rendu son résultat depuis. */
@@ -2756,6 +2846,10 @@ export async function runPipeline(o) {
       const acts = Array.isArray(disp.actions) && disp.actions.length
         ? `\n\n**Actions du chef (exécutées par l’orchestrateur)** :\n${disp.actions.map(a => `- ${a.action}${a.projet ? ` ${a.projet}` : ''} : ${{ done: 'faite', scheduled: 'programmée après la fin de ce tour', failed: `échec (code ${a.code})`, refused: `refusée — ${a.why}` }[a.status] || a.status}`).join('\n')}`
         : '';
+      // Hand-off to the chef (0.88.0), stated by the code.
+      const handTxt = disp.handoff
+        ? `\n\n**Renvoyé au chef, qui agit lui-même** (${disp.handoff.status === 'scheduled' ? 'son tour part dès la fin de celui-ci' : `non lancé : ${disp.handoff.why || '?'}`}) :\n${(disp.handoff.tasks || []).map(t => `- tâche ${t.n} « ${t.titre} » — ${t.raison || ''}`).join('\n')}`
+        : '';
       // Waiting tasks are named by the code (0.87.0): never a bare id.
       const waitTxt = Array.isArray(disp.waiting) && disp.waiting.length
         ? `\n\n**Tâches mises en attente (identifiant « titre »)** :\n${disp.waiting.map(w => `- ${w.id || '?'} « ${w.titre || '?'} » — ${w.projet}, après ${w.after || '?'}`).join('\n')}`
@@ -2765,7 +2859,7 @@ export async function runPipeline(o) {
       const ext = (state.externalChanges || []).length
         ? `\n\n**Fichiers du dossier du chef modifiés pendant cette exécution** (par vous ou un musicien, conservés, rien n’a été annulé) : ${state.externalChanges.slice(0, 12).map(f => `\`${f}\``).join(', ')}`
         : '';
-      return `${body || '(rapport vide)'}${acts}${waitTxt}${horsTxt}${ext}${q && !/NEEDS_USER_INPUT:/.test(body) ? `\n\nNEEDS_USER_INPUT: ${q}` : ''}`;
+      return `${body || '(rapport vide)'}${acts}${handTxt}${waitTxt}${horsTxt}${ext}${q && !/NEEDS_USER_INPUT:/.test(body) ? `\n\nNEEDS_USER_INPUT: ${q}` : ''}`;
     }
     const head = git(cwd, ['rev-parse', 'HEAD']).out;
     const delivered = head && head !== base ? git(cwd, ['log', '-1', '--format=%h %s']).out : null;

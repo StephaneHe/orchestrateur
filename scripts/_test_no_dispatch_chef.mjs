@@ -13,7 +13,8 @@
 //     dispatched; an allowlisted one runs as a chef action (by the code);
 //   - a task marked « ne_pas_dispatcher » is never dispatched nor classified,
 //     and becomes a question to the user;
-//   - a chef action outside the allowlist becomes a question, nothing runs;
+//   - a chef action outside the allowlist is handed back to the chef (0.88.0;
+//     it used to become a question), nothing runs by the code;
 //   - the other tasks of the same message are dispatched normally.
 // Real dispatch.mjs and engine, claude double, fake action runner.
 // ============================================================================
@@ -111,10 +112,13 @@ ok(!x.musicianPrompts.some(p => /^Q:/.test(p)) && x.musicianPrompts.some(p => /^
 ok(/NEEDS_USER_INPUT: .*Tâche 2 \(Q\) marquée « ne pas dispatcher »/.test(x.result) && x.calls.length === 0, 'la question part à l’utilisateur, aucune action exécutée', x.result.slice(-400));
 
 // ---------------------------------------------------------------------------
-section('5. Action du chef hors liste blanche : question, rien d’exécuté, rien dispatché');
+// 0.88.0, user request « IL faut que le routage puisse renvoyer au chef pour qu'il agisse lui meme »:
+// a chef action outside the allowlist is no longer a question — it is handed back to the chef.
+section('5. Action du chef hors liste blanche : renvoyée au chef (il agit lui-même), rien d’exécuté par le code, rien dispatché');
 x = await chefTurn('Ajoute double() à R, et supprime les journaux de Q', TASKS({ projet: 'Q', titre: 'tâche de test 6', demande: 'Supprime tous les journaux de Q.' }),
   { ...DEV, 'journaux': { chef: 'autre', raison: 'action de supervision' } });
-ok(x.calls.length === 0 && !x.musicianPrompts.some(p => /^Q:/.test(p)) && /NEEDS_USER_INPUT: .*Tâche 2 \(Q\) : c’est une action du chef \(« autre »\)/.test(x.result), 'aucune exécution, aucun tour chez Q, question posée', x.result.slice(-400));
+ok(x.calls.length === 0 && !x.musicianPrompts.some(p => /^Q:/.test(p)) && x.read('classement.json')?.taches?.[1]?.chefHandoff === true && x.read('dispatch.json')?.handoff?.tasks?.[0]?.n === 2 && !/Tâche 2 \(Q\) : c’est une action du chef/.test(x.result),
+  'aucun script exécuté, aucun tour chez Q, renvoi au chef au lieu d’une question', x.result.slice(-400));
 
 // ---------------------------------------------------------------------------
 section('6. Garde-fou du Dispatcher : une tâche marquée ne part pas, quoi qu’en dise le classement');
