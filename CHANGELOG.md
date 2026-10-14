@@ -11,6 +11,49 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.93.0] - 2026-10-14
+
+### Fixed
+
+- (server) A musician's report reaching the chef is never cut silently —
+  user request « c'est problematique. S'il n'y a pas de taches existantes qui
+  investigue et corrige ce probleme, il faut en creer une » (2026-10-14).
+  - Cause (evidence in the production chef log): the report of the musician
+    orchestrateur arrived WHOLE in the chef's log (3,207 characters, notify),
+    but `conversationExcerpt` — the conversation.md given to every Routage
+    step — cut each message at 2,000 characters, so the chef saw it end at
+    « | 26cf9ce7 | orchestrateur-dev | attend » with no « after » list; its
+    30,000-character window also cut the oldest kept message in the middle.
+    Neither cut was stated. The wake summary (280 characters) and the chef's
+    context (questions at 400, last reply at 6,000, waiting tasks at 200,
+    paused runs at 160) cut silently too.
+  - `conversationExcerpt`: per-message limit raised to 8,000; a longer
+    message ends with « ⚠ [tronqué par l'orchestrateur : N caractères affichés
+    sur M — texte complet : …] » and its whole text is written next to the
+    excerpt (`<run>/conversation/message-NN.md`, to read with Read), else
+    the log file and line are given; the window drops whole older messages
+    and says how many.
+  - `clipText` (engine) used for every cut of the chef's context
+    (contexte.md): last reply, questions asked, musicians' pending questions,
+    parked requests, waiting tasks, paused runs — each with where the whole
+    text is.
+  - `summarizeResult` (server.js, wake): a cut summary says so and where the
+    whole report is. Needs a server restart.
+
+- (server) The musician pane re-reads its queue every time it opens: it
+  only reloaded when the queue length changed, so a pane reopened after one
+  entry left and another came showed a stale list (seen as an intermittent KO
+  of the browser check `queue-drag`).
+
+### Security
+
+- (server) `conversationExcerpt` labelled every message sent to the chef by
+  a musician (notify) as « **utilisateur** ». The off-pipeline authorization
+  check (`userSaid`, 0.71.2) trusts only « **utilisateur** » lines, so a
+  musician's text could have been taken for the user's own words. Such
+  messages are now labelled « **message de <musicien>** ».
+- Test: `scripts/_test_report_truncation.mjs`.
+
 ## [0.92.0] - 2026-10-14
 
 ### Added

@@ -4249,7 +4249,9 @@ function summarizeResult(ev) {
   if (last.length < 40 && paras.length > 1) last = `${paras[paras.length - 2]} ${last}`;
   last = last.replace(/\s+/g, ' ').trim();
   if (last.length <= 280) return last;
-  return last.slice(0, 279).replace(/\s+\S*$/, '') + '…';
+  // 0.93.0: a cut is never silent — the wake says so and where the whole is.
+  const kept = last.slice(0, 279).replace(/\s+\S*$/, '');
+  return `${kept}… ⚠ [résumé coupé : ${kept.length} caractères sur ${last.length} — compte rendu complet dans le journal du musicien, et dans la conversation s’il a été envoyé au chef]`;
 }
 
 // ---------- Aggregate SSE (all projects over one connection) ---------------

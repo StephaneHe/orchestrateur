@@ -1661,6 +1661,22 @@ fonctionalite codee dans le routeur. »
   avec la raison (rien n'est perdu).
 - Recette : `_test_todo_capture.mjs`.
 
+## Comptes rendus jamais coupés en silence (0.93.0)
+
+Demande utilisateur (2026-10-14) : « c'est problematique. S'il n'y a pas de
+taches existantes qui investigue et corrige ce probleme, il faut en creer une ».
+
+- `conversationExcerpt` (conversation.md des étapes du Routage) : messages
+  entiers jusqu'à `EXCERPT_MESSAGE_MAX` (8 000) ; au-delà, avis « ⚠ [tronqué
+  par l'orchestrateur : N sur M — texte complet : …] » et texte complet dans
+  `<run>/conversation/message-NN.md` ; la fenêtre de 30 000 caractères écarte
+  des messages entiers et le dit.
+- `clipText` pour toute coupe du contexte du chef ; `summarizeResult`
+  (réveil, server.js) signale sa coupe.
+- Un message d'un musicien est étiqueté « message de <musicien> », jamais
+  « utilisateur » (`userSaid` ne fait confiance qu'à l'utilisateur).
+- Recette : `_test_report_truncation.mjs`.
+
 ## Routage : contexte, « suite », lacunes tardives (0.57.0)
 
 - **`routingContext`** (moteur) écrit `contexte.md` avant Lire. Il contient :

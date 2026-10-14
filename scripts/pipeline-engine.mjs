@@ -899,8 +899,34 @@ function userSaid(ctx, quote) {
 }
 
 /** Les derniers échanges du fil (demandes, réponses du chef, résultats), pour l'étape Lire. */
-export function conversationExcerpt(logFile, { max = 30, maxChars = 30_000 } = {}) {
+// ---------------------------------------------------------------------------
+// No silent truncation (0.93.0). User, 2026-10-14: « c'est problematique »
+// — a musician's report reached the chef cut at « | 26cf9ce7 |
+// orchestrateur-dev | attend » (its « after » list missing) although the whole
+// 3,207-character report was in the chef's log: the excerpt given to the
+// Routage cut every message at 2,000 characters, and the 30,000-character
+// window cut the oldest kept message in the middle, both without a word.
+// Now a cut is always stated, with where the whole text is, and the window
+// drops whole messages, never part of one.
+// ---------------------------------------------------------------------------
+export const EXCERPT_MESSAGE_MAX = 8000;
+/** `text` cut at `max` (word boundary) with an explicit notice, or as is. */
+export function clipText(text, max, { where = null } = {}) {
+  const s = String(text ?? '');
+  if (s.length <= max) return { text: s, cut: false };
+  const kept = s.slice(0, max).replace(/\s+\S*$/, '');
+  return { text: `${kept} […]\n⚠ [tronqué par l’orchestrateur : ${kept.length} caractères affichés sur ${s.length}${where ? ` — texte complet : ${where}` : ''}]`, cut: true };
+}
+/** Who wrote a user_prompt: never « utilisateur » for a musician's message. */
+function promptAuthor(e) {
+  if (!e.source) return 'utilisateur';
+  if (e.source === 'wake') return 'réveil';
+  return `message de ${e.source}`;
+}
+
+export function conversationExcerpt(logFile, { max = 30, maxChars = 30_000, perMessage = EXCERPT_MESSAGE_MAX, fullDir = null } = {}) {
   let lines = [];
+  let firstLine = 1;
   try {
     const st = fs.statSync(logFile);
     const fd = fs.openSync(logFile, 'r');
@@ -909,21 +935,44 @@ export function conversationExcerpt(logFile, { max = 30, maxChars = 30_000 } = {
     fs.readSync(fd, buf, 0, len, st.size - len);
     fs.closeSync(fd);
     lines = buf.toString('utf8').split('\n');
+    if (len < st.size) { lines.shift(); firstLine = 0; }   // partial first line; line numbers unknown then
   } catch { return '# Conversation récente\n\n(aucune)\n'; }
-  const out = [];
-  for (const l of lines) {
-    let e; try { e = JSON.parse(l); } catch { continue; }
-    if (e.type === 'user_prompt' && typeof e.text === 'string' && !e.pipeline?.answer) {
-      out.push(`**${e.source === 'wake' ? 'réveil' : 'utilisateur'}** : ${e.text.slice(0, 2000)}`);
-    } else if (e.type === 'assistant') {
-      for (const b of e.message?.content || []) { if (b?.type === 'text' && b.text?.trim()) out.push(`**chef** : ${b.text.trim().slice(0, 2000)}`); }
-    } else if (e.type === 'notification' && e.subtype === 'musician_done' && e.text) {
-      out.push(`**résultat** ${e.text.slice(0, 600)}`);
+  const msgs = [];
+  lines.forEach((l, i) => {
+    let e; try { e = JSON.parse(l); } catch { return; }
+    const lineNo = firstLine ? i + 1 : null;
+    if (e.type === 'user_prompt' && typeof e.text === 'string' && !e.pipeline?.answer) msgs.push({ who: promptAuthor(e), text: e.text, lineNo });
+    else if (e.type === 'assistant') {
+      for (const b of e.message?.content || []) { if (b?.type === 'text' && b.text?.trim()) msgs.push({ who: 'chef', text: b.text.trim(), lineNo }); }
+    } else if (e.type === 'notification' && e.subtype === 'musician_done' && e.text) msgs.push({ who: 'résultat', text: e.text, lineNo });
+  });
+  const recent = msgs.slice(-max);
+  const blocks = recent.map((m, k) => {
+    let where = null;
+    if (m.text.length > perMessage) {
+      if (fullDir) {
+        try {
+          fs.mkdirSync(fullDir, { recursive: true });
+          const f = path.join(fullDir, `message-${String(k + 1).padStart(2, '0')}.md`);
+          fs.writeFileSync(f, m.text);
+          where = `${f} (à lire avec Read)`;
+        } catch { /* fall back to the log reference */ }
+      }
+      if (!where) where = `${logFile}${m.lineNo ? `, ligne ${m.lineNo}` : ''}`;
     }
+    return `**${m.who}** : ${clipText(m.text, perMessage, { where }).text}`;
+  });
+  // Keep the most recent messages whole; drop whole older ones to fit.
+  const kept = [];
+  let size = 0;
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    if (kept.length && size + blocks[i].length + 2 > maxChars) break;
+    kept.unshift(blocks[i]);
+    size += blocks[i].length + 2;
   }
-  let txt = out.slice(-max).join('\n\n');
-  if (txt.length > maxChars) txt = txt.slice(-maxChars);
-  return `# Conversation récente (extraite du log par l'orchestrateur)\n\n${txt || '(aucune)'}\n`;
+  const omitted = msgs.length - kept.length;
+  const head = omitted > 0 ? `⚠ [${omitted} message(s) plus ancien(s) non repris ici — journal complet : ${logFile}]\n\n` : '';
+  return `# Conversation récente (extraite du log par l'orchestrateur)\n\n${head}${kept.join('\n\n') || '(aucune)'}\n`;
 }
 
 const CODE_STEPS = {
@@ -1200,7 +1249,7 @@ export function routingContext(root, { logsDir, chefLog, chefDir }) {
     if (txt) replies.push(txt);
   }
   const last = replies[replies.length - 1] || '';
-  L.push('## Ta dernière réponse', '', last ? last.slice(0, 6000) : '(aucune)', '');
+  L.push('## Ta dernière réponse', '', last ? clipText(last, 6000, { where: chefLog }).text : '(aucune)', '');
   const asked = [];
   for (const r of replies.slice(-3)) {
     for (const line of r.split(/\r?\n/)) {
@@ -1208,7 +1257,7 @@ export function routingContext(root, { logsDir, chefLog, chefDir }) {
       if (/^NEEDS_USER_INPUT:/.test(t) || (/\?\s*$/.test(t) && t.length > 12)) asked.push(t.replace(/^NEEDS_USER_INPUT:\s*/, ''));
     }
   }
-  L.push('## Questions que tu as posées (les plus récentes)', '', asked.length ? [...new Set(asked)].slice(-12).map(q => `- ${q.slice(0, 400)}`).join('\n') : '(aucune)', '');
+  L.push('## Questions que tu as posées (les plus récentes)', '', asked.length ? [...new Set(asked)].slice(-12).map(q => `- ${clipText(q, 600, { where: chefLog }).text}`).join('\n') : '(aucune)', '');
   // 2. Questions en attente des musiciens (dernier tour fini sur NEEDS_USER_INPUT, non acquitté).
   const waiting = [];
   const cfg = readConfig(root);
@@ -1223,7 +1272,7 @@ export function routingContext(root, { logsDir, chefLog, chefDir }) {
         lastQ = m ? m[1].trim() : null;
       }
     }
-    if (lastQ) waiting.push(`- **${p.name}** : ${lastQ.slice(0, 400)}`);
+    if (lastQ) waiting.push(`- **${p.name}** : ${clipText(lastQ, 600, { where: path.join(logsDir, `${p.name}.jsonl`) }).text}`);
   }
   L.push('## Questions en attente des musiciens', '', waiting.join('\n') || '(aucune)', '');
   // 3. Demandes mises en attente par le chef (TODO_LIST.md, entrées « EN ATTENTE »).
@@ -1236,7 +1285,8 @@ export function routingContext(root, { logsDir, chefLog, chefDir }) {
       parked.push(`${line.replace(/^[\s*-]+/, '').trim()}${next ? ` ${next}` : ''}`);
     });
   } catch { /* pas de TODO_LIST */ }
-  L.push('## Demandes mises en attente (TODO_LIST du chef)', '', parked.length ? parked.slice(0, 20).map(x => `- ${x.slice(0, 400)}`).join('\n') : '(aucune)', '');
+  L.push('## Demandes mises en attente (TODO_LIST du chef)', '', parked.length ? parked.slice(0, 20).map(x => `- ${clipText(x, 600, { where: path.join(chefDir, 'TODO_LIST.md') }).text}`).join('\n') +
+    (parked.length > 20 ? `\n⚠ [${parked.length - 20} autre(s) non repris ici — voir ${path.join(chefDir, 'TODO_LIST.md')}]` : '') : '(aucune)', '');
   // 4. Tâches de Routage qui attendent la fin d'une autre.
   const pend = readPending(logsDir);
   // 0.91.0 (task 3/4): entries sharing their start show what sets them apart
@@ -1244,14 +1294,14 @@ export function routingContext(root, { logsDir, chefLog, chefDir }) {
   const distinct = distinctExcerpts(pend);
   if (pend.length) L.push('## Tâches déjà décidées, en attente d’une autre', '', pend.map(p => {
     const d = distinct.get(pendingLabel(p).id);
-    const what = d ? `ce qui la distingue : ${d.excerpt} (même début sur ${d.commonLength} caractères que ${d.commonWith.join(', ')})` : String(p.demande).slice(0, 200);
+    const what = d ? `ce qui la distingue : ${d.excerpt} (même début sur ${d.commonLength} caractères que ${d.commonWith.join(', ')})` : clipText(String(p.demande).replace(/\s+/g, ' ').trim(), 300, { where: `node scripts/routage-pending.mjs list --json (${pendingLabel(p).id})` }).text;
     const r = cleanTitle(p.rattache);
     return `- ${pendingLabel(p).text} — ${p.projet} (après ${p.after?.projet || '?'})${p.reprise ? ` — reprise ${p.reprise}` : ''} : ${what}${r ? `\n  rattachée à : ${r.slice(0, 300)}` : ''}`;
   }).join('\n'), '');
   // 5. Paused pipeline runs (0.58.0): resuming one is a task with « reprise ».
   const paused = pausedRuns(logsDir);
   L.push('## Exécutions de pipeline en pause (pour les reprendre : tâche avec « reprise »: "<identifiant>")', '',
-    paused.length ? paused.map(p => `- ${p.project} : ${p.run} (${p.pipeline}${p.mode ? ` ${p.mode}` : ''}, en pause : ${p.pausedLimit || 'question'}) — ${String(p.request || '').replace(/\s+/g, ' ').slice(0, 160)}`).join('\n') : '(aucune)', '');
+    paused.length ? paused.map(p => `- ${p.project} : ${p.run} (${p.pipeline}${p.mode ? ` ${p.mode}` : ''}, en pause : ${p.pausedLimit || 'question'}) — ${clipText(String(p.request || '').replace(/\s+/g, ' '), 240, { where: path.join(logsDir, 'runs', p.run, 'run.json') }).text}`).join('\n') : '(aucune)', '');
   return L.join('\n');
 }
 
@@ -2545,7 +2595,7 @@ export async function runPipeline(o) {
     }
     // Contexte du chef : la conversation récente, extraite de son log par le code.
     if (step.prerun === 'conversation') {
-      fs.writeFileSync(path.join(artDir, 'conversation.md'), conversationExcerpt(projectLog));
+      fs.writeFileSync(path.join(artDir, 'conversation.md'), conversationExcerpt(projectLog, { fullDir: path.join(artDir, 'conversation') }));
       fs.writeFileSync(path.join(artDir, 'contexte.md'), routingContext(root, { logsDir, chefLog: projectLog, chefDir: cwd }));
     }
     // Étapes exécutées par le CODE (Routage : affecter, dispatcher) — aucun tour de model.

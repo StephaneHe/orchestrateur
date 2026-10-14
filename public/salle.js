@@ -902,6 +902,10 @@
     const el = diveEl();
     if (!el) return;
     dive.name = name;
+    // 0.93.0: re-read the queue on every opening — it only reloaded when the
+    // queue LENGTH changed, so a pane reopened after « one left, one came »
+    // showed a stale list.
+    diveQueue.name = null;
     dive.tab = defaultTab();
     dive.events = [];
     dive.truncated = false;
