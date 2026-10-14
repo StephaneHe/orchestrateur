@@ -97,7 +97,7 @@
           </section></div>
         <section class="tov-confirm" hidden aria-labelledby="tov-confirm-h">
           <h3 id="tov-confirm-h" class="tov-confirm-h">Envoyer cet item au chef ?</h3>
-          <p class="tov-hint">Ce message sera placé dans votre saisie au chef. Il partira quand vous l’enverrez (Entrée ou ➤), comme tout message au chef, qui en lancera l’exécution.</p>
+          <p class="tov-hint tov-confirm-hint">Ce message sera placé dans votre saisie au chef. Il partira quand vous l’enverrez (Entrée ou ➤), comme tout message au chef, qui en lancera l’exécution.</p>
           <pre class="tov-confirm-msg"></pre>
           <p class="tov-confirm-draft" hidden></p>
           <div class="tov-confirm-bar">
@@ -187,10 +187,41 @@
     ].filter(Boolean).join("\n\n");
   }
 
-  function askSendToChef(i) {
+  /* ---- « Discuter avec le chef » (0.96.0) --------------------------------
+     User request: « liste des todo, on devrait pouvoir envoyer au chef, pas
+     pour lancer mais en discuter, si j'ai besoin de reponse. » The message
+     starts with the explicit prefix /chef-discussion: dispatch.mjs then runs
+     the chef's Routage in its discussion mode, which has no dispatch step —
+     nothing is launched; the chef's answer comes back in the usual thread. */
+  const DISCUSS_PREFIX = "/chef-discussion";
+  function discussMessage(i) {
+    const full = i.detailFull || i.detail || "";
+    const notes = Array.isArray(i.notes) ? i.notes : [];
+    return [
+      DISCUSS_PREFIX,
+      `Item de la TODO de ${i.project} à DISCUTER (ne pas le lancer) : ${i.title}`,
+      full,
+      i.more || "",
+      notes.length ? "Notes de l’utilisateur :\n" + notes.map(n => `- ${n.at ? `(${fmt(n.at)}) ` : ""}${n.text}`).join("\n") : "",
+      `(Item ${i.id}, ${i.project}/TODO_LIST.md ligne ${i.line}, ${(STATUS[i.status] || i.status).replace(/^\S+\s/, "").toLowerCase()}.)`,
+      "Ma question / ce dont je veux discuter : ",
+    ].filter(Boolean).join("\n\n");
+  }
+  const CONFIRM = {
+    run: { h: "Envoyer cet item au chef ?", ok: "Placer dans le message au chef", msg: (i) => chefMessage(i), action: "send-chef",
+      hint: "Ce message sera placé dans votre saisie au chef. Il partira quand vous l’enverrez (Entrée ou ➤), comme tout message au chef, qui en lancera l’exécution." },
+    discuss: { h: "Discuter de cet item avec le chef ?", ok: "Placer dans le message au chef (discussion)", msg: (i) => discussMessage(i), action: "discuss-chef",
+      hint: "Ce message sera placé dans votre saisie au chef, pour en DISCUTER : ajoutez votre question à la fin, puis envoyez-le (Entrée ou ➤). Le chef répond dans le fil ; rien n’est lancé (aucune tâche, aucun musicien)." },
+  };
+  function askSendToChef(i, kind = "run") {
     const el = overlayEl();
     const box = el.querySelector(".tov-confirm");
-    box.querySelector(".tov-confirm-msg").textContent = chefMessage(i);
+    const k = CONFIRM[kind] ? kind : "run";
+    box.dataset.kind = k;
+    box.querySelector(".tov-confirm-h").textContent = CONFIRM[k].h;
+    box.querySelector(".tov-confirm-hint").textContent = CONFIRM[k].hint;
+    box.querySelector(".tov-confirm-ok").textContent = CONFIRM[k].ok;
+    box.querySelector(".tov-confirm-msg").textContent = CONFIRM[k].msg(i);
     const draft = (document.getElementById("composer-input")?.value || "").trim();
     const warn = box.querySelector(".tov-confirm-draft");
     warn.textContent = draft ? `⚠ Votre brouillon actuel au chef (${draft.length} caractères) sera remplacé.` : "";
@@ -208,16 +239,17 @@
     box.hidden = true;
     const i = currentItem();
     if (i) fillOverlay(i);
-    if (refocus) ov.el.querySelector('[data-tov-action="send-chef"]')?.focus();
+    if (refocus) ov.el.querySelector(`[data-tov-action="${(CONFIRM[box.dataset.kind] || CONFIRM.run).action}"]`)?.focus();
   }
 
   function confirmSend() {
     const i = currentItem();
     if (!i || !globalThis.App?.prepareChefMessage) return;
-    const text = chefMessage(i);
+    const kind = ov.el?.querySelector(".tov-confirm")?.dataset.kind === "discuss" ? "discuss" : "run";
+    const text = CONFIRM[kind].msg(i);
     closeItem();
     globalThis.SidePanel?.close();
-    globalThis.App.prepareChefMessage(text, { project: i.project, title: i.title, id: i.id });
+    globalThis.App.prepareChefMessage(text, { project: i.project, title: i.title, id: i.id, ...(kind === "discuss" ? { discuss: true } : {}) });
   }
 
   /* ---- Reject (0.85.0, part 3/5): « Possibilité […] de rejetter l'item ».
@@ -566,10 +598,15 @@
     run: (i) => askSendToChef(i),
   });
   registerAction({
+    id: "discuss-chef", label: "💬 Discuter avec le chef…",
+    title: "Prépare un message au chef pour DISCUTER de l’item (questions, avis), sans rien lancer : le chef répond dans le fil (confirmation d’abord)",
+    run: (i) => askSendToChef(i, "discuss"),
+  });
+  registerAction({
     id: "reject", label: "Rejeter l’item…",
     title: "Marque l’item « rejeté par l’utilisateur » dans le TODO_LIST.md du musicien ; il passe dans les faits, barré (confirmation d’abord)",
     when: (i) => i.status !== "done",
     run: (i) => askReject(i),
   });
-  globalThis.TodoPanel = { reload: load, openItem, closeItem, registerAction, chefMessage, isItemOpen: () => !!(ov.el && !ov.el.hidden), isDragging: () => drag.on };
+  globalThis.TodoPanel = { reload: load, openItem, closeItem, registerAction, chefMessage, discussMessage, DISCUSS_PREFIX, isItemOpen: () => !!(ov.el && !ov.el.hidden), isDragging: () => drag.on };
 })();

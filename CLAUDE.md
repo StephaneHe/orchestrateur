@@ -749,6 +749,14 @@ de la prod).
   message va dans la saisie du chef (`App.prepareChefMessage`, contexte
   « Item TODO de … ») et part quand l'utilisateur l'envoie, par le même
   canal que tout message au chef. Cette action n'envoie rien au serveur elle-même. Recette : navigateur `todo-send-chef`.
+- **« 💬 Discuter avec le chef… »** (0.96.0, demande « pas pour lancer mais
+  en discuter, si j'ai besoin de reponse ») : action `discuss-chef`, même
+  confirmation, message préfixé `/chef-discussion` (`TodoPanel.
+  discussMessage`). `dispatch.mjs` (`scripts/chef-discussion.mjs`, avant la
+  capture « TODO: ») lance alors le Routage du chef en mode `discussion`
+  (Lire → Discuter → Rapporter, **aucune étape de lancement**), même si le
+  chef n'est pas routé ; réponse dans le fil, aucun dispatch. Recettes :
+  `_test_todo_discuss_chef.mjs`, navigateur `todo-discuss-chef`.
 - **Notes d'un item** (0.81.0, partie 2/5, « Possibilité d'y ajouter des
   notes ») : section « Notes » de l'overlay (bouton ou Ctrl+Entrée, brouillon
   gardé par item, jamais effacé par le rafraîchissement ; « ✎ n » dans la

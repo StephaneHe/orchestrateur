@@ -2366,7 +2366,7 @@ const App = {
     const input = $("#composer-input");
     if (!input || !text) return false;
     this.composer.target = this.composer.CONDUCTOR;
-    this.composer.answerFor = { name: ctx.project || "", question: ctx.title || "", todo: true };
+    this.composer.answerFor = { name: ctx.project || "", question: ctx.title || "", todo: true, ...(ctx.discuss ? { discuss: true } : {}) };
     input.value = text;
     input.dispatchEvent(new Event("input"));
     input.focus();
@@ -2399,7 +2399,7 @@ const App = {
     if (!ctx) { el.hidden = true; el.innerHTML = ""; return; }
     el.hidden = false;
     el.innerHTML =
-      `<span class="cc-label">${ctx.todo ? "Item TODO de" : ctx.about ? "Au chef, à propos de" : "Réponse via le chef pour"} ${esc(ctx.name)}${ctx.todo ? " — Entrée ou ➤ pour l’envoyer au chef" : ""}</span>` +
+      `<span class="cc-label">${ctx.todo && ctx.discuss ? "💬 Discussion (rien ne sera lancé) — item TODO de" : ctx.todo ? "Item TODO de" : ctx.about ? "Au chef, à propos de" : "Réponse via le chef pour"} ${esc(ctx.name)}${ctx.todo ? " — Entrée ou ➤ pour l’envoyer au chef" : ""}</span>` +
       (ctx.question ? `<span class="cc-quote">« ${esc(ctx.question.slice(0, 160))} »</span>` : `<span class="cc-quote"></span>`) +
       `<button class="cc-close" aria-label="Retirer le contexte">✕</button>`;
     $(".cc-close", el).addEventListener("click", () => {

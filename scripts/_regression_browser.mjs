@@ -341,7 +341,7 @@ export async function browserChecks(sb, t) {
       assert(o.more === long.more, `lignes de suite : ${JSON.stringify(o.more)}`);
       assert(/En cours/.test(o.status) && o.added === '14/09/26 00:00', `statut / date : ${o.status} · ${o.added}`);
       assert(o.focusClose, 'le focus n’est pas sur ✕ à l’ouverture');
-      assert(o.actionsHidden === false && o.actions.join() === 'Envoyer au chef…,Rejeter l’item…', `barre d’actions : ${JSON.stringify(o.actions)} (0.79.0 : « Envoyer au chef… » ; 0.85.0 : « Rejeter l’item… » sur un item ouvert)`);
+      assert(o.actionsHidden === false && o.actions.join() === 'Envoyer au chef…,💬 Discuter avec le chef…,Rejeter l’item…', `barre d’actions : ${JSON.stringify(o.actions)} (0.79.0 : « Envoyer au chef… » ; 0.96.0 : « 💬 Discuter avec le chef… » ; 0.85.0 : « Rejeter l’item… » sur un item ouvert)`);
       await page.keyboard.press('Escape');
       assert(await until(async () => !(await ovState(page)).open, 3000), 'Échap ne ferme pas l’overlay');
       o = await ovState(page);
@@ -435,6 +435,50 @@ export async function browserChecks(sb, t) {
       } finally {
         // Never leave an open overlay, panel or draft to the next checks — nor
         // the pointer over the rail, which freezes its order (railState.hovered).
+        await page.evaluate(() => { window.TodoPanel?.closeItem(); if (window.SidePanel?.isOpen()) window.SidePanel.close(); });
+        await page.fill('#composer-input', '').catch(() => {});
+        await page.mouse.move(5, 5);
+        await sleep(1700);
+        await page.evaluate(() => window.App.pollPupitre());
+        await sleep(500);
+      }
+    });
+    // 0.96.0 — user request (2026-10-14): « Orchestrateur-dev: liste des todo,
+    // on devrait pouvoir envoyer au chef, pas pour lancer mais en discuter, si
+    // j'ai besoin de reponse. »
+    await check(B, 'todo-discuss-chef', 'Overlay d’un item TODO : « 💬 Discuter avec le chef… », distinct de « Envoyer au chef… », confirme puis place dans la saisie au chef un message de DISCUSSION (/chef-discussion) ; envoyé, le chef répond dans le fil par son Routage en mode discussion, et rien n’est dispatché', async () => {
+      if (!(await page.evaluate(() => !!window.TodoPanel?.discussMessage))) NA('discussion avec le chef absente de cet état du code');
+      const api = await (await fetch(`${sb.url}/api/todo`, { headers: H })).json();
+      const long = api.items.find(i => i.project === 'chef' && /beta — analyse/.test(i.title));
+      const chefLog = () => { try { return fs.readFileSync(path.join(sb.root, 'logs', 'chef.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return {}; } }); } catch { return []; } };
+      const n0 = chefLog().length;
+      await page.evaluate(() => window.TodoPanel?.closeItem());
+      try {
+        await page.fill('#composer-input', '');
+        if (!(await todoState(page)).open) await page.click('#btn-todo');
+        const li = `#side-panel .todo-item[data-id="${long.id}"]`;
+        await page.locator(li).waitFor({ timeout: 8000 });
+        await page.click(`${li} .ti-title`);
+        await page.locator('#todo-overlay [data-tov-action="discuss-chef"]').waitFor({ timeout: 4000 });
+        const labels = await page.$$eval('#todo-overlay [data-tov-action]', bs => bs.map(b => b.textContent));
+        assert(labels.includes('💬 Discuter avec le chef…') && labels.includes('Envoyer au chef…'), `actions : ${labels}`);
+        await page.click('#todo-overlay [data-tov-action="discuss-chef"]');
+        const c = await page.evaluate(() => { const b = document.querySelector('#todo-overlay .tov-confirm'); return { shown: !!b && !b.hidden, h: b?.querySelector('.tov-confirm-h')?.textContent || '', hint: b?.querySelector('.tov-confirm-hint')?.textContent || '', msg: b?.querySelector('.tov-confirm-msg')?.textContent || '' }; });
+        assert(c.shown && /Discuter de cet item/.test(c.h) && /rien n’est lancé/.test(c.hint) && c.msg.startsWith('/chef-discussion\n') && c.msg.includes('à DISCUTER (ne pas le lancer) : beta — analyse') && c.msg.includes(long.detailFull), `confirmation : ${JSON.stringify(c).slice(0, 300)}`);
+        await page.click('#todo-overlay .tov-confirm-ok');
+        assert(await until(async () => !(await page.evaluate(() => TodoPanel.isItemOpen())), 4000), 'overlay encore ouvert');
+        const ctx = await page.textContent('#composer-context').catch(() => '');
+        assert(/Discussion \(rien ne sera lancé\)/.test(ctx), `contexte du composer : ${ctx}`);
+        await page.fill('#composer-input', `${await page.inputValue('#composer-input')}QUESTION-DISCUSSION : faut-il le faire maintenant ?`);
+        await page.press('#composer-input', 'Enter');
+        const turn = () => { const ev = chefLog().slice(n0); const k = ev.findIndex(e => e.type === 'user_prompt' && e.pipeline?.mode === 'discussion' && /QUESTION-DISCUSSION/.test(e.text || '')); return k < 0 ? null : { up: ev[k], after: ev.slice(k + 1) }; };
+        assert(await until(async () => turn()?.after.some(e => e.type === 'result'), 60_000), 'pas de tour du chef en mode discussion terminé');
+        const t = turn();
+        const run = t.up.pipeline.run;
+        assert(!fs.existsSync(path.join(sb.root, 'chef', '.orchestrateur', 'runs', run, 'dispatch.json')), 'un dispatch.json a été écrit');
+        assert(t.after.some(e => e.type === 'assistant'), 'aucune réponse du chef dans le fil');
+        return `discussion ${run} : Lire → Discuter → Rapporter, réponse dans le fil, aucun dispatch`;
+      } finally {
         await page.evaluate(() => { window.TodoPanel?.closeItem(); if (window.SidePanel?.isOpen()) window.SidePanel.close(); });
         await page.fill('#composer-input', '').catch(() => {});
         await page.mouse.move(5, 5);

@@ -11,6 +11,35 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.96.0] - 2026-10-14
+
+### Added
+
+- (server) Discuss a TODO item with the chef, without launching it — user
+  request « Orchestrateur-dev: liste des todo, on devrait pouvoir envoyer au
+  chef, pas pour lancer mais en discuter, si j'ai besoin de reponse. »
+  (2026-10-14).
+  - TODO panel: « 💬 Discuter avec le chef… » in each item's overlay, next to
+    the unchanged « Envoyer au chef… ». After a confirmation showing the exact
+    message, it goes into the chef's composer (context « 💬 Discussion (rien
+    ne sera lancé) »): the explicit prefix `/chef-discussion`, the whole item,
+    its notes, and a line for the user's question. It leaves when the user
+    sends it, through the usual channel.
+  - `dispatch.mjs` (`scripts/chef-discussion.mjs`): a USER message to the
+    chef starting with `/chef-discussion` runs the chef's Routage in its new
+    `discussion` mode — Lire → Discuter → Rapporter — even when the chef is
+    not routed. That mode has no Decomposer, Classifier, Affecter, Dispatcher
+    nor Relancer step: nothing can be dispatched, by construction (and a step
+    turn refuses any `dispatch.mjs`). The answer lands in the chef's thread.
+    The prefix is checked before the « TODO: » capture, so a quoted
+    « TODO: » line is never captured. Messages without it are unchanged.
+  - Catalog: step `discuter` (judge, slot `routage.rapporter`, artefact
+    `discussion.md`, sections « Réponse » and « À décider »).
+  - Tests: `scripts/_test_todo_discuss_chef.mjs` (real chef turns, routed or
+    not: discussion mode, answer in the thread, no dispatch.json, no musician
+    turn, no queue, no waiting task; without the prefix the usual Routage still
+    dispatches), browser `todo-discuss-chef`.
+
 ## [0.95.0] - 2026-10-14
 
 ### Added

@@ -204,6 +204,10 @@ S.routage = {
     // the whole message is never classified into a pipeline (nor a gap).
     demande: ['lire', 'comprendre', 'decomposer', 'classifier', 'affecter', 'dispatcher', 'rapporter'],
     callback: ['lire', 'relancer', 'callback', 'rapporter'],
+    // 0.96.0 (user request 2026-10-14, « pas pour lancer mais en discuter »):
+    // the user discusses an item with the chef. No Decomposer, Classifier,
+    // Affecter nor Dispatcher: nothing can be launched from this mode.
+    discussion: ['lire', 'discuter', 'rapporter'],
   },
   steps: [
     { id: 'lire', title: '1 Lire la demande', chain: ['routage.lire'], group: 'routage', artefact: 'lecture.md', kind: 'judge', prerun: 'conversation',
@@ -233,6 +237,9 @@ S.routage = {
     { id: 'callback', title: '2 Callback', chain: ['routage.callback'], group: 'routage', artefact: 'callback.md', kind: 'judge',
       role: 'CALLBACK : des musiciens ont rendu leurs résultats (dans demande.md). Pour chacun : ce qui a été fait, vérifié ou non, ce qui reste ; puis la suite à proposer à l’utilisateur. Ne relance aucun travail toi-même.',
       checks: { sections: ['Résultats', 'Suite'] } },
+    { id: 'discuter', title: '2 Discuter (sans rien lancer)', chain: ['routage.rapporter'], group: 'routage', artefact: 'discussion.md', kind: 'judge',
+      role: 'DISCUTER avec l’utilisateur du sujet de demande.md (souvent un item de TODO) : il veut en PARLER, pas le lancer. Réponds à ses questions, donne ton avis, les options et leurs conséquences, ce qu’il faudrait décider et ce qui manque, en t’appuyant sur contexte.md et conversation.md. Tu ne lances RIEN : aucun dispatch, aucune tâche, aucune action (ce mode n’a d’ailleurs aucune étape de lancement). Si l’utilisateur décide ensuite de le faire, il l’enverra au chef avec « Envoyer au chef… ».',
+      checks: { sections: ['Réponse', 'À décider'] } },
     { id: 'rapporter', title: '7 Rapporter', chain: ['routage.rapporter'], group: 'routage', artefact: 'rapport.md', kind: 'judge',
       role: 'RAPPORTER à l’utilisateur, à partir des artefacts de cette exécution : la réponse directe, ou ce qui a été lancé (projet, pipeline, models — tâche par tâche, voir classement.json) et ce qu’il en attend, ou la synthèse des résultats. Une tâche non lancée (question, lacune, classement impossible) est dite comme telle. En nommant toujours le projet concerné. Clair et bref.',
       checks: {} },
@@ -243,7 +250,7 @@ S.routage = {
 // id. Method rule for every Routage step that writes (the code also checks
 // each id of the report: scripts/report-check.mjs).
 export const ID_METHOD_RULE = 'MÉTHODE : ne nomme jamais une tâche en attente par son identifiant sans avoir relu son entrée dans ce tour (contexte.md) ; écris toujours « identifiant « titre » », jamais l’identifiant seul ni un titre de mémoire. L’orchestrateur contrôle chaque identifiant de ta réponse.';
-for (const st of S.routage.steps) if (['lire', 'comprendre', 'decomposer', 'callback', 'rapporter'].includes(st.id)) st.role = `${st.role} ${ID_METHOD_RULE}`;
+for (const st of S.routage.steps) if (['lire', 'comprendre', 'decomposer', 'callback', 'discuter', 'rapporter'].includes(st.id)) st.role = `${st.role} ${ID_METHOD_RULE}`;
 
 // ── Images, Vidéo, Audio (lot C, 0.55.0) ────────────────────────────────────
 Object.assign(S, MEDIA_PIPELINES);

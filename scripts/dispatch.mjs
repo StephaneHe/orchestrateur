@@ -1181,6 +1181,16 @@ let pipelineBypass = null;   // trace d'un tour qui ne passe PAS par un pipeline
 if (horsPipelineArg != null && !PIPE_STEP) {
   pipelineBypass = { reason: String(horsPipelineArg).replace(/\s+/g, ' ').trim().slice(0, 300), by: 'hors-pipeline', enforced: ENFORCED || (CHEF_TARGET && ENFORCEMENT.chef) };
 }
+// ---------- « Discuter avec le chef » (0.96.0) --------------------------------
+// A USER message to the chef starting with /chef-discussion (explicit choice,
+// placed by the TODO panel) runs the Routage in its discussion mode: no
+// Decomposer/Dispatcher step, so nothing is ever launched. Checked before the
+// TODO capture, so a « TODO: » line quoted from the item is never captured.
+let CHEF_DISCUSSION = false;
+if (CHEF_TARGET && !sourceProject && !PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && !CHEF_HANDOFF && horsPipelineArg == null) {
+  const d = (await import('./chef-discussion.mjs')).chefDiscussion(prompt);
+  if (d.on && d.text) { CHEF_DISCUSSION = true; prompt = d.text; }
+}
 // ---------- « TODO: » lines of a user message (0.84.0) -----------------------
 // User request: « Dans ma requete, si je commence par TODO: , alors ce qui suit
 // doit etre ajoute dans la todo list. Ce doit etre une fonctionalite codee dans
@@ -1189,7 +1199,7 @@ if (horsPipelineArg != null && !PIPE_STEP) {
 // its « TODO: » lines added to the chef's TODO_LIST.md (scripts/todo-capture.mjs);
 // the rest is routed as usual, told what was captured. Nothing else ⇒ the turn
 // ends here.
-if (CHEF_TARGET && !sourceProject && !PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && !CHEF_HANDOFF) {
+if (CHEF_TARGET && !CHEF_DISCUSSION && !sourceProject && !PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && !CHEF_HANDOFF) {
   const cap = await import('./todo-capture.mjs');
   const { todos, rest } = cap.splitTodoLines(prompt);
   if (todos.length) {
@@ -1217,9 +1227,11 @@ if (CHEF_TARGET && !sourceProject && !PIPE_STEP && !DUAL_BRANCH && !dualSynthesi
     prompt = error ? `${prompt}\n\n[Routeur] ${text}` : `${rest}\n\n[Routeur] ${text}`;
   }
 }
-if (CHEF_ROUTED) {
+if (CHEF_ROUTED || CHEF_DISCUSSION) {
   // Demande (message, question d'un musicien) ou réveil apportant des résultats.
-  const mode = (sourceProject === 'wake' || /^\s*\[CALLBACK_WAKE/.test(prompt)) ? 'callback' : 'demande';
+  // 0.96.0: a discussion runs the Routage even when the chef is not routed:
+  // that is what guarantees, by code, that nothing is dispatched.
+  const mode = CHEF_DISCUSSION ? 'discussion' : (sourceProject === 'wake' || /^\s*\[CALLBACK_WAKE/.test(prompt)) ? 'callback' : 'demande';
   process.exit(await pipeEngine.runPipeline({
     root: ROOT, logsDir: LOGS, project, projectName,
     prompt: imagePaths.length || videoPaths.length
