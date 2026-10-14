@@ -74,7 +74,7 @@ async function chefTurn(text, json, map) {
   return { code: r.status, out: `${r.stdout || ''}${r.stderr || ''}`, read, calls: calls().slice(c0), musicianPrompts,
     classify: prompts.filter(p => /^\[CLASSIFY\] ROUTING TASK/.test(p)), result: evs.filter(e => e.type === 'result').pop()?.result || '' };
 }
-const TASKS = (extra) => ({ comprendre: { nature: 'taches', sens: 'travail et action du chef', raison: 'x' }, decomposer: { taches: [{ projet: 'R', demande: 'Ajoute une fonction double(x) au projet R, avec son test.' }, extra] } });
+const TASKS = (extra) => ({ comprendre: { nature: 'taches', sens: 'travail et action du chef', raison: 'x' }, decomposer: { taches: [{ projet: 'R', titre: 'tâche de test 1', demande: 'Ajoute une fonction double(x) au projet R, avec son test.' }, extra] } });
 const DEV = { 'double(x)': { pipeline: 'dev', mode: 'leger', nature: 'comportement', raison: 'fonction à ajouter' } };
 
 // ---------------------------------------------------------------------------
@@ -85,7 +85,7 @@ ok(/ne_pas_dispatcher/.test(dec.role) && /ne_pas_dispatcher/.test(dec.jsonExampl
 
 // ---------------------------------------------------------------------------
 section('2. Une tâche reconnue « action du chef » (liste blanche) n’est JAMAIS dispatchée : elle est faite par le code');
-let x = await chefTurn('Ajoute double() à R, puis redémarre la prod', TASKS({ projet: 'Q', demande: 'Redémarre le serveur de la prod (action directe du chef, ne pas dispatcher).' }),
+let x = await chefTurn('Ajoute double() à R, puis redémarre la prod', TASKS({ projet: 'Q', titre: 'tâche de test 2', demande: 'Redémarre le serveur de la prod (action directe du chef, ne pas dispatcher).' }),
   { ...DEV, 'Redémarre le serveur': { chef: 'restart-orchestrateur', raison: 'redémarrage par le chef' } });
 const cls = x.read('classement.json');
 ok(x.code === 0 && cls?.taches?.[1]?.chefAction === 'restart-orchestrateur' && cls.taches[1].route === false, `tâche 2 : action du chef (${JSON.stringify(cls?.taches?.[1] && { a: cls.taches[1].chefAction, r: cls.taches[1].route })})`, x.out.slice(-600));
@@ -93,26 +93,26 @@ ok(!x.musicianPrompts.some(p => /Redémarre/.test(p)), 'aucun musicien ne reçoi
 ok(x.musicianPrompts.some(p => /^R: .*double/.test(p)), 'la vraie tâche du même message part normalement chez R', x.musicianPrompts.join(' | '));
 ok(x.calls.map(c => c[0]).join() === 'restart-orchestrateur' && x.read('dispatch.json')?.actions?.[0]?.status === 'scheduled', 'le redémarrage est programmé par le code, comme une action du chef');
 
-x = await chefTurn('Ajoute double() à R, PUIS redémarre la prod', TASKS({ projet: 'Q', demande: 'Redémarre le serveur de la prod quand R aura fini.', apres: 1 }),
+x = await chefTurn('Ajoute double() à R, PUIS redémarre la prod', TASKS({ projet: 'Q', titre: 'tâche de test 3', demande: 'Redémarre le serveur de la prod quand R aura fini.', apres: 1 }),
   { ...DEV, 'Redémarre le serveur': { chef: 'restart-orchestrateur', raison: 'redémarrage par le chef' } });
 ok(x.calls.length === 0 && !x.musicianPrompts.some(p => /Redémarre/.test(p)) && /NEEDS_USER_INPUT: .*doit attendre la fin de la tâche 1/.test(x.result), 'action du chef qui doit attendre une tâche (« puis ») : ni exécutée tout de suite (elle couperait le tour de R), ni dispatchée — question', x.result.slice(-400));
 
 // ---------------------------------------------------------------------------
 section('3. kill-stalled reconnu sur une tâche : exécuté par le code avec le projet de la tâche');
-x = await chefTurn('Arrête le tour bloqué de Q et ajoute double() à R', TASKS({ projet: 'Q', demande: 'Arrête le tour bloqué de Q.' }),
+x = await chefTurn('Arrête le tour bloqué de Q et ajoute double() à R', TASKS({ projet: 'Q', titre: 'tâche de test 4', demande: 'Arrête le tour bloqué de Q.' }),
   { ...DEV, 'tour bloqué': { chef: 'kill-stalled', raison: 'tour bloqué depuis 2 h' } });
 ok(x.calls.length === 1 && x.calls[0].slice(0, 4).join(' ') === 'kill-stalled Q --by chef' && !x.musicianPrompts.some(p => /^Q:/.test(p)), `kill-stalled Q par le code, aucun tour chez Q (${JSON.stringify(x.calls)})`);
 
 // ---------------------------------------------------------------------------
 section('4. Tâche marquée « ne_pas_dispatcher » : jamais dispatchée, pas classée, question à l’utilisateur');
-x = await chefTurn('Ajoute double() à R ; et pour Q, la chose dont on a parlé', TASKS({ projet: 'Q', demande: 'Faire sur Q la chose dont on a parlé.', ne_pas_dispatcher: true }), DEV);
+x = await chefTurn('Ajoute double() à R ; et pour Q, la chose dont on a parlé', TASKS({ projet: 'Q', titre: 'tâche de test 5', demande: 'Faire sur Q la chose dont on a parlé.', ne_pas_dispatcher: true }), DEV);
 ok(x.code === 0 && x.classify.length === 1 && x.classify[0].includes('double(x)'), `seule la vraie tâche est classée (${x.classify.length} appel(s))`);
 ok(!x.musicianPrompts.some(p => /^Q:/.test(p)) && x.musicianPrompts.some(p => /^R:/.test(p)), 'rien chez Q, R part normalement', x.musicianPrompts.join(' | '));
 ok(/NEEDS_USER_INPUT: .*Tâche 2 \(Q\) marquée « ne pas dispatcher »/.test(x.result) && x.calls.length === 0, 'la question part à l’utilisateur, aucune action exécutée', x.result.slice(-400));
 
 // ---------------------------------------------------------------------------
 section('5. Action du chef hors liste blanche : question, rien d’exécuté, rien dispatché');
-x = await chefTurn('Ajoute double() à R, et supprime les journaux de Q', TASKS({ projet: 'Q', demande: 'Supprime tous les journaux de Q.' }),
+x = await chefTurn('Ajoute double() à R, et supprime les journaux de Q', TASKS({ projet: 'Q', titre: 'tâche de test 6', demande: 'Supprime tous les journaux de Q.' }),
   { ...DEV, 'journaux': { chef: 'autre', raison: 'action de supervision' } });
 ok(x.calls.length === 0 && !x.musicianPrompts.some(p => /^Q:/.test(p)) && /NEEDS_USER_INPUT: .*Tâche 2 \(Q\) : c’est une action du chef \(« autre »\)/.test(x.result), 'aucune exécution, aucun tour chez Q, question posée', x.result.slice(-400));
 

@@ -93,7 +93,7 @@ const tDev = 'Ajoute une fonction double(x) qui renvoie 2*x dans le projet Q, av
 const tGit = 'Pousse la branche main du projet Q et pose le tag annoté v1.1.0 sur le dernier commit.';
 let x = chefTurn(mixed, {
   FAKE_PIPE_JSON: JSON.stringify({ comprendre: { nature: 'taches', sens: 'deux travaux de natures différentes sur Q', raison: 'code puis version' },
-    decomposer: { taches: [{ projet: 'Q', demande: tDev }, { projet: 'Q', demande: tGit, apres: 1 }] } }),
+    decomposer: { taches: [{ projet: 'Q', titre: 'tâche de test 1', demande: tDev }, { projet: 'Q', titre: 'tâche de test 2', demande: tGit, apres: 1 }] } }),
   FAKE_CLAUDE_CLASSIFY_MAP: JSON.stringify({
     'double(x)': { pipeline: 'dev', mode: 'leger', nature: 'comportement', raison: 'une fonction à ajouter' },
     'tag annoté': { pipeline: 'maintenance', mode: 'leger', raison: 'opération git de version' } }),
@@ -122,7 +122,7 @@ fs.appendFileSync(path.join(T, 'logs', 'chef.jsonl'), [
 const tSuite = 'Le chef avait proposé de faire le changement d’ordre du Routage sur Q ou d’abord sur R ; l’utilisateur répond : ce développement doit être fait sur R. Fais-le sur R.';
 x = chefTurn('Mais ce dev devra etre fait sur R', {
   FAKE_PIPE_JSON: JSON.stringify({ comprendre: { nature: 'suite', sens: 'répond à l’offre du chef : le travail se fait sur R', raison: 'réponse courte à une offre', rattache: ['offre du chef'] },
-    decomposer: { taches: [{ projet: 'R', demande: tSuite, rattache: 'offre du chef' }] } }),
+    decomposer: { taches: [{ projet: 'R', titre: 'tâche de test 3', demande: tSuite, rattache: 'offre du chef' }] } }),
   FAKE_CLAUDE_CLASSIFY_MAP: JSON.stringify({ 'fait sur R': { pipeline: 'dev', mode: 'leger', nature: 'comportement', raison: 'développement' } }),
 });
 ok(x.code === 0 && x.read('sens.json')?.nature === 'suite' && statusOf(x.st) === 'lire:ok comprendre:ok decomposer:ok classifier:ok affecter:ok dispatcher:ok rapporter:ok', `suite reconnue et routée : ${statusOf(x.st)}`, x.out.slice(-900));
@@ -135,7 +135,7 @@ await waitIdle();
 section('4. Tâche ambiguë : question à l’utilisateur pour CETTE tâche, les autres partent ; jamais deviner');
 x = chefTurn('Corrige le bug de Q et range R', {
   FAKE_PIPE_JSON: JSON.stringify({ comprendre: { nature: 'taches', sens: 'deux demandes', raison: 'deux projets' },
-    decomposer: { taches: [{ projet: 'Q', demande: 'Corrige le bug de division par zéro de Q.' }, { projet: 'R', demande: 'Range le projet R comme convenu.' }] } }),
+    decomposer: { taches: [{ projet: 'Q', titre: 'tâche de test 4', demande: 'Corrige le bug de division par zéro de Q.' }, { projet: 'R', titre: 'tâche de test 5', demande: 'Range le projet R comme convenu.' }] } }),
   FAKE_CLAUDE_CLASSIFY_MAP: JSON.stringify({ 'division par zéro': { pipeline: 'dev', mode: 'leger', nature: 'bugfix', raison: 'bug' }, 'Range le projet': { question: 'Ranger R : supprimer les fichiers inutiles, ou réorganiser les dossiers ?', raison: 'ambigu' } }),
 });
 const cls4 = x.read('classement.json');
@@ -146,7 +146,7 @@ await waitIdle();
 // ---------------------------------------------------------------------------
 section('5. Classement impossible (réponse invalide du model) : question, rien n’est lancé, aucun repli');
 x = chefTurn('Fais le ménage dans Q', {
-  FAKE_PIPE_JSON: JSON.stringify({ comprendre: { nature: 'taches', sens: 'ménage', raison: 'x' }, decomposer: { taches: [{ projet: 'Q', demande: 'Fais le ménage dans le dépôt Q.' }] } }),
+  FAKE_PIPE_JSON: JSON.stringify({ comprendre: { nature: 'taches', sens: 'ménage', raison: 'x' }, decomposer: { taches: [{ projet: 'Q', titre: 'tâche de test 6', demande: 'Fais le ménage dans le dépôt Q.' }] } }),
   FAKE_CLAUDE_CLASSIFY: 'pas du JSON',
 });
 ok(x.code === 0 && x.read('dispatch.json')?.dispatched?.length === 0 && x.read('classement.json')?.taches?.[0]?.failed === true, 'aucune tâche lancée');
@@ -160,7 +160,7 @@ x = chefTurn('Fais ce qu’on a dit', {
 ok(x.code === 0 && x.classify.length === 0 && x.read('dispatch.json')?.dispatched?.length === 0 && /NEEDS_USER_INPUT: De quelle demande parlez-vous/.test(x.result), 'aucun classement, aucune tâche, la question part', x.result.slice(-300));
 x = chefTurn('Organise un voyage', { FAKE_PIPE_JSON: JSON.stringify({ comprendre: { nature: 'lacune', sens: 's', raison: 'x' } }) });
 ok(x.st?.steps?.find(s => s.id === 'comprendre')?.status === 'refused' && x.gaps.length === 0, '« lacune » pour le message entier : refusée, aucune lacune signalée');
-ok(E.validateUnitTasks(T, [{ projet: 'Q', demande: 'Une demande autonome.' }]) === null && /pipeline inconnu/.test(E.validateUnitTasks(T, [{ projet: 'Q', demande: 'Une demande autonome.', impose: { pipeline: 'routage' } }]) || ''),
+ok(E.validateUnitTasks(T, [{ projet: 'Q', titre: 'tâche de test 7', demande: 'Une demande autonome.' }]) === null && /pipeline inconnu/.test(E.validateUnitTasks(T, [{ projet: 'Q', titre: 'tâche de test 8', demande: 'Une demande autonome.', impose: { pipeline: 'routage' } }]) || ''),
   'tâches unitaires : pas de pipeline exigé ; un pipeline imposé reste vérifié');
 
 // The double's default answer (nothing scripted) must satisfy « Comprendre » too.

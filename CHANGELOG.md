@@ -11,6 +11,34 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.87.0] - 2026-10-14
+
+### Added
+
+- (server) Mandatory short title for every Routage task — task 1/4 of the
+  mechanism validated by the user after the chef confused two waiting Routage
+  tasks born from the same request (2026-10-13; their texts shared their first
+  ~400 characters, every display cut them at ~140, and an 8-hex id says
+  nothing), answer verbatim « Lances les taches ».
+  - The Decomposer step must give each task a `titre` (3 to 60 characters);
+    `validateUnitTasks` refuses a `taches.json` whose task has no title, an
+    empty one, or one that is too short or too long, and names the task.
+  - The title follows the task: classification, `dispatch.json` (launched
+    and waiting tasks), the waiting entry in `logs/routage-pending.json`.
+  - Shown as `id « titre »` wherever a waiting task is named:
+    `routage-pending.mjs list` (`--json`: `titre`, `titreRepli`),
+    `release` and `drop`, the context given to the chef's steps (« Tâches
+    déjà décidées, en attente d'une autre »), the chef's Routage report
+    (written by the code), `relance.json`, the stale-task wake-up and sweep
+    of the server, `/api/version`'s `routagePending`, end-of-turn release
+    messages of `dispatch.mjs`, and the duplicate report.
+  - Entries queued before 0.87.0 get a fallback title derived from their
+    `rattache` (else the start of their demand), marked « titre de repli »,
+    computed at display time only: the stored entry and its demand are never
+    rewritten.
+  - Test: `scripts/_test_routage_titles.mjs`. The Routage suites now give
+    their decomposed tasks a title.
+
 ## [0.86.0] - 2026-10-13
 
 ### Added

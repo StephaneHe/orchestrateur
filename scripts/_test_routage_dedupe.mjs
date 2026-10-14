@@ -51,7 +51,7 @@ section('1. Deux tâches au même début de texte mais différentes : les deux s
 {
   const L = path.join(T, 'l1'); fs.mkdirSync(L);
   ok(HEAD.length > 200 && RP.taskKey(TASK3) === RP.taskKey(TASK4), 'l’ancienne clé (120 premiers caractères) les confondait : même clé pour la tâche 3 et la tâche 4');
-  ok(RP.contentHash({ projet: 'O', demande: TASK3 }) !== RP.contentHash({ projet: 'O', demande: TASK4 }), 'empreinte du texte complet : différente');
+  ok(RP.contentHash({ projet: 'O', titre: 'tâche de test 1', demande: TASK3 }) !== RP.contentHash({ projet: 'O', titre: 'tâche de test 2', demande: TASK4 }), 'empreinte du texte complet : différente');
   const after = { projet: 'Q', offset: 0, hash: RP.textHash('tâche 1') };
   const r = RP.addPending(L, [
     { run: 'p-20261010T080000-aaaaaa', n: 3, projet: 'O', pipeline: 'dev', mode: 'complet', demande: TASK3, after },
@@ -103,8 +103,8 @@ section('4. Libération : deux jumeaux (anciennes entrées) partent une seule fo
 {
   const L = path.join(T, 'l4'); fs.mkdirSync(L);
   fs.writeFileSync(path.join(L, 'routage-pending.json'), JSON.stringify({ tasks: [
-    { projet: 'O', demande: 'Même travail', after: { projet: 'Q', since: '2000-01-01T00:00:00Z' } },
-    { projet: 'O', demande: 'même   travail', after: { projet: 'Q', since: '2000-01-01T00:00:00Z' } },
+    { projet: 'O', titre: 'tâche de test 3', demande: 'Même travail', after: { projet: 'Q', since: '2000-01-01T00:00:00Z' } },
+    { projet: 'O', titre: 'tâche de test 4', demande: 'même   travail', after: { projet: 'Q', since: '2000-01-01T00:00:00Z' } },
   ] }));
   fs.writeFileSync(path.join(L, 'Q.jsonl'), J([{ type: 'result', subtype: 'success', num_turns: 2, duration_api_ms: 5, result: 'ok', timestamp: '2026-10-10T08:00:00Z' }]));
   const launched = [];
@@ -138,10 +138,10 @@ section('5. De bout en bout (vrai dispatch.mjs, Routage du chef) : tâches 3 et 
     ORCH_PERM_DISABLE: '1', ORCH_PORT: String(srv.address().port), ORCH_PIPE_PROGRESS_MS: '200', ORCH_NO_PENDING_RELEASE: '1' };
   for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'ORCH_TURN_PROJECT', 'ORCH_TURN_STEP', 'ORCH_STEP_TOKEN', 'ORCH_OBS_ID', 'DISPATCH_SLOT', 'DISPATCH_TICKET', 'DISPATCH_REPORT_ONLY', 'ORCH_TEST_LABEL', 'CODEX_HOME']) delete env[k];
   const tasks = [
-    { projet: 'Q', pipeline: 'discussion', demande: 'Explique pourquoi la suite de tests passe.' },
-    { projet: 'O', pipeline: 'discussion', demande: 'Résume l’état du dépôt.', apres: 1 },
-    { projet: 'O', pipeline: 'discussion', demande: TASK3, apres: 1 },
-    { projet: 'O', pipeline: 'discussion', demande: TASK4, apres: 1 },
+    { projet: 'Q', titre: 'tâche de test 5', pipeline: 'discussion', demande: 'Explique pourquoi la suite de tests passe.' },
+    { projet: 'O', titre: 'tâche de test 6', pipeline: 'discussion', demande: 'Résume l’état du dépôt.', apres: 1 },
+    { projet: 'O', titre: 'tâche de test 7', pipeline: 'discussion', demande: TASK3, apres: 1 },
+    { projet: 'O', titre: 'tâche de test 8', pipeline: 'discussion', demande: TASK4, apres: 1 },
   ];
   const fakeJson = JSON.stringify({ comprendre: { nature: 'taches', sens: 'enchaînement de tâches', raison: 'enchaînement' }, decomposer: { taches: tasks } });
   // Async: the notification listener lives in THIS process (spawnSync would block it).

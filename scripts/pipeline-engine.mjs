@@ -39,7 +39,7 @@ import { renameRetry, writeFileAtomic } from './atomic-file.mjs';
 import { readBranchLog } from './dual-run.mjs';
 import { languageFor, languageGate, localize, workingLanguage } from './language.mjs';
 import { CATALOG_PIPELINES, catalogOf, catalogSteps } from './pipeline-catalog.mjs';
-import { readPending, addPending, releaseReady, launchTask, detectReprise, logOffset, taskKey, textHash, duplicatesText, RUN_ID_RE } from './routage-pending.mjs';
+import { readPending, addPending, releaseReady, launchTask, detectReprise, logOffset, taskKey, textHash, duplicatesText, RUN_ID_RE, titleProblem, pendingLabel, cleanTitle } from './routage-pending.mjs';
 export { readPending };
 import { backoffConfig, isLaunchFailure, dispatchRefusal, tierAfter, delayFor, waitBackoff, runDirOf } from './model-backoff.mjs';
 import { runModelTest } from './model-test.mjs';
@@ -703,6 +703,10 @@ export function validateTasks(root, tasks) {
 export function validateUnitTasks(root, tasks) {
   if (!Array.isArray(tasks) || !tasks.length) return 'aucune tâche';
   for (const [i, t] of tasks.entries()) {
+    // 0.87.0: an id alone told the chef nothing and two tasks of one request were
+    // confused (2026-10-13); every task is named here, where it is decided.
+    const why = t && typeof t === 'object' ? titleProblem(t.titre) : null;
+    if (why) return `tâche ${i + 1} : ${why}`;
     if (t?.hors_pipeline == null) continue;
     const h = t.hors_pipeline;
     // 0.71.2 (n° 10): an off-pipeline task must quote the user's authorization.
@@ -876,7 +880,7 @@ const CODE_STEPS = {
     for (const [i, t] of units.entries()) {
       const n = i + 1;
       const imp = t.impose && typeof t.impose === 'object' ? t.impose : {};
-      const base = { n, projet: t.projet, demande: t.demande, ...(t.rattache ? { rattache: t.rattache } : {}), ...(t.apres ? { apres: t.apres } : {}), ...(t.reprise ? { reprise: t.reprise } : {}), ...(t.ne_pas_dispatcher ? { ne_pas_dispatcher: true } : {}) };
+      const base = { n, projet: t.projet, titre: cleanTitle(t.titre), demande: t.demande, ...(t.rattache ? { rattache: t.rattache } : {}), ...(t.apres ? { apres: t.apres } : {}), ...(t.reprise ? { reprise: t.reprise } : {}), ...(t.ne_pas_dispatcher ? { ne_pas_dispatcher: true } : {}) };
       // Explicitly marked « not for a musician » (0.71.0, n° 8): never dispatched,
       // not even classified — the user says what it is (never guess).
       if (t.ne_pas_dispatcher) {
@@ -1005,7 +1009,7 @@ const CODE_STEPS = {
         // (or now, if it is itself still waiting) plus the fingerprint of its
         // WHOLE text (0.67.x: a shared opening sentence no longer matches).
         // `n` + `run` identify this Routage task (deduplication, 0.68.0).
-        return { run, n: w.n, projet: w.projet, pipeline: w.pipeline, mode: w.mode || null, ...(w.kind ? { kind: w.kind } : {}), ...(w.horsPipeline ? { horsPipeline: w.horsPipeline } : {}), served: w.served, demande: w.demande, rattache: w.rattache || null,
+        return { run, n: w.n, projet: w.projet, ...(w.titre ? { titre: w.titre } : {}), pipeline: w.pipeline, mode: w.mode || null, ...(w.kind ? { kind: w.kind } : {}), ...(w.horsPipeline ? { horsPipeline: w.horsPipeline } : {}), served: w.served, demande: w.demande, rattache: w.rattache || null,
           ...(w.reprise ? { reprise: w.reprise } : {}),
           after: { projet: w.after, offset: dep ? dep.offset : logOffset(logsDir, w.after), key: taskKey(depTask.demande), hash: textHash(depTask.demande), since: dep?.at || new Date().toISOString() } };
       });
@@ -1029,7 +1033,7 @@ const CODE_STEPS = {
     // « waiting » = what is REALLY queued (it was computed before addPending, so
     // a task dropped as a duplicate still showed as waiting); duplicates apart.
     fs.writeFileSync(path.join(artDir, 'dispatch.json'), JSON.stringify({ dispatched: done,
-      waiting: waiting.filter(w => queued.some(q => q.n === w.n)).map(w => ({ n: w.n, projet: w.projet, apres: w.apres, after: w.after, ...(w.reprise ? { reprise: w.reprise } : {}) })),
+      waiting: queued.map(q => ({ id: q.id, titre: pendingLabel(q).titre, n: q.n, projet: q.projet, apres: waiting.find(w => w.n === q.n)?.apres ?? null, after: q.after?.projet || null, ...(q.reprise ? { reprise: q.reprise } : {}) })),
       ...(duplicates.length ? { duplicates } : {}),
       ...(actions.length ? { actions } : {}),
       ...(tj.aucun_dispatch && !done.length && !waiting.length ? { aucun_dispatch: String(tj.aucun_dispatch).slice(0, 500) } : {}) }, null, 2));
@@ -1047,7 +1051,7 @@ const CODE_STEPS = {
     const r = process.env.DISPATCH_REPORT_ONLY === '1'
       ? { launched: [], blocked: [], still: readPending(logsDir) }
       : releaseReady({ root, logsDir, dispatchScript });
-    fs.writeFileSync(path.join(artDir, 'relance.json'), JSON.stringify({ launched: r.launched, waiting: r.still.map(p => ({ projet: p.projet, after: p.after?.projet })), blocked: r.blocked }, null, 2));
+    fs.writeFileSync(path.join(artDir, 'relance.json'), JSON.stringify({ launched: r.launched, waiting: r.still.map(p => ({ ...pendingLabel(p), projet: p.projet, after: p.after?.projet })), blocked: r.blocked }, null, 2));
     return { ok: true };
   },
 };
@@ -1138,7 +1142,7 @@ export function routingContext(root, { logsDir, chefLog, chefDir }) {
   L.push('## Demandes mises en attente (TODO_LIST du chef)', '', parked.length ? parked.slice(0, 20).map(x => `- ${x.slice(0, 400)}`).join('\n') : '(aucune)', '');
   // 4. Tâches de Routage qui attendent la fin d'une autre.
   const pend = readPending(logsDir);
-  if (pend.length) L.push('## Tâches déjà décidées, en attente d’une autre', '', pend.map(p => `- ${p.projet} (après ${p.after?.projet || '?'})${p.reprise ? ` — reprise ${p.reprise}` : ''} : ${String(p.demande).slice(0, 200)}`).join('\n'), '');
+  if (pend.length) L.push('## Tâches déjà décidées, en attente d’une autre', '', pend.map(p => `- ${pendingLabel(p).text} — ${p.projet} (après ${p.after?.projet || '?'})${p.reprise ? ` — reprise ${p.reprise}` : ''} : ${String(p.demande).slice(0, 200)}`).join('\n'), '');
   // 5. Paused pipeline runs (0.58.0): resuming one is a task with « reprise ».
   const paused = pausedRuns(logsDir);
   L.push('## Exécutions de pipeline en pause (pour les reprendre : tâche avec « reprise »: "<identifiant>")', '',
@@ -2752,12 +2756,16 @@ export async function runPipeline(o) {
       const acts = Array.isArray(disp.actions) && disp.actions.length
         ? `\n\n**Actions du chef (exécutées par l’orchestrateur)** :\n${disp.actions.map(a => `- ${a.action}${a.projet ? ` ${a.projet}` : ''} : ${{ done: 'faite', scheduled: 'programmée après la fin de ce tour', failed: `échec (code ${a.code})`, refused: `refusée — ${a.why}` }[a.status] || a.status}`).join('\n')}`
         : '';
+      // Waiting tasks are named by the code (0.87.0): never a bare id.
+      const waitTxt = Array.isArray(disp.waiting) && disp.waiting.length
+        ? `\n\n**Tâches mises en attente (identifiant « titre »)** :\n${disp.waiting.map(w => `- ${w.id || '?'} « ${w.titre || '?'} » — ${w.projet}, après ${w.after || '?'}`).join('\n')}`
+        : '';
       const hors = (state.tasks || []).filter(t => t.horsPipeline && t.route);
       const horsTxt = hors.length ? `\n\n**Tâches lancées hors pipeline, sur votre autorisation** : ${hors.map(t => `tâche ${t.n} (${t.projet}) — « ${t.autorisation} » — ${t.horsPipeline}`).join(' ; ')}` : '';
       const ext = (state.externalChanges || []).length
         ? `\n\n**Fichiers du dossier du chef modifiés pendant cette exécution** (par vous ou un musicien, conservés, rien n’a été annulé) : ${state.externalChanges.slice(0, 12).map(f => `\`${f}\``).join(', ')}`
         : '';
-      return `${body || '(rapport vide)'}${acts}${horsTxt}${ext}${q && !/NEEDS_USER_INPUT:/.test(body) ? `\n\nNEEDS_USER_INPUT: ${q}` : ''}`;
+      return `${body || '(rapport vide)'}${acts}${waitTxt}${horsTxt}${ext}${q && !/NEEDS_USER_INPUT:/.test(body) ? `\n\nNEEDS_USER_INPUT: ${q}` : ''}`;
     }
     const head = git(cwd, ['rev-parse', 'HEAD']).out;
     const delivered = head && head !== base ? git(cwd, ['log', '-1', '--format=%h %s']).out : null;

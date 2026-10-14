@@ -100,6 +100,41 @@ export function pendingId(t) {
 /** Entries written before 0.58.0 have no id: derive a stable one. */
 export const idOf = (t) => t.id || pendingId(t);
 
+// --- short title (0.87.0) ----------------------------------------------------
+// On 2026-10-13 the chef confused two waiting tasks of the same request: their
+// texts shared their first ~400 characters, every display cut them at ~140, and
+// an 8-hex id says nothing. Each task now gets a short title at the Decomposer
+// step, shown next to its id everywhere; an id never appears alone.
+export const TITLE_MIN = 3;
+export const TITLE_MAX = 60;
+export const cleanTitle = (s) => (typeof s === 'string' ? s.replace(/\s+/g, ' ').trim() : '');
+/** null when `titre` is a valid short title, else why (French, for the model's retry). */
+export function titleProblem(titre) {
+  const s = cleanTitle(titre);
+  if (!s) return '« titre » obligatoire : quelques mots qui disent ce que fait cette tâche et la distinguent des autres (ex. « file : glisser-déposer »)';
+  if (s.length < TITLE_MIN) return `« titre » trop court (« ${s} ») : quelques mots qui distinguent cette tâche`;
+  if (s.length > TITLE_MAX) return `« titre » trop long (${s.length} caractères, ${TITLE_MAX} au plus) : un titre court, pas la demande`;
+  return null;
+}
+/**
+ * Title of an entry. Entries written before 0.87.0 have none: a fallback is
+ * derived from their « rattache » (else the start of the demand) at display
+ * time only — the stored entry and its demand are never modified.
+ */
+export function titleOf(t) {
+  const own = cleanTitle(t?.titre);
+  if (own) return { titre: own, fallback: false };
+  const src = cleanTitle(t?.rattache) || cleanTitle(String(t?.demande || '').replace(/\n\n\(Rattachée à :[\s\S]*$/, ''));
+  const cut = src.length > TITLE_MAX - 2 ? `${src.slice(0, TITLE_MAX - 3).replace(/\s+\S*$/, '')}…` : src;
+  return { titre: `↳ ${cut || 'sans titre'}`, fallback: true };
+}
+/** `id « titre »`: the only way an id is shown. */
+export function pendingLabel(t) {
+  const id = idOf(t);
+  const { titre, fallback } = titleOf(t);
+  return { id, titre, ...(fallback ? { titreRepli: true } : {}), text: `${id} « ${titre} »${fallback ? ' (titre de repli)' : ''}` };
+}
+
 export function logOffset(logsDir, projet) {
   try { return fs.statSync(path.join(logsDir, `${projet}.jsonl`)).size; } catch { return 0; }
 }
@@ -137,11 +172,11 @@ export function addPending(logsDir, entries) {
       if (hit) {
         const kept = seen.get(hit);
         duplicates.push({ projet: e.projet, run: e.run || null, n: e.n ?? null, reprise: e.reprise || null, key: hit,
-          reason: DUP_REASON[hit.split(':')[0]], keptId: idOf(kept), keptRun: kept.run || null, keptN: kept.n ?? null,
+          reason: DUP_REASON[hit.split(':')[0]], keptId: idOf(kept), keptTitre: titleOf(kept).titre, keptRun: kept.run || null, keptN: kept.n ?? null,
           demande: String(e.demande || '').slice(0, 2000) });
         continue;
       }
-      const t = { ...e, id: e.id || pendingId(e), createdAt: e.createdAt || new Date().toISOString() };
+      const t = { ...e, ...(cleanTitle(e.titre) ? { titre: cleanTitle(e.titre) } : {}), id: e.id || pendingId(e), createdAt: e.createdAt || new Date().toISOString() };
       tasks.push(t); added.push(t); index(t);
     }
     writePending(logsDir, tasks);
@@ -155,7 +190,7 @@ export function addPending(logsDir, entries) {
 
 /** One line per duplicate, in the user's language, for the chef's report. */
 export function duplicatesText(duplicates) {
-  return duplicates.map(d => `- ${d.projet}${d.n != null ? ` (tâche ${d.n}${d.run ? ` du Routage ${d.run}` : ''})` : ''} : écartée — ${d.reason} ; gardée : ${d.keptId}${d.keptN != null ? ` (tâche ${d.keptN}${d.keptRun ? ` du Routage ${d.keptRun}` : ''})` : ''}. Demande : « ${String(d.demande).replace(/\s+/g, ' ').slice(0, 160)} »`).join('\n');
+  return duplicates.map(d => `- ${d.projet}${d.n != null ? ` (tâche ${d.n}${d.run ? ` du Routage ${d.run}` : ''})` : ''} : écartée — ${d.reason} ; gardée : ${d.keptId}${d.keptTitre ? ` « ${d.keptTitre} »` : ''}${d.keptN != null ? ` (tâche ${d.keptN}${d.keptRun ? ` du Routage ${d.keptRun}` : ''})` : ''}. Demande : « ${String(d.demande).replace(/\s+/g, ' ').slice(0, 160)} »`).join('\n');
 }
 
 /**
@@ -236,7 +271,7 @@ export function launchTask(root, t, dispatchScript) {
     c.unref();
     pid = c.pid || null;
   } catch { pid = null; }
-  return { projet: t.projet, pipeline: t.reprise ? t.pipeline || null : t.served ? t.pipeline : null, mode: t.mode || null, ...(t.horsPipeline ? { horsPipeline: t.horsPipeline } : {}),
+  return { projet: t.projet, ...(cleanTitle(t.titre) ? { titre: cleanTitle(t.titre) } : {}), pipeline: t.reprise ? t.pipeline || null : t.served ? t.pipeline : null, mode: t.mode || null, ...(t.horsPipeline ? { horsPipeline: t.horsPipeline } : {}),
     reprise: t.reprise || null, pid, at: new Date().toISOString(), offset, key: taskKey(t.demande), hash: textHash(t.demande) };
 }
 
@@ -260,7 +295,7 @@ export function releaseReady({ root, logsDir = path.join(root, 'logs'), dispatch
       const r = force ? { forced: true } : dependencyResult(logsDir, t.after);
       if (!r) { keep.push(t); continue; }
       if (r.is_error || (typeof r.subtype === 'string' && r.subtype.startsWith('error'))) {
-        blocked.push({ id, projet: t.projet, after: t.after?.projet, why: `la tâche attendue (${t.after?.projet}) a échoué : non relancée` });
+        blocked.push({ id, label: pendingLabel(t).text, projet: t.projet, after: t.after?.projet, why: `la tâche attendue (${t.after?.projet}) a échoué : non relancée` });
         keep.push({ ...t, blocked: t.blocked || new Date().toISOString() });
         continue;
       }
@@ -285,8 +320,8 @@ export function releaseReady({ root, logsDir = path.join(root, 'logs'), dispatch
     // A demand citing a paused run of its project is a resume even without the
     // field (entries written before 0.58.0): never a second, new run.
     const reprise = detectReprise(logsDir, t);
-    if (t.reprise && !reprise) return { id: t.id, projet: t.projet, skipped: `exécution ${t.reprise} plus en pause : rien relancé` };
-    return { id: t.id, ...launch(root, { ...t, reprise }, dispatchScript), after: t.after?.projet };
+    if (t.reprise && !reprise) return { id: t.id, label: pendingLabel(t).text, projet: t.projet, skipped: `exécution ${t.reprise} plus en pause : rien relancé` };
+    return { id: t.id, label: pendingLabel(t).text, ...launch(root, { ...t, reprise }, dispatchScript), after: t.after?.projet };
   });
   return { launched, blocked, still, duplicates: twins };
 }
@@ -337,7 +372,7 @@ function withLock(logsDir, fn) {
 function describe(logsDir, t) {
   const dep = t.after ? dependencyResult(logsDir, t.after) : null;
   const state = !t.after ? 'sans dépendance' : !dep ? `attend ${t.after.projet}` : dep.is_error ? `${t.after.projet} a échoué` : `prête (${t.after.projet} a fini)`;
-  return `${idOf(t)}  ${t.projet}${t.reprise ? ` — reprise ${t.reprise}` : ''}  [${state}]  depuis ${t.createdAt || '?'}  (routage ${t.run || '?'})\n    ${String(t.demande || '').replace(/\s+/g, ' ').slice(0, 140)}`;
+  return `${pendingLabel(t).text}  ${t.projet}${t.reprise ? ` — reprise ${t.reprise}` : ''}  [${state}]  depuis ${t.createdAt || '?'}  (routage ${t.run || '?'})\n    ${String(t.demande || '').replace(/\s+/g, ' ').slice(0, 140)}`;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -349,22 +384,22 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const has = (f) => { const i = rest.indexOf(f); if (i < 0) return false; rest.splice(i, 1); return true; };
   if (cmd === 'list') {
     const tasks = readPending(LOGS);
-    if (has('--json')) console.log(JSON.stringify(tasks.map(t => ({ ...t, id: idOf(t), ready: !!(t.after && dependencyResult(LOGS, t.after)) })), null, 2));
+    if (has('--json')) console.log(JSON.stringify(tasks.map(t => { const lb = pendingLabel(t); return { ...t, id: lb.id, titre: lb.titre, ...(lb.titreRepli ? { titreRepli: true } : {}), ready: !!(t.after && dependencyResult(LOGS, t.after)) }; }), null, 2));
     else console.log(tasks.length ? tasks.map(t => describe(LOGS, t)).join('\n') : 'aucune tâche en attente');
   } else if (cmd === 'release') {
     const force = has('--force');
     const ids = rest.filter(Boolean);
     if (force && !ids.length) { console.error('--force exige au moins un identifiant'); process.exit(64); }
     const r = releaseReady({ root: ROOT, logsDir: LOGS, dispatchScript: path.join(here, 'dispatch.mjs'), ids: ids.length ? ids : null, force });
-    for (const l of r.launched) console.log(l.skipped ? `— ${l.id} ${l.projet} : ${l.skipped}` : `↗ ${l.id} ${l.projet} lancée${l.reprise ? ` (reprise ${l.reprise})` : ''}`);
-    for (const b of r.blocked) console.log(`✕ ${b.id} ${b.projet} : ${b.why}`);
+    for (const l of r.launched) console.log(l.skipped ? `— ${l.label} ${l.projet} : ${l.skipped}` : `↗ ${l.label} ${l.projet} lancée${l.reprise ? ` (reprise ${l.reprise})` : ''}`);
+    for (const b of r.blocked) console.log(`✕ ${b.label} ${b.projet} : ${b.why}`);
     if (!r.launched.length && !r.blocked.length) console.log('rien à relancer');
   } else if (cmd === 'drop') {
     const run = flag('--run'), projet = flag('--projet'), all = has('--all');
     const ids = rest.filter(Boolean);
     if (!run && !all && !ids.length) { console.error('drop : donner un identifiant, --run <routage run> [--projet <p>] ou --all'); process.exit(64); }
     const d = dropPending(LOGS, { ids: ids.length ? ids : null, run, projet, all });
-    console.log(d.length ? d.map(t => `− ${idOf(t)} ${t.projet} retirée`).join('\n') : 'aucune tâche retirée');
+    console.log(d.length ? d.map(t => `− ${pendingLabel(t).text} ${t.projet} retirée`).join('\n') : 'aucune tâche retirée');
     process.exit(d.length ? 0 : 2);
   } else {
     console.error('usage : routage-pending.mjs list [--json] | release [<id>…] [--force] | drop <id>… | --run <run> [--projet <p>] | --all');

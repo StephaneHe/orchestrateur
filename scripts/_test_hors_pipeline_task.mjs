@@ -80,7 +80,7 @@ async function chefTurn(text, json, extraArgs = []) {
     classify: prompts.filter(p => /^\[CLASSIFY\] ROUTING TASK/.test(p)), newGaps: gaps().slice(g0), result: evs.filter(e => e.type === 'result').pop()?.result || '' };
 }
 const RAISON = 'Nettoyage git de P (branches mortes, tags temporaires) autorisé hors pipeline par l’utilisateur.';
-const TACHE = { projet: 'P', demande: 'Nettoie les branches git mortes et les tags temporaires de P.' };
+const TACHE = { projet: 'P', titre: 'tâche de test 1', demande: 'Nettoie les branches git mortes et les tags temporaires de P.' };
 const turnJson = (task) => ({ comprendre: { nature: 'suite', sens: 'feu vert hors pipeline', raison: 'x' }, decomposer: { taches: [task] } });
 
 // ---------------------------------------------------------------------------
@@ -113,13 +113,13 @@ ok(x.pUps.length === 0, 'question RELAYÉE d’un musicien : il ne peut pas s’
 
 // ---------------------------------------------------------------------------
 section('4. Sans « hors_pipeline » : classement normal, comme avant');
-x = await chefTurn('Explique pourquoi la suite de P passe', turnJson({ projet: 'P', demande: 'Explique pourquoi la suite de tests de P passe.' }));
+x = await chefTurn('Explique pourquoi la suite de P passe', turnJson({ projet: 'P', titre: 'tâche de test 2', demande: 'Explique pourquoi la suite de tests de P passe.' }));
 ok(x.classify.length === 1 && !x.pUps.some(u => u.pipelineBypass), `classée par le model (${x.classify.length} appel), pas hors pipeline`);
 
 // ---------------------------------------------------------------------------
 section('5. Une tâche hors pipeline qui attend une autre tâche garde sa raison dans la file');
 x = await chefTurn('d’abord explique la suite de P, puis oui vas y hors pipeline pour le nettoyage', { comprendre: { nature: 'taches', sens: 's', raison: 'x' }, decomposer: { taches: [
-  { projet: 'P', demande: 'Explique pourquoi la suite de tests de P passe.' },
+  { projet: 'P', titre: 'tâche de test 3', demande: 'Explique pourquoi la suite de tests de P passe.' },
   { ...TACHE, apres: 1, hors_pipeline: { raison: RAISON, autorisation: 'oui vas y hors pipeline' } }] } });
 const pend = RP.readPending(path.join(T, 'logs')).find(p => p.n === 2);
 ok(pend?.horsPipeline === RAISON, 'la tâche en attente porte la raison hors pipeline (elle partira avec --hors-pipeline)', JSON.stringify(pend));

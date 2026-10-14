@@ -82,8 +82,8 @@ ok(fs.existsSync(path.join(art, 'conversation.md')) && /Conversation récente/.t
 // ---------------------------------------------------------------------------
 section('2. Des tâches : Décomposer → Affecter (page Models, par le code) → Dispatcher (par le code) → Rapporter');
 const tasks = [
-  { projet: 'P', pipeline: 'discussion', demande: 'Explique pourquoi la suite de tests passe.' },
-  { projet: 'Q', pipeline: 'dev', mode: 'leger', demande: 'Ajoute une fonction double qui multiplie par deux.' },
+  { projet: 'P', titre: 'tâche de test 1', pipeline: 'discussion', demande: 'Explique pourquoi la suite de tests passe.' },
+  { projet: 'Q', titre: 'tâche de test 2', pipeline: 'dev', mode: 'leger', demande: 'Ajoute une fonction double qui multiplie par deux.' },
 ];
 const nP = logOf('P').length, nQ = logOf('Q').length;
 x = chefTurn('Demande à P d’expliquer ses tests et ajoute double() à Q', { FAKE_PIPE_JSON: JSON.stringify({ comprendre: { sens: 'sens simulé', nature: 'taches', raison: 'deux projets' }, decomposer: { taches: tasks } }) });
@@ -103,10 +103,10 @@ for (let i = 0; i < 300 && ['P', 'Q'].some(n => fs.existsSync(path.join(T, 'logs
 
 // ---------------------------------------------------------------------------
 section('3. Tâches invalides refusées par le code, puis refaites');
-x = chefTurn('Travaille sur Z', { FAKE_PIPE_JSON: JSON.stringify({ comprendre: { sens: 'sens simulé', nature: 'taches', raison: 'x' }, decomposer: { taches: [{ projet: 'chef', pipeline: 'dev', demande: 'délègue-toi ceci' }] } }) });
+x = chefTurn('Travaille sur Z', { FAKE_PIPE_JSON: JSON.stringify({ comprendre: { sens: 'sens simulé', nature: 'taches', raison: 'x' }, decomposer: { taches: [{ projet: 'chef', titre: 'tâche de test 3', pipeline: 'dev', demande: 'délègue-toi ceci' }] } }) });
 const dec = x.st.steps.filter(s => s.id === 'decomposer');
 ok(dec.every(s => s.status === 'refused') && /le chef ne se délègue pas/.test(dec[0].why) && x.st.status === 'paused', 'tâche confiée au chef : refusée à chaque essai, puis pause expliquée');
-ok(E.validateTasks(T, [{ projet: 'X', pipeline: 'dev', demande: 'quelque chose' }]).includes('projet inconnu') && E.validateTasks(T, [{ projet: 'P', pipeline: 'routage', demande: 'quelque chose' }]).includes('pipeline inconnu') && E.validateTasks(T, Array(7).fill({ projet: 'P', pipeline: 'dev', demande: 'quelque chose' })).includes('au plus 6'), 'projet hors liste blanche, Routage délégué, plus de 6 tâches : refusés');
+ok(E.validateTasks(T, [{ projet: 'X', titre: 'tâche de test 4', pipeline: 'dev', demande: 'quelque chose' }]).includes('projet inconnu') && E.validateTasks(T, [{ projet: 'P', titre: 'tâche de test 5', pipeline: 'routage', demande: 'quelque chose' }]).includes('pipeline inconnu') && E.validateTasks(T, Array(7).fill({ projet: 'P', titre: 'tâche de test 6', pipeline: 'dev', demande: 'quelque chose' })).includes('au plus 6'), 'projet hors liste blanche, Routage délégué, plus de 6 tâches : refusés');
 x = chefTurn('Fais ceci', { FAKE_PIPE_BAD: 'decomposer:1', FAKE_PIPE_JSON: JSON.stringify({ comprendre: { sens: 'sens simulé', nature: 'taches', raison: 'x' }, decomposer: { taches: [tasks[0]] } }) });
 const d2 = x.st.steps.filter(s => s.id === 'decomposer');
 ok(d2[0]?.status === 'refused' && /JSON/.test(d2[0].why) && d2[1]?.status === 'ok', 'JSON illisible : refusé, refait');
@@ -153,8 +153,8 @@ fs.writeFileSync(path.join(T, 'chef', 'TODO_LIST.md'), '# TODO\n\n- EN ATTENTE :
 fs.appendFileSync(path.join(T, 'logs', 'P.jsonl'), JSON.stringify({ type: 'result', subtype: 'success', is_error: false, num_turns: 2, duration_ms: 1000, duration_api_ms: 900, result: 'Analyse faite.\n\nNEEDS_USER_INPUT: Garde-t-on le format JSON ?', timestamp: new Date().toISOString() }) + '\n');
 const reply = 'passes décomposer et rapporter en opus 5.5. passes tout en pipeline puis passe à la suite';
 const suiteTasks = [
-  { projet: 'P', pipeline: 'discussion', demande: 'Le chef a demandé : lance-t-on la phase 7 et quels models pour Décomposer et Rapporter ? Réponse de l’utilisateur : opus 5.5, tout en pipeline. Applique-le.', rattache: 'questions 1 à 3 du chef' },
-  { projet: 'Q', pipeline: 'dev', mode: 'leger', demande: 'Reprends la demande en attente : ajouter l’export CSV demandé par l’utilisateur.', rattache: 'question 4 du chef (la suite)', apres: 1 },
+  { projet: 'P', titre: 'tâche de test 7', pipeline: 'discussion', demande: 'Le chef a demandé : lance-t-on la phase 7 et quels models pour Décomposer et Rapporter ? Réponse de l’utilisateur : opus 5.5, tout en pipeline. Applique-le.', rattache: 'questions 1 à 3 du chef' },
+  { projet: 'Q', titre: 'tâche de test 8', pipeline: 'dev', mode: 'leger', demande: 'Reprends la demande en attente : ajouter l’export CSV demandé par l’utilisateur.', rattache: 'question 4 du chef (la suite)', apres: 1 },
 ];
 const nObs = obsCount().length, nQ8 = logOf('Q').length;
 x = chefTurn(reply, { FAKE_PIPE_JSON: JSON.stringify({ comprendre: { sens: 'sens simulé', nature: 'suite', raison: 'répond aux questions 1 à 4 du chef', rattache: ['phase 7', 'Routage', 'models', 'la suite'] }, decomposer: { taches: suiteTasks } }) });
@@ -175,7 +175,7 @@ let qUp8 = null;
 for (let i = 0; i < 300 && !qUp8; i++) { await sleep(100); qUp8 = logOf('Q').slice(nQ8).find(e => e.type === 'user_prompt'); }
 ok(qUp8 && /export CSV/.test(qUp8.text) && /Rattachée à : question 4/.test(qUp8.text) && !E.readPending(path.join(T, 'logs')).length, 'après le résultat de P, le réveil lance Q (demande rattachée), file d’attente vidée');
 for (let i = 0; i < 300 && fs.existsSync(path.join(T, 'logs', 'Q.pid')); i++) await sleep(100);
-ok(E.validateTasks(T, [{ projet: 'P', pipeline: 'dev', demande: 'quelque chose', apres: 1 }]).includes('apres'), '« apres » qui ne désigne pas une tâche précédente : refusé');
+ok(E.validateTasks(T, [{ projet: 'P', titre: 'tâche de test 9', pipeline: 'dev', demande: 'quelque chose', apres: 1 }]).includes('apres'), '« apres » qui ne désigne pas une tâche précédente : refusé');
 
 // 0.69.0: a gap is raised only about ONE unit task, after the message was
 // understood and split — the whole message can no longer be a « lacune ».
@@ -183,7 +183,7 @@ section('9. Tâche qu’aucun pipeline ne couvre : lacune sur CETTE tâche seule
 const nObs9 = obsCount().length;
 const vac = 'Planifie des vacances en Italie avec un budget serré.';
 x = chefTurn('planifie mes vacances en Italie avec un budget serré', {
-  FAKE_PIPE_JSON: JSON.stringify({ comprendre: { sens: 'organiser des vacances', nature: 'taches', raison: 'nouvelle demande' }, decomposer: { taches: [{ projet: 'P', demande: vac }] } }),
+  FAKE_PIPE_JSON: JSON.stringify({ comprendre: { sens: 'organiser des vacances', nature: 'taches', raison: 'nouvelle demande' }, decomposer: { taches: [{ projet: 'P', titre: 'tâche de test 10', demande: vac }] } }),
   FAKE_CLAUDE_CLASSIFY_MAP: JSON.stringify({ Italie: { pipeline: 'discussion', mode: 'leger', raison: 'hors des pipelines', lacune: 'ajouter un pipeline « voyages »' } }) });
 const gap9 = obsCount().slice(nObs9).find(o => o.gap);
 ok(x.r.code === 0 && gap9?.entry === 'signalement' && gap9.caller === 'routage' && gap9.gap.proposal && /la tâche 1 \(P\) ne correspond à aucun pipeline/.test(gap9.gap.why) && gap9.head === vac, `lacune signalée sur la tâche, avec proposition (${gap9?.gap?.key})`, JSON.stringify(gap9));

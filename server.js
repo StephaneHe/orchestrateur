@@ -71,7 +71,7 @@ import { trustWorkspace } from './scripts/workspace-trust.mjs';
 import { createNetworkGuard } from './scripts/network-guard.mjs';
 import { requestControl as requestBackoffControl } from './scripts/model-backoff.mjs';
 import { isModelTestLog } from './scripts/model-test.mjs';
-import { readPending, dependencyResult, releaseReady, staleEntries, markNotified, idOf as pendingIdOf } from './scripts/routage-pending.mjs';
+import { readPending, dependencyResult, releaseReady, staleEntries, markNotified, idOf as pendingIdOf, pendingLabel } from './scripts/routage-pending.mjs';
 // Vue « Models par tâche » (0.39.0) : catalogue + model-routing.json.
 import { createModelRouting, incompatibility } from './scripts/model-routing.mjs';
 import { createRecommendations } from './scripts/model-reco.mjs';
@@ -1019,15 +1019,15 @@ function sweepRoutagePending() {
   try {
     if (!readPending(LOGS_DIR).length) return;
     const r = releaseReady({ root: __dirname, logsDir: LOGS_DIR, dispatchScript: path.join(__dirname, 'scripts', 'dispatch.mjs') });
-    for (const l of r.launched) { const m = `[routage-pending] ${l.projet} ${l.skipped ? `non relancée : ${l.skipped}` : `relancée (balayage)${l.reprise ? ` — reprise ${l.reprise}` : ''}`}`; console.log(m); debugLog(m); }
+    for (const l of r.launched) { const m = `[routage-pending] ${l.label || l.id} ${l.projet} ${l.skipped ? `non relancée : ${l.skipped}` : `relancée (balayage)${l.reprise ? ` — reprise ${l.reprise}` : ''}`}`; console.log(m); debugLog(m); }
     const stale = staleEntries(readPending(LOGS_DIR), { maxMs: PENDING_STALE_MS });
     if (!stale.length) return;
     const text = `⏳ ${stale.length} tâche(s) du Routage en attente depuis plus de ${Math.round(PENDING_STALE_MS / 60_000)} min :\n` +
-      stale.map(t => `- ${t.projet} (après ${t.after?.projet || '?'})${t.reprise ? ` — reprise ${t.reprise}` : ''} — node scripts/routage-pending.mjs list`).join('\n');
+      stale.map(t => `- ${pendingLabel(t).text} — ${t.projet} (après ${t.after?.projet || '?'})${t.reprise ? ` — reprise ${t.reprise}` : ''} — node scripts/routage-pending.mjs list`).join('\n');
     try { fs.appendFileSync(path.join(LOGS_DIR, `${conductorName()}.jsonl`), '\n' + JSON.stringify({ type: 'user_prompt', text, source: 'routage-pending', timestamp: new Date().toISOString() }) + '\n'); } catch {}
     try { fireDesktopNotification('routage-pending', text); } catch {}
     markNotified(LOGS_DIR, stale.map(pendingIdOf));
-    debugLog(`[routage-pending] signalé : ${stale.map(t => t.projet).join(', ')}`);
+    debugLog(`[routage-pending] signalé : ${stale.map(t => `${pendingLabel(t).text} ${t.projet}`).join(', ')}`);
   } catch (e) { debugLog(`[routage-pending] balayage : ${e.message}`); }
 }
 setInterval(sweepRoutagePending, 60_000).unref();
@@ -3243,7 +3243,7 @@ app.get('/api/pupitre', (req, res) => {
 function routagePendingView() {
   try {
     return readPending(LOGS_DIR).map(t => ({
-      id: pendingIdOf(t), projet: t.projet, after: t.after?.projet || null, reprise: t.reprise || null,
+      id: pendingIdOf(t), titre: pendingLabel(t).titre, ...(pendingLabel(t).titreRepli ? { titreRepli: true } : {}), projet: t.projet, after: t.after?.projet || null, reprise: t.reprise || null,
       createdAt: t.createdAt || null, ready: !!(t.after && dependencyResult(LOGS_DIR, t.after)), blocked: t.blocked || null,
       demande: String(t.demande || '').replace(/\s+/g, ' ').slice(0, 160),
     }));

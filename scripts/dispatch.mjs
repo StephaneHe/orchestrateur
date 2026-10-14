@@ -534,7 +534,7 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && process.env.ORCH_NO_PENDING_
     try {
       if (!readPending(LOGS).length) return;
       const r = releaseReady({ root: ROOT, logsDir: LOGS, dispatchScript: fileURLToPath(import.meta.url) });
-      for (const l of r.launched) console.error(`[dispatch] tâche en attente ${l.skipped ? `non relancée (${l.skipped})` : `relancée : ${l.projet}${l.reprise ? ` — reprise ${l.reprise}` : ''}`}`);
+      for (const l of r.launched) console.error(`[dispatch] tâche en attente ${l.skipped ? `non relancée (${l.skipped})` : `relancée : ${l.projet}${l.reprise ? ` — reprise ${l.reprise}` : ''}`} [${l.label || l.id}]`);
     } catch (e) { console.error(`[dispatch] libération des tâches en attente : ${e.message}`); }
   };
   const realExit = process.exit.bind(process);

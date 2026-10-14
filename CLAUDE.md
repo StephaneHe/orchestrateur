@@ -1787,6 +1787,19 @@ Suivi `docs/ROUTAGE-PROBLEMES.md`, n° 10.
 
 ## Tâches du Routage en attente : jamais bloquées (0.58.0)
 
+**Titre court obligatoire** (0.87.0, tâche 1/4 de « Lances les taches », après
+la confusion par le chef de deux tâches nées de la même demande) : l'étape
+Découper donne à chaque tâche un `titre` (3 à 60 caractères,
+`titleProblem` de `routage-pending.mjs`, appelé par `validateUnitTasks`) ;
+sans lui, `taches.json` est refusé. Le titre suit la tâche (classement,
+`dispatch.json`, `routage-pending.json`) et s'affiche `id « titre »`
+(`pendingLabel`) partout : `list` / `--json`, `release`, `drop`,
+contexte du chef, rapport du Routage, réveils, `/api/version`. Une entrée
+plus ancienne reçoit à l'affichage un titre de repli tiré de `rattache`
+(`titleOf`, « titre de repli »), sans réécriture. Recette :
+`_test_routage_titles.mjs`.
+
+
 Signalement utilisateur : « A nouveau, orchestrateur est termine, et plus rien
 ne se passe. Il faut corriger la situation ».
 

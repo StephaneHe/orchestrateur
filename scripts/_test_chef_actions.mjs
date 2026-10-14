@@ -115,9 +115,9 @@ ok(x.st.steps.find(s => s.id === 'decomposer')?.status === 'refused' && x.calls.
 
 // ---------------------------------------------------------------------------
 section('5. Une tâche pour le chef (ou un slot chef-N) reste refusée');
-ok(/le chef ne se délègue pas/.test(E.validateTasks(T, [{ projet: 'chef-2', pipeline: 'dev', demande: 'redémarre le serveur' }]) || '') && /le chef ne se délègue pas/.test(E.validateUnitTasks(T, [{ projet: 'chef', demande: 'redémarre le serveur' }]) || '') && /le chef ne se délègue pas/.test(E.validateUnitTasks(T, [{ projet: 'chef-2', demande: 'redémarre le serveur' }]) || ''),
+ok(/le chef ne se délègue pas/.test(E.validateTasks(T, [{ projet: 'chef-2', titre: 'tâche de test 1', pipeline: 'dev', demande: 'redémarre le serveur' }]) || '') && /le chef ne se délègue pas/.test(E.validateUnitTasks(T, [{ projet: 'chef', titre: 'tâche de test 2', demande: 'redémarre le serveur' }]) || '') && /le chef ne se délègue pas/.test(E.validateUnitTasks(T, [{ projet: 'chef-2', titre: 'tâche de test 3', demande: 'redémarre le serveur' }]) || ''),
   'tâche pour chef ou chef-2 : refusée (Découper et Affecter)');
-x = chefTurn('Redémarre', { comprendre: { nature: 'taches', sens: 's', raison: 'x' }, decomposer: { taches: [{ projet: 'chef-2', demande: 'Redémarre le serveur de la prod.' }] } });
+x = chefTurn('Redémarre', { comprendre: { nature: 'taches', sens: 's', raison: 'x' }, decomposer: { taches: [{ projet: 'chef-2', titre: 'tâche de test 4', demande: 'Redémarre le serveur de la prod.' }] } });
 ok(x.st.steps.find(s => s.id === 'decomposer')?.status === 'refused' && x.calls.length === 0, 'de bout en bout : refusée, aucun lancement');
 
 // ---------------------------------------------------------------------------
