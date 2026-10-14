@@ -11,6 +11,38 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.97.0] - 2026-10-14
+
+### Added
+
+- (server) A growing list that leads to the release note — user request « Je
+  dois voir comme TODO ou GIT, une liste qui augmente au fur et a mesure et
+  qui conduira a la release note en fonction de ce qui est pret » (2026-10-14),
+  with the user's choices « 1. changelog / 2. je ne comprends pas,
+  l'orchestrateur est sensé connaître sa propre version / 3. langue du
+  changelog ».
+  - Side panel tab « 📰 Release » (`public/release-panel.js`, pill
+    `#btn-release`), next to TODO and Git: per musician, « ⏳ en cours » (the
+    `[Unreleased]` bullets of its CHANGELOG and its TODO items in progress)
+    and « ✓ prêt » (every CHANGELOG version newer than its last release),
+    re-read every 30 s while open, so the list grows as work is delivered.
+  - The release note is built from the ready part only, merged by Keep a
+    Changelog section (Added, Changed, Deprecated, Removed, Fixed, Security),
+    each item verbatim with its version — the CHANGELOG's words, no
+    translation, no model. Copy and Download `.md`.
+  - The last release is found automatically, never marked by hand
+    (`lastRelease` of `scripts/release-notes.mjs`): the orchestrator's own
+    checkout → the version the running server knows; a dev instance
+    (`devOf`) → the last release of the project it develops (for
+    orchestrateur-dev: the production version); any other project → its latest
+    `v*` git tag; none → no release yet, every version counts as ready (said in
+    the tab). « Ready » = what stands above the released entry in the file,
+    which also covers non X.Y.Z headings.
+  - Read-only routes `GET /api/release` and `GET /api/release/:project`
+    (config.json projects only; `git describe` is the only git command).
+  - Tests: `scripts/_test_release_list.mjs`, HTTP `release-list`, browser
+    `release-panel`.
+
 ## [0.96.0] - 2026-10-14
 
 ### Added

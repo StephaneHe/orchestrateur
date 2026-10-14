@@ -232,7 +232,46 @@
   background: transparent; color: var(--fg-1); border: 1px solid var(--card-border); border-radius: 6px; padding: 0.3rem 0.7rem;
 }
 
+/* --- Release tab (0.97.0) — own classes: the Git tab's checks select .gg-* --- */
+.rl-filters {
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  padding: 0.6rem 0; border-bottom: 1px solid var(--card-border); font-size: 0.75rem; color: var(--fg-2);
+}
+.rl-project {
+  font-family: var(--font-body); font-size: 0.75rem; max-width: 16rem;
+  background: var(--bg-0); color: var(--fg-1); border: 1px solid var(--card-border); border-radius: 5px; padding: 0.15rem 0.3rem;
+}
+.rl-ro { margin-left: auto; border: 1px solid var(--card-border); border-radius: 4px; padding: 0 0.35rem; }
+.rl-summary { font-size: 0.6875rem; color: var(--fg-2); margin: 0.6rem 0 0.4rem; }
+.rl-summary b { color: var(--st-live); }
+.rl-empty { color: var(--fg-2); font-size: 0.8125rem; padding: 1rem 0; }
+.rl-why { color: var(--fg-3); }
+.rl-count-ready { color: var(--st-live); }
+.rl-count-progress { color: var(--st-think); }
+.rl-list { list-style: none; margin: 0; padding: 0; }
+.rl-item {
+  display: flex; align-items: baseline; gap: 0.4rem; font-size: 0.75rem; padding: 0.25rem 0;
+  border-bottom: 1px solid rgba(232, 161, 92, 0.05); overflow: hidden;
+}
+.rl-state { flex: 0 0 auto; font-size: 0.625rem; border: 1px solid var(--card-border); border-radius: 4px; padding: 0 0.3rem; white-space: nowrap; }
+.rl-ready { border-color: rgba(45, 255, 122, 0.4); color: var(--st-live); }
+.rl-progress { border-color: rgba(232, 161, 92, 0.45); color: var(--st-think); }
+.rl-where { flex: 0 0 auto; color: var(--fg-3); font-size: 0.6875rem; font-family: var(--font-mono); white-space: nowrap; }
+.rl-text { color: var(--fg-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 3rem; }
+.rl-note-box { margin-top: 0.8rem; border-top: 1px solid var(--card-border); padding-top: 0.6rem; }
+.rl-note-bar { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.75rem; color: var(--fg-1); }
+.rl-note-hint { color: var(--fg-3); font-size: 0.6875rem; }
+.rl-btn {
+  font-family: var(--font-body); font-size: 0.75rem; cursor: pointer;
+  background: transparent; color: var(--fg-1); border: 1px solid var(--card-border); border-radius: 6px; padding: 0.2rem 0.6rem;
+}
+.rl-note {
+  font-family: var(--font-mono); font-size: 0.6875rem; color: var(--fg-1); white-space: pre-wrap;
+  background: var(--bg-0); border: 1px solid var(--card-border); border-radius: 6px; padding: 0.6rem; max-height: 50vh; overflow: auto;
+}
+
 @media (max-width: 767.98px) {
+  .rl-btn, .rl-project { min-height: 44px; }
   .gg-project, .gg-more-btn { min-height: 44px; }
   .gg-meta { display: none; }
   .sp { top: 0; width: 100vw; z-index: 200; }

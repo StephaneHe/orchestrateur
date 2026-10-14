@@ -82,6 +82,7 @@ import { writeFileAtomic } from './scripts/atomic-file.mjs';
 import { createNotesStore, NOTES_FILE, ITEM_ID_RE, NOTE_MAX } from './scripts/todo-notes.mjs';
 import { createOrderStore, ORDER_FILE, applyOrder, cleanOrder } from './scripts/todo-order.mjs';
 import { readGitGraph, GIT_N_DEFAULT, GIT_N_MAX } from './scripts/git-graph-core.mjs';
+import { releaseList, lastRelease } from './scripts/release-notes.mjs';
 import { mountGatewayRoutes } from './scripts/responses-gateway.mjs';
 // Clés NVIDIA / OpenRouter saisies dans la page Models (0.43.0).
 import { createApiKeys } from './scripts/api-keys.mjs';
@@ -2799,6 +2800,41 @@ app.get('/api/git-graph/:project', async (req, res) => {
   const g = await readGitGraph(p.path, { n });
   const body = { ok: true, project: p.name, n, ...g };
   gitGraphCache.set(key, { at: Date.now(), body });
+  res.json(body);
+});
+
+// ── Release list (0.97.0) ────────────────────────────────────────────────────
+// User request (2026-10-14): « Je dois voir comme TODO ou GIT, une liste qui
+// augmente au fur et a mesure et qui conduira a la release note en fonction de
+// ce qui est pret ». READ-ONLY: the CHANGELOG.md and TODO_LIST.md of a
+// config.json project, plus `git describe` for its last `v*` tag. The last
+// release is found automatically (scripts/release-notes.mjs, lastRelease): the
+// orchestrator's own version for itself and its dev instance.
+const releaseCache = new Map();
+const RELEASE_TTL_MS = 15_000;
+const hasChangelog = (dir) => { try { return fs.existsSync(path.join(dir, 'CHANGELOG.md')); } catch { return false; } };
+app.get('/api/release', (req, res) => {
+  const projects = (config.projects || []).filter(p => p && p.name && p.path)
+    .map(p => ({ name: p.name, changelog: hasChangelog(p.path) }));
+  res.json({ ok: true, projects });
+});
+app.get('/api/release/:project', (req, res) => {
+  const p = (config.projects || []).find(x => x && x.name === req.params.project && x.path);
+  if (!p) return res.status(404).json({ ok: false, error: `projet inconnu : ${req.params.project}` });
+  const file = path.join(p.path, 'CHANGELOG.md');
+  let st;
+  try { st = fs.statSync(file); } catch { return res.json({ ok: true, project: p.name, changelog: false, items: [], note: '' }); }
+  const todoSt = (() => { try { return fs.statSync(path.join(p.path, TODO_FILE)).mtimeMs; } catch { return 0; } })();
+  const key = `${st.mtimeMs}:${st.size}:${todoSt}`;
+  const hit = releaseCache.get(p.name);
+  if (hit && hit.key === key && Date.now() - hit.at < RELEASE_TTL_MS) return res.json(hit.body);
+  const release = lastRelease(p, { projects: config.projects || [], serverRoot: __dirname, serverVersion: PKG_VERSION });
+  let body;
+  try {
+    const list = releaseList({ changelog: fs.readFileSync(file, 'utf8'), release, todos: todoOf(p) || [] });
+    body = { ok: true, project: p.name, changelog: true, ...list };
+  } catch (e) { body = { ok: true, project: p.name, changelog: true, error: e.message, items: [], note: '' }; }
+  releaseCache.set(p.name, { key, at: Date.now(), body });
   res.json(body);
 });
 

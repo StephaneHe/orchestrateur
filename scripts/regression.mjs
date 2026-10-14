@@ -1152,6 +1152,33 @@ async function apiChecks(sb) {
     g('tag', '-d', 'recette-git');
     return `omega : ${d.commits.length} commits, HEAD ${d.head}, ${d.layout.lanes} voie(s) ; dépôt inchangé ; écritures : 404`;
   });
+  // 0.97.0 — « une liste qui augmente au fur et a mesure et qui conduira a la
+  // release note en fonction de ce qui est pret ».
+  await check(S, 'release-list', 'Liste menant à la release note : GET /api/release et /api/release/:projet — la liste s’allonge quand une version ou une entrée [Unreleased] arrive dans le CHANGELOG, la release note ne reprend que le « prêt » (versions après la dernière release, trouvée seule : dernier tag v*), lecture seule', async () => {
+    if (!fs.existsSync(path.join(sb.root, 'scripts', 'release-notes.mjs'))) NA('liste de release absente de cet état du code');
+    const g = omegaRepo();
+    const cl = path.join(omegaDir, 'CHANGELOG.md');
+    const write = (blocks) => fs.writeFileSync(cl, ['# Changelog', '', ...blocks].join('\n') + '\n');
+    const V = (v, line) => `## [${v}] - 2026-10-1${v.at(-1)}\n\n### Added\n\n- ${line}\n`;
+    g('tag', '-f', 'v1.0.0', 'HEAD');
+    try {
+      write([V('1.0.0', 'Premier jet publié')]);
+      let d = await json('/api/release/omega');
+      assert(d.changelog && d.release?.source === 'tag' && d.release.version === '1.0.0' && d.counts.ready === 0 && !d.note, `départ : ${JSON.stringify({ rel: d.release, c: d.counts })}`);
+      write([V('1.1.0', 'RECETTE-PRET-1'), V('1.0.0', 'Premier jet publié')]);
+      d = await json('/api/release/omega');
+      assert(d.counts.ready === 1 && d.note.includes('RECETTE-PRET-1') && !d.note.includes('Premier jet publié'), `1 version prête : ${JSON.stringify(d.counts)} ${d.note}`);
+      write(['## [Unreleased]\n\n### Fixed\n\n- RECETTE-EN-COURS\n', V('1.2.0', 'RECETTE-PRET-2'), V('1.1.0', 'RECETTE-PRET-1'), V('1.0.0', 'Premier jet publié')]);
+      d = await json('/api/release/omega');
+      assert(d.counts.ready === 2 && d.counts.progress >= 1 && d.items.some(i => i.state === 'progress' && /RECETTE-EN-COURS/.test(i.text)), `la liste s’allonge : ${JSON.stringify(d.counts)}`);
+      assert(d.note.includes('RECETTE-PRET-1') && d.note.includes('RECETTE-PRET-2') && !d.note.includes('RECETTE-EN-COURS'), `release note = prêt seulement : ${d.note}`);
+      const list = await json('/api/release');
+      assert(list.projects.find(p => p.name === 'omega')?.changelog === true && list.projects.find(p => p.name === 'beta')?.changelog === false, 'liste des musiciens');
+      assert((await get('/api/release/inconnu')).status === 404, 'projet hors liste accepté');
+      for (const method of ['POST', 'PUT', 'DELETE']) assert((await fetch(sb.url + '/api/release/omega', { method, headers: H })).status === 404, `${method} /api/release/omega accepté`);
+      return `omega : départ v1.0.0 (tag), puis ${d.counts.ready} entrées prêtes et ${d.counts.progress} en cours ; note sans l’en-cours`;
+    } finally { g('tag', '-d', 'v1.0.0'); fs.rmSync(cl, { force: true }); }
+  });
   // 0.56.0 — phase 7 : relevé de la mise en service générale (« une semaine sans contournement »).
   await check(S, 'pipeline-health', 'Pipelines, phase 7 : relevé de la mise en service — exécutions, tours hors pipeline, tours ordinaires, refus (moteur et porte), pauses, jours complets sans contournement', async () => {
     if (!fs.existsSync(path.join(sb.root, 'scripts', 'pipeline-health.mjs'))) NA('relevé absent de cet état du code');

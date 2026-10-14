@@ -230,6 +230,49 @@ export async function browserChecks(sb, t) {
       assert(await until(async () => !(await gitState(page)).open, 3000), 'Échap ne ferme pas');
       return `omega : ${s.rows} commits, ${s.edges} trait(s), refs ${s.refs.slice(0, 4).join(' · ')}`;
     });
+    // 0.97.0 — user request (2026-10-14): « Je dois voir comme TODO ou GIT, une
+    // liste qui augmente au fur et a mesure et qui conduira a la release note en
+    // fonction de ce qui est pret ».
+    await check(B, 'release-panel', 'Onglet « 📰 Release » du panneau (comme TODO et Git) : par musicien, la liste de ce qui est en cours et prêt, qui s’allonge quand le CHANGELOG grandit ; la release note ne reprend que le « prêt », avec Copier et Télécharger .md ; lecture seule', async () => {
+      if (!(await page.locator('#btn-release').count())) NA('onglet Release absent de cet état du code');
+      const cl = path.join(sb.root, 'projects', 'alpha', 'CHANGELOG.md');
+      const V = (v, line) => `## [${v}] - 2026-10-1${v.at(-1)}\n\n### Added\n\n- ${line}\n`;
+      const write = (...b) => fs.writeFileSync(cl, ['# Changelog', '', ...b].join('\n') + '\n');
+      const rl = () => page.evaluate(() => {
+        const pane = document.querySelector('#side-panel [data-sp-pane="release"]');
+        return { visible: !!pane && pane.offsetParent !== null, project: pane?.querySelector('.rl-project')?.value || '',
+          ready: pane ? pane.querySelectorAll('.rl-item[data-state="ready"]').length : 0, progress: pane ? pane.querySelectorAll('.rl-item[data-state="progress"]').length : 0,
+          note: pane?.querySelector('.rl-note')?.textContent || '', copy: pane?.querySelector('.rl-copy')?.textContent || '',
+          summary: pane?.querySelector('.rl-summary')?.textContent || '' };
+      });
+      write('## [Unreleased]\n\n### Fixed\n\n- NAV-EN-COURS\n', V('1.0.0', 'NAV-PRET-1'));
+      try {
+        assert(await until(async () => visible(page, '#btn-release'), 6000), 'pill 📰 Release absente');
+        await page.click('#btn-release');
+        assert(await until(async () => (await rl()).visible, 4000), 'onglet Release non ouvert');
+        await page.selectOption('#side-panel .rl-project', 'alpha');
+        assert(await until(async () => (await rl()).ready === 1, 8000), `liste : ${JSON.stringify(await rl())}`);
+        let s = await rl();
+        assert(s.progress === 1 && /aucune release repérée/.test(s.summary) && s.note.includes('NAV-PRET-1') && !s.note.includes('NAV-EN-COURS'), `départ : ${JSON.stringify(s)}`);
+        write('## [Unreleased]\n\n### Fixed\n\n- NAV-EN-COURS\n', V('1.1.0', 'NAV-PRET-2'), V('1.0.0', 'NAV-PRET-1'));
+        await page.evaluate(() => window.ReleasePanel.reload());
+        assert(await until(async () => (await rl()).ready === 2, 8000), 'la liste ne s’est pas allongée');
+        s = await rl();
+        assert(s.note.includes('NAV-PRET-1') && s.note.includes('NAV-PRET-2') && !s.note.includes('NAV-EN-COURS'), `release note : ${s.note}`);
+        await page.click('#side-panel .rl-copy');
+        assert(await until(async () => /Copié/.test((await rl()).copy), 3000), 'Copier sans effet');
+        const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 5000 }), page.click('#side-panel .rl-download')]);
+        const body = fs.readFileSync(await dl.path(), 'utf8');
+        assert(/^alpha-release-1\.1\.0\.md$/.test(dl.suggestedFilename()) && body === s.note, `téléchargement : ${dl.suggestedFilename()}`);
+        assert(await overflowX(page) <= 0, `débordement horizontal ${await overflowX(page)} px`);
+        await shot(page, 'release-panel-desktop');
+        return `alpha : ${s.ready} prêts, ${s.progress} en cours ; note copiée et téléchargée (${body.length} car.)`;
+      } finally {
+        fs.rmSync(cl, { force: true });
+        await page.keyboard.press('Escape').catch(() => {});
+        await page.evaluate(() => { if (window.SidePanel?.isOpen()) window.SidePanel.close(); });
+      }
+    });
     // User report (2026-10-13): « le pan git et vide, et sa liste de musiciens
     // aussi ». Cause: a server started on an older version serves the new front
     // from disk but not its routes (404). The panel must list every musician

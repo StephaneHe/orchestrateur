@@ -824,6 +824,25 @@ de la prod).
   vide, et sa liste de musiciens aussi »). Recettes : navigateur
   `git-panel-musicians` et `todo-panel-musicians`.
 
+## Onglet « 📰 Release » : la liste qui mène à la release note (0.97.0)
+
+Demande utilisateur (2026-10-14) : « Je dois voir comme TODO ou GIT, une liste
+qui augmente au fur et a mesure et qui conduira a la release note en fonction
+de ce qui est pret » ; choix : source CHANGELOG, dernière release trouvée
+seule (« l'orchestrateur est sensé connaître sa propre version »), langue du
+CHANGELOG.
+
+- `scripts/release-notes.mjs` : `parseChangelog`, `readyVersions` (prêt = ce
+  qui est au-dessus de l'entrée publiée), `releaseList`, `releaseNote`
+  (Keep a Changelog, texte verbatim), `lastRelease` (serveur → `PKG_VERSION` ;
+  `devOf` → la release du projet développé ; sinon dernier tag `v*` ; sinon
+  aucune).
+- En cours = `[Unreleased]` + items TODO `[~]`. Routes GET `/api/release`,
+  `/api/release/:projet`. Panneau `public/release-panel.js`, pill
+  `#btn-release`, Copier / Télécharger `.md`.
+- Recettes : `_test_release_list.mjs`, HTTP `release-list`, navigateur
+  `release-panel`.
+
 ## Vue « Projets » et retour arrière (0.29.0)
 
 - `#/projets` (`public/projets.js` + `projets.css`) : le statut de chaque
