@@ -39,7 +39,7 @@ import { renameRetry, writeFileAtomic } from './atomic-file.mjs';
 import { readBranchLog } from './dual-run.mjs';
 import { languageFor, languageGate, localize, workingLanguage } from './language.mjs';
 import { CATALOG_PIPELINES, catalogOf, catalogSteps } from './pipeline-catalog.mjs';
-import { readPending, addPending, releaseReady, launchTask, detectReprise, logOffset, taskKey, textHash, duplicatesText, RUN_ID_RE, titleProblem, pendingLabel, cleanTitle, ambiguityProblem } from './routage-pending.mjs';
+import { readPending, addPending, releaseReady, launchTask, detectReprise, logOffset, taskKey, textHash, duplicatesText, RUN_ID_RE, titleProblem, pendingLabel, cleanTitle, ambiguityProblem, distinctExcerpts } from './routage-pending.mjs';
 export { readPending };
 import { backoffConfig, isLaunchFailure, dispatchRefusal, tierAfter, delayFor, waitBackoff, runDirOf } from './model-backoff.mjs';
 import { runModelTest } from './model-test.mjs';
@@ -1238,7 +1238,15 @@ export function routingContext(root, { logsDir, chefLog, chefDir }) {
   L.push('## Demandes mises en attente (TODO_LIST du chef)', '', parked.length ? parked.slice(0, 20).map(x => `- ${x.slice(0, 400)}`).join('\n') : '(aucune)', '');
   // 4. Tâches de Routage qui attendent la fin d'une autre.
   const pend = readPending(logsDir);
-  if (pend.length) L.push('## Tâches déjà décidées, en attente d’une autre', '', pend.map(p => `- ${pendingLabel(p).text} — ${p.projet} (après ${p.after?.projet || '?'})${p.reprise ? ` — reprise ${p.reprise}` : ''} : ${String(p.demande).slice(0, 200)}`).join('\n'), '');
+  // 0.91.0 (task 3/4): entries sharing their start show what sets them apart
+  // and their « rattache », never only the common start.
+  const distinct = distinctExcerpts(pend);
+  if (pend.length) L.push('## Tâches déjà décidées, en attente d’une autre', '', pend.map(p => {
+    const d = distinct.get(pendingLabel(p).id);
+    const what = d ? `ce qui la distingue : ${d.excerpt} (même début sur ${d.commonLength} caractères que ${d.commonWith.join(', ')})` : String(p.demande).slice(0, 200);
+    const r = cleanTitle(p.rattache);
+    return `- ${pendingLabel(p).text} — ${p.projet} (après ${p.after?.projet || '?'})${p.reprise ? ` — reprise ${p.reprise}` : ''} : ${what}${r ? `\n  rattachée à : ${r.slice(0, 300)}` : ''}`;
+  }).join('\n'), '');
   // 5. Paused pipeline runs (0.58.0): resuming one is a task with « reprise ».
   const paused = pausedRuns(logsDir);
   L.push('## Exécutions de pipeline en pause (pour les reprendre : tâche avec « reprise »: "<identifiant>")', '',

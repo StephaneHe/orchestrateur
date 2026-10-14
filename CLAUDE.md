@@ -1842,6 +1842,13 @@ même début affiché (`displayedHead`, `DISPLAY_HEAD` = 140, la coupe de
 `list`), en nommant chaque paire en conflit. Recette :
 `_test_routage_ambiguous.mjs`.
 
+**Ce qui diffère est affiché** (0.91.0, tâche 3/4) : `distinctExcerpts` de
+`routage-pending.mjs` donne, pour chaque entrée dont le début affiché est
+partagé, l'extrait qui commence où elle s'écarte de son jumeau le plus proche ;
+`list` (« ce qui la distingue », « rattachée à »), `--json` (`distinct`) et le
+contexte du chef l'affichent. Affichage seul. Recette :
+`_test_routage_distinct.mjs`.
+
 
 Signalement utilisateur : « A nouveau, orchestrateur est termine, et plus rien
 ne se passe. Il faut corriger la situation ».

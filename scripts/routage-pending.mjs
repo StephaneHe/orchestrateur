@@ -161,6 +161,50 @@ export function ambiguityProblem(tasks) {
     `et fais commencer sa demande par ce qui la distingue (les ${DISPLAY_HEAD} premiers caractères sont ce que l’on voit dans la liste)`;
 }
 
+// --- what differs (0.91.0) ----------------------------------------------------
+// Task 3/4: on 2026-10-13 two waiting tasks showed the same 140 characters
+// while they differed after ~400, and their `rattache` (which named the part
+// covered) was shown nowhere. Entries that share their displayed start now
+// show, each, the excerpt that starts where it parts from its closest twin.
+export const DISTINCT_EXCERPT = 220;
+const flatText = (text) => String(text || '').replace(/\n\n\(Rattachée à :[\s\S]*$/, '').replace(/\s+/g, ' ').trim();
+const commonPrefix = (a, b) => { let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++; return i; };
+/**
+ * Map id → {excerpt, commonLength, commonWith: [ids]} for every entry whose
+ * displayed start is shared by another entry; entries told apart by their
+ * start are absent (their start is enough).
+ */
+export function distinctExcerpts(tasks) {
+  const list = (tasks || []).map(t => ({ id: idOf(t), head: displayedHead(t.demande), text: flatText(t.demande) }));
+  const out = new Map();
+  for (const a of list) {
+    const twins = list.filter(b => b !== a && a.head && b.head === a.head);
+    if (!twins.length) continue;
+    const common = Math.max(...twins.map(b => commonPrefix(a.text, b.text)));
+    // Back to a word boundary so the excerpt does not start mid-word.
+    let from = common;
+    while (from > 0 && a.text[from - 1] !== ' ') from--;
+    const rest = a.text.slice(from);
+    out.set(a.id, {
+      excerpt: rest ? `…${rest.slice(0, DISTINCT_EXCERPT)}${rest.length > DISTINCT_EXCERPT ? '…' : ''}` : '(même texte complet)',
+      commonLength: common, commonWith: twins.map(b => b.id),
+    });
+  }
+  return out;
+}
+/** Lines that name what sets an entry apart (CLI and the chef's context). */
+export function entryDetailLines(t, distinct, { indent = '    ' } = {}) {
+  const d = distinct?.get(idOf(t));
+  const lines = [];
+  if (d) {
+    lines.push(`${indent}ce qui la distingue : ${d.excerpt}`);
+    lines.push(`${indent}(même début sur ${d.commonLength} caractères que ${d.commonWith.join(', ')})`);
+  } else lines.push(`${indent}${displayedHead(t.demande)}`);
+  const r = cleanTitle(t.rattache);
+  if (r) lines.push(`${indent}rattachée à : ${r.slice(0, 300)}`);
+  return lines;
+}
+
 /** `id « titre »`: the only way an id is shown. */
 export function pendingLabel(t) {
   const id = idOf(t);
@@ -402,10 +446,10 @@ function withLock(logsDir, fn) {
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
-function describe(logsDir, t) {
+function describe(logsDir, t, distinct) {
   const dep = t.after ? dependencyResult(logsDir, t.after) : null;
   const state = !t.after ? 'sans dépendance' : !dep ? `attend ${t.after.projet}` : dep.is_error ? `${t.after.projet} a échoué` : `prête (${t.after.projet} a fini)`;
-  return `${pendingLabel(t).text}  ${t.projet}${t.reprise ? ` — reprise ${t.reprise}` : ''}  [${state}]  depuis ${t.createdAt || '?'}  (routage ${t.run || '?'})\n    ${displayedHead(t.demande)}`;
+  return `${pendingLabel(t).text}  ${t.projet}${t.reprise ? ` — reprise ${t.reprise}` : ''}  [${state}]  depuis ${t.createdAt || '?'}  (routage ${t.run || '?'})\n${entryDetailLines(t, distinct).join('\n')}`;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -417,8 +461,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const has = (f) => { const i = rest.indexOf(f); if (i < 0) return false; rest.splice(i, 1); return true; };
   if (cmd === 'list') {
     const tasks = readPending(LOGS);
-    if (has('--json')) console.log(JSON.stringify(tasks.map(t => { const lb = pendingLabel(t); return { ...t, id: lb.id, titre: lb.titre, ...(lb.titreRepli ? { titreRepli: true } : {}), ready: !!(t.after && dependencyResult(LOGS, t.after)) }; }), null, 2));
-    else console.log(tasks.length ? tasks.map(t => describe(LOGS, t)).join('\n') : 'aucune tâche en attente');
+    const distinct = distinctExcerpts(tasks);
+    if (has('--json')) console.log(JSON.stringify(tasks.map(t => { const lb = pendingLabel(t); const d = distinct.get(lb.id); return { ...t, id: lb.id, titre: lb.titre, ...(lb.titreRepli ? { titreRepli: true } : {}), ...(d ? { distinct: d } : {}), ready: !!(t.after && dependencyResult(LOGS, t.after)) }; }), null, 2));
+    else console.log(tasks.length ? tasks.map(t => describe(LOGS, t, distinct)).join('\n') : 'aucune tâche en attente');
   } else if (cmd === 'release') {
     const force = has('--force');
     const ids = rest.filter(Boolean);

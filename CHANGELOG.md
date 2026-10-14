@@ -11,6 +11,29 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.91.0] - 2026-10-14
+
+### Added
+
+- (server) Waiting Routage tasks that share their start show what sets them
+  apart — task 3/4 of the mechanism validated after the chef confused two
+  waiting tasks on 2026-10-13 (user answer, verbatim: « Lances les taches »;
+  relaunched on 2026-10-14: « Relances les taches necessaires »). The two
+  tasks differed only after ~400 characters while every display cut them near
+  the 140th, and their `rattache` was shown nowhere.
+  - `distinctExcerpts` (`scripts/routage-pending.mjs`): for each entry
+    whose displayed start is shared by another, the excerpt (up to 220
+    characters, from a word boundary) starting where it parts from its
+    closest twin, the common length and the twins' ids.
+  - `routage-pending.mjs list`: for such entries, « ce qui la distingue :
+    … » and « même début sur N caractères que <ids> » instead of the common
+    start; « rattachée à : … » for every entry that has one. `--json`
+    carries `distinct` {excerpt, commonLength, commonWith}.
+  - The chef's context (« Tâches déjà décidées, en attente d'une autre »)
+    shows the same, plus the `rattache`.
+  - Display only: `logs/routage-pending.json` is never rewritten.
+  - Test: `scripts/_test_routage_distinct.mjs` (the 2026-10-13 shape).
+
 ## [0.90.0] - 2026-10-14
 
 ### Added
