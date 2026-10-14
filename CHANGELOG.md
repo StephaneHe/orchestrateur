@@ -11,6 +11,29 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.98.0] - 2026-10-14
+
+### Changed
+
+- (server) Release tab: items grouped by release, each release opens a detail
+  window — user request « Dans RELEASE, les items doivent etre regroupes par
+  release, et chaque release est clickable et ouvrir une fenetre qui montre
+  les details de chaque items » (2026-10-14).
+  - `groupByRelease` (`scripts/release-notes.mjs`), returned as `groups` by
+    `GET /api/release/:project`: first « ⏳ En cours » (the `[Unreleased]`
+    bullets and the TODO items in progress — not in any version yet), then one
+    group per ready version, newest first, each with its date, sections and
+    items (each keeping its index in the flat list).
+  - The tab draws one block per release; its header is a button (click,
+    Enter, Space) that opens `#release-overlay` (modal dialog): title, state,
+    date, sections, and every item in full — its section, its whole text with
+    sub-bullets (Markdown), and for a TODO item its id and date. Escape (the
+    side panel stays open), ✕ or a click outside close it; full screen on
+    mobile; kept in step with the 30 s refresh. An older server without
+    `groups` is grouped in the browser the same way.
+  - The release note, Copy and Download `.md` are unchanged.
+  - Tests: `scripts/_test_release_groups.mjs`, browser `release-groups`.
+
 ## [0.97.0] - 2026-10-14
 
 ### Added

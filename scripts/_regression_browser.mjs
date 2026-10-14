@@ -273,6 +273,48 @@ export async function browserChecks(sb, t) {
         await page.evaluate(() => { if (window.SidePanel?.isOpen()) window.SidePanel.close(); });
       }
     });
+    // 0.98.0 — user request (2026-10-14): « Dans RELEASE, les items doivent
+    // etre regroupes par release, et chaque release est clickable et ouvrir une
+    // fenetre qui montre les details de chaque items ».
+    await check(B, 'release-groups', 'Onglet Release : les éléments sont regroupés par release (en cours d’abord, puis chaque version, la plus récente en haut) ; chaque release est cliquable (clic ou clavier) et ouvre une fenêtre qui montre le détail complet de chacun de ses éléments ; Échap, ✕ ou clic hors zone la ferment, l’onglet reste ouvert', async () => {
+      if (!(await page.locator('#btn-release').count())) NA('onglet Release absent de cet état du code');
+      if (!(await page.evaluate(() => !!window.ReleasePanel?.openDetail))) NA('regroupement par release absent de cet état du code');
+      const cl = path.join(sb.root, 'projects', 'alpha', 'CHANGELOG.md');
+      fs.writeFileSync(cl, ['# Changelog', '', '## [Unreleased]', '', '### Fixed', '', '- GRP-EN-COURS', '',
+        '## [1.1.0] - 2026-10-11', '', '### Added', '', '- GRP-A', '- GRP-B première ligne', '  - GRP-B-SOUS-POINT', '', '### Fixed', '', '- GRP-C', '',
+        '## [1.0.0] - 2026-10-10', '', '### Added', '', '- GRP-D', ''].join('\n') + '\n');
+      const groups = () => page.evaluate(() => [...document.querySelectorAll('#side-panel [data-sp-pane="release"] .rl-group')].map(g => ({ key: g.dataset.key, state: g.dataset.state, n: g.querySelectorAll('.rl-item').length, head: g.querySelector('.rl-group-head')?.textContent.replace(/\s+/g, ' ').trim() })));
+      const ovs = () => page.evaluate(() => { const o = document.getElementById('release-overlay'); return { open: !!o && !o.hidden, title: o?.querySelector('.rlo-title')?.textContent || '', meta: o?.querySelector('.rlo-meta')?.textContent || '', items: o ? [...o.querySelectorAll('.rlo-item')].map(i => i.textContent.replace(/\s+/g, ' ').trim()) : [] }; });
+      try {
+        if (!(await page.evaluate(() => window.SidePanel?.isOpen()))) await page.click('#btn-release');
+        await page.click('#side-panel [data-sp-tab="release"]').catch(() => {});
+        await page.selectOption('#side-panel .rl-project', 'alpha');
+        await page.evaluate(() => window.ReleasePanel.reload());
+        assert(await until(async () => (await groups()).length === 3, 8000), `groupes : ${JSON.stringify(await groups())}`);
+        const g = await groups();
+        assert(g.map(x => x.key).join() === 'progress,v:1.1.0,v:1.0.0' && g.map(x => x.n).join() === '1,3,1', `ordre et contenu des groupes : ${JSON.stringify(g)}`);
+        assert(/En cours/.test(g[0].head) && /1\.1\.0/.test(g[1].head) && /3 éléments/.test(g[1].head), `en-têtes : ${g.map(x => x.head).join(' | ')}`);
+        await page.click('#side-panel .rl-group-head[data-rl-group="v:1.1.0"]');
+        assert(await until(async () => (await ovs()).open, 3000), 'fenêtre de détail non ouverte');
+        let o = await ovs();
+        assert(/release 1\.1\.0/.test(o.title) && /3 éléments/.test(o.meta) && /Added, Fixed/.test(o.meta), `titre / méta : ${o.title} — ${o.meta}`);
+        assert(o.items.length === 3 && o.items.some(t => /GRP-B première ligne/.test(t) && /GRP-B-SOUS-POINT/.test(t)) && !o.items.some(t => /GRP-D|GRP-EN-COURS/.test(t)), `éléments de la fenêtre : ${JSON.stringify(o.items)}`);
+        await shot(page, 'release-groups-detail');
+        await page.keyboard.press('Escape');
+        assert(await until(async () => !(await ovs()).open, 3000) && await page.evaluate(() => window.SidePanel.isOpen()), 'Échap : la fenêtre doit se fermer, l’onglet rester ouvert');
+        await page.focus('#side-panel .rl-group-head[data-rl-group="progress"]');
+        await page.keyboard.press('Enter');
+        assert(await until(async () => (await ovs()).open, 3000), 'Entrée sur une release : fenêtre non ouverte');
+        o = await ovs();
+        assert(/en cours/.test(o.title) && o.items.length === 1 && /GRP-EN-COURS/.test(o.items[0]), `en cours : ${JSON.stringify(o)}`);
+        await page.click('#release-overlay .rlo-backdrop', { position: { x: 5, y: 5 } });
+        assert(await until(async () => !(await ovs()).open, 3000), 'clic hors zone : fenêtre non fermée');
+        return `3 groupes (en cours, 1.1.0, 1.0.0) ; fenêtre 1.1.0 : ${o.items.length ? 3 : 0} éléments complets ; Échap, Entrée, clic hors zone`;
+      } finally {
+        fs.rmSync(cl, { force: true });
+        await page.evaluate(() => { window.ReleasePanel?.closeDetail?.(); if (window.SidePanel?.isOpen()) window.SidePanel.close(); });
+      }
+    });
     // User report (2026-10-13): « le pan git et vide, et sa liste de musiciens
     // aussi ». Cause: a server started on an older version serves the new front
     // from disk but not its routes (404). The panel must list every musician

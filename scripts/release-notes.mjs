@@ -113,8 +113,32 @@ export function releaseList({ changelog, release = { version: null, source: 'non
   return {
     release, readyVersions: ready.map(v => ({ version: v.version, date: v.date })),
     counts: { ready: items.filter(i => i.state === 'ready').length, progress: progress.length },
-    items, note: releaseNote({ versions: ready, release }),
+    items, groups: groupByRelease(items), note: releaseNote({ versions: ready, release }),
   };
+}
+
+/**
+ * The list grouped by release (0.98.0, user request « les items doivent etre
+ * regroupes par release »): first the not-yet-released group (⏳ in progress:
+ * [Unreleased] + TODO), then one group per ready version, newest first. Each
+ * item keeps its index in `items`, so a detail view can show it in full.
+ */
+export function groupByRelease(items) {
+  const groups = [];
+  const progress = items.map((it, index) => ({ ...it, index })).filter(i => i.state === 'progress');
+  if (progress.length) groups.push({ key: 'progress', state: 'progress', version: null, date: null, items: progress });
+  const byVersion = new Map();
+  items.forEach((it, index) => {
+    if (it.state !== 'ready') return;
+    if (!byVersion.has(it.version)) {
+      const g = { key: `v:${it.version}`, state: 'ready', version: it.version, date: it.date || null, items: [] };
+      byVersion.set(it.version, g);
+      groups.push(g);
+    }
+    byVersion.get(it.version).items.push({ ...it, index });
+  });
+  for (const g of groups) g.sections = [...new Set(g.items.map(i => i.section || ''))].filter(Boolean);
+  return groups;
 }
 
 /** Markdown release note: ready versions only, merged by Keep a Changelog section, verbatim. */

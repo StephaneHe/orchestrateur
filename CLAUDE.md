@@ -842,6 +842,13 @@ CHANGELOG.
   `#btn-release`, Copier / Télécharger `.md`.
 - Recettes : `_test_release_list.mjs`, HTTP `release-list`, navigateur
   `release-panel`.
+- **Groupes et détail** (0.98.0, demande « les items doivent etre regroupes
+  par release, et chaque release est clickable et ouvrir une fenetre ») :
+  `groupByRelease` → `groups` (« ⏳ En cours » d'abord, puis chaque version
+  prête, la plus récente en haut) ; en-tête de bloc = bouton qui ouvre
+  `#release-overlay` (chaque élément en entier, Markdown) ; Échap en capture
+  (l'onglet reste ouvert), ✕, clic hors zone. Recettes :
+  `_test_release_groups.mjs`, navigateur `release-groups`.
 
 ## Vue « Projets » et retour arrière (0.29.0)
 
