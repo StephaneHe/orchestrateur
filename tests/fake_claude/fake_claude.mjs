@@ -499,6 +499,8 @@ function pipelineStep(text) {
 // marker; FAKE_PIPE_REMAINING=<n> makes the re-check report one remaining flaw
 // n times; FAKE_PIPE_BAD=<step> breaks that step's contract.
 function catalogStep(text, step, artefact, bad, w, once) {
+  // FAKE_PIPE_REPORT : texte imposé du rapport du Routage (0.92.0, contrôle des identifiants).
+  if (step === 'rapporter' && process.env.FAKE_PIPE_REPORT) { w(artefact, process.env.FAKE_PIPE_REPORT); return; }
   const line = (k) => (new RegExp(`^${k}=(.+)$`, 'm').exec(text) || [])[1]?.trim() || '';
   const modify = line('MODIFIER');
   const sections = line('ATTENDU_SECTIONS').split('|').map(s => s.trim()).filter(Boolean);

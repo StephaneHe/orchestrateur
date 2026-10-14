@@ -1849,6 +1849,15 @@ partagé, l'extrait qui commence où elle s'écarte de son jumeau le plus proche
 contexte du chef l'affichent. Affichage seul. Recette :
 `_test_routage_distinct.mjs`.
 
+**Contrôle de la réponse du chef par le code** (0.92.0, tâche 4/4) :
+`checkReportIds` de `scripts/report-check.mjs`, appliqué au rapport du
+Routage (demande et réveil) avant l'envoi : identifiant connu complété par son
+titre, inconnu signalé, identifiant suivi du libellé d'une autre entrée signalé
+comme contradictoire (avec le bon identifiant) ; `q-…` et `p-…` inconnus
+signalés ; rien n'est retiré ; événement `system/report_check`. Règle
+`ID_METHOD_RULE` dans les consignes des étapes qui écrivent. Recette :
+`_test_report_check.mjs`.
+
 
 Signalement utilisateur : « A nouveau, orchestrateur est termine, et plus rien
 ne se passe. Il faut corriger la situation ».

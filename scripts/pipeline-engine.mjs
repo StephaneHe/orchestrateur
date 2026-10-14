@@ -39,6 +39,7 @@ import { renameRetry, writeFileAtomic } from './atomic-file.mjs';
 import { readBranchLog } from './dual-run.mjs';
 import { languageFor, languageGate, localize, workingLanguage } from './language.mjs';
 import { CATALOG_PIPELINES, catalogOf, catalogSteps } from './pipeline-catalog.mjs';
+import { checkReportIds } from './report-check.mjs';
 import { readPending, addPending, releaseReady, launchTask, detectReprise, logOffset, taskKey, textHash, duplicatesText, RUN_ID_RE, titleProblem, pendingLabel, cleanTitle, ambiguityProblem, distinctExcerpts } from './routage-pending.mjs';
 export { readPending };
 import { backoffConfig, isLaunchFailure, dispatchRefusal, tierAfter, delayFor, waitBackoff, runDirOf } from './model-backoff.mjs';
@@ -2844,6 +2845,15 @@ export async function runPipeline(o) {
     // Routage : le rapport EST la réponse du chef ; une demande ambiguë finit
     // par la question à l'utilisateur (règle : ne jamais deviner).
     if (pipeline === 'routage') {
+      // 0.92.0 (task 4/4): every id the model wrote is checked against the
+      // registries before the report leaves (request and wake-up modes).
+      const chk = checkReportIds(body, { logsDir });
+      if (chk.findings.length) {
+        body = chk.text;
+        const bad = chk.findings.filter(f => f.kind !== 'titled');
+        writeEvent({ type: 'system', subtype: 'report_check', pipeline: { run }, findings: chk.findings,
+          text: `🔎 contrôle des identifiants du rapport : ${chk.findings.length - bad.length} complété(s) par leur titre${bad.length ? `, ${bad.length} point(s) signalé(s)` : ''}` });
+      }
       // Questions come from the global meaning (ambiguous message), the split
       // (impossible to split) or the per-task classification (0.69.0).
       const sens = parseJsonArtefact(readArtefact(ctx, 'sens.json') || '') || {};

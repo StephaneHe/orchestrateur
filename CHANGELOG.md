@@ -11,6 +11,37 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.92.0] - 2026-10-14
+
+### Added
+
+- (server) The code checks every id written in the chef's Routage report —
+  task 4/4 of the mechanism validated after the chef named a waiting task from
+  memory by the wrong id on 2026-10-13 (5383dd61 instead of 75627914), the
+  mistake repeated from answer to answer (user answer, verbatim: « Lances les
+  taches »; relaunched on 2026-10-14: « Relances les taches necessaires »).
+  - `scripts/report-check.mjs` (`checkReportIds`), applied to the report
+    (request and wake-up modes) before it is sent, annotating it in place,
+    never removing anything:
+    - a waiting Routage task id (8 hex characters) known to the registry gets
+      its official title when the report does not show it;
+    - an unknown one (mixing digits and letters, not after « commit »/« sha »)
+      is flagged « ⚠ [contrôle : identifiant absent du registre…] »;
+    - an id followed by a label (« … », "…", (…), « — … ») that matches
+      ANOTHER entry's title or `rattache` and not its own is flagged as
+      contradictory, naming the right id and both titles;
+    - unknown queue ids (`q-…`) and pipeline runs (`p-…`) are flagged.
+    A closing line sums up the points to check; `system/report_check`
+    records every finding.
+  - Method rule `ID_METHOD_RULE` (`pipeline-catalog.mjs`) added to the
+    instructions of Lire, Comprendre, Découper, Callback and Rapporter: never
+    name a waiting task by its id without re-reading its entry in the same
+    turn, always write « identifiant « titre » ».
+  - Fake claude: `FAKE_PIPE_REPORT` (imposed text of the Routage report).
+  - Test: `scripts/_test_report_check.mjs` (known id titled, unknown id
+    flagged, the 2026-10-13 sentence « 5383dd61 « glisser-déposer » » caught
+    as contradictory, end to end on a real chef turn).
+
 ## [0.91.0] - 2026-10-14
 
 ### Added

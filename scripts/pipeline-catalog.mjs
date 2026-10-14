@@ -239,6 +239,12 @@ S.routage = {
   ],
 };
 
+// 0.92.0 (task 4/4 after 2026-10-13): a task named from memory by the wrong
+// id. Method rule for every Routage step that writes (the code also checks
+// each id of the report: scripts/report-check.mjs).
+export const ID_METHOD_RULE = 'MÉTHODE : ne nomme jamais une tâche en attente par son identifiant sans avoir relu son entrée dans ce tour (contexte.md) ; écris toujours « identifiant « titre » », jamais l’identifiant seul ni un titre de mémoire. L’orchestrateur contrôle chaque identifiant de ta réponse.';
+for (const st of S.routage.steps) if (['lire', 'comprendre', 'decomposer', 'callback', 'rapporter'].includes(st.id)) st.role = `${st.role} ${ID_METHOD_RULE}`;
+
 // ── Images, Vidéo, Audio (lot C, 0.55.0) ────────────────────────────────────
 Object.assign(S, MEDIA_PIPELINES);
 
