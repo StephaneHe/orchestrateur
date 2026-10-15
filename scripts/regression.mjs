@@ -27,7 +27,12 @@
 //   node scripts/regression.mjs --targeted [--since <ref>]  CIBLÉE (développement) : socle + suites/étages
 //                                                    qui couvrent les fichiers modifiés ; complète si un fichier
 //                                                    n'est couvert par rien. La prod exige la complète (prod-jump.mjs)
-//   node scripts/regression.mjs --jobs <n>           suites en parallèle (défaut : ORCH_REGRESS_JOBS, sinon 1/4 des cœurs, 1 à 4 ;
+//   node scripts/regression.mjs --ref vX.Y.Z --perimeters --prod <dépôt de prod>   PAR PÉRIMÈTRE (avant une mise en prod,
+//                                                    0.106.0) : socle + suites/étages des périmètres touchés depuis la version
+//                                                    en prod (scripts/regression-perimeters.json) ; complète pour un fichier
+//                                                    transverse ou inconnu, ou avec --full. Aussi --since <ref> au lieu de --prod,
+//                                                    et sans --ref sur l'état de travail
+//   node scripts/regression.mjs --jobs <n>          suites en parallèle (défaut : ORCH_REGRESS_JOBS, sinon 1/4 des cœurs, 1 à 4 ;
 //                                                    les suites SERIAL_SUITES de suite-runner.mjs restent seules, à la fin)
 //   node scripts/regression.mjs --no-browser         sans navigateur
 //   node scripts/regression.mjs --no-suites          sans les suites node
@@ -130,6 +135,25 @@ if (flag('--targeted')) {
     for (const o of sel.outOfScope || []) console.log(`   ${o.file} — ${o.reason}`);
   }
   selection = { since, changed, ...sel };
+}
+// Perimeter run (0.106.0): the suites and stages of the perimeters impacted
+// since the production version (scripts/regression-perimeters.json), on the
+// working tree or on a tag. Full fallback: transverse or unmapped file, --full.
+if (flag('--perimeters')) {
+  if (selection) { console.error('--perimeters et --targeted sont exclusifs'); process.exit(64); }
+  if (opt('--dir')) { console.error('--perimeters vaut pour l’état de travail ou un --ref, pas pour --dir'); process.exit(64); }
+  const { perimeterPlan, planLines } = await import('./regression-perimeters.mjs');
+  let base = opt('--since');
+  if (!base && opt('--prod')) {
+    base = (spawnSync('git', ['-C', path.resolve(opt('--prod')), 'rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true }).stdout || '').trim();
+    if (!base) { console.error(`--prod : version en prod illisible dans ${opt('--prod')}`); process.exit(64); }
+  }
+  if (!base && source.ref) { console.error('--perimeters --ref exige --since <version en prod> ou --prod <dépôt de prod>'); process.exit(64); }
+  let plan;
+  try { plan = perimeterPlan({ repo: REPO, base: base || 'HEAD', target: source.ref || null, full: flag('--full') }); }
+  catch (e) { console.error(`[périmètres] ${e.message}`); process.exit(64); }
+  console.log(`\n${planLines(plan).join('\n')}`);
+  selection = { kind: 'perimeter', since: plan.base, ...plan };
 }
 const results = [];
 function record(stage, id, name, status, detail = '', extra = null) {
@@ -1843,13 +1867,18 @@ function writeReport(tree, extra = {}) {
   const narrowed = selection && !selection.full;
   const commit = (spawnSync('git', ['-C', REPO, 'rev-parse', source.ref || 'HEAD'], { encoding: 'utf8' }).stdout || '').trim() || null;
   // "full" = every stage on every suite: the only kind a production jump accepts.
+  // "perimeter" (0.106.0) = the impacted perimeters only: accepted by a
+  // production jump when its base is the production version (prod-jump.mjs).
   const mode = narrowed ? 'targeted' : (flag('--no-suites') || flag('--no-browser')) ? 'partial' : 'full';
-  const report = { label, at: new Date().toISOString(), durationS: Math.round((Date.now() - t0) / 1000), tree, commit, mode,
+  // A perimeter run without a stage it needs is refused by reportCoversPlan.
+  const runMode = mode === 'targeted' && selection.kind === 'perimeter' ? 'perimeter' : mode;
+  const report = { label, at: new Date().toISOString(), durationS: Math.round((Date.now() - t0) / 1000), tree, commit, mode: runMode,
     ...(selection ? { selection: { since: selection.since, changed: selection.changed, full: !!selection.full, reason: selection.reason || null,
-      suites: selection.suites || null, http: selection.http ?? true, browser: selection.browser ?? true } } : {}),
+      suites: selection.suites || null, http: selection.http ?? true, browser: selection.browser ?? true,
+      ...(selection.kind === 'perimeter' ? { kind: 'perimeter', base: selection.base, baseCommit: selection.baseCommit, target: selection.target, perimeters: selection.perimeters || null } : {}) } } : {}),
     ...extra, counts: c, results };
   fs.writeFileSync(out, JSON.stringify(report, null, 2));
-  return { report, out, c, mode };
+  return { report, out, c, mode: runMode };
 }
 async function abortStale(info) {
   const diff = changedPaths(REPO, info.start, info.current);
@@ -1911,7 +1940,7 @@ async function main() {
   const tree = staleWatch?.start || (source.worktree ? worktreeTree(REPO)
     : source.ref ? (spawnSync('git', ['-C', REPO, 'rev-parse', `${source.ref}^{tree}`], { encoding: 'utf8' }).stdout || '').trim() || null : null);
   const { report, out, c, mode } = writeReport(tree);
-  console.log(`\n=== ${mode === 'full' ? 'COMPLÈTE' : mode === 'targeted' ? 'CIBLÉE' : 'PARTIELLE'} : ${c.OK} OK · ${c.KO} KO · ${c.NA} NA — ${Math.round((Date.now() - t0) / 1000)} s — rapport : ${out}`);
+  console.log(`\n=== ${mode === 'full' ? 'COMPLÈTE' : mode === 'targeted' ? 'CIBLÉE' : mode === 'perimeter' ? 'PAR PÉRIMÈTRE' : 'PARTIELLE'} : ${c.OK} OK · ${c.KO} KO · ${c.NA} NA — ${Math.round((Date.now() - t0) / 1000)} s — rapport : ${out}`);
   const gate = checkReport(report, { knownKo: readKnownKo(REPO) });
   for (const k of gate.accepted) console.log(`KO accepté (docs/known-ko.json) : ${k.id} — ${k.reason}`);
   console.log(`=== LIVRAISON : ${gate.ok ? 'AUTORISÉE' : `REFUSÉE — ${gate.reasons.join(' ; ')}`}`);

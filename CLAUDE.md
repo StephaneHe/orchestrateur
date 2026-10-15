@@ -658,9 +658,10 @@ pendant le développement, et la complète seulement avant une mise en prod ».
     Android : hors périmètre de la non-régression ».
 - **Aucune livraison avec une suite exécutée rouge, ciblée comprise** : le
   hook `pre-commit` vérifie le rapport ciblé comme un complet.
-- **Avant la prod** : la complète (`mode: 'full'` ; `--no-suites` ou
-  `--no-browser` donnent `partial`) sur exactement l'arbre du tag :
-  `node scripts/regression.mjs --ref vX.Y.Z`. Puis
+- **Avant la prod** : depuis 0.106.0, celle **par périmètre** depuis la
+  version en prod (section suivante), ou la complète (`mode: 'full'` ;
+  `--no-suites` ou `--no-browser` donnent `partial`) sur exactement l'arbre du
+  tag : `node scripts/regression.mjs --ref vX.Y.Z`. Puis
   `node scripts/prod-jump.mjs --tag vX.Y.Z --prod I:\orchestrateur
   [--apply]` refuse sans elle (et si la prod est modifiée, un tour en cours,
   pas d'avance rapide), sinon affiche le plan ; `--apply` (décision de
@@ -671,6 +672,36 @@ pendant le développement, et la complète seulement avant une mise en prod ».
 - Le tag de retour avant modification et le test d'exigence restent
   obligatoires.
 - Recette : `_test_targeted_regression.mjs`.
+
+## Avant la prod : par périmètre, la complète en repli (0.106.0)
+
+Demande utilisateur (2026-10-15) : « les tests complets de regression
+deviennent beaucoup trop long. Il faut decouper l'ensemble du projet de
+maniere cloisonee, et seul les tests correspondant au perimetre impacte par
+des modifications devront etre lances avant une mise en prod. »
+
+- **Carte** `scripts/regression-perimeters.json` (versionnée) : chaque fichier
+  dans exactement un périmètre (un nom exact prime sur un motif) ou une
+  catégorie `transverse` (→ complète), `noTests`, `outOfScope` ; chaque suite
+  dans un périmètre (ou `excludedSuites`). `uses` : `"Q"` (toutes les suites
+  du périmètre) ou `{perimeter, suites}` ; **non transitif**.
+- **Avant la prod** : `node scripts/regression.mjs --ref vX.Y.Z --perimeters
+  --prod I:\orchestrateur` (ou `--since <commit>`). Diff depuis la version en
+  prod, périmètres et suites affichés avec leur raison, socle + suites des
+  périmètres touchés + celles qui les atteignent + étages des périmètres
+  touchés. **Complète** : fichier transverse, fichier inconnu, `package.json`
+  au-delà de la version, `--full`. Rapport `mode: 'perimeter'`.
+- `prod-jump.mjs` / `delivery-gate.mjs prod-check --prod` recalculent la
+  sélection depuis la carte du tag (`prodPlan`) et exigent : même base que la
+  prod, toutes les suites et étages attendus, aucun KO. La complète reste
+  acceptée ; ciblée et partielle refusées.
+- **Tenir la carte à jour** : `node scripts/regression-perimeters.mjs check`
+  (`_test_regression_perimeters.mjs`, dans le socle des deux modes). Toute
+  nouvelle suite ou tout nouveau fichier doit y être rattaché ; une suite qui
+  exécute du code d'un autre périmètre (import, ou script lancé : clôture
+  d'imports de `dispatch.mjs`, `server.js`…) exige l'arête. `check --suggest`
+  donne les listes `uses` exactes à recopier.
+- Recette : `_test_regression_perimeters.mjs`.
 
 ## Un test périmé s'arrête aussitôt (0.94.0)
 

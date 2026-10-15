@@ -80,14 +80,63 @@ export function checkReport(report, { tree, knownKo = [] } = {}) {
 }
 
 /**
- * Production gate (0.72.0): only a FULL run (every suite, HTTP and browser
- * stages) on exactly the jumped tree, with no KO, lets a version go to prod.
- * A targeted or partial run is fine for development, never for production.
+ * Production gate (0.72.0, perimeters 0.106.0): a run on exactly the jumped
+ * tree, with no KO, that is either FULL (every suite, HTTP and browser stages)
+ * or PER PERIMETER from the production version: `plan` is the selection
+ * recomputed from the tag's own map (perimeterPlan), and the report must have
+ * run every suite and stage of it. Targeted or partial runs never go to prod.
  */
-export function checkProdReport(report, { tree, knownKo = [] } = {}) {
+export function checkProdReport(report, { tree, knownKo = [], plan = null } = {}) {
   const v = checkReport(report, { tree, knownKo });
-  if (report && report.mode !== 'full') v.reasons.unshift(`non-régression ${report.mode === 'targeted' ? 'CIBLÉE' : report.mode || 'sans mode'} : la mise en prod exige la COMPLÈTE`);
+  if (report && report.mode === 'perimeter') {
+    if (!plan) v.reasons.unshift('non-régression PAR PÉRIMÈTRE : version en prod inconnue, sélection impossible à vérifier (indiquer --prod)');
+    else v.reasons.unshift(...reportCoversPlan(report, plan));
+  } else if (report && report.mode !== 'full') v.reasons.unshift(`non-régression ${report.mode === 'targeted' ? 'CIBLÉE' : report.mode || 'sans mode'} : la mise en prod exige la COMPLÈTE ou celle PAR PÉRIMÈTRE depuis la version en prod`);
   return { ...v, ok: !v.reasons.length };
+}
+
+/**
+ * The most recent report on `tree` a production jump accepts: full, or per
+ * perimeter covering `plan`. Otherwise the most recent full / perimeter one on
+ * `tree` (so the refusal says why), or null.
+ */
+export function findProdReport(repo, tree, { plan = null, knownKo = [] } = {}) {
+  const dir = path.join(repo, '.regress');
+  let files = [];
+  try { files = fs.readdirSync(dir).filter(f => /^report-.*\.json$/.test(f)).map(f => path.join(dir, f)); } catch { return null; }
+  const all = files.map(f => { try { return { f, r: JSON.parse(fs.readFileSync(f, 'utf8')), m: fs.statSync(f).mtimeMs }; } catch { return null; } })
+    .filter(x => x && x.r.tree === tree && (x.r.mode === 'full' || x.r.mode === 'perimeter')).sort((a, b) => b.m - a.m);
+  return all.find(x => checkProdReport(x.r, { tree, knownKo, plan }).ok) || all[0] || null;
+}
+
+/**
+ * Does `report` cover `plan` (a perimeterPlan)? → [reasons it does not]; [] = covered.
+ * Kept here, import-free: the pre-commit hook runs this file on its own.
+ */
+export function reportCoversPlan(report, plan) {
+  const reasons = [];
+  const sel = report?.selection || {};
+  if (sel.baseCommit !== plan.baseCommit) reasons.push(`non-régression par périmètre faite depuis ${String(sel.baseCommit || '?').slice(0, 7)}, pas depuis la version en prod (${String(plan.baseCommit).slice(0, 7)})`);
+  if (plan.full) { reasons.push(`la sélection exige la COMPLÈTE : ${plan.reason}`); return reasons; }
+  const results = report?.results || [];
+  const ran = new Set(results.filter(r => r.stage === 'suite').map(r => r.id.replace(/^suite:/, '')));
+  const absent = plan.suites.map(s => s.file).filter(s => !ran.has(s));
+  if (absent.length) reasons.push(`suites attendues non exécutées : ${absent.join(', ')}`);
+  if (plan.http && !results.some(r => r.stage === 'http')) reasons.push('étage HTTP attendu, non exécuté');
+  if (plan.browser && !results.some(r => !['suite', 'http'].includes(r.stage))) reasons.push('étage navigateur attendu, non exécuté');
+  return reasons;
+}
+
+/**
+ * Selection a perimeter run from `prodHead` to `ref` must cover, recomputed
+ * from the map of `ref` (regression-perimeters.mjs select, run as a child so
+ * this file stays import-free); null without a map in `ref` or a known commit.
+ */
+export function prodPlan(repo, ref, prodHead) {
+  const cli = path.join(ROOT, 'scripts', 'regression-perimeters.mjs');
+  if (!prodHead || !fs.existsSync(cli)) return null;
+  const r = spawnSync(process.execPath, [cli, 'select', '--since', prodHead, '--ref', ref, '--repo', repo, '--json'], { encoding: 'utf8', windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
+  try { return r.status === 0 ? JSON.parse(r.stdout) : null; } catch { return null; }
 }
 
 /** The most recent FULL report under .regress/ made on `tree`, or null. */
@@ -155,18 +204,22 @@ async function cli() {
     process.exit(v.ok ? 0 : 1);
   }
   if (cmd === 'prod-check') {
-    const ref = rest.find(a => !a.startsWith('--') && a !== opt('--repo') && a !== opt('--report'));
-    if (!ref) { console.error('usage: delivery-gate.mjs prod-check <tag|commit> [--report <f>]'); process.exit(64); }
+    const ref = rest.find(a => !a.startsWith('--') && ![opt('--repo'), opt('--report'), opt('--prod'), opt('--base')].includes(a));
+    if (!ref) { console.error('usage: delivery-gate.mjs prod-check <tag|commit> [--prod <dépôt de prod> | --base <commit>] [--report <f>]'); process.exit(64); }
     const tree = git(repo, ['rev-parse', `${ref}^{tree}`]).out;
     if (!tree) { console.error(`[delivery-gate] référence inconnue : ${ref}`); process.exit(64); }
     const file = opt('--report');
-    const found = file ? { f: file, r: JSON.parse(fs.readFileSync(file, 'utf8')) } : findFullReport(repo, tree);
-    const v = found ? checkProdReport(found.r, { tree, knownKo: readKnownKo(repo) })
-      : { ok: false, reasons: [`aucune non-régression COMPLÈTE sur ${ref} (arbre ${tree.slice(0, 10)}) : lancer node scripts/regression.mjs --ref ${ref}`], accepted: [] };
+    // The production version a perimeter run starts from: --prod <checkout> or --base <commit>.
+    const prodHead = opt('--base') || (opt('--prod') ? git(path.resolve(opt('--prod')), ['rev-parse', 'HEAD']).out : null);
+    const plan = prodPlan(repo, ref, prodHead);
+    const knownKo = readKnownKo(repo);
+    const found = file ? { f: file, r: JSON.parse(fs.readFileSync(file, 'utf8')) } : findProdReport(repo, tree, { plan, knownKo });
+    const v = found ? checkProdReport(found.r, { tree, knownKo, plan })
+      : { ok: false, reasons: [`aucune non-régression COMPLÈTE ni PAR PÉRIMÈTRE sur ${ref} (arbre ${tree.slice(0, 10)}) : lancer node scripts/regression.mjs --ref ${ref} --perimeters --prod <dépôt de prod>`], accepted: [] };
     printVerdict(v, found ? `${path.basename(found.f)}, mise en prod de ${ref}` : `mise en prod de ${ref}`);
     process.exit(v.ok ? 0 : 1);
   }
-  console.error('usage: delivery-gate.mjs check [--report <f>] [--tree <sha>] | prod-check <ref> | pre-commit | install-hook');
+  console.error('usage: delivery-gate.mjs check [--report <f>] [--tree <sha>] | prod-check <ref> [--prod <dépôt>|--base <commit>] | pre-commit | install-hook');
   process.exit(64);
 }
 

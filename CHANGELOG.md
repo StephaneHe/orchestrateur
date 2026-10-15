@@ -11,6 +11,44 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.106.0] - 2026-10-16
+
+### Added
+
+- (server) Non-regression **by perimeter** before a production jump (user
+  request of 2026-10-15: the full run takes about 20 minutes). New versioned
+  map `scripts/regression-perimeters.json`: 8 isolated perimeters (tooling,
+  server, shared state rules, web client, dispatch / queue / lanes,
+  pipelines, chef routing, panel data), each with its files, its suites, its
+  HTTP / browser stages and the `uses` edges its suites need; categories
+  `transverse` (→ full run), `noTests` (docs) and `outOfScope` (Android).
+  New `scripts/regression-perimeters.mjs`: `selectPerimeters`,
+  `perimeterPlan` (git diff between the production commit and a tag or the
+  working tree), `checkMap`, CLI `select` / `check [--suggest]`.
+- (server) `node scripts/regression.mjs --ref vX.Y.Z --perimeters --prod
+  <prod checkout>` (or `--since <ref>`, or on the working tree): prints the
+  perimeters and suites kept and why, runs the base, those suites and the
+  needed stages; report `mode: "perimeter"` with its base commit. Falls back
+  to the full run for a transverse file, an unmapped file, `package.json`
+  changed beyond its version, or `--full`.
+- (server) Map check in the base of every run (`_test_regression_perimeters.mjs`,
+  also added to the targeted base): fails on an unattached file or suite, a
+  file in two perimeters, a missing stage, or a suite that executes code of a
+  perimeter its entry does not declare — including through a script it
+  launches (`dispatch.mjs`, `server.js`: their import closure counts,
+  t-8dda3e). A perimeter run therefore never selects less than the targeted
+  run.
+
+### Changed
+
+- (server) `prod-jump.mjs` and `delivery-gate.mjs prod-check` accept a green
+  run by perimeter on the tag's tree when it starts from the production commit
+  and contains every suite and stage of the selection recomputed from the
+  tag's own map (`prodPlan`, `findProdReport`, `reportCoversPlan`); a full
+  run is still accepted, targeted and partial runs are still refused. The
+  plan's in-production regression becomes `--perimeters --since
+  prod-before-vX.Y.Z`. Procedure in `docs/DEV-PROD.md`.
+
 ## [0.105.0] - 2026-10-16
 
 ### Added

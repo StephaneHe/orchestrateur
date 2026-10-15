@@ -48,9 +48,26 @@ Local, never committed files of the dev checkout:
   base plus the suites and stages that cover the changed files, and falls back
   to the full run when a changed file is covered by nothing. A targeted run
   with a KO still refuses the delivery commit (git hook).
-- The **full** regression (`node scripts/regression.mjs`, every suite, HTTP and
-  browser stages) is required before production, on exactly the tag's
-  content: `node scripts/regression.mjs --ref vX.Y.Z`.
+- Before production, the regression **by perimeter** (0.106.0) is enough, on
+  exactly the tag's content and from the version production runs:
+  `node scripts/regression.mjs --ref vX.Y.Z --perimeters --prod I:\orchestrateur`
+  (or `--since <prod commit>`). The project is split into isolated perimeters
+  in `scripts/regression-perimeters.json` (every file in exactly one
+  perimeter or category, every suite in one perimeter); the run takes the
+  files changed since production (`git diff`), prints the perimeters and
+  suites it keeps and why, and runs the base, the suites of the impacted
+  perimeters (and of the perimeters whose suites reach them) and their HTTP /
+  browser stages. It falls back to the **full** run (`node scripts/regression.mjs
+  --ref vX.Y.Z`, every suite and stage, still accepted) when a transverse file
+  changed (dependencies, `package.json` beyond its version, shared utilities,
+  test doubles), when a changed file belongs to no perimeter, or with
+  `--full`. Preview only: `node scripts/regression-perimeters.mjs select
+  --since <prod commit> --ref vX.Y.Z`.
+- Keeping the map up to date: `node scripts/regression-perimeters.mjs check`
+  (also the base suite `_test_regression_perimeters.mjs`, so every run fails
+  while a file or a suite is unattached, or while a suite reaches a perimeter
+  its entry does not declare). `check --suggest` prints the `uses` lists the
+  suites need, to paste into the map.
 
 ## Jumps (dev → prod)
 
@@ -60,24 +77,27 @@ when.
 1. In `I:\Dev\orchestrateur-dev`:
    - the version `X.Y.Z` is bumped with its CHANGELOG entry ;
    - tag `vX.Y.Z` (annotated) ;
-   - the FULL regression on the tag is green:
-     `node scripts/regression.mjs --ref vX.Y.Z` (a targeted or partial run
+   - the regression BY PERIMETER from production is green on the tag:
+     `node scripts/regression.mjs --ref vX.Y.Z --perimeters --prod I:\orchestrateur`
+     (it runs the full one by itself when needed; a targeted or partial run
      does not count) ;
    - `node scripts/prod-jump.mjs --tag vX.Y.Z --prod I:\orchestrateur` checks
-     everything (full green report on the tag's tree, production clean, no
-     turn running, fast-forward possible) and prints the plan ;
+     everything (green report on the tag's tree — full, or by perimeter from
+     the production commit, the selection recomputed from the tag's own map
+     and every expected suite and stage present — production clean, no turn
+     running, fast-forward possible) and prints the plan ;
    - push `dev` and the tag to `origin`, with the user's authorisation.
 2. In `I:\orchestrateur`, when **no orchestrator turn runs**
    (`node scripts/fleet-status.mjs`, no `logs/orchestrateur.turnlock`, empty
    queue). The scripts are read live by every turn of the fleet.
    `node scripts/prod-jump.mjs --tag vX.Y.Z --prod I:\orchestrateur --apply`
-   (on the user's decision) refuses without a full green run, then does the
+   (on the user's decision) refuses without that green run, then does the
    first three commands below; it never restarts anything.
    ```
    git tag -a prod-before-vX.Y.Z -m "production before the jump to vX.Y.Z"
    git fetch origin --tags
    git merge --ff-only vX.Y.Z      # never a merge commit, never a force
-   node scripts/regression.mjs     # on the jumped production checkout
+   node scripts/regression.mjs --perimeters --since prod-before-vX.Y.Z   # on the jumped production checkout
    ```
    A file that production tracks but the version stops tracking and ignores
    (`TODO_LIST.md` since 0.74.2) is deleted by the fast-forward: `--apply`

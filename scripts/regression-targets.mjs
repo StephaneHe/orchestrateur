@@ -28,7 +28,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 /** Fast suites always run in targeted mode (a few seconds in total). */
-export const BASE_SUITES = ['_test_repo_hygiene.mjs', '_test_user_requirements.mjs', '_test_delivery_gate.mjs', '_test_targeted_regression.mjs'];
+export const BASE_SUITES = ['_test_repo_hygiene.mjs', '_test_user_requirements.mjs', '_test_delivery_gate.mjs', '_test_targeted_regression.mjs', '_test_regression_perimeters.mjs'];
 /** Entry points of the HTTP stage (regression.mjs apiChecks on a sandboxed server). */
 export const HTTP_ROOTS = ['server.js', 'scripts/_regression_sandbox.mjs', 'tests/fake_claude/fake_claude.mjs', 'tests/fake_codex/fake_codex.mjs'];
 /** The browser stage runs when one of these changes (or anything under public/). */

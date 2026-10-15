@@ -11,6 +11,12 @@
 // and browser stages) made on exactly the tag's tree, with no KO (except the
 // ones listed with their reason in docs/known-ko.json, printed).
 //
+// Since 0.106.0 (« seul les tests correspondant au perimetre impacte par des
+// modifications devront etre lances avant une mise en prod »), a run BY
+// PERIMETER is accepted too, when it starts from the production commit and
+// ran every suite and stage of the selection recomputed here from the tag's
+// own map (scripts/regression-perimeters.mjs).
+//
 // Step 2 of docs/DEV-PROD.md, made mechanical. The jump itself stays a user
 // decision: without --apply nothing is written (plan only).
 //
@@ -26,7 +32,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { checkProdReport, findFullReport, readKnownKo } from './delivery-gate.mjs';
+import { checkProdReport, findProdReport, prodPlan, readKnownKo } from './delivery-gate.mjs';
 
 const DEV = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
@@ -55,11 +61,15 @@ export function preflight({ dev = DEV, prod, tag, from = 'origin', turnLock = nu
   const commit = git(dev, ['rev-parse', `${tag}^{commit}`]).out;
   if (!tree || !commit) problems.push(`tag ${tag} inconnu dans la dev`);
   let report = null;
+  // The production version a perimeter run must start from (read only).
+  const prodHead = prod && fs.existsSync(path.join(prod, '.git')) ? git(prod, ['rev-parse', 'HEAD']).out : null;
   if (tree) {
-    const found = findFullReport(dev, tree);
-    const v = found ? checkProdReport(found.r, { tree, knownKo: readKnownKo(dev) })
-      : { ok: false, reasons: [`aucune non-régression COMPLÈTE sur ${tag} : lancer node scripts/regression.mjs --ref ${tag}`], accepted: [] };
-    report = { file: found?.f || null, accepted: v.accepted };
+    const plan = prodPlan(dev, tag, prodHead);
+    const knownKo = readKnownKo(dev);
+    const found = findProdReport(dev, tree, { plan, knownKo });
+    const v = found ? checkProdReport(found.r, { tree, knownKo, plan })
+      : { ok: false, reasons: [`aucune non-régression COMPLÈTE ni PAR PÉRIMÈTRE sur ${tag} : lancer node scripts/regression.mjs --ref ${tag} --perimeters --prod ${prod}`], accepted: [] };
+    report = { file: found?.f || null, accepted: v.accepted, mode: found?.r.mode || null, plan };
     problems.push(...v.reasons);
   }
   let keep = [];
@@ -86,7 +96,7 @@ export function preflight({ dev = DEV, prod, tag, from = 'origin', turnLock = nu
     `git -C ${prod} fetch ${from} tag ${tag}`,
     `git -C ${prod} merge --ff-only ${tag}`,
     ...keep.map(f => `remettre ${f} sur le disque (n'est plus suivi par git depuis ${tag}) : contenu de prod-before-${tag}:${f}`),
-    `node ${path.join(prod, 'scripts', 'regression.mjs')}   # complète, dans la prod`,
+    `node ${path.join(prod, 'scripts', 'regression.mjs')} --perimeters --since prod-before-${tag}   # par périmètre, dans la prod (--full : la complète)`,
     'redémarrage du serveur par le chef, avec l’accord de l’utilisateur',
   ];
   return { ok: !problems.length, problems, plan, report, tree, commit, keep };
@@ -126,13 +136,14 @@ async function main() {
     for (const x of p.problems) console.error(`  - ${x}`);
     process.exit(1);
   }
-  console.log(`[prod-jump] ${tag} : non-régression COMPLÈTE verte (${path.basename(p.report.file)}) — mise en prod possible`);
+  const kind = p.report.mode === 'perimeter' ? `PAR PÉRIMÈTRE depuis la prod (${p.report.plan.perimeters.map(x => x.id).join(', ') || 'socle seul'})` : 'COMPLÈTE';
+  console.log(`[prod-jump] ${tag} : non-régression ${kind} verte (${path.basename(p.report.file)}) — mise en prod possible`);
   console.log(p.plan.map((s, i) => `  ${i + 1}. ${s}`).join('\n'));
   if (!argv.includes('--apply')) { console.log('[prod-jump] plan seulement (ajouter --apply, sur décision de l’utilisateur)'); return; }
   const r = applyJump({ prod: path.resolve(prod), tag, from, keep: p.keep });
   if (!r.ok) { console.error(`[prod-jump] échec à l'étape ${r.step} : ${r.err}`); process.exit(1); }
   for (const f of r.restored) console.log(`[prod-jump] ${f} remis sur le disque (non suivi par git, contenu de prod-before-${tag})`);
-  console.log(`[prod-jump] prod avancée sur ${tag} (retour : git reset --hard prod-before-${tag}). Reste : non-régression complète dans la prod, puis redémarrage par le chef.`);
+  console.log(`[prod-jump] prod avancée sur ${tag} (retour : git reset --hard prod-before-${tag}). Reste : non-régression par périmètre dans la prod, puis redémarrage par le chef.`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

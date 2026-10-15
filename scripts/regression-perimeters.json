@@ -1,0 +1,1033 @@
+{
+  "about": "Perimeters of the non-regression (0.106.0). Every file belongs to exactly one perimeter or category; every suite to exactly one perimeter. Checked by scripts/_test_regression_perimeters.mjs (node scripts/regression-perimeters.mjs check). A change in perimeter Q runs the suites of Q and of every perimeter that uses Q.",
+  "transverse": [
+    {
+      "glob": "package-lock.json",
+      "reason": "dépendances"
+    },
+    {
+      "glob": "package.json",
+      "reason": "au-delà de son numéro de version (dépendances, scripts) ; une hausse de version seule ne demande que le socle"
+    },
+    {
+      "glob": ".gitignore",
+      "reason": "change ce que git suit pour tout le dépôt"
+    },
+    {
+      "glob": "config.example.json",
+      "reason": "configuration de référence de toute la flotte"
+    },
+    {
+      "glob": "scripts/atomic-file.mjs",
+      "reason": "utilitaire d'écriture partagé par tous les périmètres"
+    },
+    {
+      "glob": "tests/fake_claude/**",
+      "reason": "doublure de claude partagée par toutes les suites"
+    },
+    {
+      "glob": "tests/fake_codex/**",
+      "reason": "doublure de codex partagée par toutes les suites"
+    },
+    {
+      "glob": "tests/fixture-speed.mjs",
+      "reason": "réglage des projets de test partagé par les suites du moteur"
+    },
+    {
+      "glob": "tests/fixtures/**",
+      "reason": "jeux de données de test partagés"
+    },
+    {
+      "glob": "scripts/local-secret.mjs",
+      "reason": "secret local partagé par le serveur, le dispatch et le moteur"
+    }
+  ],
+  "noTests": [
+    {
+      "glob": "**/*.md",
+      "reason": "documentation"
+    },
+    {
+      "glob": "docs/**",
+      "reason": "documentation (docs/known-ko.json est lu par le garde-fou du socle)"
+    },
+    {
+      "glob": "reports/**",
+      "reason": "rapports historiques"
+    },
+    {
+      "glob": "LICENSE",
+      "reason": "licence"
+    },
+    {
+      "glob": ".gitleaksignore",
+      "reason": "réglage de l'outil gitleaks, hors code"
+    },
+    {
+      "glob": "**/.gitkeep",
+      "reason": "dossier vide versionné"
+    }
+  ],
+  "outOfScope": [
+    {
+      "glob": "android/**",
+      "reason": "code Android : hors périmètre de la non-régression (décision 2026-10-12)"
+    }
+  ],
+  "excludedSuites": {
+    "_test_phase2.mjs": "code mort, appels Haiku réels (exclue de regression.mjs)"
+  },
+  "perimeters": [
+    {
+      "id": "outillage",
+      "label": "Outillage de la non-régression et des mises en prod",
+      "files": [
+        "scripts/regression.mjs",
+        "scripts/regression-targets.mjs",
+        "scripts/regression-perimeters.mjs",
+        "scripts/regression-perimeters.json",
+        "scripts/suite-runner.mjs",
+        "scripts/delivery-gate.mjs",
+        "scripts/prod-jump.mjs",
+        "scripts/stale-run.mjs",
+        "scripts/_regression_sandbox.mjs",
+        "scripts/_regression_browser.mjs",
+        "scripts/readme-screenshots.mjs",
+        "scripts/_bench_phase1_3.mjs",
+        "scripts/instrumentation-report.mjs",
+        "scripts/dev-split.mjs"
+      ],
+      "suites": [
+        "_test_delivery_gate.mjs",
+        "_test_targeted_regression.mjs",
+        "_test_regression_perimeters.mjs",
+        "_test_failed_suite_output.mjs",
+        "_test_parallel_suites.mjs",
+        "_test_stale_run.mjs",
+        "_test_ref_snapshot.mjs",
+        "_test_fixture_speed.mjs",
+        "_test_repo_hygiene.mjs",
+        "_test_user_requirements.mjs",
+        "_test_readme_images.mjs",
+        "_test_todo_untracked.mjs",
+        "_test_dev_split.mjs"
+      ],
+      "uses": [
+        {
+          "perimeter": "dispatch",
+          "suites": [
+            "_test_fixture_speed.mjs",
+            "_test_stale_run.mjs"
+          ]
+        },
+        {
+          "perimeter": "noyau",
+          "suites": [
+            "_test_fixture_speed.mjs",
+            "_test_stale_run.mjs"
+          ]
+        },
+        {
+          "perimeter": "panneaux",
+          "suites": [
+            "_test_stale_run.mjs"
+          ]
+        },
+        {
+          "perimeter": "pipelines",
+          "suites": [
+            "_test_fixture_speed.mjs",
+            "_test_stale_run.mjs"
+          ]
+        },
+        {
+          "perimeter": "routage",
+          "suites": [
+            "_test_fixture_speed.mjs",
+            "_test_stale_run.mjs"
+          ]
+        },
+        {
+          "perimeter": "serveur",
+          "suites": [
+            "_test_ref_snapshot.mjs"
+          ]
+        }
+      ],
+      "stages": [
+        "http",
+        "browser"
+      ]
+    },
+    {
+      "id": "serveur",
+      "label": "Serveur HTTP/WS, garde réseau, autorisations, passerelle",
+      "files": [
+        "server.js",
+        "ssh-server.js",
+        "start.ps1",
+        "test_key.mjs",
+        "downloads.json",
+        "src/**",
+        ".claude/**",
+        "scripts/*.cmd",
+        "scripts/network-guard.mjs",
+        "scripts/downloads-registry.mjs",
+        "scripts/api-keys.mjs",
+        "scripts/permission-store.mjs",
+        "scripts/permission-mcp.mjs",
+        "scripts/responses-gateway.mjs",
+        "scripts/restart-orchestrateur.mjs",
+        "scripts/server-watchdog.mjs",
+        "scripts/sendmail.mjs",
+        "scripts/copy-build.mjs"
+      ],
+      "suites": [
+        "_test_network_guard.mjs",
+        "_test_downloads_hot.mjs",
+        "_test_api_keys.mjs",
+        "_test_permission_prompt.mjs",
+        "_test_responses_shim.mjs",
+        "_test_phase1_backpressure.mjs",
+        "_test_phase1_close_handler.mjs",
+        "_test_phase1_crlf.mjs",
+        "_test_phase1_queue_persist.mjs",
+        "_test_phase2_5_integrated.mjs",
+        "_test_phase2_5_override.mjs",
+        "_test_phase4b_harness.mjs",
+        "_test_pool_p0a.mjs",
+        "_test_pool_chef_dispatch.mjs",
+        "_test_queue_api.mjs",
+        "_test_queue_sidecar_sweep.mjs"
+      ],
+      "uses": [
+        {
+          "perimeter": "client",
+          "suites": [
+            "_test_permission_prompt.mjs"
+          ]
+        },
+        {
+          "perimeter": "dispatch",
+          "suites": [
+            "_test_api_keys.mjs",
+            "_test_downloads_hot.mjs",
+            "_test_network_guard.mjs",
+            "_test_permission_prompt.mjs",
+            "_test_phase1_backpressure.mjs",
+            "_test_phase1_close_handler.mjs",
+            "_test_phase1_crlf.mjs",
+            "_test_phase1_queue_persist.mjs",
+            "_test_phase2_5_integrated.mjs",
+            "_test_pool_chef_dispatch.mjs",
+            "_test_pool_p0a.mjs",
+            "_test_queue_api.mjs",
+            "_test_queue_sidecar_sweep.mjs",
+            "_test_responses_shim.mjs"
+          ]
+        },
+        {
+          "perimeter": "noyau",
+          "suites": [
+            "_test_api_keys.mjs",
+            "_test_downloads_hot.mjs",
+            "_test_network_guard.mjs",
+            "_test_permission_prompt.mjs",
+            "_test_phase1_backpressure.mjs",
+            "_test_phase1_close_handler.mjs",
+            "_test_phase1_crlf.mjs",
+            "_test_phase1_queue_persist.mjs",
+            "_test_phase2_5_integrated.mjs",
+            "_test_pool_chef_dispatch.mjs",
+            "_test_pool_p0a.mjs",
+            "_test_queue_api.mjs",
+            "_test_queue_sidecar_sweep.mjs",
+            "_test_responses_shim.mjs"
+          ]
+        },
+        {
+          "perimeter": "outillage",
+          "suites": [
+            "_test_permission_prompt.mjs",
+            "_test_phase2_5_integrated.mjs"
+          ]
+        },
+        {
+          "perimeter": "panneaux",
+          "suites": [
+            "_test_api_keys.mjs",
+            "_test_downloads_hot.mjs",
+            "_test_network_guard.mjs",
+            "_test_permission_prompt.mjs",
+            "_test_phase1_backpressure.mjs",
+            "_test_phase1_close_handler.mjs",
+            "_test_phase1_crlf.mjs",
+            "_test_phase1_queue_persist.mjs",
+            "_test_phase2_5_integrated.mjs",
+            "_test_pool_chef_dispatch.mjs",
+            "_test_pool_p0a.mjs",
+            "_test_queue_api.mjs",
+            "_test_queue_sidecar_sweep.mjs",
+            "_test_responses_shim.mjs"
+          ]
+        },
+        {
+          "perimeter": "pipelines",
+          "suites": [
+            "_test_api_keys.mjs",
+            "_test_downloads_hot.mjs",
+            "_test_network_guard.mjs",
+            "_test_permission_prompt.mjs",
+            "_test_phase1_backpressure.mjs",
+            "_test_phase1_close_handler.mjs",
+            "_test_phase1_crlf.mjs",
+            "_test_phase1_queue_persist.mjs",
+            "_test_phase2_5_integrated.mjs",
+            "_test_pool_chef_dispatch.mjs",
+            "_test_pool_p0a.mjs",
+            "_test_queue_api.mjs",
+            "_test_queue_sidecar_sweep.mjs",
+            "_test_responses_shim.mjs"
+          ]
+        },
+        {
+          "perimeter": "routage",
+          "suites": [
+            "_test_api_keys.mjs",
+            "_test_downloads_hot.mjs",
+            "_test_network_guard.mjs",
+            "_test_permission_prompt.mjs",
+            "_test_phase1_backpressure.mjs",
+            "_test_phase1_close_handler.mjs",
+            "_test_phase1_crlf.mjs",
+            "_test_phase1_queue_persist.mjs",
+            "_test_phase2_5_integrated.mjs",
+            "_test_pool_chef_dispatch.mjs",
+            "_test_pool_p0a.mjs",
+            "_test_queue_api.mjs",
+            "_test_queue_sidecar_sweep.mjs",
+            "_test_responses_shim.mjs"
+          ]
+        }
+      ],
+      "stages": [
+        "http",
+        "browser"
+      ]
+    },
+    {
+      "id": "noyau",
+      "label": "Règles d'état partagées (navigateur et Node)",
+      "files": [
+        "public/turn-core.js",
+        "public/permission-core.js",
+        "scripts/fleet-status-core.mjs",
+        "scripts/queue-hold.mjs",
+        "public/html-text.js"
+      ],
+      "suites": [],
+      "uses": [],
+      "stages": [
+        "http",
+        "browser"
+      ]
+    },
+    {
+      "id": "client",
+      "label": "Client web (public/)",
+      "files": [
+        "public/**"
+      ],
+      "suites": [
+        "_test_html_output.mjs",
+        "_test_tts_text.mjs",
+        "_test_projects_view.mjs",
+        "_test_neutral_stop.mjs",
+        "_test_permission_denial.mjs"
+      ],
+      "uses": [
+        {
+          "perimeter": "dispatch",
+          "suites": [
+            "_test_html_output.mjs",
+            "_test_neutral_stop.mjs",
+            "_test_projects_view.mjs"
+          ]
+        },
+        {
+          "perimeter": "noyau",
+          "suites": [
+            "_test_html_output.mjs",
+            "_test_neutral_stop.mjs",
+            "_test_projects_view.mjs"
+          ]
+        },
+        {
+          "perimeter": "outillage",
+          "suites": [
+            "_test_tts_text.mjs"
+          ]
+        },
+        {
+          "perimeter": "panneaux",
+          "suites": [
+            "_test_html_output.mjs",
+            "_test_neutral_stop.mjs",
+            "_test_projects_view.mjs"
+          ]
+        },
+        {
+          "perimeter": "pipelines",
+          "suites": [
+            "_test_html_output.mjs",
+            "_test_neutral_stop.mjs",
+            "_test_projects_view.mjs"
+          ]
+        },
+        {
+          "perimeter": "routage",
+          "suites": [
+            "_test_html_output.mjs",
+            "_test_neutral_stop.mjs",
+            "_test_projects_view.mjs"
+          ]
+        },
+        {
+          "perimeter": "serveur",
+          "suites": [
+            "_test_projects_view.mjs"
+          ]
+        }
+      ],
+      "stages": [
+        "http",
+        "browser"
+      ]
+    },
+    {
+      "id": "dispatch",
+      "label": "Dispatch, file, couloirs, sessions, models et langue d'un tour",
+      "files": [
+        "scripts/dispatch.mjs",
+        "scripts/lanes.mjs",
+        "scripts/lane-rules.mjs",
+        "scripts/context-policy.mjs",
+        "scripts/queue.mjs",
+        "scripts/queue-order.mjs",
+        "scripts/dual-run.mjs",
+        "scripts/kill-stalled.mjs",
+        "scripts/notify.mjs",
+        "scripts/fleet-status.mjs",
+        "scripts/turn-report.mjs",
+        "scripts/model-backoff.mjs",
+        "scripts/model-test.mjs",
+        "scripts/language.mjs",
+        "scripts/resolve-question.mjs",
+        "scripts/new-project.mjs",
+        "scripts/workspace-trust.mjs",
+        "scripts/trust-projects.mjs",
+        "templates/**",
+        ".orchestrateur/**",
+        "scripts/output-format.mjs"
+      ],
+      "suites": [
+        "_test_parallel_lanes.mjs",
+        "_test_lane_rules.mjs",
+        "_test_lane_changelog_rule.mjs",
+        "_test_maxparallel_default.mjs",
+        "_test_dev_pilot_first.mjs",
+        "_test_context_calibration.mjs",
+        "_test_queue_order.mjs",
+        "_test_queue_edit.mjs",
+        "_test_queue_held.mjs",
+        "_test_explicit_model.mjs",
+        "_test_dual_model.mjs",
+        "_test_language.mjs",
+        "_test_launch_refused.mjs",
+        "_test_model_backoff.mjs",
+        "_test_tools_resolution.mjs",
+        "_test_turn_logs.mjs",
+        "_test_turn_report.mjs",
+        "_test_activity_journal.mjs",
+        "_test_examine_after_chef.mjs",
+        "_test_atomic_rename.mjs",
+        "_test_wake_report_only.mjs",
+        "_test_busy_never_ready.mjs",
+        "_test_workspace_trust.mjs"
+      ],
+      "uses": [
+        {
+          "perimeter": "client",
+          "suites": [
+            "_test_busy_never_ready.mjs",
+            "_test_examine_after_chef.mjs",
+            "_test_model_backoff.mjs",
+            "_test_queue_held.mjs"
+          ]
+        },
+        {
+          "perimeter": "noyau",
+          "suites": [
+            "_test_activity_journal.mjs",
+            "_test_atomic_rename.mjs",
+            "_test_busy_never_ready.mjs",
+            "_test_context_calibration.mjs",
+            "_test_dev_pilot_first.mjs",
+            "_test_dual_model.mjs",
+            "_test_examine_after_chef.mjs",
+            "_test_explicit_model.mjs",
+            "_test_lane_changelog_rule.mjs",
+            "_test_language.mjs",
+            "_test_launch_refused.mjs",
+            "_test_maxparallel_default.mjs",
+            "_test_model_backoff.mjs",
+            "_test_parallel_lanes.mjs",
+            "_test_queue_edit.mjs",
+            "_test_queue_held.mjs",
+            "_test_queue_order.mjs",
+            "_test_tools_resolution.mjs",
+            "_test_turn_logs.mjs",
+            "_test_turn_report.mjs",
+            "_test_wake_report_only.mjs"
+          ]
+        },
+        {
+          "perimeter": "outillage",
+          "suites": [
+            "_test_lane_changelog_rule.mjs",
+            "_test_queue_edit.mjs",
+            "_test_queue_order.mjs"
+          ]
+        },
+        {
+          "perimeter": "panneaux",
+          "suites": [
+            "_test_activity_journal.mjs",
+            "_test_busy_never_ready.mjs",
+            "_test_context_calibration.mjs",
+            "_test_dev_pilot_first.mjs",
+            "_test_dual_model.mjs",
+            "_test_examine_after_chef.mjs",
+            "_test_explicit_model.mjs",
+            "_test_lane_changelog_rule.mjs",
+            "_test_language.mjs",
+            "_test_launch_refused.mjs",
+            "_test_maxparallel_default.mjs",
+            "_test_model_backoff.mjs",
+            "_test_parallel_lanes.mjs",
+            "_test_queue_edit.mjs",
+            "_test_queue_held.mjs",
+            "_test_queue_order.mjs",
+            "_test_tools_resolution.mjs",
+            "_test_turn_logs.mjs",
+            "_test_turn_report.mjs",
+            "_test_wake_report_only.mjs"
+          ]
+        },
+        {
+          "perimeter": "pipelines",
+          "suites": [
+            "_test_activity_journal.mjs",
+            "_test_atomic_rename.mjs",
+            "_test_busy_never_ready.mjs",
+            "_test_context_calibration.mjs",
+            "_test_dev_pilot_first.mjs",
+            "_test_dual_model.mjs",
+            "_test_examine_after_chef.mjs",
+            "_test_explicit_model.mjs",
+            "_test_lane_changelog_rule.mjs",
+            "_test_language.mjs",
+            "_test_launch_refused.mjs",
+            "_test_maxparallel_default.mjs",
+            "_test_model_backoff.mjs",
+            "_test_parallel_lanes.mjs",
+            "_test_queue_edit.mjs",
+            "_test_queue_held.mjs",
+            "_test_queue_order.mjs",
+            "_test_tools_resolution.mjs",
+            "_test_turn_logs.mjs",
+            "_test_turn_report.mjs",
+            "_test_wake_report_only.mjs"
+          ]
+        },
+        {
+          "perimeter": "routage",
+          "suites": [
+            "_test_activity_journal.mjs",
+            "_test_atomic_rename.mjs",
+            "_test_busy_never_ready.mjs",
+            "_test_context_calibration.mjs",
+            "_test_dev_pilot_first.mjs",
+            "_test_dual_model.mjs",
+            "_test_examine_after_chef.mjs",
+            "_test_explicit_model.mjs",
+            "_test_lane_changelog_rule.mjs",
+            "_test_language.mjs",
+            "_test_launch_refused.mjs",
+            "_test_maxparallel_default.mjs",
+            "_test_model_backoff.mjs",
+            "_test_parallel_lanes.mjs",
+            "_test_queue_edit.mjs",
+            "_test_queue_held.mjs",
+            "_test_queue_order.mjs",
+            "_test_tools_resolution.mjs",
+            "_test_turn_logs.mjs",
+            "_test_turn_report.mjs",
+            "_test_wake_report_only.mjs"
+          ]
+        },
+        {
+          "perimeter": "serveur",
+          "suites": [
+            "_test_busy_never_ready.mjs",
+            "_test_context_calibration.mjs",
+            "_test_examine_after_chef.mjs",
+            "_test_explicit_model.mjs",
+            "_test_model_backoff.mjs",
+            "_test_queue_edit.mjs",
+            "_test_queue_held.mjs",
+            "_test_queue_order.mjs",
+            "_test_tools_resolution.mjs",
+            "_test_turn_report.mjs",
+            "_test_wake_report_only.mjs",
+            "_test_workspace_trust.mjs"
+          ]
+        }
+      ],
+      "stages": [
+        "http"
+      ]
+    },
+    {
+      "id": "pipelines",
+      "label": "Pipelines : moteur, catalogue, classement, models par tâche",
+      "files": [
+        "scripts/pipeline-engine.mjs",
+        "scripts/pipeline-catalog.mjs",
+        "scripts/pipeline-catalog-media.mjs",
+        "scripts/pipeline-classify.mjs",
+        "scripts/pipeline-enforce.mjs",
+        "scripts/pipeline-entry-opts.mjs",
+        "scripts/pipeline-health.mjs",
+        "scripts/pipeline-observe.mjs",
+        "scripts/pipeline-onboard.mjs",
+        "scripts/item-delivery.mjs",
+        "scripts/item-review.mjs",
+        "scripts/item-tests.mjs",
+        "scripts/media-check.mjs",
+        "scripts/model-pipelines.mjs",
+        "scripts/model-routing.mjs",
+        "scripts/model-reco.mjs",
+        "data/**"
+      ],
+      "suites": [
+        "_test_pipeline_catalog.mjs",
+        "_test_pipeline_covered.mjs",
+        "_test_pipeline_engine.mjs",
+        "_test_pipeline_entries.mjs",
+        "_test_pipeline_gaps.mjs",
+        "_test_pipeline_gates.mjs",
+        "_test_pipeline_media.mjs",
+        "_test_pipeline_observe.mjs",
+        "_test_pipeline_onboard.mjs",
+        "_test_item_delivery.mjs",
+        "_test_item_review.mjs",
+        "_test_item_tests.mjs",
+        "_test_tests_per_item.mjs",
+        "_test_defect_blocks.mjs",
+        "_test_model_reco.mjs",
+        "_test_model_routing.mjs",
+        "_test_step_key_3digits.mjs",
+        "_test_no_lexical_routing.mjs"
+      ],
+      "uses": [
+        {
+          "perimeter": "client",
+          "suites": [
+            "_test_model_reco.mjs"
+          ]
+        },
+        {
+          "perimeter": "dispatch",
+          "suites": [
+            "_test_defect_blocks.mjs",
+            "_test_item_delivery.mjs",
+            "_test_item_review.mjs",
+            "_test_item_tests.mjs",
+            "_test_model_reco.mjs",
+            "_test_model_routing.mjs",
+            "_test_no_lexical_routing.mjs",
+            "_test_pipeline_catalog.mjs",
+            "_test_pipeline_covered.mjs",
+            "_test_pipeline_engine.mjs",
+            "_test_pipeline_entries.mjs",
+            "_test_pipeline_gaps.mjs",
+            "_test_pipeline_gates.mjs",
+            "_test_pipeline_media.mjs",
+            "_test_pipeline_observe.mjs",
+            "_test_pipeline_onboard.mjs",
+            "_test_step_key_3digits.mjs",
+            "_test_tests_per_item.mjs"
+          ]
+        },
+        {
+          "perimeter": "noyau",
+          "suites": [
+            "_test_defect_blocks.mjs",
+            "_test_item_delivery.mjs",
+            "_test_item_review.mjs",
+            "_test_item_tests.mjs",
+            "_test_model_reco.mjs",
+            "_test_model_routing.mjs",
+            "_test_no_lexical_routing.mjs",
+            "_test_pipeline_catalog.mjs",
+            "_test_pipeline_covered.mjs",
+            "_test_pipeline_engine.mjs",
+            "_test_pipeline_entries.mjs",
+            "_test_pipeline_gaps.mjs",
+            "_test_pipeline_gates.mjs",
+            "_test_pipeline_media.mjs",
+            "_test_pipeline_observe.mjs",
+            "_test_pipeline_onboard.mjs",
+            "_test_step_key_3digits.mjs",
+            "_test_tests_per_item.mjs"
+          ]
+        },
+        {
+          "perimeter": "outillage",
+          "suites": [
+            "_test_model_reco.mjs",
+            "_test_pipeline_entries.mjs"
+          ]
+        },
+        {
+          "perimeter": "panneaux",
+          "suites": [
+            "_test_defect_blocks.mjs",
+            "_test_item_delivery.mjs",
+            "_test_item_review.mjs",
+            "_test_item_tests.mjs",
+            "_test_model_reco.mjs",
+            "_test_model_routing.mjs",
+            "_test_no_lexical_routing.mjs",
+            "_test_pipeline_catalog.mjs",
+            "_test_pipeline_covered.mjs",
+            "_test_pipeline_engine.mjs",
+            "_test_pipeline_entries.mjs",
+            "_test_pipeline_gaps.mjs",
+            "_test_pipeline_gates.mjs",
+            "_test_pipeline_media.mjs",
+            "_test_pipeline_observe.mjs",
+            "_test_step_key_3digits.mjs",
+            "_test_tests_per_item.mjs"
+          ]
+        },
+        {
+          "perimeter": "routage",
+          "suites": [
+            "_test_defect_blocks.mjs",
+            "_test_item_delivery.mjs",
+            "_test_item_review.mjs",
+            "_test_item_tests.mjs",
+            "_test_model_reco.mjs",
+            "_test_model_routing.mjs",
+            "_test_no_lexical_routing.mjs",
+            "_test_pipeline_catalog.mjs",
+            "_test_pipeline_covered.mjs",
+            "_test_pipeline_engine.mjs",
+            "_test_pipeline_entries.mjs",
+            "_test_pipeline_gaps.mjs",
+            "_test_pipeline_gates.mjs",
+            "_test_pipeline_media.mjs",
+            "_test_pipeline_observe.mjs",
+            "_test_pipeline_onboard.mjs",
+            "_test_step_key_3digits.mjs",
+            "_test_tests_per_item.mjs"
+          ]
+        },
+        {
+          "perimeter": "serveur",
+          "suites": [
+            "_test_item_delivery.mjs",
+            "_test_model_reco.mjs",
+            "_test_no_lexical_routing.mjs",
+            "_test_pipeline_entries.mjs",
+            "_test_pipeline_observe.mjs",
+            "_test_pipeline_onboard.mjs"
+          ]
+        }
+      ],
+      "stages": [
+        "http"
+      ]
+    },
+    {
+      "id": "routage",
+      "label": "Routage du chef : tâches en attente, renvois, actions, rapports",
+      "files": [
+        "scripts/routage-pending.mjs",
+        "scripts/report-check.mjs",
+        "scripts/request-map.mjs",
+        "scripts/chef-action-deferred.mjs",
+        "scripts/chef-discussion.mjs",
+        "scripts/todo-capture.mjs",
+        "scripts/terminal-route.mjs",
+        "tests/request-fixture.mjs"
+      ],
+      "suites": [
+        "_test_routage_ambiguous.mjs",
+        "_test_routage_dedupe.mjs",
+        "_test_routage_distinct.mjs",
+        "_test_routage_new_session.mjs",
+        "_test_routage_pending.mjs",
+        "_test_routage_split.mjs",
+        "_test_routage_titles.mjs",
+        "_test_pipeline_routage.mjs",
+        "_test_chef_actions.mjs",
+        "_test_chef_folder_writes.mjs",
+        "_test_chef_handoff.mjs",
+        "_test_chef_handoff_failed.mjs",
+        "_test_chef_handoff_slot.mjs",
+        "_test_no_dispatch_chef.mjs",
+        "_test_hors_pipeline_task.mjs",
+        "_test_report_check.mjs",
+        "_test_report_truncation.mjs",
+        "_test_request_map.mjs",
+        "_test_todo_capture.mjs",
+        "_test_todo_discuss_chef.mjs"
+      ],
+      "uses": [
+        {
+          "perimeter": "client",
+          "suites": [
+            "_test_request_map.mjs",
+            "_test_routage_pending.mjs",
+            "_test_todo_discuss_chef.mjs"
+          ]
+        },
+        {
+          "perimeter": "dispatch",
+          "suites": [
+            "_test_chef_actions.mjs",
+            "_test_chef_folder_writes.mjs",
+            "_test_chef_handoff.mjs",
+            "_test_chef_handoff_failed.mjs",
+            "_test_chef_handoff_slot.mjs",
+            "_test_hors_pipeline_task.mjs",
+            "_test_no_dispatch_chef.mjs",
+            "_test_pipeline_routage.mjs",
+            "_test_report_check.mjs",
+            "_test_report_truncation.mjs",
+            "_test_request_map.mjs",
+            "_test_routage_ambiguous.mjs",
+            "_test_routage_dedupe.mjs",
+            "_test_routage_distinct.mjs",
+            "_test_routage_new_session.mjs",
+            "_test_routage_pending.mjs",
+            "_test_routage_split.mjs",
+            "_test_routage_titles.mjs",
+            "_test_todo_capture.mjs",
+            "_test_todo_discuss_chef.mjs"
+          ]
+        },
+        {
+          "perimeter": "noyau",
+          "suites": [
+            "_test_chef_actions.mjs",
+            "_test_chef_folder_writes.mjs",
+            "_test_chef_handoff.mjs",
+            "_test_chef_handoff_failed.mjs",
+            "_test_chef_handoff_slot.mjs",
+            "_test_hors_pipeline_task.mjs",
+            "_test_no_dispatch_chef.mjs",
+            "_test_pipeline_routage.mjs",
+            "_test_report_check.mjs",
+            "_test_report_truncation.mjs",
+            "_test_request_map.mjs",
+            "_test_routage_ambiguous.mjs",
+            "_test_routage_dedupe.mjs",
+            "_test_routage_distinct.mjs",
+            "_test_routage_new_session.mjs",
+            "_test_routage_pending.mjs",
+            "_test_routage_split.mjs",
+            "_test_routage_titles.mjs",
+            "_test_todo_capture.mjs",
+            "_test_todo_discuss_chef.mjs"
+          ]
+        },
+        {
+          "perimeter": "outillage",
+          "suites": [
+            "_test_todo_discuss_chef.mjs"
+          ]
+        },
+        {
+          "perimeter": "panneaux",
+          "suites": [
+            "_test_chef_actions.mjs",
+            "_test_chef_folder_writes.mjs",
+            "_test_chef_handoff.mjs",
+            "_test_chef_handoff_failed.mjs",
+            "_test_chef_handoff_slot.mjs",
+            "_test_hors_pipeline_task.mjs",
+            "_test_no_dispatch_chef.mjs",
+            "_test_pipeline_routage.mjs",
+            "_test_report_check.mjs",
+            "_test_report_truncation.mjs",
+            "_test_request_map.mjs",
+            "_test_routage_ambiguous.mjs",
+            "_test_routage_dedupe.mjs",
+            "_test_routage_new_session.mjs",
+            "_test_routage_pending.mjs",
+            "_test_routage_split.mjs",
+            "_test_routage_titles.mjs",
+            "_test_todo_capture.mjs",
+            "_test_todo_discuss_chef.mjs"
+          ]
+        },
+        {
+          "perimeter": "pipelines",
+          "suites": [
+            "_test_chef_actions.mjs",
+            "_test_chef_folder_writes.mjs",
+            "_test_chef_handoff.mjs",
+            "_test_chef_handoff_failed.mjs",
+            "_test_chef_handoff_slot.mjs",
+            "_test_hors_pipeline_task.mjs",
+            "_test_no_dispatch_chef.mjs",
+            "_test_pipeline_routage.mjs",
+            "_test_report_check.mjs",
+            "_test_report_truncation.mjs",
+            "_test_request_map.mjs",
+            "_test_routage_ambiguous.mjs",
+            "_test_routage_dedupe.mjs",
+            "_test_routage_distinct.mjs",
+            "_test_routage_new_session.mjs",
+            "_test_routage_pending.mjs",
+            "_test_routage_split.mjs",
+            "_test_routage_titles.mjs",
+            "_test_todo_capture.mjs",
+            "_test_todo_discuss_chef.mjs"
+          ]
+        },
+        {
+          "perimeter": "serveur",
+          "suites": [
+            "_test_chef_actions.mjs",
+            "_test_report_truncation.mjs",
+            "_test_request_map.mjs",
+            "_test_routage_pending.mjs"
+          ]
+        }
+      ],
+      "stages": [
+        "http"
+      ]
+    },
+    {
+      "id": "panneaux",
+      "label": "Données des panneaux : TODO, release, git",
+      "files": [
+        "scripts/todo.mjs",
+        "scripts/todo-core.mjs",
+        "scripts/todo-notes.mjs",
+        "scripts/todo-order.mjs",
+        "scripts/release-notes.mjs",
+        "scripts/git-graph-core.mjs"
+      ],
+      "suites": [
+        "_test_todo.mjs",
+        "_test_todo_notes.mjs",
+        "_test_todo_order.mjs",
+        "_test_todo_reject.mjs",
+        "_test_release_list.mjs",
+        "_test_release_groups.mjs",
+        "_test_git_graph.mjs"
+      ],
+      "uses": [
+        {
+          "perimeter": "client",
+          "suites": [
+            "_test_git_graph.mjs",
+            "_test_release_groups.mjs",
+            "_test_release_list.mjs",
+            "_test_todo.mjs",
+            "_test_todo_notes.mjs",
+            "_test_todo_order.mjs",
+            "_test_todo_reject.mjs"
+          ]
+        },
+        {
+          "perimeter": "dispatch",
+          "suites": [
+            "_test_git_graph.mjs",
+            "_test_release_groups.mjs",
+            "_test_release_list.mjs",
+            "_test_todo.mjs",
+            "_test_todo_notes.mjs",
+            "_test_todo_order.mjs",
+            "_test_todo_reject.mjs"
+          ]
+        },
+        {
+          "perimeter": "noyau",
+          "suites": [
+            "_test_git_graph.mjs",
+            "_test_release_groups.mjs",
+            "_test_release_list.mjs",
+            "_test_todo.mjs",
+            "_test_todo_notes.mjs",
+            "_test_todo_order.mjs",
+            "_test_todo_reject.mjs"
+          ]
+        },
+        {
+          "perimeter": "outillage",
+          "suites": [
+            "_test_release_groups.mjs",
+            "_test_release_list.mjs"
+          ]
+        },
+        {
+          "perimeter": "pipelines",
+          "suites": [
+            "_test_git_graph.mjs",
+            "_test_release_groups.mjs",
+            "_test_release_list.mjs",
+            "_test_todo.mjs",
+            "_test_todo_notes.mjs",
+            "_test_todo_order.mjs",
+            "_test_todo_reject.mjs"
+          ]
+        },
+        {
+          "perimeter": "routage",
+          "suites": [
+            "_test_git_graph.mjs",
+            "_test_release_groups.mjs",
+            "_test_release_list.mjs",
+            "_test_todo.mjs",
+            "_test_todo_notes.mjs",
+            "_test_todo_order.mjs",
+            "_test_todo_reject.mjs"
+          ]
+        },
+        {
+          "perimeter": "serveur",
+          "suites": [
+            "_test_git_graph.mjs",
+            "_test_release_groups.mjs",
+            "_test_release_list.mjs",
+            "_test_todo.mjs",
+            "_test_todo_notes.mjs",
+            "_test_todo_order.mjs",
+            "_test_todo_reject.mjs"
+          ]
+        }
+      ],
+      "stages": [
+        "http"
+      ]
+    }
+  ]
+}
