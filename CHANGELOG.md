@@ -11,6 +11,28 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.100.1] - 2026-10-15
+
+### Fixed
+
+- (server) A Routage hand-off to the chef (`--chef-handoff`, 0.88.0) was
+  refused in production: `chef-action-deferred.mjs` inherits the chef turn's
+  env, `DISPATCH_SLOT` included, so `dispatch.mjs` took it for a chef speaking
+  to the chef and stopped it at the P0-B guard (exit 65, « délégation chef →
+  chef non disponible ») before checking `ORCH_HANDOFF_TOKEN`. Two hand-offs
+  were lost on 2026-10-14. User decision « 1. oui / 2. A » (TODO t-dd3d21):
+  - the token is verified before the P0-B guard (`verifyHandoff`, constant
+    time); only `--chef-handoff` with a token signed for THAT reference passes.
+    No token, a wrong token, a token for another reference, or an ordinary
+    chef → chef call: still 65;
+  - the hand-off turn has its own session, `logs/runs/<run>/handoff.session`:
+    it never resumes `logs/chef.session` (a pool slot may be running a turn on
+    it) nor replaces it;
+  - it consumes no pool ticket: the inherited slot/ticket are not stamped on
+    its `user_prompt`.
+  - Test: `scripts/_test_chef_handoff_slot.mjs`, with `DISPATCH_SLOT` kept as
+    in production, end to end from a pool-assigned Routage turn.
+
 ## [0.100.0] - 2026-10-14
 
 ### Added

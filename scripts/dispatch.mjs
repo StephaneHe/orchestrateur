@@ -400,10 +400,17 @@ const CHEF_SPEAKING = CHEF_SLOT != null && !POOL_ASSIGN;
 if (CHEF_SPEAKING && new RegExp(`^${CONDUCTOR}-\\d+$`).test(projectName)) {
   die(`un chef ne cible jamais un slot (« ${projectName} ») — écris « ${CONDUCTOR} », le serveur choisit`, 65);
 }
+// Hand-off from the Routage (0.88.0) — checked here, before the P0-B refusal:
+// chef-action-deferred.mjs inherits the chef turn's env, DISPATCH_SLOT included,
+// so the hand-off looks like a chef speaking. Only a token signed for THIS ref
+// lets it through (0.100.1, two hand-offs lost in prod on 2026-10-14).
+const pipeEngine = await import('./pipeline-engine.mjs');
+const HANDOFF_GRANT = chefHandoffArg != null ? pipeEngine.verifyHandoff(ROOT, chefHandoffArg, HANDOFF_TOKEN) : null;
 // Délégation chef → chef : c'est P0-B. Refuser explicitement vaut mieux que
 // spawner un second `--resume` sur la session du chef (suicide de tour).
-if (CHEF_SPEAKING && projectName === CONDUCTOR) {
-  die('délégation chef → chef non disponible (P0-B) — route vers un musicien ou réponds toi-même', 65);
+if (CHEF_SPEAKING && projectName === CONDUCTOR && !HANDOFF_GRANT) {
+  die('délégation chef → chef non disponible (P0-B) — route vers un musicien ou réponds toi-même' +
+    (chefHandoffArg != null ? ' (--chef-handoff : jeton absent ou invalide pour cette référence)' : ''), 65);
 }
 
 const project = config.projects.find(p => p.name === projectName);
@@ -448,8 +455,7 @@ if (modelOverride && provider === 'claude' && OPENAI_MODEL_RE.test(modelOverride
 // ---------- pipelines en service : porte d'entrée (phase 3, 0.48.0) ----------
 // Avant toute écriture. Les refus sont mécaniques (plan §3.3) : une consigne de
 // prompt ne suffit pas.
-const pipeEngine = await import('./pipeline-engine.mjs');
-if (pipelineArg && !pipeEngine.ENGINE_PIPELINES.includes(pipelineArg)) {
+if (pipelineArg &&!pipeEngine.ENGINE_PIPELINES.includes(pipelineArg)) {
   die(`--pipeline ${pipelineArg} : pipeline inconnu du moteur (connus : ${pipeEngine.ENGINE_PIPELINES.join(', ')})`);
 }
 const ENFORCEMENT = pipeEngine.readEnforcement(ROOT);
@@ -461,7 +467,7 @@ if (pipelineArg === 'routage' && !CHEF_TARGET) gateDie(`--pipeline routage : ré
 let CHEF_HANDOFF = null;
 if (chefHandoffArg != null) {
   if (!CHEF_TARGET) gateDie(`--chef-handoff : réservé au chef (« ${CONDUCTOR} »)`, 64, 'handoff-musicien');
-  CHEF_HANDOFF = pipeEngine.verifyHandoff(ROOT, chefHandoffArg, HANDOFF_TOKEN);
+  CHEF_HANDOFF = HANDOFF_GRANT;
   if (!CHEF_HANDOFF) gateDie('--chef-handoff : jeton absent ou invalide (seul le Routage renvoie une tâche au chef)', 65, 'handoff-jeton');
 }
 const CHEF_ROUTED = CHEF_TARGET && ENFORCEMENT.chef && !PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && horsPipelineArg == null && !CHEF_HANDOFF;
@@ -576,7 +582,11 @@ if (DUAL_DIR) fs.mkdirSync(DUAL_DIR, { recursive: true });
 const STEP_DIR = PIPE_STEP ? path.join(LOGS, 'runs', PIPE_STEP.run) : null;
 if (STEP_DIR) fs.mkdirSync(STEP_DIR, { recursive: true });
 const logPath     = DUAL_DIR ? path.join(DUAL_DIR, `${DUAL_BRANCH.role}.jsonl`)   : STEP_DIR ? path.join(STEP_DIR, `${PIPE_STEP.key}.jsonl`) : path.join(LOGS, `${projectName}.jsonl`);
-const sessionPath = DUAL_DIR ? path.join(DUAL_DIR, `${DUAL_BRANCH.role}.session`) : STEP_DIR ? path.join(STEP_DIR, `${pipelineSession || PIPE_STEP.key}.session`) : path.join(LOGS, `${projectName}.session`);
+// A hand-off turn has its own session (0.100.1): it never resumes the chef's
+// session — a pool slot may be running a turn on it — nor replaces its sidecar.
+const sessionPath = DUAL_DIR ? path.join(DUAL_DIR, `${DUAL_BRANCH.role}.session`) : STEP_DIR ? path.join(STEP_DIR, `${pipelineSession || PIPE_STEP.key}.session`)
+  : CHEF_HANDOFF ? path.join(LOGS, 'runs', CHEF_HANDOFF.run, 'handoff.session') : path.join(LOGS, `${projectName}.session`);
+if (CHEF_HANDOFF) { try { fs.mkdirSync(path.dirname(sessionPath), { recursive: true }); } catch {} }
 const pidPath     = DUAL_DIR ? path.join(DUAL_DIR, `${DUAL_BRANCH.role}.pid`)     : STEP_DIR ? path.join(STEP_DIR, `${PIPE_STEP.key}.pid`) : path.join(LOGS, `${projectName}.pid`);
 
 // Turn id (0.67.0). The dual-mode review prolongs the turn its parent opened
@@ -1759,7 +1769,9 @@ if (contextDecision) {
 //     de l'env du chef via son outil Bash : c'est le tour de chef qui ATTEND
 //     ce résultat. On stampe `callbackSlot`/`callbackTicket` pour que le point
 //     revienne au bon chef (exploité en P0-B).
-if (CHEF_SLOT != null) {
+// A hand-off turn consumes no pool ticket: its inherited slot/ticket are the
+// Routage turn's, already closed by that turn's result.
+if (CHEF_SLOT != null && !CHEF_HANDOFF) {
   if (projectName === CONDUCTOR) {
     userPromptEvent.slot = CHEF_SLOT;
     if (CHEF_TICKET) userPromptEvent.ticket = CHEF_TICKET;

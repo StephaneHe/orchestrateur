@@ -1912,7 +1912,13 @@ chef pour qu'il agisse lui meme ».
   `user_prompt.chefHandoff`, ligne du rapport écrite par le code. Le relevé
   de mise en service ne le compte pas comme contournement. Racine de test :
   aucun tour réel sans `ORCH_CHEF_HANDOFF_TEST=1`.
-- Recettes : `_test_chef_handoff.mjs`, section 5 de `_test_no_dispatch_chef.mjs`.
+- **Jeton vérifié avant la garde P0-B** (0.100.1, t-dd3d21, « 1. oui / 2. A ») :
+  le lanceur hérite de `DISPATCH_SLOT` du tour du chef ; seul `--chef-handoff`
+  avec un jeton valide pour SA référence passe, tout autre chef → chef reste
+  en 65. Le renvoi a sa session (`logs/runs/<run>/handoff.session`, jamais
+  `logs/chef.session`) et ne tamponne aucun slot/ticket.
+- Recettes : `_test_chef_handoff.mjs`, `_test_chef_handoff_slot.mjs`
+  (`DISPATCH_SLOT` gardé, comme en prod), section 5 de `_test_no_dispatch_chef.mjs`.
 
 ## Routage : session neuve par le vrai drapeau (0.95.0)
 
