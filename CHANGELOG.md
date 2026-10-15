@@ -11,6 +11,22 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.104.0] - 2026-10-15
+
+### Changed
+
+- (server) Lanes: only the dev instance goes first (user decision: « il ne
+  faudra passer d'abord que orchestrateur-dev, on ne passera orchestrateur
+  qu'a la maj suivante »). A project designated by another entry's `devOf`
+  (the production orchestrator) defaults to `maxParallel = 1` — the 0.67.0
+  path: turn lock, queue, no lane — unless its own entry sets `maxParallel`;
+  `defaults.maxParallel` does not reach it. The dev instance and every other
+  project keep the default 2. `lanesStatus` (`GET /api/lanes/:projet`,
+  `lanes.mjs status`) gives `maxParallelSource` and the reason
+  (`maxParallelInfo`, flag `DEV_PILOT_FIRST`, lifted at the next update).
+  Requirement test `_test_dev_pilot_first.mjs` (serial suite). Rollback:
+  `git revert` to the tag `pre-dev-pilot-first-v0.103.0`.
+
 ## [0.103.0] - 2026-10-15
 
 ### Changed

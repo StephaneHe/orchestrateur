@@ -839,6 +839,13 @@ etre justifies et documentes. » Conception, état livré (§7) et règles (§3)
   règles d'exception restent actives. Surveillance 2 → 3 : TODO séparée.
   Retour arrière : `"defaults": {"maxParallel": 1}`, sans redémarrage.
   Recette : `_test_maxparallel_default.mjs`.
+- **La dev d'abord, la prod à la mise à jour suivante** (0.104.0, décision
+  « il ne faudra passer d'abord que orchestrateur-dev, on ne passera
+  orchestrateur qu'a la maj suivante ») : un projet désigné par le `devOf`
+  d'un autre garde 1 (chemin 0.67.0, aucun couloir) sauf `maxParallel` dans
+  sa propre entrée ; `defaults.maxParallel` ne l'atteint pas
+  (`maxParallelInfo`, `DEV_PILOT_FIRST`). Lever à la mise à jour suivante.
+  Recette : `_test_dev_pilot_first.mjs`.
 - **Couloir** (`scripts/lanes.mjs`) : 0 = la copie du musicien, fichiers
   d'aujourd'hui ; k ≥ 1 = worktree git persistant `lanes/<p>/<k>`
   (gitignoré), fichiers `logs/lanes/<p>/<k>.*`, une branche

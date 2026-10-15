@@ -670,3 +670,26 @@ keeps its branch and diff, nothing to undo. Code: `git revert` to the tag
 - **Rollback** (no restart): `"defaults": {"maxParallel": 1}` in
   config.json ⇒ the 0.67.0 path for every project without its own value.
   Code: `git revert` to the tag `pre-maxparallel-default-2-v0.102.0`.
+
+## 11. The dev goes first, production at the next update (0.104.0)
+
+- **User decision** (2026-10-15, answering the pilot question): « il ne
+  faudra passer d'abord que orchestrateur-dev, on ne passera orchestrateur
+  qu'a la maj suivante ».
+- **Rule** (`maxParallelInfo` of `scripts/lanes.mjs`, flag `DEV_PILOT_FIRST`):
+  a project designated by another entry's `devOf` (the production
+  orchestrator) gets `maxParallel = 1` — exactly the 0.67.0 path: turn lock,
+  queue, no lane — unless its OWN entry sets `maxParallel`.
+  `defaults.maxParallel` does not reach it. The dev instance and every other
+  project keep the default 2. `lanesStatus` (`GET /api/lanes/:projet`,
+  `lanes.mjs status`) reports `maxParallelSource: 'dev-pilot-first'` and the
+  reason.
+- This is a default, not a §3 exception rule: the project never enters the
+  lane code, so there is no `system/lane_exclusive` event.
+- **Next update** (lifting it): set `DEV_PILOT_FIRST = false` (and update
+  `_test_dev_pilot_first.mjs` with the user's agreement), or put
+  `"maxParallel": 2` on the `orchestrateur` entry of the production
+  config.json (no restart).
+- Test: `_test_dev_pilot_first.mjs` (unit, `lanesStatus`, real dispatch:
+  production serial without lanes, dev with two concurrent tasks).
+- **Rollback**: `git revert` to the tag `pre-dev-pilot-first-v0.103.0`.

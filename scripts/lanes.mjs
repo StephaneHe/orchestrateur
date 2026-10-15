@@ -18,6 +18,8 @@
 //
 // `maxParallel` (config.json project entry, else defaults.maxParallel),
 // default 2 since 0.103.0 (user decision Q1); 1 = exactly the 0.67.0 behaviour.
+// Since 0.104.0, a project with a dev instance (`devOf`) defaults to 1: the dev
+// goes first, the production orchestrator follows at the next update.
 //
 // CLI:  node scripts/lanes.mjs status <project> [--json]
 //       node scripts/lanes.mjs release <project> <lane>   (frees a lane held
@@ -38,9 +40,26 @@ export const HARD_CAP = 4;
 export const DEFAULT_MAX_PARALLEL = 2;
 const EXCLUDED_FROM_COMMIT = ['.orchestrateur-callback.md', '.claude', '.orchestrateur/runs'];
 
+// User decision (2026-10-15), verbatim: « il ne faudra passer d'abord que
+// orchestrateur-dev, on ne passera orchestrateur qu'a la maj suivante ». A
+// project that has a dev instance (another entry with `devOf: <it>`) is the
+// production orchestrator: it keeps the 0.67.0 path (1) unless its own entry
+// sets `maxParallel`; `defaults.maxParallel` does not reach it. Lifted at the
+// next update by setting DEV_PILOT_FIRST to false.
+export const DEV_PILOT_FIRST = true;
+
+/** { value, source: 'project'|'defaults'|'dev-pilot-first'|'default', why? } */
+export function maxParallelInfo(config, project) {
+  const clamp = (x) => { const v = Number(x); return Number.isFinite(v) && v >= 1 ? Math.min(HARD_CAP, Math.floor(v)) : 1; };
+  if (project?.maxParallel != null) return { value: clamp(project.maxParallel), source: 'project' };
+  const dev = DEV_PILOT_FIRST && project?.name ? (config?.projects || []).find(p => p && p.devOf === project.name && p.name !== project.name) : null;
+  if (dev) return { value: 1, source: 'dev-pilot-first', why: `${dev.name} passe d'abord aux couloirs ; ${project.name} n'y passera qu'à la mise à jour suivante (décision utilisateur du 2026-10-15)` };
+  if (config?.defaults?.maxParallel != null) return { value: clamp(config.defaults.maxParallel), source: 'defaults' };
+  return { value: DEFAULT_MAX_PARALLEL, source: 'default' };
+}
+
 export function maxParallelFor(config, project) {
-  const v = Number(project?.maxParallel ?? config?.defaults?.maxParallel ?? DEFAULT_MAX_PARALLEL);
-  return Number.isFinite(v) && v >= 1 ? Math.min(HARD_CAP, Math.floor(v)) : 1;
+  return maxParallelInfo(config, project).value;
 }
 
 /**
@@ -618,7 +637,8 @@ export function finishTask({ logsDir, project, k, dir, turnEnd, title, log = () 
 
 // ---------- status (API, CLI) -------------------------------------------------
 export function lanesStatus({ root, logsDir, config, project }) {
-  const max = maxParallelFor(config, project);
+  const maxInfo = maxParallelInfo(config, project);
+  const max = maxInfo.value;
   const lanes = [];
   for (let k = 0; k < Math.max(max, 1); k++) {
     const f = laneFiles(logsDir, project.name, k);
@@ -636,7 +656,7 @@ export function lanesStatus({ root, logsDir, config, project }) {
   } catch {}
   const ex = lockHolder(exclusiveLockFile(logsDir, project.name), -1);
   const retainedBranches = readRetained(logsDir, project.name).map(e => ({ branch: e.branch, task: e.task, title: e.title, outcome: e.outcome, finishedAt: e.finishedAt, deleteAfter: e.deleteAfter, ...(e.moved ? { moved: true } : {}) }));
-  return { project: project.name, maxParallel: max, running: lanes.filter(l => l.busy).length, lanes, resources, retainedBranches,
+  return { project: project.name, maxParallel: max, maxParallelSource: maxInfo.source, ...(maxInfo.why ? { maxParallelWhy: maxInfo.why } : {}), running: lanes.filter(l => l.busy).length, lanes, resources, retainedBranches,
     exclusive: ex ? { rule: ex.rule || null, text: ex.text || null, pid: ex.pid, turn: ex.turn || null } : null };
 }
 
@@ -656,6 +676,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (process.argv.includes('--json')) console.log(JSON.stringify(s, null, 2));
     else {
       console.log(`${s.project} : ${s.running}/${s.maxParallel} couloir(s) occupé(s)${s.exclusive ? ` — tâche seule en cours (règle ${s.exclusive.rule})` : ''}`);
+      if (s.maxParallelWhy) console.log(`  en série : ${s.maxParallelWhy}`);
       for (const l of s.lanes) console.log(`  #${l.lane} ${l.busy ? 'occupé' : 'libre'}${l.task ? ` — ${l.task.state} « ${l.task.title} » (${l.task.branch})` : ''}`);
       for (const r of s.resources) console.log(`  ressource ${r.resource} tenue (règle ${r.rule})`);
       for (const b of s.retainedBranches) console.log(`  branche terminée ${b.branch} — supprimée après ${b.deleteAfter}${b.moved ? ' (modifiée depuis : gardée)' : ''}`);
