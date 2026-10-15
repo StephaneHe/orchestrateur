@@ -11,6 +11,23 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.100.2] - 2026-10-15
+
+### Fixed
+
+- (server) A Routage hand-off to the chef that is refused or fails (non-zero
+  exit of `dispatch.mjs --chef-handoff`, unreadable `handoff.json`, launch
+  error) is now posted to the chef's thread, not only to
+  `logs/chef-actions.log`: `chef-action-deferred.mjs` appends one
+  `notification/musician_done` card (`outcome: failed`, additive
+  `handoff {ref, run, tasks, code, why}`) naming the reference
+  (`<run>#<task>`), the title of each task handed back, the exit code and
+  the reason (the `[dispatch] …` refusal line). The journal keeps its
+  « exited with N: <reason> » line (reason first, full output on a separate
+  « output: » line), still read by the Requests tab, which shows the task as
+  failed with that reason. Two tasks were lost silently this way on
+  2026-10-14. Test: `_test_chef_handoff_failed.mjs`.
+
 ## [0.100.1] - 2026-10-15
 
 ### Fixed

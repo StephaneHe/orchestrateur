@@ -1917,7 +1917,13 @@ chef pour qu'il agisse lui meme ».
   avec un jeton valide pour SA référence passe, tout autre chef → chef reste
   en 65. Le renvoi a sa session (`logs/runs/<run>/handoff.session`, jamais
   `logs/chef.session`) et ne tamponne aucun slot/ticket.
-- Recettes : `_test_chef_handoff.mjs`, `_test_chef_handoff_slot.mjs`
+- **Renvoi refusé ou en échec = carte dans le fil du chef** (0.100.2,
+  « 3. oui ») : `chef-action-deferred.mjs` ajoute au log du chef une
+  `notification/musician_done` `outcome: failed` (`handoff {ref, run, tasks,
+  code, why}`) : référence, titre, code, raison. `logs/chef-actions.log`
+  garde « exited with N: <raison> » (lu par la vue Requêtes). Recette :
+  `_test_chef_handoff_failed.mjs`.
+- Recettes : `_test_chef_handoff.mjs`, `_test_chef_handoff_slot.mjs`, `_test_chef_handoff_failed.mjs`
   (`DISPATCH_SLOT` gardé, comme en prod), section 5 de `_test_no_dispatch_chef.mjs`.
 
 ## Routage : session neuve par le vrai drapeau (0.95.0)
