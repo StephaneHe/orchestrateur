@@ -11,6 +11,17 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.104.1] - 2026-10-15
+
+### Fixed
+
+- (server) Two stale suites of the full regression since the `maxParallel`
+  default became 2 (0.103.0): `_test_turn_logs.mjs` §3 (turn lock) and
+  `_test_routage_new_session.mjs` (busy musician's queue entry with
+  `newSession`) test the 0.67.0 serial path; their fixture projects P and R
+  now set `maxParallel: 1` explicitly. No server code change. Rollback tag:
+  `pre-stale-tests-fix-v0.104.0`.
+
 ## [0.104.0] - 2026-10-15
 
 ### Changed

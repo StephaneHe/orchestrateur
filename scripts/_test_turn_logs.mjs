@@ -106,7 +106,8 @@ const P = path.join(T, 'p'), Q = path.join(T, 'q');
 for (const d of [path.join(T, 'logs'), P, Q, path.join(T, 'chef')]) fs.mkdirSync(d, { recursive: true });
 fs.writeFileSync(path.join(T, 'config.json'), JSON.stringify({
   conductor: 'chef', defaults: { model: 'claude-haiku-5-5', allowedTools: 'Read,Edit,Write,Bash', provider: 'claude' },
-  projects: [{ name: 'chef', path: path.join(T, 'chef') }, { name: 'P', path: P }, { name: 'Q', path: Q }],
+  // maxParallel: 1 — §3 tests the 0.67.0 turn lock; the default is 2 since 0.103.0.
+  projects: [{ name: 'chef', path: path.join(T, 'chef') }, { name: 'P', path: P, maxParallel: 1 }, { name: 'Q', path: Q }],
 }));
 fs.writeFileSync(path.join(T, 'model-routing.json'), JSON.stringify({
   version: 2, assignments: { 'routage.classifier': { provider: 'anthropic', model: 'claude-haiku-5-5' }, ...Object.fromEntries(['rouge', 'vert', 'revue', 'livrer'].map(s => [`dev.${s}`, { provider: 'anthropic', model: 'claude-sonnet-5-5' }])) },

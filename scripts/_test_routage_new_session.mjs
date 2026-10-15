@@ -53,7 +53,8 @@ fs.writeFileSync(path.join(T, 'chef', 'CLAUDE.md'), '# Chef\n\nContrat du chef (
 fs.writeFileSync(path.join(T, '.token'), 'a'.repeat(64));
 fs.writeFileSync(path.join(T, 'config.json'), JSON.stringify({
   conductor: 'chef', defaults: { model: 'claude-haiku-5-5', allowedTools: 'Read,Edit,Write,Bash', provider: 'claude' },
-  projects: ['chef', 'Q', 'R', 'S'].map(n => ({ name: n, path: path.join(T, n) })),
+  // maxParallel: 1 — R's busy musician goes through the 0.67.0 queue path; the default is 2 since 0.103.0.
+  projects: ['chef', 'Q', 'R', 'S'].map(n => ({ name: n, path: path.join(T, n), ...(n === 'R' ? { maxParallel: 1 } : {}) })),
 }));
 fs.writeFileSync(path.join(T, 'model-routing.json'), JSON.stringify({
   version: 2, history: [],
