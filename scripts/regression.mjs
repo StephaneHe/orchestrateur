@@ -1752,7 +1752,9 @@ async function apiChecks(sb) {
     return outcome;
   });
   await check(S, 'callback-wake', 'Dispatch avec --callback chef : tour du musicien, notification au chef, réveil du chef', async () => {
-    const d = await post('/api/dispatch', { project: 'omega', prompt: 'Tâche de recette pour le réveil', queueIfBusy: true, callback: 'chef' });
+    // [FAKE_LONG_REPORT]: the musician's report is the multi-paragraph one that
+    // check `report-full` below expects to reach the chef whole.
+    const d = await post('/api/dispatch', { project: 'omega', prompt: 'Tâche de recette pour le réveil [FAKE_LONG_REPORT]', queueIfBusy: true, callback: 'chef' });
     assert(d.status === 202, `dispatch ${d.status}`);
     const done = await until(() => readLog('omega').some(e => e.type === 'result'), 30_000);
     assert(done, 'le tour du musicien ne s\'est pas terminé');
@@ -1762,6 +1764,22 @@ async function apiChecks(sb) {
     assert(woke, 'le chef n\'a pas été réveillé en 60 s');
     const chefDone = await until(() => { const l = readLog('chef'); const i = l.findIndex(e => e.type === 'user_prompt' && e.source === 'wake'); return i >= 0 && l.slice(i).some(e => e.type === 'result'); }, 40_000, 1000);
     assert(chefDone, 'le tour de réveil du chef ne s\'est pas terminé');
+  });
+  // TODO t-a7f8ca (0.100.3): the chef used to get only the last paragraph, cut
+  // at 280 characters — the number of tests passed never reached it.
+  await check(S, 'report-full', 'Compte rendu de fin de tour : arrive en entier au chef (notification et réveil)', async () => {
+    const results = readLog('omega').filter(e => e.type === 'result' && /FIN-DU-RAPPORT/.test(e.result || ''));
+    if (!results.length) NA('aucun result du compte rendu long (parcours callback-wake)');
+    const n = readLog('chef').filter(e => e.type === 'notification' && e.source === 'omega').pop();
+    assert(n, 'aucune notification de omega dans le log du chef');
+    if (n.report === undefined) NA('serveur antérieur à 0.100.3 (pas de champ report)');
+    assert(/412 tests passés/.test(n.report) && /FIN-DU-RAPPORT/.test(n.report) && /## Vérifications/.test(n.report),
+      `notification : compte rendu incomplet : ${String(n.report).slice(0, 300)}`);
+    assert(n.summary.length < n.report.length && !/412 tests passés/.test(n.summary), 'la carte garde le résumé court');
+    const w = readLog('chef').filter(e => e.type === 'user_prompt' && e.source === 'wake').pop();
+    assert(w && /412 tests passés/.test(w.text) && /FIN-DU-RAPPORT/.test(w.text) && !/résumé coupé/.test(w.text),
+      `réveil : compte rendu incomplet : ${String(w?.text).slice(0, 400)}`);
+    return `notification ${n.report.length} car., réveil complet`;
   });
 }
 

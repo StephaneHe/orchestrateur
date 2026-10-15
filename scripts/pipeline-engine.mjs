@@ -36,6 +36,7 @@ import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { derivedToken } from './local-secret.mjs';
 import { renameRetry, writeFileAtomic } from './atomic-file.mjs';
+import { notificationReportText } from './turn-report.mjs';
 import { readBranchLog } from './dual-run.mjs';
 import { languageFor, languageGate, localize, workingLanguage } from './language.mjs';
 import { CATALOG_PIPELINES, catalogOf, catalogSteps } from './pipeline-catalog.mjs';
@@ -957,7 +958,7 @@ export function conversationExcerpt(logFile, { max = 30, maxChars = 30_000, perM
     if (e.type === 'user_prompt' && typeof e.text === 'string' && !e.pipeline?.answer) msgs.push({ who: promptAuthor(e), text: e.text, lineNo });
     else if (e.type === 'assistant') {
       for (const b of e.message?.content || []) { if (b?.type === 'text' && b.text?.trim()) msgs.push({ who: 'chef', text: b.text.trim(), lineNo }); }
-    } else if (e.type === 'notification' && e.subtype === 'musician_done' && e.text) msgs.push({ who: 'résultat', text: e.text, lineNo });
+    } else if (e.type === 'notification' && e.subtype === 'musician_done' && e.text) msgs.push({ who: 'résultat', text: notificationReportText(e), lineNo });
   });
   const recent = msgs.slice(-max);
   const blocks = recent.map((m, k) => {

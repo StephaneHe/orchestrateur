@@ -40,6 +40,14 @@ import path   from 'node:path';
 import readline from 'node:readline';
 import { spawn, spawnSync } from 'node:child_process';
 
+// Shape of the 2026-10-13 report that reached the chef cut (TODO t-a7f8ca):
+// the test count sits in a middle paragraph, the last paragraph is long.
+const LONG_REPORT = [
+  'Le travail demandé est terminé et la correction est livrée sur la branche de développement.',
+  '## Vérifications\n- Non-régression ciblée : 412 tests passés, 0 échec, 3 suites rejouées.\n- Le registre des exigences est à jour.',
+  `Pour la suite, il reste à décider de la mise en prod ; ${'les détails de la livraison sont dans le journal du musicien et dans le CHANGELOG, avec la version et la liste des fichiers modifiés. '.repeat(3)}FIN-DU-RAPPORT`,
+].join('\n\n');
+
 const argv = process.argv.slice(2);
 
 // Interactive central terminal double (0.52.0): started by the server through
@@ -170,6 +178,7 @@ async function run() {
   const fixedReply = isReformulation
     ? (process.env.FAKE_CLAUDE_TRANSLATION || 'Réponse reformulée en français : la suite de tests passe, le travail est terminé et rien ne reste à faire pour cette demande.')
     : isClassify ? classifyReply()
+    : /\[FAKE_LONG_REPORT\]/.test(userText) ? LONG_REPORT
     : (process.env.FAKE_CLAUDE_REPLY || null);
 
   // FAKE_CLAUDE_LAUNCH_FAIL_FILE=<f> (0.60.0): while <f> holds n > 0, decrement it
@@ -336,6 +345,9 @@ async function run() {
 //   FAKE_PIPE_REVIEW_LOG=<f>     chaque revue ajoute {item, diff} à ce fichier (JSON par ligne)
 //   FAKE_PIPE_REVIEW_SEVERITY=P2 le défaut de FAKE_PIPE_REVIEW_ITEM porte cette gravité
 //   FAKE_PIPE_REVIEW_DOC_ITEM=<k>[:n][,…]  revue de l'item k : un constat de doc (hors_tdd), n fois
+//   « [FAKE_LONG_REPORT] » dans la demande : compte rendu final de plusieurs
+//                               paragraphes (nombre de tests au milieu, dernier
+//                               paragraphe de plus de 280 caractères, FIN-DU-RAPPORT)
 /** Numéro de l'item de la liste de tests (« ITEM=<n>: … »), ou 0 en léger. */
 function item(text) { return Number((/^ITEM=(\d+):/m.exec(text) || [])[1] || 0); }
 

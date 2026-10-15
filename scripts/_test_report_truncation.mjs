@@ -105,10 +105,9 @@ ok(/## Ta dernière réponse[\s\S]*⚠ \[tronqué par l’orchestrateur[^\]]*che
 
 // ---------------------------------------------------------------------------
 section('6. Le résumé du réveil (server.js) signale sa coupe');
-const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
-const fnSrc = /function summarizeResult\(ev\) \{[\s\S]*?\n\}/.exec(src)?.[0];
-const summarizeResult = fnSrc ? new Function(`${fnSrc}; return summarizeResult;`)() : null;
-ok(typeof summarizeResult === 'function', 'summarizeResult extraite de server.js');
+// 0.100.3: moved to scripts/turn-report.mjs, imported by server.js.
+const { summarizeResult } = await import('./turn-report.mjs');
+ok(typeof summarizeResult === 'function' && /import \{[^}]*summarizeResult[^}]*\} from '\.\/scripts\/turn-report\.mjs'/.test(fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8')), 'summarizeResult : celle de turn-report.mjs, utilisée par server.js');
 const shortS = summarizeResult({ result: 'Début.\n\nConclusion courte mais assez longue pour être gardée telle quelle.' });
 const longS = summarizeResult({ result: `Début.\n\n${'Conclusion très longue. '.repeat(40)}` });
 ok(shortS === 'Conclusion courte mais assez longue pour être gardée telle quelle.', 'résumé court : intact');

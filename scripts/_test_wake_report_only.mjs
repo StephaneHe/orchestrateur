@@ -21,6 +21,7 @@ import '../public/turn-core.js';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { wakeItemBody } from './turn-report.mjs';
 
 const TC = globalThis.TurnCore;   // règles 0.31.0 passées aux fonctions de server.js évaluées
 
@@ -48,6 +49,8 @@ function sandbox() {
     // 0.41.0 — observation des pipelines : sans effet sur le réveil.
     observeEntry: () => null,
     conductorName: () => 'chef',
+    // 0.100.3 — corps d'un élément du réveil : le compte rendu complet.
+    wakeItemBody,
   };
   const names = Object.keys(deps);
   // eslint-disable-next-line no-new-func

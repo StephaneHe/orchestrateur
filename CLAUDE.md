@@ -1788,6 +1788,14 @@ taches existantes qui investigue et corrige ce probleme, il faut en creer une »
 - Un message d'un musicien est étiqueté « message de <musicien> », jamais
   « utilisateur » (`userSaid` ne fait confiance qu'à l'utilisateur).
 - Recette : `_test_report_truncation.mjs`.
+- **Compte rendu de fin de tour entier** (0.100.3, TODO t-a7f8ca, « pourquoi
+  certains comptes rendus sont coupes ? ») : `scripts/turn-report.mjs`.
+  `summarizeResult` (dernier paragraphe, 280 caractères) n'est plus que la
+  ligne de carte ; le chef lit `fullReport` (result entier, avis au-delà de
+  8 000) : champ `report` de la notification `musician_done` /
+  `musician_question` (lu par `conversationExcerpt`) et de chaque élément du
+  réveil (`wakeItemBody`). Redémarrage nécessaire. Recettes :
+  `_test_turn_report.mjs`, HTTP `report-full`.
 
 ## Routage : contexte, « suite », lacunes tardives (0.57.0)
 

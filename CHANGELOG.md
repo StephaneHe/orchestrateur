@@ -11,6 +11,28 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.100.3] - 2026-10-15
+
+### Fixed
+
+- (server) A musician's end-of-turn report now reaches the chef whole (TODO
+  t-a7f8ca, « pourquoi certains comptes rendus sont coupes ? »). The
+  `musician_done` notification and the chef's wake prompt carried only
+  `summarizeResult`, a card line: the LAST paragraph of the result, cut at
+  280 characters. Every earlier paragraph (typically the number of tests
+  passed) was dropped, and the Routage's conversation excerpt then showed
+  the chef « résultat : … ⚠ [résumé coupé : 274 caractères sur 1031 …] ».
+  New module `scripts/turn-report.mjs`: `summarizeResult` (unchanged card
+  line) and `fullReport` (the whole result, cut only beyond 8,000 characters
+  and then with an explicit notice naming the musician's log). Every
+  turn-end notification (done, question, failure) gets an additive `report`
+  field, read by `conversationExcerpt` (`notificationReportText`); every wake
+  item carries `report`, used as its body (`wakeItemBody`). Older
+  notifications and wake items without it are read as before. The size
+  limits of context excerpts (« tronqué par l'orchestrateur ») are a
+  separate, unchanged mechanism. Needs a server restart. Tests:
+  `_test_turn_report.mjs`, HTTP `report-full`.
+
 ## [0.100.2] - 2026-10-15
 
 ### Fixed

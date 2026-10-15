@@ -92,6 +92,7 @@ import { createPermissionStore, mountPermissionRoutes } from './scripts/permissi
 import { createObserver, TerminalLineBuffer, ENTRY_KINDS, explicitChoice } from './scripts/pipeline-observe.mjs';
 import { classifyEntry } from './scripts/pipeline-classify.mjs';
 import { readEnforcement, isEnforced, ENGINE_PIPELINES, RUN_RE } from './scripts/pipeline-engine.mjs';
+import { summarizeResult, fullReport, wakeItemBody } from './scripts/turn-report.mjs';
 import { TerminalRouter, discussionArgs, encodeFrame, targetOf, HOLD_TIMEOUT_MS } from './scripts/terminal-route.mjs';
 import { pipelineOptsFrom, pipelineArgs, withPipelinePrefix } from './scripts/pipeline-entry-opts.mjs';
 import { computeHealth } from './scripts/pipeline-health.mjs';
@@ -636,8 +637,8 @@ function buildWakePrompt(items, gen, reportOnly = false) {
     const meta = [fmtWakeAge(it.durationMs), Number.isFinite(it.costUsd) ? `$${it.costUsd.toFixed(2)}` : '']
       .filter(Boolean).join(' · ');
     const head = `— ${it.source} ${mark}${meta ? ' ' + meta : ''}`;
-    const body = (it.summary || '').trim();
-    return body ? `${head}\n  ${body}` : head;
+    const body = wakeItemBody(it);
+    return body ? `${head}\n${body}` : head;
   }).join('\n');
   if (reportOnly) {
     return (
@@ -4300,22 +4301,10 @@ function reduceMusician(name, ev) {
   };
 }
 
-/** Human-facing summary of a finished turn: the LAST paragraph of the result —
- *  musicians end with their conclusion — instead of the old `slice(0, 600)` that
- *  cut the opening mid-sentence. Capped at 280 chars on a word boundary. */
-function summarizeResult(ev) {
-  const raw = typeof ev?.result === 'string' ? ev.result.trim() : '';
-  if (!raw) return '';
-  const paras = raw.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
-  let last = paras.length ? paras[paras.length - 1] : raw;
-  // A very short tail (a closing line like "Terminé.") carries no information —
-  // fold the previous paragraph in so the card still says something.
-  if (last.length < 40 && paras.length > 1) last = `${paras[paras.length - 2]} ${last}`;
-  last = last.replace(/\s+/g, ' ').trim();
-  if (last.length <= 280) return last;
-  // 0.93.0: a cut is never silent — the wake says so and where the whole is.
-  const kept = last.slice(0, 279).replace(/\s+\S*$/, '');
-  return `${kept}… ⚠ [résumé coupé : ${kept.length} caractères sur ${last.length} — compte rendu complet dans le journal du musicien, et dans la conversation s’il a été envoyé au chef]`;
+// summarizeResult (short card line) and fullReport (what the chef reads) live in
+// scripts/turn-report.mjs since 0.100.3: the chef used to get the short line only.
+function turnReport(name, ev) {
+  return fullReport(ev, { where: `${path.join(LOGS_DIR, `${name}.jsonl`)} (dernier result)` });
 }
 
 // ---------- Aggregate SSE (all projects over one connection) ---------------
@@ -4989,6 +4978,7 @@ function autoNotifyConductor(musicianName, opts = {}) {
   if (musicianName === cName) return;
   const outcome = OUTCOME_LABEL[opts.outcome] ? opts.outcome : 'done';
   const summary = typeof opts.summary === 'string' ? opts.summary.trim() : '';
+  const report = typeof opts.report === 'string' ? opts.report.trim() : '';
   console.log(`[notify-bg] firing autoNotifyConductor for ${musicianName} (${outcome})`);
 
   // 1. Write a visual coordination event to the conductor log (for the human).
@@ -5002,6 +4992,9 @@ function autoNotifyConductor(musicianName, opts = {}) {
     source: musicianName,
     outcome,
     summary,
+    // The whole report, read by the chef (conversationExcerpt); `summary` and
+    // `text` stay the short line of the card.
+    ...(report && report !== summary ? { report } : {}),
     ...(Number.isFinite(opts.durationMs) ? { duration_ms: opts.durationMs } : {}),
     ...(Number.isFinite(opts.costUsd)    ? { cost_usd: opts.costUsd }       : {}),
     ...(opts.awaitingChef ? { awaitingChef: true } : {}),
@@ -6209,16 +6202,18 @@ function startBackgroundNotifyWatchers() {
               autoNotifyConductor(name, {
                 outcome: awaitingChef ? 'ask_chef' : 'done',
                 summary: summarizeResult(ev) || lastLine,
+                report: turnReport(name, ev),
                 durationMs, costUsd, awaitingChef,
               });
             } else if (newState === 'input') {
               // The musician is asking the USER — surface it in the chef thread
               // instead of leaving it to be spotted on an orange card.
-              autoNotifyConductor(name, { outcome: 'question', summary: lastLine, durationMs, costUsd });
+              autoNotifyConductor(name, { outcome: 'question', summary: lastLine, report: turnReport(name, ev), durationMs, costUsd });
             } else if (newState === 'error') {
               autoNotifyConductor(name, {
                 outcome: 'failed',
                 summary: summarizeResult(ev) || ev.subtype || 'échec du tour',
+                report: turnReport(name, ev),
                 durationMs, costUsd,
               });
             }
@@ -6244,6 +6239,7 @@ function startBackgroundNotifyWatchers() {
                 source: name,
                 outcome: newState === 'error' ? 'failed' : (awaitingChef ? 'ask_chef' : 'done'),
                 summary: summarizeResult(ev) || lastLine || '',
+                report: turnReport(name, ev),
                 durationMs, costUsd, awaitingChef, wakeGen: gen,
                 ts: Date.now(),
               });
