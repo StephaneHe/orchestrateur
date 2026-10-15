@@ -11,6 +11,31 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.105.0] - 2026-10-16
+
+### Added
+
+- (server) Model answers in HTML are rendered as HTML by the web client
+  (chef thread, musician panels, result cards, activity journal, pipeline
+  reports). New `public/html-render.js` (`HtmlRender`): `isHtml` tells an
+  HTML fragment from legacy Markdown / plain text (inline code and fences
+  ignored), `sanitize` re-serialises it through a strict allowlist (no
+  script/style/iframe/svg/object/form, content dropped; no `on*`, `style` or
+  `class` attribute except `language-*` on code; links limited to http(s),
+  mailto, `/` and `#`, judged after entity decoding and control-character
+  removal, opened with `rel="noopener noreferrer"`; every tag closed, stray
+  closing tags ignored so a fragment never leaves its bubble), `toPlain` gives
+  Markdown-like text. `mdToHtml` routes HTML to the sanitizer and keeps the
+  Markdown path for everything else; user prompts are never read as HTML.
+- (server) Text-to-speech and journal one-line summaries read HTML answers
+  without their tags (`turn-core.js` also strips tags on the server side, after
+  a restart).
+- (server) Styles for the HTML tags the Markdown path never produced
+  (h4–h6, blockquote, details, dl, kbd, mark).
+- (server) Regression: suite `_test_html_output.mjs` (detection, rendering,
+  20 injection cases refused, legacy Markdown unchanged, TTS, summaries) and
+  browser check `html-output`.
+
 ## [0.104.1] - 2026-10-15
 
 ### Fixed

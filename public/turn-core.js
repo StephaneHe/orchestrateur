@@ -105,8 +105,20 @@
     if (t.length <= max) return t;
     return t.slice(0, max - 1).replace(/\s+\S*$/, "") + "…";
   }
+  // HTML answers (0.105.0) → plain lines for summaries. The server imports this
+  // file without html-render.js: crude tag stripping is enough for one-liners.
+  function htmlToLines(s) {
+    const H = globalThis.HtmlRender;
+    if (H) return H.isHtml(s) ? H.toPlain(s) : s;
+    if (!/<\/(?:p|li|div|h[1-6]|td|th|tr|ul|ol|table|pre|blockquote|section)\s*>/i.test(s)) return s;
+    return s
+      .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, " ")
+      .replace(/<br\s*\/?>|<\/?(?:p|li|div|h[1-6]|tr|ul|ol|table|pre|blockquote|section)\b[^>]*>/gi, "\n")
+      .replace(/<[^>]*>/g, "")
+      .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&");
+  }
   function stripMd(s) {
-    return String(s || "")
+    return htmlToLines(String(s || ""))
       .replace(/```[\s\S]*?```/g, " ")
       .replace(/`([^`]*)`/g, "$1")
       .replace(/\*\*([^*]+)\*\*/g, "$1")

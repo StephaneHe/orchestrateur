@@ -2101,6 +2101,58 @@ export async function browserChecks(sb, t) {
       assert(await until(async () => !(await visible(tp, '#tts-bar')), 2000), 'Ctrl+Alt+L n\'arrête pas');
       await tp.evaluate(() => { window.__tts.delay = 40; });
     });
+    // 0.105.0 — user request (2026-10-16): « il faut qu'elles soient au format
+    // html (et que le client web soit capables de les afficher correctemetn) ».
+    await check(B, 'html-output', 'Sorties HTML des models : une réponse HTML du chef est rendue en HTML (titre, liste, tableau, lien), assainie (script, onerror, javascript:, style, iframe refusés, rien n’est exécuté), les anciennes réponses Markdown restent rendues, la lecture audio ne lit aucune balise', async () => {
+      if (!(await tp.evaluate(() => !!window.HtmlRender))) NA('rendu HTML absent de cet état du code');
+      const html = '<h2>HTML-OUT bilan</h2><p>Suite <strong>verte</strong> &amp; livrée, voir <a href="https://example.org/doc">la doc</a>.</p>'
+        + '<ul><li>HTML-OUT un</li><li>deux</li></ul><table><tr><th>Suite</th><th>État</th></tr><tr><td>a</td><td>ok</td></tr></table>'
+        + '<script>window.__xss = 1</script><img src="x" onerror="window.__xss = 2"><p onclick="window.__xss = 3" style="position:fixed;inset:0">HTML-OUT clic</p>'
+        + '<a href="javascript:window.__xss = 4">HTML-OUT piège</a><iframe src="about:blank"></iframe></div></div>';
+      appendLog('chef', [
+        { type: 'user_prompt', text: 'Recette sortie HTML' },
+        { type: 'system', subtype: 'init', model: 'claude-opus-5-5' },
+        { type: 'assistant', message: { content: [{ type: 'text', text: html }] } },
+        { type: 'result', subtype: 'success', is_error: false, num_turns: 1, duration_ms: 1000, duration_api_ms: 800, result: html },
+        { type: 'user_prompt', text: 'Recette sortie Markdown' },
+        { type: 'system', subtype: 'init', model: 'claude-opus-5-5' },
+        { type: 'assistant', message: { content: [{ type: 'text', text: '## MD-OUT titre\n\n- **MD-OUT gras**\n- `code`' }] } },
+        { type: 'result', subtype: 'success', is_error: false, num_turns: 1, duration_ms: 1000, duration_api_ms: 800, result: '## MD-OUT titre' },
+      ]);
+      await tp.goto(`${sb.url}/?token=${sb.token}`);
+      await tp.locator('.brand').waitFor();
+      const bubble = tp.locator('#cv-scroll .cv-bubble.is-conductor', { hasText: 'HTML-OUT bilan' }).last();
+      assert(await until(async () => (await bubble.count()) > 0, 10_000), 'bulle HTML absente');
+      const r = await bubble.evaluate((el) => {
+        const body = el.querySelector('.cv-body');
+        return {
+          h2: body.querySelector('h2')?.textContent, li: body.querySelectorAll('li').length, th: body.querySelectorAll('th').length,
+          strong: body.querySelector('strong')?.textContent, link: body.querySelector('a[href="https://example.org/doc"]')?.getAttribute('rel'),
+          danger: body.querySelectorAll('script, img, iframe, style, [onclick], [onerror], [style]').length,
+          jsLinks: [...body.querySelectorAll('a')].filter((a) => /^\s*javascript:/i.test(a.getAttribute('href') || '')).length,
+          text: body.textContent,
+        };
+      });
+      assert(r.h2 === 'HTML-OUT bilan' && r.li === 2 && r.th === 2 && r.strong === 'verte', `rendu HTML : ${JSON.stringify(r)}`);
+      assert(/noopener/.test(r.link || ''), 'lien https sans rel=noopener');
+      assert(r.danger === 0 && r.jsLinks === 0, `éléments dangereux restés : ${JSON.stringify(r)}`);
+      assert(!/<h2>|<script|&lt;h2/.test(r.text) && /HTML-OUT clic/.test(r.text) && /HTML-OUT piège/.test(r.text), `balises affichées en texte : ${r.text.slice(0, 200)}`);
+      await bubble.getByText('HTML-OUT piège').click().catch(() => {});
+      assert(!(await tp.evaluate(() => window.__xss)), 'du code injecté s’est exécuté');
+      assert(await tp.evaluate(() => document.querySelectorAll('#cv-scroll .cv-bubble.is-conductor').length > 0 && !!document.getElementById('cv-scroll')), 'le fil a été cassé par le fragment');
+      const md = tp.locator('#cv-scroll .cv-bubble.is-conductor', { hasText: 'MD-OUT titre' }).last();
+      const m = await md.evaluate((el) => ({ h2: el.querySelector('.cv-body h2')?.textContent, strong: el.querySelector('.cv-body strong')?.textContent }));
+      assert(m.h2 === 'MD-OUT titre' && m.strong === 'MD-OUT gras', `ancienne réponse Markdown : ${JSON.stringify(m)}`);
+      await tp.evaluate(() => { window.__tts.spoken = []; });
+      await bubble.evaluate((el) => { const s = document.getElementById('cv-scroll'); s.scrollTop = Math.max(0, el.offsetTop - 20); });
+      await bubble.locator('.cv-tts-btn').click();
+      assert(await until(async () => (await spoken()).length > 0, 3000), 'lecture audio : rien envoyé');
+      await tp.click('#tts-bar [data-tts-act="stop"]').catch(() => {});
+      const said = (await spoken()).map((x) => x.text).join(' ');
+      assert(/HTML-OUT bilan/.test(said) && !/<|&amp;|__xss/.test(said), `lecture audio : « ${said} »`);
+      await shot(tp, 'html-output-desktop');
+      return `bulle HTML rendue et assainie, Markdown inchangé, lu : « ${said.slice(0, 60)}… »`;
+    });
     await check(B, 'tts-settings', 'Lecture audio : réglages (voix, vitesse), lecture automatique d\'une nouvelle réponse, désactivation à chaud', async () => {
       if (!(await tp.evaluate(() => !!window.Tts))) NA('lecture audio absente de cet état du code');
       await tp.click('#btn-tweaks');

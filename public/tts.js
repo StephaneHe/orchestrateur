@@ -57,6 +57,9 @@
   /** Markdown d'une réponse → texte propre à lire à voix haute. */
   function toSpeech(md) {
     let s = String(md || "").replace(/\r\n?/g, "\n");
+    // HTML answers (0.105.0): back to Markdown-like text, so tags are never read aloud.
+    const H = g.HtmlRender;
+    if (H && H.isHtml(s)) s = H.toPlain(s);
     // Blocs de code : jamais lus.
     s = s.replace(/```[\s\S]*?(```|$)/g, "\n(bloc de code)\n");
     // Tableaux : annoncés (et lus s'ils sont courts).

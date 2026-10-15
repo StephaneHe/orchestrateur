@@ -3830,7 +3830,7 @@ function renderFocusedEventMain(raw, projectName, toolNames) {
     case "user_prompt": {
       const badge = raw.source ? esc(raw.source) : "TOI";
       const callbackCls = raw.source ? " ev-prompt-callback" : "";
-      return `<div class="ev ev-prompt${callbackCls}"><span class="ev-ts">${ts}</span><span class="ev-prompt-badge">${badge}</span><div class="ev-text md">${mdToHtml(raw.text || "")}</div></div>`;
+      return `<div class="ev ev-prompt${callbackCls}"><span class="ev-ts">${ts}</span><span class="ev-prompt-badge">${badge}</span><div class="ev-text md">${mdToHtml(raw.text || "", { html: false })}</div></div>`;
     }
     case "assistant":
       return renderAssistantMain(raw, ts);
@@ -3925,6 +3925,11 @@ function renderResult(raw, ts) {
   return `<div class="ev"><span class="ev-ts">${ts}</span><span class="ev-text" style="color: var(--fg-1);">${parts.filter(Boolean).join(" · ")} —</span></div>`;
 }
 // --------------------------------------------------------------------------
+// Model output → HTML. Since 0.105.0 models answer in HTML fragments: those
+// go through HtmlRender.sanitize (strict allowlist, public/html-render.js).
+// Anything else (legacy answers, CHANGELOG, user prompts with {html:false})
+// takes the Markdown path below.
+//
 // Minimal, safe Markdown → HTML converter. We escape HTML first, then only
 // inject tags we produce ourselves (no raw HTML from the model). Covers the
 // constructs Claude emits most often: headings, bold/italic, inline code,
@@ -3932,8 +3937,10 @@ function renderResult(raw, ts) {
 // clickable — href sanitised). Intentionally does NOT handle tables or
 // reference-style links (rare in Claude's prose).
 // --------------------------------------------------------------------------
-function mdToHtml(src) {
+function mdToHtml(src, opts) {
   if (!src) return "";
+  const H = globalThis.HtmlRender;
+  if (opts?.html !== false && H && H.isHtml(src)) return H.sanitize(src);
   // 1. Extract fenced code blocks into placeholders, then escape everything
   //    else. This protects code-block contents from further regex passes.
   const fences = [];

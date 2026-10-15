@@ -1105,6 +1105,33 @@ de la police ».
   captures à 85 % et 150 %. Ils vérifient l'absence de débordement, les bords
   réels de la barre et les libellés du rail qui ne passent pas sous les boutons.
 
+## Sorties HTML des models (0.105.0)
+
+Demande utilisateur (2026-10-16) : « il faut qu'elles soient au format html (et
+que le client web soit capables de les afficher correctemetn) ». La consigne
+côté models est une autre tâche ; ici, le rendu.
+
+- `public/html-render.js` (`HtmlRender`, sans import ni export, testé sous
+  Node) : `isHtml` (fragment HTML ou Markdown/texte ; code en ligne et blocs
+  ignorés), `sanitize` (liste blanche, re-sérialisation sans DOM), `toPlain`
+  (texte façon Markdown pour la lecture audio et les résumés).
+- **Tout passe par `mdToHtml`** (app.js) : HTML → `sanitize`, sinon le chemin
+  Markdown d'avant. Les demandes de l'utilisateur : `mdToHtml(t, {html:
+  false})`, jamais interprétées comme HTML.
+- **Liste blanche** : balises de texte, listes, tableaux, `pre/code`,
+  `details`, liens. Supprimés avec leur contenu : script, style, iframe, svg,
+  math, object, embed, template, textarea… Attributs : `title`, `lang`, et
+  quelques-uns par balise (`href`, `colspan`, `start`, `open`, `class`
+  `language-*` sur code/pre). Liens : http(s), mailto, `/`, `#` seulement,
+  jugés après décodage des entités et retrait des caractères de contrôle,
+  ouverts avec `rel="noopener noreferrer"`. Toute balise est refermée, une
+  fermeture parasite est ignorée : un fragment ne sort jamais de sa bulle.
+  **N'ajouter à la liste blanche ni balise active ni attribut d'événement.**
+- `turn-core.js` (résumés du journal) retire aussi les balises côté serveur
+  (sans html-render.js) : redémarrage nécessaire pour le journal servi.
+- Recettes : `_test_html_output.mjs` (dont 20 injections refusées),
+  navigateur `html-output`.
+
 ## Lecture audio des réponses du chef (0.35.0)
 
 Demande utilisateur : « implémente une fonction de lecture audio des réponses,
