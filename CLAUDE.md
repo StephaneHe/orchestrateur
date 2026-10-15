@@ -824,6 +824,34 @@ de la prod).
   vide, et sa liste de musiciens aussi »). Recettes : navigateur
   `git-panel-musicians` et `todo-panel-musicians`.
 
+## Tâches parallèles d'un même musicien : couloirs (0.101.0)
+
+Demande utilisateur (2026-10-15) : « Il faut que ce soit assez fin (d'ou la
+question sur git) pour que les taches d'un meme musicien puissent s'activer en
+parallele. Sauf pour certains cas particuliers sont detectes, ils doivent alors
+etre justifies et documentes. » Conception, état livré (§7) et règles (§3) :
+`docs/PLAN-parallel-tasks-same-musician.md`.
+
+- **Mise en service par projet** : `maxParallel` (entrée du projet, puis
+  `defaults`) ; défaut 1 = le chemin 0.67.0 intact ; plafond 4. Retour
+  arrière : retirer `maxParallel`, sans redémarrage.
+- **Couloir** (`scripts/lanes.mjs`) : 0 = la copie du musicien, fichiers
+  d'aujourd'hui ; k ≥ 1 = worktree git persistant `lanes/<p>/<k>`
+  (gitignoré), fichiers `logs/lanes/<p>/<k>.*`, une branche
+  `lane/<k>/<tâche>` par tâche. Fin de tâche : intégration (fusion, version
+  tirée du fragment `changelog.d/`, avance rapide, jamais poussée) ; conflit
+  ⇒ pause, branche gardée, chef prévenu, rien d'écrasé. Question ⇒ couloir
+  gardé, réponse par `--lane k`.
+- **Exceptions** (`scripts/lane-rules.mjs`) : toute règle a un id, une portée
+  et une ligne dans le §3 du document (vérifié par `_test_lane_rules.mjs`).
+  Détectée par le code ou déclarée par le Routage (`--ressources`, liste
+  fermée), jamais par mots-clés. Tâche retenue : `system/lane_exclusive` dans
+  le log, entrée de file avec `exclusive`, « ⛓ En série » au journal. **Toute
+  nouvelle règle : registre + ligne du §3 + cas dans `_test_lane_rules.mjs`.**
+- Lecture : `GET /api/lanes/:projet`, `node scripts/lanes.mjs status <p>`.
+- Recettes : `_test_parallel_lanes.mjs` (série), `_test_lane_rules.mjs`, HTTP
+  `lanes-queue` et `lanes-api`.
+
 ## Contexte calibré par requête (0.99.0)
 
 Demande utilisateur (TODO t-182fa2, précisée le 2026-10-14) : le contexte de

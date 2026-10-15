@@ -1165,6 +1165,7 @@
       const meta = [
         e.enqueuedAt ? new Date(e.enqueuedAt).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : null,
         e.model, e.callback ? `callback ${e.callback}` : null,
+        e.exclusive ? `⛓ en série : ${e.exclusive.rule}` : null,
       ].filter(Boolean).join(" · ");
       return `<div class="dq-item" role="button" tabindex="0" data-queue-open="${esc(e.id)}" aria-label="Voir le détail de la tâche ${e.position} en file (Alt+↑ / Alt+↓ pour la déplacer)">
           <span class="dq-grip" aria-hidden="true" title="Glisser pour changer l’ordre de traitement (clavier : Alt+↑ / Alt+↓)">⋮⋮</span>
@@ -1404,6 +1405,10 @@
         row("Hors pipeline", e.horsPipeline ? esc(e.horsPipeline) : null, "qdv-hors") +
         row("Callback", e.callback ? `rapport à ${esc(e.callback)}` : "aucun", "qdv-callback") +
         row("Session neuve", e.newSession ? "oui — le tour repartira sans --resume" : "non", "qdv-newsession") +
+        // 0.101.0 — lanes: why this task does not run in parallel (lane rule).
+        row("En série", e.exclusive ? `⛓ ${esc(e.exclusive.text || "")} <span class="qdv-dim">(règle <code>${esc(e.exclusive.rule)}</code>${e.exclusive.doc ? ` — ${esc(e.exclusive.doc)}` : ""})</span>` : null, "qdv-exclusive") +
+        row("Couloir", e.lane != null ? `#${esc(e.lane)} (suite de la même tâche)` : null, "qdv-lane") +
+        row("Ressources", e.ressources ? esc(e.ressources) : null, "qdv-ressources") +
         row("Origine", e.source ? esc(e.source) : null, "qdv-source") +
         row("Pièces jointes", e.attachments ? String(e.attachments) : null, "qdv-att") +
         row("Modifiée", e.edits ? `${esc(fmtWhen(e.editedAt))}${e.edits > 1 ? ` (${esc(e.edits)} fois)` : ""}` : null, "qdv-edited") +

@@ -185,9 +185,27 @@
       lastText = (t && t._last) || "";
     }
 
+    // Lanes (0.101.0): a lane rule written before the turn opened (it waited),
+    // and the tasks running in lanes ≥ 1 (their own log, a marker here).
+    const pendingSerial = new Map();
+    const laneTurns = new Map();
     function open(ev, promptEv) {
       if (cur) cur._last = lastText;
-      cur = {
+      cur = newTurn(ev, promptEv);
+      turns.push(cur);
+      if (cur.turnId) byId.set(cur.turnId, cur);
+      if (cur.turnId && pendingSerial.has(cur.turnId)) { cur.serial = pendingSerial.get(cur.turnId); pendingSerial.delete(cur.turnId); }
+      trim();
+      lastText = "";
+      pendingPrompt = null;
+    }
+    function trim() {
+      if (turns.length > max) {
+        for (const old of turns.splice(0, turns.length - max)) { if (old.turnId) { byId.delete(old.turnId); laneTurns.delete(old.turnId); } }
+      }
+    }
+    function newTurn(ev, promptEv) {
+      return {
         turnId: ev.orch_turn || (promptEv && promptEv.orch_turn) || null,
         id: (promptEv && promptEv.timestamp) || ev.timestamp || null,
         start: (promptEv && promptEv.timestamp) || ev.timestamp || null,
@@ -204,13 +222,40 @@
         stop: null, ack: null, resolved: null, tools: 0,
         test: promptEv ? testInfo(promptEv) : null,
       };
-      turns.push(cur);
-      if (cur.turnId) byId.set(cur.turnId, cur);
-      if (turns.length > max) {
-        for (const old of turns.splice(0, turns.length - max)) if (old.turnId) byId.delete(old.turnId);
+    }
+    /** Lane markers: never become `cur` (lane-0 events are never attributed to them). */
+    function laneEvent(ev) {
+      const id = ev.orch_turn;
+      if (ev.subtype === "lane_exclusive") {
+        const s = { rule: ev.rule || "", text: ev.text || "", resource: ev.resource || null };
+        const tr = id ? (byId.get(id) || laneTurns.get(id)) : null;
+        if (tr) tr.serial = s; else if (id) pendingSerial.set(id, s);
+        return;
       }
-      lastText = "";
-      pendingPrompt = null;
+      let lt = id ? laneTurns.get(id) : null;
+      if (!lt) {
+        lt = newTurn(ev, null);
+        lt.prompt = summarizePrompt(ev.title || "");
+        lt.hasInit = false;
+        lt.lane = { lane: ev.lane, branch: ev.branch || null, task: ev.task || null };
+        if (id && pendingSerial.has(id)) { lt.serial = pendingSerial.get(id); pendingSerial.delete(id); }
+        turns.push(lt);
+        if (id) laneTurns.set(id, lt);
+        trim();
+      }
+      if (ev.state === "running") return;
+      lt.end = ev.timestamp || null;
+      if (lt.start && lt.end) { const d = Date.parse(lt.end) - Date.parse(lt.start); if (Number.isFinite(d) && d >= 0) lt.durationMs = d; }
+      lt.lane.outcome = ev.outcome || ev.state;
+      if (ev.state === "input") { lt.outcome = "question"; lt.question = String(ev.question || "").split(/NEEDS_(?:USER|CHEF)_INPUT\s*:/).pop().trim(); }
+      else if (ev.state === "paused") { lt.outcome = "error"; lt.subtype = "intégration en pause"; lt.summary = [ev.why || ev.reason || "intégration en pause"]; lt.lane.diff = ev.diff || null; }
+      else if (ev.state === "interrupted") { lt.outcome = "interrupted"; lt.summary = [ev.text || ""]; }
+      else {
+        lt.outcome = "ok";
+        lt.summary = [ev.outcome === "nothing" ? "rien à intégrer" : `intégré dans la branche principale${ev.commit ? ` (${ev.commit})` : ""}`];
+        if (ev.commit) lt.commits.push({ sha: ev.commit, msg: "intégration du couloir" });
+        if (ev.version) lt.versions.push(ev.version);
+      }
     }
 
     // A turn-less event (old logs, before `orch_turn`) with no turn open: the
@@ -253,8 +298,10 @@
         if (ev.pipeline) cur.pipeline = { run: ev.pipeline.run, pipeline: ev.pipeline.pipeline, mode: ev.pipeline.mode, kind: ev.pipeline.kind || null,
           resumed: !!ev.pipeline.resumed, planned: ev.pipeline.steps || [], steps: [], warnings: [], limit: null, loops: 0, status: "running" };
         if (ev.pipelineBypass) cur.bypass = { reason: ev.pipelineBypass.reason || "", by: ev.pipelineBypass.by || "" };
+        if (ev.lane) cur.lane = { lane: ev.lane.lane, branch: ev.lane.branch || null, task: ev.lane.task || null, rule: ev.lane.rule || null };
         return;
       }
+      if (t === "system" && (ev.subtype === "lane_exclusive" || ev.subtype === "lane_task")) { laneEvent(ev); return; }
       if (t === "system" && typeof ev.subtype === "string" && ev.subtype.startsWith("pipeline_")) {
         const p = (cur && cur.pipeline) || (last() && last().pipeline);
         if (!p) return;

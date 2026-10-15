@@ -601,6 +601,33 @@ async function apiChecks(sb) {
       await fetch(`${sb.url}/api/queue/eps/${encodeURIComponent(dj.id)}`, { method: 'DELETE', headers: H });
     }
   });
+  await check(S, 'lanes-queue', 'Couloirs (0.101.0) : une tâche retenue en série par une règle va en file même si le musicien est libre, avec sa justification, son couloir et ses ressources', async () => {
+    if (!fs.existsSync(path.join(sb.root, 'scripts', 'lane-rules.mjs'))) NA('couloirs absents de cet état du code');
+    const exclusive = { rule: 'port', text: 'la tâche lance un serveur sur un port fixe — port 5173 ; ressource tenue', resource: 'port-5173', doc: 'docs/PLAN-parallel-tasks-same-musician.md §3' };
+    const d = await post('/api/dispatch', { project: 'theta', prompt: 'Recette des couloirs : tâche en série', queueIfBusy: true, source: 'chef', lane: 1, ressources: 'serveur', exclusive });
+    const dj = await d.json();
+    try {
+      assert(d.status === 202 && dj.queued === true, `musicien libre + règle de couloir : mise en file attendue (${d.status} ${JSON.stringify(dj)})`);
+      const e = (await json('/api/queue/theta')).entries.find(x => x.id === dj.id);
+      assert(e && e.exclusive?.rule === 'port' && e.exclusive.text === exclusive.text && e.exclusive.doc === exclusive.doc && e.lane === 1 && e.ressources === 'serveur', `entrée : ${JSON.stringify(e)}`);
+      const bad = await post('/api/dispatch', { project: 'eps', prompt: 'x', queueIfBusy: true, exclusive: { rule: '../../x', text: 'y' }, lane: 42, ressources: 'rm -rf' });
+      const bj = await bad.json();
+      const be = (await json('/api/queue/eps')).entries.find(x => x.id === bj.id);
+      try { assert(be && be.exclusive === null && be.lane === null && be.ressources === null, `champs invalides acceptés : ${JSON.stringify(be)}`); }
+      finally { if (bj.id) await fetch(`${sb.url}/api/queue/eps/${encodeURIComponent(bj.id)}`, { method: 'DELETE', headers: H }); }
+    } finally {
+      if (dj.id) await fetch(`${sb.url}/api/queue/theta/${encodeURIComponent(dj.id)}`, { method: 'DELETE', headers: H });
+    }
+  });
+  await check(S, 'lanes-api', 'Couloirs (0.101.0) : GET /api/lanes/:projet donne les couloirs, la limite et les règles documentées ; projet hors liste refusé ; aucune écriture', async () => {
+    if (!fs.existsSync(path.join(sb.root, 'scripts', 'lane-rules.mjs'))) NA('couloirs absents de cet état du code');
+    const d = await json('/api/lanes/alpha');
+    assert(d.project === 'alpha' && d.maxParallel === 1 && d.lanes.length === 1 && d.lanes[0].lane === 0 && d.running === 0 && Array.isArray(d.resources) && d.exclusive === null, `état : ${JSON.stringify(d)}`);
+    assert(d.rules.some(r => r.id === 'no-git' && r.status === 'active' && r.text) && /PLAN-parallel-tasks-same-musician\.md$/.test(d.doc), 'règles documentées absentes');
+    assert((await get('/api/lanes/..%2Fsecret')).status === 404, 'projet hors liste accepté');
+    const w = await fetch(sb.url + '/api/lanes/alpha', { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: '{}' });
+    assert(w.status === 404, `POST /api/lanes → ${w.status} (lecture seule)`);
+  });
   await check(S, 'question', 'Question acquittée sans relancer (200 puis 409), événement dans le log', async () => {
     const a = await post('/api/question/mu/resolve', { note: 'recette', by: 'regression' });
     assert(a.status === 200, `1er acquittement ${a.status}`);

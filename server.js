@@ -412,7 +412,21 @@ function queueEntryView(e, i) {
     sameTask: !!e.sameTask, resumeSession: !!e.resumeSession,
     editedAt: e.editedAt || null, edits: e.edits || 0,
     pipeline: e.pipeline || null, pipelineResume: e.pipelineResume || null, horsPipeline: e.horsPipeline || null, pipelineMode: e.pipelineMode || null,
+    lane: Number.isInteger(e.lane) ? e.lane : null, ressources: e.ressources || null, exclusive: e.exclusive || null,
   };
+}
+
+/** Lanes (0.101.0): affinity, declared resources and the rule that kept a task serial. */
+function laneOptsFrom(body) {
+  const o = {};
+  if (Number.isInteger(body?.lane) && body.lane >= 0 && body.lane <= 9) o.lane = body.lane;
+  if (typeof body?.ressources === 'string' && /^[a-z, ]{1,80}$/.test(body.ressources)) o.ressources = body.ressources;
+  const ex = body?.exclusive;
+  if (ex && typeof ex === 'object' && typeof ex.rule === 'string' && /^[a-z0-9-]{1,40}$/.test(ex.rule)) {
+    o.exclusive = { rule: ex.rule, text: String(ex.text || '').slice(0, 400), ...(typeof ex.resource === 'string' ? { resource: ex.resource.slice(0, 60) } : {}),
+      ...(typeof ex.doc === 'string' ? { doc: ex.doc.slice(0, 120) } : {}) };
+  }
+  return o;
 }
 
 function queueSidecarPath(name) {
@@ -844,6 +858,11 @@ function spawnDirectDispatch(name, prompt, attachmentPaths = [], videoPaths = []
   }
   // Pipelines (0.48.0) : la demande garde son pipeline jusqu'au lancement.
   args.push(...pipelineArgs(pipelineOptsFrom(opts)));
+  // Lanes (0.101.0): the lane affinity and the declared resources travel too
+  // (the exclusivity is decided again at launch, on the facts of that moment).
+  const lo = laneOptsFrom(opts);
+  if (lo.lane != null) args.push('--lane', String(lo.lane));
+  if (lo.ressources) args.push('--ressources', lo.ressources);
 
   const child = spawn(process.execPath, args, {
     cwd: __dirname,
@@ -926,7 +945,7 @@ function drainAttempt(name, reason) {
     return;
   }
   drainPending.delete(name);
-  const { id, prompt, attachmentPaths, videoPaths, callback, source, model, provider, slot, ticket, newSession, sameTask, resumeSession, obsId, secondModel, secondProvider, dualMode, pipeline, pipelineResume, horsPipeline, pipelineMode } = q.shift();
+  const { id, prompt, attachmentPaths, videoPaths, callback, source, model, provider, slot, ticket, newSession, sameTask, resumeSession, obsId, secondModel, secondProvider, dualMode, pipeline, pipelineResume, horsPipeline, pipelineMode, lane, ressources } = q.shift();
   if (q.length === 0) dispatchQueue.delete(name);
   persistQueue(name);
   drainLaunchedAt.set(name, Date.now());
@@ -935,7 +954,7 @@ function drainAttempt(name, reason) {
     ` attente-pid=${Date.now() - since}ms`;
   console.log(msg); debugLog(msg);
   spawnDirectDispatch(name, prompt, attachmentPaths, videoPaths,
-    { callback, source, model, provider, slot, ticket, newSession, sameTask, resumeSession, obsId, secondModel, secondProvider, dualMode, pipeline, pipelineResume, horsPipeline, pipelineMode, noQueueIfBusy: true });
+    { callback, source, model, provider, slot, ticket, newSession, sameTask, resumeSession, obsId, secondModel, secondProvider, dualMode, pipeline, pipelineResume, horsPipeline, pipelineMode, lane, ressources, noQueueIfBusy: true });
 }
 
 const DRAIN_WAIT_STEP_MS = 1000;
@@ -3351,6 +3370,19 @@ app.get('/api/queue/:project', async (req, res) => {
   });
 });
 
+// 0.101.0 — lanes of a musician (parallel tasks of the same musician): each
+// lane's turn and task, resources held, the task running alone if any. GET only.
+app.get('/api/lanes/:project', async (req, res) => {
+  const proj = config.projects.find(p => p.name === req.params.project);
+  if (!proj) return res.status(404).json({ error: `unknown project "${req.params.project}"` });
+  try {
+    const lanes = await import('./scripts/lanes.mjs');
+    const rules = await import('./scripts/lane-rules.mjs');
+    res.json({ ...lanes.lanesStatus({ root: __dirname, logsDir: LOGS_DIR, config, project: proj }),
+      rules: rules.RULES.map(r => ({ id: r.id, scope: r.scope, status: r.status, text: r.text })), doc: rules.DOC });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // 0.86.0 — drag and drop of the queue: « il faut pouvoir drag & drop les
 // éléments de la file d'attente, et que celà ai un impacte sur l'ordre de
 // traitement ». The in-memory queue is reordered (then the sidecar rewritten
@@ -5382,11 +5414,14 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
       secondProvider: typeof req.body?.secondProvider === 'string' ? req.body.secondProvider : undefined,
       dualMode:       req.body?.dualMode === 'judge' ? 'judge' : undefined,
       ...pipelineOptsFrom(req.body),
+      ...laneOptsFrom(req.body),
     };
-    if (busy) {
+    // Lanes (0.101.0): a lane rule kept this task serial — it waits in the
+    // queue, with its justification, even when lane 0 happens to be free.
+    if (busy || entry.exclusive) {
       const len = queuePush(name, entry);
       const id = dispatchQueue.get(name)[len - 1].id;
-      console.log(`[queue] ${name} occupé (pid=${busy}) — dispatch mis en file (pos=${len}, id=${id})`);
+      console.log(`[queue] ${name} ${busy ? `occupé (pid=${busy})` : `en série (règle ${entry.exclusive.rule})`} — dispatch mis en file (pos=${len}, id=${id})`);
       return res.status(202).json({ ok: true, queued: true, project: name, queueLength: len, position: len, id });
     }
     const pid = spawnDirectDispatch(name, prompt, attachmentPaths, videoPaths, entry);

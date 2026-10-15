@@ -11,6 +11,55 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.101.0] - 2026-10-15
+
+### Added
+
+- (server) Parallel tasks of the SAME musician, each in its own git worktree
+  (user request 2026-10-15: « Il faut que ce soit assez fin (d'ou la question
+  sur git) pour que les taches d'un meme musicien puissent s'activer en
+  parallele. Sauf pour certains cas particuliers sont detectes, ils doivent
+  alors etre justifies et documentes. »). Lot 1 of
+  `docs/PLAN-parallel-tasks-same-musician.md` (§7 lists what is in and out).
+  Opt-in: `maxParallel` in a project entry of config.json (or `defaults`),
+  default 1 = the 0.67.0 behaviour, hard cap 4.
+  - `scripts/lanes.mjs`: lanes. Lane 0 is the musician's checkout with
+    today's files; lanes ≥ 1 are persistent worktrees under `lanes/<p>/<k>`
+    (gitignored), files under `logs/lanes/<p>/<k>.*` (log, session, pid,
+    turn lock, task). One branch `lane/<k>/<task>` per task, workspace trust,
+    provisioning of ignored local files, crash recovery. At the end of the
+    task: integration into the main checkout's branch (merge, version
+    assigned from the task's `changelog.d/` fragment, fast-forward, never
+    pushed). A conflict, a failed turn or a blocked fast-forward pauses the
+    integration: branch kept, diff archived, chef notified, nothing
+    overwritten. A question keeps the lane; the answer (`--lane k`,
+    `[CHEF_ANSWER]`, `--meme-tache`) resumes it. CLI `status` / `release`.
+  - `scripts/lane-rules.mjs`: every case where parallelism is impossible or
+    dangerous is a rule with an id, a scope and a justification documented
+    in §3 of the design document: `no-git`, `git-unsupported`, `same-task`,
+    `lane0-direct`, `pipeline-engine`, `dual-mode`, `main-dirty`,
+    `machine-state`, `migration`, `port`, `orchestrator-self`, `adb-device`,
+    `database` (active), `gradle-heavy`, `deps-shared`, `outside-repo`
+    (planned). Detected by code on facts or declared by the Routage
+    (`--ressources`, closed list), never by keywords.
+  - `dispatch.mjs`: one lock per lane, a lock for tasks that must run alone,
+    resource locks. A retained task writes `system/lane_exclusive` (rule,
+    scope, plain reason, link to the documentation) in the musician's log and
+    falls back to the queue with that justification (`exclusive`), or waits.
+  - Server: queue entries carry `lane`, `ressources`, `exclusive` (shown in
+    the queue row and detail, « ⛓ En série »); an entry retained by a rule is
+    queued even when lane 0 is free; the drain passes `--lane` /
+    `--ressources`; `GET /api/lanes/:project` (read-only).
+  - Activity journal: one entry per lane task (outcome, version, paused
+    integration), « ⛓ En série — reason (rule) » on a retained turn.
+    `turn-core.js` is loaded by the server at boot: restart needed for the
+    served journal.
+  - Tests: `_test_parallel_lanes.mjs` (real dispatch, fake claude: three
+    concurrent turns in three folders, exception back to the queue with its
+    justification, no-git, maxParallel = 1 unchanged, question/answer,
+    conflict, crash recovery, journal), `_test_lane_rules.mjs` (detectors,
+    registry ↔ documentation), HTTP `lanes-queue`, `lanes-api`.
+
 ## [0.100.3] - 2026-10-15
 
 ### Fixed

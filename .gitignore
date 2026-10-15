@@ -9,6 +9,10 @@ yarn-error.log*
 logs/*
 !logs/.gitkeep
 
+# Lanes (0.101.0): persistent git worktrees of the musicians' parallel tasks
+# (copies of projects, with their local .env / CLAUDE.local.md) — never commit
+lanes/
+
 # Secret: the per-install token used to gate dashboard access
 .token
 

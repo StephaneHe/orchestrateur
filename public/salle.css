@@ -780,6 +780,10 @@ div.jt-did { padding-left: 0; }
 /* Pipelines (0.48.0) : frise des étapes d'une exécution */
 .jt-pipeline { margin-top: 6px; padding: 5px 8px; border-left: 2px solid var(--st-live); background: color-mix(in srgb, var(--st-live) 6%, transparent); }
 .jt-pipeline.is-bypass { border-left-color: var(--fg-3); background: none; }
+/* Lanes (0.101.0): the lane of a turn and the rule that kept it serial. */
+.jt-lane, .jt-serial { margin-top: 6px; padding: 4px 8px; border-left: 2px solid var(--fg-3); font-size: 0.75rem; }
+.jt-serial { border-left-color: var(--st-input); color: var(--fg-1); }
+.jt-lane .jt-dim, .jt-serial .jt-dim { color: var(--fg-2); }
 .jt-pipeline .jt-steps { margin: 3px 0 0; padding-left: 1.4em; }
 .jt-pipeline .jt-step { margin: 2px 0; }
 .jt-pipeline .jt-step[data-step-status="refused"], .jt-pipeline .jt-step[data-step-status="failed"] { color: var(--fg-1); }

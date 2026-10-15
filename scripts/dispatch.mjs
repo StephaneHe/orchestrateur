@@ -258,6 +258,13 @@ if (pipelineModeArg && !['leger', 'complet'].includes(pipelineModeArg)) die(`--m
 // otherwise the classifier model decides it (never a keyword guess).
 const pipelineKindArg   = takeFlagValue('--kind');
 if (pipelineKindArg && !['simple', 'bugfix', 'mecanique'].includes(pipelineKindArg)) die(`--kind simple|bugfix|mecanique (reçu « ${pipelineKindArg} »)`);
+// Lanes (0.101.0, scripts/lanes.mjs): --lane <k> sends the request to the task
+// held by lane k (answer to its question); --ressources <list> carries what the
+// Routage model declared the task needs (closed list, scripts/lane-rules.mjs).
+const laneArgRaw        = takeFlagValue('--lane');
+if (laneArgRaw != null && !/^[0-9]$/.test(laneArgRaw)) die(`--lane <0-9> (reçu « ${laneArgRaw} »)`);
+const LANE_ARG = laneArgRaw != null ? Number(laneArgRaw) : null;
+const ressourcesArg     = takeFlagValue('--ressources');
 const STEP_TOKEN = process.env.ORCH_STEP_TOKEN || null;
 const TURN_OF    = process.env.ORCH_TURN_PROJECT || null;   // ce dispatch est lancé DEPUIS un tour de ce projet
 const TURN_STEP  = process.env.ORCH_TURN_STEP || null;      // … qui est une étape de pipeline
@@ -581,13 +588,13 @@ if (DUAL_DIR) fs.mkdirSync(DUAL_DIR, { recursive: true });
 // La relecture d'un mode double DANS une étape écrit aussi dans le log d'étape.
 const STEP_DIR = PIPE_STEP ? path.join(LOGS, 'runs', PIPE_STEP.run) : null;
 if (STEP_DIR) fs.mkdirSync(STEP_DIR, { recursive: true });
-const logPath     = DUAL_DIR ? path.join(DUAL_DIR, `${DUAL_BRANCH.role}.jsonl`)   : STEP_DIR ? path.join(STEP_DIR, `${PIPE_STEP.key}.jsonl`) : path.join(LOGS, `${projectName}.jsonl`);
+let logPath     = DUAL_DIR ? path.join(DUAL_DIR, `${DUAL_BRANCH.role}.jsonl`)   : STEP_DIR ? path.join(STEP_DIR, `${PIPE_STEP.key}.jsonl`) : path.join(LOGS, `${projectName}.jsonl`);
 // A hand-off turn has its own session (0.100.1): it never resumes the chef's
 // session — a pool slot may be running a turn on it — nor replaces its sidecar.
-const sessionPath = DUAL_DIR ? path.join(DUAL_DIR, `${DUAL_BRANCH.role}.session`) : STEP_DIR ? path.join(STEP_DIR, `${pipelineSession || PIPE_STEP.key}.session`)
+let sessionPath = DUAL_DIR ? path.join(DUAL_DIR, `${DUAL_BRANCH.role}.session`) : STEP_DIR ? path.join(STEP_DIR, `${pipelineSession || PIPE_STEP.key}.session`)
   : CHEF_HANDOFF ? path.join(LOGS, 'runs', CHEF_HANDOFF.run, 'handoff.session') : path.join(LOGS, `${projectName}.session`);
 if (CHEF_HANDOFF) { try { fs.mkdirSync(path.dirname(sessionPath), { recursive: true }); } catch {} }
-const pidPath     = DUAL_DIR ? path.join(DUAL_DIR, `${DUAL_BRANCH.role}.pid`)     : STEP_DIR ? path.join(STEP_DIR, `${PIPE_STEP.key}.pid`) : path.join(LOGS, `${projectName}.pid`);
+let pidPath     = DUAL_DIR ? path.join(DUAL_DIR, `${DUAL_BRANCH.role}.pid`)     : STEP_DIR ? path.join(STEP_DIR, `${PIPE_STEP.key}.pid`) : path.join(LOGS, `${projectName}.pid`);
 
 // Turn id (0.67.0). The dual-mode review prolongs the turn its parent opened
 // (same musician log, no request of its own): it inherits the parent's id.
@@ -1083,6 +1090,10 @@ function postQueueIfBusy() {
     if (pipelineResumeArg) payload.pipelineResume  = pipelineResumeArg;
     if (horsPipelineArg != null) payload.horsPipeline = horsPipelineArg;
     if (pipelineModeArg)   payload.pipelineMode    = pipelineModeArg;
+    // Lanes (0.101.0): affinity, declared resources and the rule that made it wait.
+    if (LANE_ARG != null)  payload.lane            = LANE_ARG;
+    if (ressourcesArg)     payload.ressources      = ressourcesArg;
+    if (QUEUE_EXCLUSIVE)   payload.exclusive       = QUEUE_EXCLUSIVE;
     const body = Buffer.from(JSON.stringify(payload));
     const req = http.request({
       hostname: '127.0.0.1', port: Number(process.env.ORCH_PORT) || 7777, path: '/api/dispatch', method: 'POST',
@@ -1130,7 +1141,13 @@ if (!obsId) {
   } catch { /* l'observation ne bloque jamais un dispatch */ }
 }
 
-if (queueIfBusy && projectName !== CONDUCTOR) {
+// Lanes (0.101.0): with maxParallel > 1, a busy lane 0 no longer means a busy
+// musician — the lane acquisition below decides (and queues if it must).
+const lanesMod = await import('./lanes.mjs');
+const LANES_MAX = (!DUAL_BRANCH && !dualSynthesis && !PIPE_STEP && projectName !== CONDUCTOR) ? lanesMod.maxParallelFor(config, project) : 1;
+let QUEUE_EXCLUSIVE = null;   // justification carried by a queue entry (lane rule that made it wait)
+if (LANE_ARG != null && LANES_MAX <= 1 && LANE_ARG !== 0) die(`--lane ${LANE_ARG} : ${projectName} n'a pas de couloirs parallèles (maxParallel = 1)`);
+if (queueIfBusy && projectName !== CONDUCTOR && LANES_MAX <= 1) {
   const busyPid = pidAliveFor(projectName);
   if (busyPid) {
     const r = await postQueueIfBusy();
@@ -1176,7 +1193,7 @@ function tryTurnLock() {
   }
   return false;
 }
-if (TURN_LOCK) {
+if (TURN_LOCK && LANES_MAX <= 1) {
   const WAIT_MAX = Number(process.env.ORCH_TURN_LOCK_WAIT_MS) || 4 * 3600_000;
   const POLL = Number(process.env.ORCH_TURN_LOCK_POLL_MS) || 1000;
   let got = tryTurnLock();
@@ -1194,6 +1211,122 @@ if (TURN_LOCK) {
   process.on('exit', () => {
     try { if (JSON.parse(fs.readFileSync(TURN_LOCK, 'utf8')).pid === process.pid) fs.unlinkSync(TURN_LOCK); } catch {}
   });
+}
+
+// ---------- lanes: parallel tasks of the same musician (0.101.0) -------------
+// User request (2026-10-15): « Il faut que ce soit assez fin (d'ou la question
+// sur git) pour que les taches d'un meme musicien puissent s'activer en
+// parallele. Sauf pour certains cas particuliers sont detectes, ils doivent
+// alors etre justifies et documentes. » With maxParallel > 1 the single turn
+// lock becomes one lock per lane (scripts/lanes.mjs): lane 0 is the musician's
+// checkout, lanes ≥ 1 are git worktrees, each task on its own branch,
+// integrated at its end. A rule of scripts/lane-rules.mjs that keeps a task
+// serial is written to the musician's log (system/lane_exclusive) and travels
+// with its queue entry: justified, never silent.
+let LANE = null;           // { k, dir?, task?, branch?, title, rule }
+let laneMainLog = () => {};
+if (TURN_LOCK && LANES_MAX > 1) {
+  const rulesMod = await import('./lane-rules.mjs');
+  const WAIT_MAX = Number(process.env.ORCH_TURN_LOCK_WAIT_MS) || 4 * 3600_000;
+  const POLL = Number(process.env.ORCH_TURN_LOCK_POLL_MS) || 1000;
+  const files = (k) => lanesMod.laneFiles(LOGS, projectName, k);
+  laneMainLog = (ev) => { try { fs.appendFileSync(files(0).log, JSON.stringify({ orch_turn: TURN_ID, ...ev, timestamp: new Date().toISOString() }) + '\n'); } catch {} };
+  const title = prompt.replace(/\s+/g, ' ').trim().slice(0, 140);
+  const declared = rulesMod.parseResources(ressourcesArg);
+  if (declared.unknown.length) console.error(`[dispatch] --ressources : ${declared.unknown.join(', ')} inconnu(s), ignoré(s) (liste fermée : ${rulesMod.DECLARED_RESOURCES.join(', ')})`);
+  const sameTask = SAME_TASK || FORCE_RESUME || /^\s*\[CHEF_ANSWER\]/i.test(prompt);
+  const reserved = lanesMod.reservedLanes(LOGS, projectName, LANES_MAX);
+  const decision = rulesMod.decide({
+    project, conductor: CONDUCTOR, direct: !sourceProject && LANE_ARG == null, laneArg: LANE_ARG, sameTask,
+    sameTaskLanes: sameTask ? reserved : [],
+    pipeline: !!(pipelineArg || pipelineResumeArg || AUTO_PIPELINE) && horsPipelineArg == null,
+    dual: !!secondModel, resources: declared.list,
+    // A turn running in lane 0 explains its own uncommitted changes.
+    mainDirtyMatters: !lanesMod.lockHolder(files(0).lock),
+  });
+  if (decision.mode === 'ambiguous') die(`plusieurs couloirs de ${projectName} attendent une réponse (${decision.lanes.join(', ')}) : précise lequel avec --lane <n> — jamais deviné`, 64);
+  if (decision.mode === 'lane' && !(decision.lane >= 0 && decision.lane < LANES_MAX)) die(`--lane ${decision.lane} : ${projectName} a ${LANES_MAX} couloirs (0 à ${LANES_MAX - 1})`, 64);
+  if (decision.mode === 'lane' && decision.lane >= 1 && !lanesMod.readTask(files(decision.lane).task)) die(`--lane ${decision.lane} : aucune tâche dans ce couloir`, 64);
+  const held = [];
+  const releaseAll = () => { for (const f of held.splice(0)) lanesMod.releaseLock(f); };
+  process.on('exit', releaseAll);
+  const ruleInfo = { turn: TURN_ID, rule: decision.rule || null, text: decision.rule ? rulesMod.ruleText(decision.rule, decision.evidence) : null };
+  const exFile = lanesMod.exclusiveLockFile(LOGS, projectName);
+  const attempt = () => {
+    if (decision.mode === 'alone') {
+      if (!lanesMod.tryLock(exFile, ruleInfo)) { const h = lanesMod.lockHolder(exFile); return { rule: h?.rule || decision.rule, text: `une autre tâche doit tourner seule : ${h?.text || h?.rule || '?'}` }; }
+      if (!held.includes(exFile)) held.push(exFile);
+      const busy = [...Array(LANES_MAX).keys()].filter(k => lanesMod.lockHolder(files(k).lock));
+      if (busy.length) return { rule: decision.rule, text: `${ruleInfo.text} ; elle attend la fin des couloirs ${busy.join(', ')}` };
+    } else {
+      const h = lanesMod.lockHolder(exFile);
+      if (h) return { rule: h.rule, text: `une tâche qui doit tourner seule est en cours : ${h.text || h.rule}` };
+    }
+    const taken = [];
+    for (const r of decision.resources) {
+      const f = lanesMod.resourceLockFile(LOGS, projectName, r.key);
+      if (!lanesMod.tryLock(f, { turn: TURN_ID, rule: r.rule, text: rulesMod.ruleText(r.rule, r.evidence) })) {
+        for (const x of taken) lanesMod.releaseLock(x);
+        return { rule: r.rule, resource: r.key, text: `${rulesMod.ruleText(r.rule, r.evidence)} ; ressource « ${r.key} » tenue par une autre tâche` };
+      }
+      taken.push(f);
+    }
+    const candidates = decision.mode === 'parallel' ? [...Array(LANES_MAX).keys()].filter(k => !reserved.includes(k))
+      : decision.mode === 'lane' ? [decision.lane] : [0];
+    for (const k of candidates) {
+      if (lanesMod.tryLock(files(k).lock, { turn: TURN_ID })) { held.push(...taken, files(k).lock); return { lane: k }; }
+    }
+    for (const x of taken) lanesMod.releaseLock(x);
+    if (decision.mode === 'parallel') return { capacity: true, text: `tous les couloirs libres de ${projectName} sont occupés (${candidates.length}/${LANES_MAX})` };
+    return { rule: decision.rule, text: `${ruleInfo.text} ; le couloir ${candidates[0]} est occupé` };
+  };
+  let got = attempt();
+  if (got.lane == null) {
+    if (got.rule) {
+      QUEUE_EXCLUSIVE = { rule: got.rule, text: got.text, ...(got.resource ? { resource: got.resource } : {}), doc: `${rulesMod.DOC} §3` };
+      laneMainLog({ type: 'system', subtype: 'lane_exclusive', rule: got.rule, scope: rulesMod.RULE_BY_ID[got.rule]?.scope || null,
+        resource: got.resource || null, text: got.text, detectedBy: 'lane-rules', doc: `${rulesMod.DOC} §3`, title });
+    }
+    console.error(`[dispatch] ${projectName} : ${got.rule ? `⛓ en série — ${got.text} (règle ${got.rule})` : got.text}`);
+    if (queueIfBusy) {
+      releaseAll();
+      const r = await postQueueIfBusy();
+      if (r?.queued) { console.log(`[dispatch] ${projectName} — mis en file (position ${r.position ?? r.queueLength})${got.rule ? `, justification : règle ${got.rule}` : ''}`); process.exit(0); }
+      if (r?.direct) { console.log(`[dispatch] ${projectName} — lancé par le serveur (pid=${r.pid})`); process.exit(0); }
+      console.error(`[dispatch] ${projectName} : serveur injoignable — attente sur place`);
+    }
+    const t0 = Date.now();
+    while ((got = attempt()).lane == null) {
+      if (Date.now() - t0 > WAIT_MAX) die(`${projectName} : toujours en attente après ${Math.round(WAIT_MAX / 60000)} min (${got.text}) — tour non lancé`, 75);
+      await new Promise(r => setTimeout(r, POLL));
+    }
+  }
+  const k = got.lane;
+  LANE = { k, title, rule: decision.rule || null, evidence: decision.evidence || null };
+  if (k >= 1) {
+    const { dir } = await lanesMod.ensureLane({ root: ROOT, project, k,
+      // a test root never touches the real ~/.claude.json
+      trust: !process.env.DISPATCH_ROOT_FOR_TESTS || !!process.env.ORCH_CLAUDE_JSON });
+    const rec = lanesMod.recoverLane({ logsDir: LOGS, project, k, dir });
+    if (rec) laneMainLog({ type: 'system', subtype: 'lane_task', lane: k, task: rec.task, branch: rec.branch, state: 'interrupted', text: rec.text });
+    const prev = lanesMod.readTask(files(k).task);
+    const resumed = decision.mode === 'lane' && prev?.state === 'input';
+    const t = resumed ? lanesMod.resumeTask({ logsDir: LOGS, project, k, turn: TURN_ID })
+      : lanesMod.startTask({ logsDir: LOGS, project, k, dir, task: TURN_ID, turn: TURN_ID, title });
+    Object.assign(LANE, { dir, task: t.task, branch: t.branch, integration: t.integration, resumed });
+    logPath = files(k).log; sessionPath = files(k).session; pidPath = files(k).pid; WORK_DIR = dir;
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    sessionId = null;
+    try { sessionId = fs.readFileSync(sessionPath, 'utf8').trim() || null; } catch {}
+    if (!resumed && sessionId) {
+      // A new task never resumes the previous task's session (0.99.0 rule).
+      try { fs.renameSync(sessionPath, `${sessionPath}.bak-${new Date().toISOString().replace(/[:.]/g, '-')}`); } catch {}
+      sessionId = null;
+    }
+    laneMainLog({ type: 'system', subtype: 'lane_task', lane: k, task: t.task, branch: t.branch, state: 'running', title: t.title || title, resumed,
+      ...(t.orphan ? { orphanDiff: t.orphan } : {}), ...(QUEUE_EXCLUSIVE ? { waited: QUEUE_EXCLUSIVE } : {}) });
+  }
+  console.log(`[dispatch] ${projectName} : couloir ${k}${k ? ` (${LANE.branch})` : ' (copie principale)'}${decision.rule ? ` — règle ${decision.rule}` : ''}`);
 }
 
 // ---------- pipelines (0.48.0) : délégation au moteur -------------------------
@@ -1459,7 +1592,7 @@ if (provider === 'claude' && !NEW_SESSION && projectName !== CONDUCTOR && !CHEF_
   try {
     const cp = await import('./context-policy.mjs');
     const fsc = await import('./fleet-status-core.mjs');
-    const { lines } = fsc.tailLines(path.join(LOGS, `${projectName}.jsonl`));
+    const { lines } = fsc.tailLines(logPath);   // the lane's log (lane 0: logs/<p>.jsonl)
     const st = fsc.deriveState(lines);
     contextDecision = cp.sessionDecision({
       hasSession: true, forceResume: FORCE_RESUME, sameTask: SAME_TASK, source: sourceProject || null,
@@ -1564,6 +1697,17 @@ function todoRule() {
     `node "${todo}" list. Elle date l'entrée et enregistre ton nom au moment où tu coches.`;
 }
 
+/** Lanes (0.101.0): the musician works in a parallel lane, on a task branch. */
+function laneRule() {
+  return `\n\n---\nCOULOIR PARALLÈLE : tu travailles dans le couloir ${LANE.k} de ${projectName}, une copie isolée du dépôt (git worktree) : ` +
+    `${LANE.dir.replace(/\\/g, '/')}, sur la branche ${LANE.branch}. D'autres tâches de ce musicien tournent peut-être en même temps dans d'autres copies. ` +
+    `Reste dans ce dossier (n'écris jamais dans ${project.path.replace(/\\/g, '/')}), commite ton travail sur cette branche, ne pousse rien. ` +
+    `NE MODIFIE NI le numéro de version (package.json, build.gradle) NI CHANGELOG.md : écris à la place un fragment changelog.d/${LANE.task}.md ` +
+    `qui commence par « ---\\nbump: patch|minor|major\\n--- » suivi des sections Keep a Changelog (### Added, ### Fixed…). ` +
+    `À la fin de ton tour, l'orchestrateur intègre la branche dans ${LANE.integration} et attribue lui-même la version. ` +
+    `Si tu poses une question (NEEDS_USER_INPUT / NEEDS_CHEF_INPUT), précise que la réponse doit être envoyée avec « --lane ${LANE.k} ».`;
+}
+
 // ---------- callback injection ----------------------------------------------
 
 // promptForLog = original prompt shown in the viewer (no boilerplate).
@@ -1580,7 +1724,8 @@ if (callbackProject) {
   // Write dans le dossier du projet (toujours autorisé), puis une commande
   // simple ; notify.mjs supprime le fichier après l'envoi.
   const notifyPath = path.join(ROOT, 'scripts', 'notify.mjs').replace(/\\/g, '/');
-  const cbFile = path.join(project.path, '.orchestrateur-callback.md').replace(/\\/g, '/');
+  // In a lane, the file goes in the lane's folder (always writable, never committed).
+  const cbFile = path.join(WORK_DIR, '.orchestrateur-callback.md').replace(/\\/g, '/');
   prompt = prompt + `\n\n---\nUne fois ta tâche terminée — ou si tu as un point important à signaler en cours de route — envoie un résumé au projet « ${callbackProject} » en DEUX étapes, sans variable shell, heredoc, printf ni pipe (le CLI refuse ces commandes) :\n\n  1. Écris le résumé complet (markdown, tableaux et accents permis, pas de limite de taille gênante) avec l'outil Write dans le fichier :\n     ${cbFile}\n  2. Lance exactement cette commande Bash :\n     node "${notifyPath}" ${callbackProject} --file "${cbFile}" --source ${projectName}\n\nnotify.mjs supprime le fichier après l'envoi (ne le commite pas). Adapte le contenu au contexte : ce que tu as accompli, découvert, ou la question que tu poses.`;
 }
 // Seul `prompt` (ce que reçoit claude) porte la règle ; `promptForLog` reste le
@@ -1591,6 +1736,7 @@ if (projectName !== CONDUCTOR) prompt = prompt + userRequirementsRule();
 if (projectName !== CONDUCTOR) prompt = prompt + simpleCommandsRule();
 if (projectName !== CONDUCTOR) prompt = prompt + todoRule();
 if (projectName !== CONDUCTOR) prompt = prompt + staleTestRule();
+if (LANE && LANE.k >= 1) prompt = prompt + laneRule();
 // Calibrated context (0.99.0): a pipeline step gets only the rules it can use
 // (scripts/context-policy.mjs, stepRules) — not the TODO rule of a whole turn,
 // nor the requirements rule at a step that writes neither tests nor delivery.
@@ -1684,9 +1830,12 @@ function stampResultLine(l) {
 
 function endLogAndExit(code) {
   let exited = false;
-  const go = () => {
+  const go = async () => {
     if (exited) return;
     exited = true;
+    if (LANE && LANE.k >= 1) {
+      try { await finishLane(code); } catch (e) { console.error(`[dispatch] intégration du couloir ${LANE.k} : ${e.message}`); }
+    }
     process.exit(code);
   };
   // Deliberately NOT unref'd: the timer must hold the event loop open long
@@ -1694,6 +1843,55 @@ function endLogAndExit(code) {
   const guard = setTimeout(go, 2000);
   try { logStream.end(() => { clearTimeout(guard); go(); }); }
   catch { clearTimeout(guard); go(); }
+}
+
+/**
+ * End of a turn in lane k ≥ 1 (0.101.0): a question keeps the lane for the
+ * answer; otherwise the task branch is integrated (scripts/lanes.mjs
+ * finishTask). Every outcome is written to the lane log and, as a one-line
+ * marker, to the musician's log; a paused integration is reported to the chef.
+ */
+async function finishLane(code) {
+  let res = null;
+  try {
+    const st = fs.statSync(logPath);
+    const fd = fs.openSync(logPath, 'r');
+    const len = Math.min(st.size, 4 * 1024 * 1024);
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, st.size - len);
+    fs.closeSync(fd);
+    for (const l of buf.toString('utf8').split('\n')) {
+      if (!l.includes(TURN_ID) || !l.includes('"result"')) continue;
+      try { const e = JSON.parse(l); if (e.type === 'result' && e.orch_turn === TURN_ID) res = e; } catch {}
+    }
+  } catch {}
+  const text = String(res?.result || '');
+  const end = !res || res.is_error || code !== 0 ? 'error' : /NEEDS_(USER|CHEF)_INPUT\s*:/.test(text) ? 'input' : 'done';
+  const laneLog = (ev) => { try { fs.appendFileSync(logPath, JSON.stringify({ orch_turn: TURN_ID, ...ev, timestamp: new Date().toISOString() }) + '\n'); } catch {} };
+  const r = lanesMod.finishTask({ logsDir: LOGS, project, k: LANE.k, dir: LANE.dir, turnEnd: end, title: LANE.title, log: laneLog });
+  const marker = { type: 'system', subtype: 'lane_task', lane: LANE.k, task: r.task || LANE.task, branch: r.branch || LANE.branch, title: LANE.title,
+    state: r.outcome === 'input' ? 'input' : r.outcome === 'paused' ? 'paused' : 'done', outcome: r.outcome,
+    ...(r.commit ? { commit: r.commit } : {}), ...(r.version ? { version: r.version } : {}), ...(r.reason ? { reason: r.reason } : {}),
+    ...(r.why ? { why: r.why } : {}), ...(r.diff ? { diff: r.diff } : {}), ...(r.files ? { files: r.files } : {}), ...(r.versionEdited ? { versionEdited: true } : {}),
+    ...(end === 'input' ? { question: text.slice(-600) } : {}) };
+  if (r.outcome === 'paused') laneLog({ type: 'system', subtype: 'lane_integration_paused', lane: LANE.k, task: marker.task, branch: marker.branch, reason: r.reason, why: r.why, diff: r.diff || null });
+  laneMainLog(marker);
+  const say = r.outcome === 'integrated' ? `intégrée (${r.commit}${r.version ? `, v${r.version}` : ''})`
+    : r.outcome === 'nothing' ? 'rien à intégrer' : r.outcome === 'input' ? `en attente d'une réponse (--lane ${LANE.k})` : `intégration en pause : ${r.why}`;
+  console.log(`[dispatch] ${projectName} couloir ${LANE.k} : tâche ${say}`);
+  if (r.outcome === 'paused') {
+    await new Promise((resolve) => {
+      let token = ''; try { token = fs.readFileSync(path.join(ROOT, '.token'), 'utf8').trim(); } catch {}
+      const body = Buffer.from(JSON.stringify({ project: CONDUCTOR, source: 'lane-integration',
+        text: `[INTÉGRATION EN PAUSE] ${projectName}, couloir ${LANE.k} — « ${LANE.title.slice(0, 120)} » : ${r.why}. Le travail reste sur la branche ${r.branch}${r.diff ? ` (différences : ${r.diff})` : ''}. Rien n'a été écrasé ni poussé.` }));
+      const req = http.request({ hostname: '127.0.0.1', port: Number(process.env.ORCH_PORT) || 7777, path: '/api/notify', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': body.length, 'X-Orchestrator-Token': token } },
+      (rs) => { rs.resume(); rs.on('end', resolve); });
+      req.on('error', resolve);
+      req.setTimeout(4000, () => { try { req.destroy(); } catch {} resolve(); });
+      req.end(body);
+    });
+  }
 }
 
 // Synthetic "user_prompt" event so the viewer can show what was asked before
@@ -1788,6 +1986,8 @@ if (PIPE_STEP) userPromptEvent.pipelineStep = { run: PIPE_STEP.run, key: PIPE_ST
 // Tour hors pipeline : la raison est écrite, donc visible (décision n° 1).
 if (pipelineBypass) userPromptEvent.pipelineBypass = pipelineBypass;
 if (CHEF_HANDOFF) userPromptEvent.chefHandoff = CHEF_HANDOFF;
+// Lanes (0.101.0): which lane runs this turn, and the rule that pinned it.
+if (LANE) userPromptEvent.lane = { lane: LANE.k, ...(LANE.branch ? { branch: LANE.branch, task: LANE.task } : {}), ...(LANE.rule ? { rule: LANE.rule } : {}), ...(LANE.resumed ? { resumed: true } : {}) };
 if (dualSynthesis) {
   logStream.write(JSON.stringify({
     type: 'system', subtype: 'dual_review_start', dual: { run: dualSynthesis, role: 'relecture' },

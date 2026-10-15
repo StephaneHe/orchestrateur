@@ -259,6 +259,11 @@
     } else if (t.bypass) {
       pipe = `<div class="jt-pipeline is-bypass"><span class="jt-k">hors pipeline</span> <span class="jt-dim">${esc(t.bypass.reason)}</span></div>`;
     }
+    // Lanes (0.101.0): the lane of the turn, and why it did not run in parallel.
+    if (t.lane && (t.lane.lane > 0 || t.lane.rule)) {
+      pipe += `<div class="jt-lane"><span class="jt-k">couloir #${esc(t.lane.lane)}</span>${t.lane.branch ? ` <code>${esc(t.lane.branch)}</code>` : ""}${t.lane.rule ? ` <span class="jt-dim">règle ${esc(t.lane.rule)}</span>` : ""}${t.lane.diff ? ` <span class="jt-dim">différences gardées : ${esc(t.lane.diff)}</span>` : ""}</div>`;
+    }
+    if (t.serial) pipe += `<div class="jt-serial" data-rule="${esc(t.serial.rule)}">⛓ En série — ${esc(t.serial.text)} <span class="jt-dim">(règle <code>${esc(t.serial.rule)}</code>, voir docs/PLAN-parallel-tasks-same-musician.md §3)</span></div>`;
     // Demandes d'autorisation du tour (0.45.0), avec leur issue.
     const PERM_TXT = { allow_once: "autorisé une fois", allow_always: "toujours autorisé", rule: "règle permanente", deny: "refusé", expired: "expiré sans réponse" };
     const perms = (t.permissions || []).length
