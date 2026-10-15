@@ -40,7 +40,24 @@ export function maxParallelFor(config, project) {
   return Number.isFinite(v) && v >= 1 ? Math.min(HARD_CAP, Math.floor(v)) : 1;
 }
 
-export function laneDir(root, projectName, k) { return path.join(root, 'lanes', projectName, String(k)); }
+/**
+ * Directory of lane k. Default `<orchestrator root>/lanes/<project>/<k>`.
+ * `lanes.dir` of the project's .orchestrateur/pipeline.json (relative to the
+ * project, outside it) moves its lanes, e.g. orchestrateur-dev, whose musician
+ * must never write under the production root that dispatches it.
+ */
+export function laneDir(root, project, k) {
+  const name = typeof project === 'string' ? project : project.name;
+  const own = typeof project === 'object' && project.path ? laneBase(project.path) : null;
+  return own ? path.join(own, String(k)) : path.join(root, 'lanes', name, String(k));
+}
+export function laneBase(projectPath) {
+  const rel = laneConfig(projectPath).lanes?.dir;
+  if (typeof rel !== 'string' || !rel.trim() || path.isAbsolute(rel)) return null;
+  const base = path.resolve(projectPath, rel);
+  const inside = path.relative(path.resolve(projectPath), base);
+  return inside === '' || !inside.startsWith('..') ? null : base;          // never inside the repository itself
+}
 
 /** Files of a lane. Lane 0 keeps the legacy names, byte for byte. */
 export function laneFiles(logsDir, projectName, k) {
@@ -116,7 +133,7 @@ export function reservedLanes(logsDir, projectName, max) {
  * CLI ignores permissions.allow in an untrusted folder, 0.30.0), provisioning.
  */
 export async function ensureLane({ root, project, k, trust = true }) {
-  const dir = laneDir(root, project.name, k);
+  const dir = laneDir(root, project, k);
   const known = fs.existsSync(path.join(dir, '.git'));
   if (!known) {
     git(project.path, ['worktree', 'prune']);
@@ -180,11 +197,37 @@ function archiveLane(logsDir, projectName, dir, name, base) {
 }
 
 /** Commits what the task left (local-only files excluded). Returns the new commit or null. */
-export function commitLeftovers(dir, message) {
+export function commitLeftovers(dir, message, { verify = false } = {}) {
+  commitLeftovers.lastError = '';
   git(dir, ['add', '-A', '--', '.', ...EXCLUDED_FROM_COMMIT.map(p => `:(exclude)${p}`)]);
   if (git(dir, ['diff', '--cached', '--quiet']).ok) return null;
-  const r = git(dir, [...identityArgs(dir), 'commit', '-q', '--no-verify', '-m', message]);
-  return r.ok ? git(dir, ['rev-parse', 'HEAD']).out : null;
+  const r = git(dir, [...identityArgs(dir), 'commit', '-q', ...(verify ? [] : ['--no-verify']), '-m', message]);
+  if (!r.ok) { commitLeftovers.lastError = r.err || r.out; return null; }
+  return git(dir, ['rev-parse', 'HEAD']).out;
+}
+
+/**
+ * `lanes.releaseCheck` of .orchestrateur/pipeline.json: argv run in the lane on
+ * the release tree (fragments applied, staged) before the release commit, e.g.
+ * this repository's targeted regression, so its delivery gate finds a report
+ * made on exactly that tree. Placeholders {base} (integration tip) and
+ * {version}. Absent ⇒ nothing runs. Output kept in logs/lanes/<p>/<task>.release-check.log.
+ */
+export function runReleaseCheck(dir, { base, version, logsDir, project, task }) {
+  const cfg = laneConfig(dir).lanes || {};
+  const argv = cfg.releaseCheck;
+  if (!Array.isArray(argv) || !argv.length || !argv.every(a => typeof a === 'string')) return { ok: true, ran: false };
+  git(dir, ['add', '-A', '--', '.', ...EXCLUDED_FROM_COMMIT.map(p => `:(exclude)${p}`)]);
+  const args = argv.map(a => a.replace(/\{base\}/g, base).replace(/\{version\}/g, version));
+  const timeout = (Number(cfg.releaseCheckTimeoutMin) || 45) * 60_000;
+  const env = { ...process.env };
+  for (const v of ['ORCH_TURN_PROJECT', 'ORCH_TURN_ID', 'ORCH_TURN_STEP', 'ORCH_STEP_TOKEN']) delete env[v];
+  const r = spawnSync(args[0] === 'node' ? process.execPath : args[0], args.slice(1), { cwd: dir, encoding: 'utf8', windowsHide: true, timeout, env, maxBuffer: 64 * 1024 * 1024 });
+  const output = `${r.stdout || ''}${r.stderr || ''}`;
+  let file = null;
+  try { file = path.join(logsDir, 'lanes', project, `${task}.release-check.log`); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, `$ ${args.join(' ')}\n${output}`); } catch {}
+  if (r.status === 0) return { ok: true, ran: true, output: file };
+  return { ok: false, ran: true, code: r.status, output: file, why: r.error ? r.error.message : `code ${r.status}, voir ${file}` };
 }
 
 /**
@@ -250,15 +293,127 @@ export function bumpVersion(v, bump) {
   if (bump === 'major') { a++; b = 0; c = 0; } else if (bump === 'minor') { b++; c = 0; } else c++;
   return `${a}.${b}.${c}`;
 }
+/**
+ * Fragments of changelog.d/. No front matter or no `bump:` line ⇒ patch,
+ * flagged `bumpDefaulted`; a `bump:` with any other value ⇒ `invalid` (the
+ * integration pauses rather than guess a version).
+ */
 export function readFragments(dir) {
   const d = path.join(dir, 'changelog.d');
   let names = []; try { names = fs.readdirSync(d).filter(f => f.endsWith('.md')).sort(); } catch {}
   return names.map(f => {
     const text = fs.readFileSync(path.join(d, f), 'utf8').replace(/\r\n/g, '\n');
     const fm = /^---\n([\s\S]*?)\n---\n?/.exec(text);
-    const bump = fm && /bump:\s*(patch|minor|major)/.exec(fm[1])?.[1] || 'patch';
-    return { file: `changelog.d/${f}`, bump, body: (fm ? text.slice(fm[0].length) : text).trim() };
+    const declared = fm && /^\s*bump\s*:\s*(\S*)\s*$/m.exec(fm[1])?.[1];
+    const bump = declared ? (BUMPS[declared] !== undefined ? declared : null) : 'patch';
+    return { file: `changelog.d/${f}`, bump, body: (fm ? text.slice(fm[0].length) : text).trim(),
+      ...(declared ? {} : { bumpDefaulted: true }), ...(declared && bump === null ? { invalid: `bump « ${declared} » (attendu : patch, minor ou major)` } : {}) };
   });
+}
+function laneConfig(dir) {
+  try { return JSON.parse(fs.readFileSync(path.join(dir, '.orchestrateur', 'pipeline.json'), 'utf8')); } catch { return {}; }
+}
+function versionFilesOf(cfg) { return Array.isArray(cfg.versionFiles) && cfg.versionFiles.length ? cfg.versionFiles : ['package.json']; }
+function versionIn(rel, s) {
+  const m = /\.json$/.test(rel) ? /"version"\s*:\s*"([^"]+)"/.exec(s) : /versionName\s*=?\s*"([^"]+)"/.exec(s);
+  return m ? m[1] : null;
+}
+/** Bump that takes version a to version b (null when b is not above a). */
+export function bumpBetween(a, b) {
+  const x = /^(\d+)\.(\d+)\.(\d+)/.exec(String(a || '')), y = /^(\d+)\.(\d+)\.(\d+)/.exec(String(b || ''));
+  if (!x || !y) return null;
+  const [a1, a2, a3] = x.slice(1).map(Number), [b1, b2, b3] = y.slice(1).map(Number);
+  if (b1 !== a1) return b1 > a1 ? 'major' : null;
+  if (b2 !== a2) return b2 > a2 ? 'minor' : null;
+  return b3 > a3 ? 'patch' : null;
+}
+/**
+ * The text a task added to the CHANGELOG, when it is a plain addition the
+ * integrator can turn into a fragment: one new top entry `## [X.Y.Z] - date`
+ * (placed above every released entry), or lines added under `## [Unreleased]`.
+ * Anything else (an older entry edited, lines removed, two entries) ⇒ null.
+ */
+export function plainChangelogAddition(before, after) {
+  const o = String(before).replace(/\r\n/g, '\n').split('\n'), n = String(after).replace(/\r\n/g, '\n').split('\n');
+  let p = 0; while (p < o.length && p < n.length && o[p] === n[p]) p++;
+  let s = 0; while (s < o.length - p && s < n.length - p && o[o.length - 1 - s] === n[n.length - 1 - s]) s++;
+  if (p + s !== o.length) return null;                                   // something was changed or removed
+  const added = n.slice(p, n.length - s);
+  if (!added.some(l => l.trim())) return null;
+  if (o.slice(0, p).some(l => /^## \[\d/.test(l))) return null;          // below a released entry
+  const heads = added.filter(l => /^## /.test(l));
+  if (heads.length === 1 && /^## \[\d+\.\d+\.\d+\]/.test(heads[0]) && added.findIndex(l => l.trim()) === added.indexOf(heads[0])) {
+    return { kind: 'entry', version: /^## \[([^\]]+)\]/.exec(heads[0])[1], body: added.slice(added.indexOf(heads[0]) + 1).join('\n').trim() };
+  }
+  if (heads.length === 0 && o.slice(0, p).some(l => /^## \[Unreleased\]/i.test(l))) return { kind: 'unreleased', version: null, body: added.join('\n').trim() };
+  return null;
+}
+/**
+ * Rule « changelog.d » (design §2.8, user decision Q4): a lane task never
+ * edits the version nor CHANGELOG.md. Run on the task branch once the
+ * integration branch is merged into it (`intTip` = that branch's tip): a
+ * direct edit that is a plain addition is converted into a fragment (version
+ * fields put back, entry moved to changelog.d/), anything else ⇒ {pause}. A
+ * task with changes but no fragment gets a generated patch fragment, so each
+ * task stays one versioned release. Never touches the main checkout.
+ */
+export function enforceChangelogRule(dir, { intTip, task, title }) {
+  const cfg = laneConfig(dir);
+  const changelogRel = cfg.changelog || 'CHANGELOG.md';
+  const show = (rel) => {                       // untrimmed: compared and written back byte for byte
+    const r = spawnSync('git', ['show', `${intTip}:${rel}`], { cwd: dir, encoding: 'utf8', windowsHide: true });
+    return r.status === 0 ? r.stdout : null;
+  };
+  const read = (rel) => { try { return fs.readFileSync(path.join(dir, rel), 'utf8'); } catch { return null; } };
+  const touched = new Set(git(dir, ['diff', '--name-only', intTip, 'HEAD']).out.split('\n').filter(Boolean));
+  const out = { converted: null, generated: null, edited: [] };
+  let taskVersion = null, baseVersion = null;
+  const fixes = [];
+  for (const rel of versionFilesOf(cfg)) {
+    if (!touched.has(rel)) continue;
+    const was = show(rel), now = read(rel);
+    if (was == null || now == null) continue;
+    const a = versionIn(rel, was), b = versionIn(rel, now);
+    const codeA = /versionCode\s*=?\s*(\d+)/.exec(was)?.[1], codeB = /versionCode\s*=?\s*(\d+)/.exec(now)?.[1];
+    if (a === b && codeA === codeB) continue;                              // other edits of the file are the task's own
+    baseVersion = baseVersion || a; taskVersion = taskVersion || b;
+    let fixed = /\.json$/.test(rel) ? now.replace(/("version"\s*:\s*")[^"]+(")/, `$1${a}$2`)
+      : now.replace(/(versionName\s*=?\s*")[^"]+(")/, `$1${a}$2`);
+    if (codeA && codeB) fixed = fixed.replace(/(versionCode\s*=?\s*)\d+/, `$1${codeA}`);
+    fixes.push([rel, fixed]); out.edited.push(rel);
+  }
+  let addition = null;
+  if (touched.has(changelogRel)) {
+    const was = show(changelogRel) ?? '', now = read(changelogRel) ?? '';
+    if (was !== now) {
+      addition = plainChangelogAddition(was, now);
+      if (!addition) return { ...out, pause: { reason: 'lane-version-edited', why: `la tâche a modifié ${changelogRel} autrement qu'en ajoutant une entrée en tête : l'intégrateur ne peut pas en tirer un fragment (règle changelog.d) ; rien n'est intégré` } };
+      fixes.push([changelogRel, was]); out.edited.push(changelogRel);
+    }
+  }
+  const fragments = readFragments(dir);
+  const bad = fragments.find(f => f.invalid);
+  if (bad) return { ...out, pause: { reason: 'lane-fragment-invalid', why: `fragment ${bad.file} : ${bad.invalid} ; rien n'est intégré` } };
+  const slug = String(task).replace(/[^\w.-]/g, '_');
+  if (fixes.length) {
+    for (const [rel, text] of fixes) fs.writeFileSync(path.join(dir, rel), text);
+    const current = baseVersion || versionFilesOf(cfg).map(rel => versionIn(rel, show(rel) || '')).find(Boolean);
+    const bump = bumpBetween(current, taskVersion) || bumpBetween(current, addition?.version) || 'patch';
+    const body = addition?.body || (fragments.length ? '' : `### Changed\n\n- ${title || task}`);
+    if (body) {
+      fs.mkdirSync(path.join(dir, 'changelog.d'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'changelog.d', `${slug}-converted.md`), `---\nbump: ${bump}\n---\n\n${body}\n`);
+    }
+    commitLeftovers(dir, `chore(lane): direct version/CHANGELOG edit turned into a changelog.d fragment (${title || task})`);
+    out.converted = { files: out.edited, bump, from: taskVersion || addition?.version || null };
+  } else if (!fragments.length && git(dir, ['rev-list', '--count', `${intTip}..HEAD`]).out !== '0') {
+    fs.mkdirSync(path.join(dir, 'changelog.d'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'changelog.d', `${slug}.md`),
+      `---\nbump: patch\n---\n\n### Changed\n\n- ${title || task} (entry generated by the integrator: the task wrote no changelog.d fragment)\n`);
+    commitLeftovers(dir, `chore(lane): changelog.d fragment generated (${title || task})`);
+    out.generated = { bump: 'patch' };
+  }
+  return out;
 }
 /**
  * Version assigned at integration time (design §2.8): current version of the
@@ -269,9 +424,10 @@ export function readFragments(dir) {
 export function applyFragments(dir, { date = new Date().toISOString().slice(0, 10) } = {}) {
   const frags = readFragments(dir);
   if (!frags.length) return null;
+  if (frags.some(f => f.invalid)) return null;
   const bump = frags.map(f => f.bump).sort((x, y) => BUMPS[y] - BUMPS[x])[0];
-  let cfg = {}; try { cfg = JSON.parse(fs.readFileSync(path.join(dir, '.orchestrateur', 'pipeline.json'), 'utf8')); } catch {}
-  const versionFiles = Array.isArray(cfg.versionFiles) && cfg.versionFiles.length ? cfg.versionFiles : ['package.json'];
+  const cfg = laneConfig(dir);
+  const versionFiles = versionFilesOf(cfg);
   let current = null, next = null;
   for (const rel of versionFiles) {
     const f = path.join(dir, rel);
@@ -389,6 +545,17 @@ export function finishTask({ logsDir, project, k, dir, turnEnd, title, log = () 
   }
   try {
     log({ type: 'system', subtype: 'lane_integrate_start', lane: k, task: t.task, branch: t.branch, integration: t.integration });
+    // Rule changelog.d (user decision Q4), applied on the task's own changes
+    // BEFORE merging the integration branch, so a direct version/CHANGELOG
+    // edit never conflicts with releases integrated meanwhile: converted into
+    // a fragment, or paused; a task without fragment gets one.
+    const rule = enforceChangelogRule(dir, { intTip: git(dir, ['merge-base', 'HEAD', t.integration]).out, task: t.task, title: title || t.title });
+    if (rule.pause) {
+      log({ type: 'system', subtype: 'lane_version_rule', lane: k, task: t.task, paused: rule.pause.reason, why: rule.pause.why });
+      return finish('paused', { ...rule.pause, diff: archiveLane(logsDir, project.name, dir, t.task, t.base) });
+    }
+    const versionEdited = !!rule.converted;
+    if (rule.converted || rule.generated) log({ type: 'system', subtype: 'lane_version_rule', lane: k, task: t.task, ...(rule.converted ? { converted: rule.converted } : { generated: rule.generated }) });
     for (let attempt = 1; attempt <= 3; attempt++) {
       if (currentBranch(project.path) !== t.integration) {
         return finish('paused', { reason: 'integration-branch-changed', diff: archiveLane(logsDir, project.name, dir, t.task, t.base),
@@ -402,16 +569,25 @@ export function finishTask({ logsDir, project, k, dir, turnEnd, title, log = () 
         return finish('paused', { reason: 'conflict', files: conflicted, diff: archiveLane(logsDir, project.name, dir, t.task, t.base),
           why: `conflit avec le travail déjà intégré (${conflicted.join(', ') || m.err.slice(0, 200)})` });
       }
-      // The task edited the version or the CHANGELOG itself instead of writing a fragment.
       const mb = git(dir, ['merge-base', 'HEAD', t.integration]).out;
-      const touched = git(dir, ['diff', '--name-only', `${mb}`, 'HEAD']).out.split('\n');
-      const versionEdited = touched.some(f => /(^|\/)(package\.json|CHANGELOG\.md|build\.gradle(\.kts)?)$/.test(f)) && !readFragments(dir).length;
       // The release is made on the merged tree, just before the fast-forward, so
       // versions strictly increase in integration order; undone if the ff fails.
       const release = applyFragments(dir);
-      if (release && !commitLeftovers(dir, `chore(release): v${release.version} (${title || t.title || t.task})`)) {
-        git(dir, ['reset', '-q', '--hard']);
-        return finish('paused', { reason: 'release-commit', diff: archiveLane(logsDir, project.name, dir, t.task, t.base), why: 'commit de version impossible' });
+      if (release) {
+        const check = runReleaseCheck(dir, { base: mb, version: release.version, logsDir, project: project.name, task: t.task });
+        if (!check.ok) {
+          git(dir, ['reset', '-q', '--hard']);
+          log({ type: 'system', subtype: 'lane_release_check', lane: k, task: t.task, ok: false, code: check.code, output: check.output });
+          return finish('paused', { reason: 'release-check', diff: archiveLane(logsDir, project.name, dir, t.task, t.base), why: `contrôle de release en échec (${check.why}) ; rien n'est intégré` });
+        }
+        if (check.ran) log({ type: 'system', subtype: 'lane_release_check', lane: k, task: t.task, ok: true, output: check.output });
+        // Hooks run on the release commit (e.g. this repository's delivery gate).
+        const c = commitLeftovers(dir, `chore(release): v${release.version} (${title || t.title || t.task})`, { verify: true });
+        if (!c) {
+          const why = commitLeftovers.lastError || 'commit de version impossible';
+          git(dir, ['reset', '-q', '--hard']);
+          return finish('paused', { reason: 'release-commit', diff: archiveLane(logsDir, project.name, dir, t.task, t.base), why: `commit de version refusé : ${why.slice(0, 400)}` });
+        }
       }
       const ff = git(project.path, ['merge', '--ff-only', '-q', t.branch]);
       if (ff.ok) {
@@ -445,7 +621,7 @@ export function lanesStatus({ root, logsDir, config, project }) {
     const f = laneFiles(logsDir, project.name, k);
     const holder = lockHolder(f.lock, -1);
     const task = readTask(f.task);
-    lanes.push({ lane: k, dir: k ? laneDir(root, project.name, k) : project.path, exists: k ? fs.existsSync(laneDir(root, project.name, k)) : true,
+    lanes.push({ lane: k, dir: k ? laneDir(root, project, k) : project.path, exists: k ? fs.existsSync(laneDir(root, project, k)) : true,
       busy: !!holder, turn: holder?.turn || null, pid: holder?.pid || null, task: task ? { id: task.task, title: task.title, branch: task.branch, state: task.state, startedAt: task.startedAt } : null });
   }
   const resources = [];
@@ -488,7 +664,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (!tryLock(f.lock, { by: 'lanes.mjs release' })) { console.error(`couloir ${k} occupé par un tour`); process.exit(2); }
     const t = readTask(f.task);
     if (!t) { releaseLock(f.lock); console.log(`couloir ${k} : aucune tâche`); process.exit(0); }
-    const dir = laneDir(ROOT, project.name, k);
+    const dir = laneDir(ROOT, project, k);
     commitLeftovers(dir, `wip(lane): ${t.title || t.task}`);
     git(dir, ['checkout', '-q', '--detach']);
     fs.unlinkSync(f.task);

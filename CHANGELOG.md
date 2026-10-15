@@ -11,6 +11,38 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.102.0] - 2026-10-15
+
+### Added
+
+- (server) Lanes: the version/CHANGELOG rule validated by the user (Q4:
+  « Question 4 : ok, je valide tout ») is enforced by the integrator. A lane
+  task's direct edit of the version or the CHANGELOG is turned into a
+  `changelog.d/` fragment when it is a plain addition (new top entry, or
+  lines under `[Unreleased]`), before the integration branch is merged, so it
+  never conflicts; any other CHANGELOG edit pauses the integration
+  (`lane-version-edited`), an invalid `bump:` too (`lane-fragment-invalid`);
+  a task without fragment gets a generated patch fragment, so each task stays
+  one release numbered in integration order. Event `system/lane_version_rule`.
+- (server) Lanes: `lanes.releaseCheck` of `.orchestrateur/pipeline.json` runs
+  on the staged release tree before the release commit (red ⇒ pause
+  `release-check`); `lanes.dir` places a project's lanes outside the
+  orchestrator root (relative, outside the repository).
+- (server) Pilot of same-musician parallelism = orchestrateur-dev (user
+  decision Q5: « Non, orchestrateur-dev, a nous de faire en sorte qu'il ne se
+  trompe pas »): `.orchestrateur/pipeline.json` keeps its lanes in
+  `../orchestrateur-dev-lanes` (never under the production root), provisions
+  `config.json`, `.orchestrateur-instance.json`, `.token`, `node_modules`, and
+  runs the targeted regression before every lane release. Conditions before
+  enabling it: design §9. Requirement test `_test_lane_changelog_rule.mjs`.
+
+### Changed
+
+- (server) Lanes: the integrator's release commit runs the project's git
+  hooks (this repository's delivery gate) instead of `--no-verify`; a refusal
+  pauses the integration (`release-commit`) and leaves the main checkout
+  untouched.
+
 ## [0.101.1] - 2026-10-15
 
 ### Changed

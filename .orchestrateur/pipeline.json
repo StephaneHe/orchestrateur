@@ -1,0 +1,9 @@
+{
+  "lanes": {
+    "dir": "../orchestrateur-dev-lanes",
+    "copy": ["config.json", ".orchestrateur-instance.json", ".token", "model-routing.json", "language-settings.json"],
+    "link": ["node_modules"],
+    "releaseCheck": ["node", "scripts/regression.mjs", "--targeted", "--since", "{base}"],
+    "releaseCheckTimeoutMin": 60
+  }
+}

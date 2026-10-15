@@ -849,7 +849,25 @@ etre justifies et documentes. » Conception, état livré (§7) et règles (§3)
   `pruneRetainedBranches` (départ d'une tâche de couloir, balayage horaire du
   serveur, `lanes.mjs prune <p> [--dry-run]`) ; jamais avant, jamais une
   branche en pause ni une branche modifiée depuis. Intégration = merge, jamais
-  squash. Q1, Q4, Q5 de la conception restent ouvertes.
+  squash. Q1 de la conception reste ouverte.
+- **Version et CHANGELOG d'une tâche de couloir** (0.102.0, décision Q4
+  « Question 4 : ok, je valide tout ») : la tâche n'y touche pas, elle écrit
+  `changelog.d/<tâche>.md` (`bump: patch|minor|major` + sections) ;
+  l'intégrateur (`enforceChangelogRule`, `applyFragments` de `lanes.mjs`) fait
+  une release par tâche dans l'ordre d'intégration. Modification directe en
+  tête ou sous `[Unreleased]` ⇒ convertie en fragment ; autre modification du
+  CHANGELOG ⇒ pause `lane-version-edited` ; hausse invalide ⇒
+  `lane-fragment-invalid` ; pas de fragment ⇒ fragment patch généré. Le commit
+  de release passe par les hooks (jamais `--no-verify`) après
+  `lanes.releaseCheck` (`.orchestrateur/pipeline.json`) sur l'arbre exact de la
+  release ; rouge ⇒ pause `release-check` / `release-commit`.
+- **Pilote = orchestrateur-dev** (décision Q5 « Non, orchestrateur-dev, a nous
+  de faire en sorte qu'il ne se trompe pas ») : son `.orchestrateur/pipeline.json`
+  provisionne un couloir (`config.json`, `.orchestrateur-instance.json`,
+  `.token`, lien `node_modules`) et lance `regression.mjs --targeted --since
+  {base}` avant chaque release, vérifiée par le hook de livraison. Garde-fous
+  et conditions de mise en service : §9 du document de conception. Recette :
+  `_test_lane_changelog_rule.mjs`.
 - **Exceptions** (`scripts/lane-rules.mjs`) : toute règle a un id, une portée
   et une ligne dans le §3 du document (vérifié par `_test_lane_rules.mjs`).
   Détectée par le code ou déclarée par le Routage (`--ressources`, liste
