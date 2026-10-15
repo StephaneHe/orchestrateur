@@ -622,7 +622,9 @@ async function apiChecks(sb) {
   await check(S, 'lanes-api', 'Couloirs (0.101.0) : GET /api/lanes/:projet donne les couloirs, la limite et les règles documentées ; projet hors liste refusé ; aucune écriture', async () => {
     if (!fs.existsSync(path.join(sb.root, 'scripts', 'lane-rules.mjs'))) NA('couloirs absents de cet état du code');
     const d = await json('/api/lanes/alpha');
-    assert(d.project === 'alpha' && d.maxParallel === 1 && d.lanes.length === 1 && d.lanes[0].lane === 0 && d.running === 0 && Array.isArray(d.resources) && d.exclusive === null, `état : ${JSON.stringify(d)}`);
+    // Default maxParallel: 1 up to 0.102.0, 2 since 0.103.0 (user decision Q1).
+    const want = /DEFAULT_MAX_PARALLEL = 2\b/.test(fs.readFileSync(path.join(sb.root, 'scripts', 'lanes.mjs'), 'utf8')) ? 2 : 1;
+    assert(d.project === 'alpha' && d.maxParallel === want && d.lanes.length === want && d.lanes[0].lane === 0 && d.running === 0 && Array.isArray(d.resources) && d.exclusive === null, `état (défaut attendu ${want}) : ${JSON.stringify(d)}`);
     assert(d.rules.some(r => r.id === 'no-git' && r.status === 'active' && r.text) && /PLAN-parallel-tasks-same-musician\.md$/.test(d.doc), 'règles documentées absentes');
     assert((await get('/api/lanes/..%2Fsecret')).status === 404, 'projet hors liste accepté');
     const w = await fetch(sb.url + '/api/lanes/alpha', { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: '{}' });

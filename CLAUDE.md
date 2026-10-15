@@ -832,9 +832,13 @@ parallele. Sauf pour certains cas particuliers sont detectes, ils doivent alors
 etre justifies et documentes. » Conception, état livré (§7) et règles (§3) :
 `docs/PLAN-parallel-tasks-same-musician.md`.
 
-- **Mise en service par projet** : `maxParallel` (entrée du projet, puis
-  `defaults`) ; défaut 1 = le chemin 0.67.0 intact ; plafond 4. Retour
-  arrière : retirer `maxParallel`, sans redémarrage.
+- **Limite par projet** : `maxParallel` (entrée du projet, puis
+  `defaults`) ; **défaut 2** depuis 0.103.0 (décision Q1 « Q1: defaut a 2, et
+  on monitore pour verifier si on peut passer a 3 », `DEFAULT_MAX_PARALLEL`
+  de `lanes.mjs`) ; 1 explicite = le chemin 0.67.0 intact ; plafond 4 ; les
+  règles d'exception restent actives. Surveillance 2 → 3 : TODO séparée.
+  Retour arrière : `"defaults": {"maxParallel": 1}`, sans redémarrage.
+  Recette : `_test_maxparallel_default.mjs`.
 - **Couloir** (`scripts/lanes.mjs`) : 0 = la copie du musicien, fichiers
   d'aujourd'hui ; k ≥ 1 = worktree git persistant `lanes/<p>/<k>`
   (gitignoré), fichiers `logs/lanes/<p>/<k>.*`, une branche

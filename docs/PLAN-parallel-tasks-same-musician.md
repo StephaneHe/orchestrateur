@@ -3,8 +3,8 @@
 Status: **lot 1 implemented in 0.101.0** (2026-10-15) — see §7 for what is
 in, what is not, and the decisions taken by default; Q2/Q3 applied in 0.101.1
 (§8); Q4 (version/CHANGELOG rule) and Q5 (pilot = orchestrateur-dev) applied
-in 0.102.0 (§9). Opt-in: `maxParallel` stays 1 everywhere until the user
-enables a project.
+in 0.102.0 (§9); Q1 (default `maxParallel` = 2, user decision) applied in
+0.103.0 (§10). An explicit `maxParallel: 1` keeps a project serial.
 Requested by the user (verbatim):
 
 > « Il faut que ce soit assez fin (d'ou la question sur git) pour que les
@@ -427,8 +427,9 @@ id in `lane-rules.mjs` has no row in the table above (or the reverse).
 ## 4. Concurrency limits
 
 - **Per musician**: `maxParallel` in the project entry of `config.json`, else
-  `defaults.maxParallel`; **default 1** (today's behaviour) so the rollout is
-  opt-in project by project; hard cap 4. Lowering it never kills a running
+  `defaults.maxParallel`; **default 2** since 0.103.0 (user decision Q1, §6;
+  it was 1 = opt-in project by project up to 0.102.0); an explicit 1 keeps
+  today's behaviour; hard cap 4. Lowering it never kills a running
   lane; it stops new acquisitions.
 - **Per host**: `defaults.hostMaxTurns` (default: `max(2, floor(cores / 2))`,
   hard cap 12) counts every running musician turn of every lane (chef pool
@@ -442,7 +443,7 @@ id in `lane-rules.mjs` has no row in the table above (or the reverse).
   (a host rule, traced like §3.1).
 - **Subscription limits**: the fleet limit flag (Claude limit) applies to all
   lanes; parallel lanes consume the same Max quota, which is why the default
-  stays 1 and the host cap is conservative.
+  is 2 (not more until monitored, Q1) and the host cap is conservative.
 - Visible: `parallel {running, max}` per musician, host gauge
   `hostTurns {running, max}` in `/api/pupitre` and the top bar.
 
@@ -498,12 +499,14 @@ regression scope since 0.73.2).
   reliability must come from the work itself (a regression test per
   mechanism, rollback tag, documented and tested rollback). §9.
 
-**Still open (not validated — the current behaviour is a provisional
-default):**
+- **Q1 — default `maxParallel`.** User, verbatim: « Q1: defaut a 2, et on
+  monitore pour verifier si on peut passer a 3. Le monitoring n'est pas a
+  faire maintenant, mets dans une TODO ». ⇒ default 2 (`DEFAULT_MAX_PARALLEL`
+  of `lanes.mjs`), hard cap 4 unchanged, all exception rules unchanged; an
+  explicit `maxParallel: 1` keeps the 0.67.0 path. Monitoring whether 3 is
+  safe is a separate TODO item, not done here. Delivered in 0.103.0 (§10).
 
-1. Default `maxParallel` once proven: stay at 1 (opt-in) or raise to 2?
-   (Provisional: 1 everywhere. The analysis « risks of maxParallel at 4 » is
-   a separate task.)
+All §6 questions are now decided.
 
 ## 7. Delivered in 0.101.0 (lot 1)
 
@@ -640,7 +643,30 @@ pushed, crash recovery, branch retention one week.
    fragments; per-lane state in `/api/pupitre` (P7) so the user sees the two
    lanes.
 
-**Rollback** (tested by the suites above, no restart): remove `maxParallel`
-from the orchestrateur-dev entry (or set 1) ⇒ the 0.67.0 path at the next
-dispatch; a paused integration keeps its branch and diff, nothing to undo.
-Code: `git revert` to the tag `pre-lane-changelog-rule-v0.101.1`.
+**Rollback** (tested by the suites above, no restart): set `maxParallel: 1`
+in the orchestrateur-dev entry ⇒ the 0.67.0 path at the next dispatch (since
+0.103.0, removing the key gives the default 2, §10); a paused integration
+keeps its branch and diff, nothing to undo. Code: `git revert` to the tag
+`pre-lane-changelog-rule-v0.101.1`.
+
+## 10. User decision Q1 applied (0.103.0) — default 2
+
+- **Q1** (« Q1: defaut a 2, et on monitore pour verifier si on peut passer a
+  3. Le monitoring n'est pas a faire maintenant, mets dans une TODO »):
+  `maxParallelFor` falls back to `DEFAULT_MAX_PARALLEL = 2` instead of 1.
+  `HARD_CAP` stays 4; every rule of §3 still applies (a project without git,
+  a direct dialogue, a pipeline, a port… stays serial, justified).
+- **Effect**: every git project without `maxParallel` gets two lanes — on
+  the fleet only once the production orchestrator runs ≥ 0.103.0 (a jump
+  decided by the user; the §9 conditions for the pilot still hold). The
+  chef pool is unaffected (chef excluded from lanes).
+- **Not done here**: monitoring whether 3 is safe (host load, memory, Max
+  quota, integration pauses) — a separate TODO item.
+- Tests: `_test_maxparallel_default.mjs` (permanent requirement test: unit,
+  `lanesStatus`, real dispatch with two concurrent tasks on a project without
+  `maxParallel`, `no-git` still serial), `_test_lane_rules.mjs` §4, HTTP
+  `lanes-api`; `_test_parallel_lanes.mjs` §4 now sets `maxParallel: 1`
+  explicitly on its « 0.67.0 behaviour » project.
+- **Rollback** (no restart): `"defaults": {"maxParallel": 1}` in
+  config.json ⇒ the 0.67.0 path for every project without its own value.
+  Code: `git revert` to the tag `pre-maxparallel-default-2-v0.102.0`.

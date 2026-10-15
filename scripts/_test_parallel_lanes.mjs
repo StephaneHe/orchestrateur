@@ -59,7 +59,7 @@ fs.writeFileSync(path.join(dirOf('N'), 'notes.txt'), 'pas de git\n');
 fs.writeFileSync(path.join(T, 'config.json'), JSON.stringify({
   conductor: 'chef', defaults: { model: 'claude-haiku-5-5', allowedTools: 'Read,Edit,Write,Bash', provider: 'claude' },
   projects: [{ name: 'chef', path: dirOf('chef') }, { name: 'P', path: dirOf('P'), maxParallel: 3, port: 5173 },
-    { name: 'N', path: dirOf('N'), maxParallel: 2 }, { name: 'S', path: dirOf('S') }, { name: 'X', path: dirOf('X'), maxParallel: 2 }],
+    { name: 'N', path: dirOf('N'), maxParallel: 2 }, { name: 'S', path: dirOf('S'), maxParallel: 1 }, { name: 'X', path: dirOf('X'), maxParallel: 2 }],
 }));
 fs.writeFileSync(path.join(T, 'model-routing.json'), JSON.stringify({ version: 2, assignments: {}, history: [], enforcement: { projects: [], pipelines: [] } }));
 fs.writeFileSync(path.join(T, '.token'), 'a'.repeat(64));

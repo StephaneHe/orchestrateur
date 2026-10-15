@@ -99,7 +99,8 @@ section('3. Aucun détecteur ne lit le texte de la demande (pas de routage par m
 
 section('4. Limite de concurrence');
 {
-  ok(L.maxParallelFor({}, {}) === 1, 'défaut : 1 (comportement 0.67.0, mise en service projet par projet)');
+  ok(L.maxParallelFor({}, {}) === 2, 'défaut : 2 (décision utilisateur Q1, 0.103.0)');
+  ok(L.maxParallelFor({}, { maxParallel: 1 }) === 1, '1 explicite : comportement 0.67.0');
   ok(L.maxParallelFor({ defaults: { maxParallel: 2 } }, {}) === 2 && L.maxParallelFor({ defaults: { maxParallel: 2 } }, { maxParallel: 3 }) === 3, 'projet, puis defaults');
   ok(L.maxParallelFor({}, { maxParallel: 99 }) === L.HARD_CAP && L.HARD_CAP === 4 && L.maxParallelFor({}, { maxParallel: 0 }) === 1, 'plafond dur 4, valeur invalide = 1');
   const f0 = L.laneFiles('/l', 'P', 0);

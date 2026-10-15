@@ -11,6 +11,24 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.103.0] - 2026-10-15
+
+### Changed
+
+- (server) Lanes: the default `maxParallel` is now **2** (user decision Q1:
+  « Q1: defaut a 2, et on monitore pour verifier si on peut passer a 3 »).
+  A project without `maxParallel` (and no `defaults.maxParallel`) can run two
+  tasks at once, each in its own lane; the hard cap stays 4 and every
+  exception rule (no git, direct dialogue, pipeline, port…) still keeps a task
+  serial with its justification. `maxParallel: 1` (project or `defaults`) keeps
+  the 0.67.0 path. Takes effect for the fleet only once the production
+  orchestrator jumps to this version. Monitoring 2 → 3 is a separate TODO.
+  Requirement test `_test_maxparallel_default.mjs`; `_test_lane_rules.mjs`,
+  `_test_parallel_lanes.mjs` (project S now sets `maxParallel: 1` explicitly)
+  and HTTP `lanes-api` follow the new default. Rollback: `defaults.maxParallel:
+  1` in config.json (no restart), or `git revert` to the tag
+  `pre-maxparallel-default-2-v0.102.0`.
+
 ## [0.102.0] - 2026-10-15
 
 ### Added

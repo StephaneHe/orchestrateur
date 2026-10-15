@@ -59,6 +59,7 @@ export const SERIAL_SUITES = new Set([
   '_test_queue_edit.mjs',          // own server instance under .regress/ (timed drain)
   '_test_stale_run.mjs',           // runs regression.mjs on a private repo, timed stop
   '_test_parallel_lanes.mjs',      // concurrent turns: overlap and wait timings
+  '_test_maxparallel_default.mjs', // concurrent turns: overlap and wait timings
 ]);
 
 /** Default parallelism: ORCH_REGRESS_JOBS, else a quarter of the CPUs, 1 to 4. */

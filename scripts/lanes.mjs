@@ -16,8 +16,8 @@
 // A finished task's branch is kept one week, then deleted (user decision Q2,
 // pruneRetainedBranches); integration is a merge, never a squash (Q3).
 //
-// Opt-in per project: `maxParallel` (config.json project entry, else
-// defaults.maxParallel), default 1 = exactly the 0.67.0 behaviour.
+// `maxParallel` (config.json project entry, else defaults.maxParallel),
+// default 2 since 0.103.0 (user decision Q1); 1 = exactly the 0.67.0 behaviour.
 //
 // CLI:  node scripts/lanes.mjs status <project> [--json]
 //       node scripts/lanes.mjs release <project> <lane>   (frees a lane held
@@ -33,10 +33,13 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 export const HARD_CAP = 4;
+// User decision Q1 (2026-10-15): « Q1: defaut a 2, et on monitore pour verifier
+// si on peut passer a 3. » An explicit `maxParallel: 1` keeps the 0.67.0 path.
+export const DEFAULT_MAX_PARALLEL = 2;
 const EXCLUDED_FROM_COMMIT = ['.orchestrateur-callback.md', '.claude', '.orchestrateur/runs'];
 
 export function maxParallelFor(config, project) {
-  const v = Number(project?.maxParallel ?? config?.defaults?.maxParallel ?? 1);
+  const v = Number(project?.maxParallel ?? config?.defaults?.maxParallel ?? DEFAULT_MAX_PARALLEL);
   return Number.isFinite(v) && v >= 1 ? Math.min(HARD_CAP, Math.floor(v)) : 1;
 }
 
