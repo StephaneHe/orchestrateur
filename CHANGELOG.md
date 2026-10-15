@@ -11,6 +11,25 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.101.1] - 2026-10-15
+
+### Changed
+
+- (server) Lanes: a finished task's branch is kept one week, then deleted
+  (user decision Q2: « On peut eliminer les branches de taches une fois
+  terminees, apres 1 semaine. »). It was deleted right after integration.
+  No tag. Registry `logs/lanes/<p>/retained-branches.json` (`retainBranch`,
+  `pruneRetainedBranches` in `scripts/lanes.mjs`); a branch is deleted only
+  after 7 days and only if its tip did not move; paused integrations keep
+  their branch. Pruning at each lane task start (`system/lane_branches_pruned`
+  in the musician's log), hourly server sweep (restart needed), and
+  `node scripts/lanes.mjs prune <p> [--dry-run]`; `retainedBranches` in
+  `lanes.mjs status` and `GET /api/lanes/:project`.
+- (server) Integration stays a merge, never a squash (user decision Q3:
+  « Fusion par merge »), now checked by the requirement test.
+- Design `docs/PLAN-parallel-tasks-same-musician.md`: Q2 and Q3 recorded as
+  decided (§6, §8); Q1, Q4, Q5 still open.
+
 ## [0.101.0] - 2026-10-15
 
 ### Added

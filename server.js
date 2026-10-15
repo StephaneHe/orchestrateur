@@ -1059,6 +1059,23 @@ function sweepRoutagePending() {
 }
 setInterval(sweepRoutagePending, 60_000).unref();
 
+// 0.101.1 — finished lane task branches are deleted one week after the end of
+// their task (user decision Q2), even for a musician that gets no new lane task.
+async function sweepLaneBranches() {
+  try {
+    const lanes = await import('./scripts/lanes.mjs');
+    for (const p of config.projects || []) {
+      if (!lanes.readRetained(LOGS_DIR, p.name).length) continue;
+      const r = lanes.pruneRetainedBranches({ logsDir: LOGS_DIR, project: p });
+      if (r.deleted.length) {
+        try { fs.appendFileSync(path.join(LOGS_DIR, `${p.name}.jsonl`), JSON.stringify({ type: 'system', subtype: 'lane_branches_pruned', branches: r.deleted, text: `Branches de tâches terminées depuis plus d'une semaine supprimées : ${r.deleted.join(', ')}`, timestamp: new Date().toISOString() }) + '\n'); } catch {}
+        debugLog(`[lane-branches] ${p.name} : supprimées ${r.deleted.join(', ')}`);
+      }
+    }
+  } catch (e) { debugLog(`[lane-branches] balayage : ${e.message}`); }
+}
+setInterval(sweepLaneBranches, Number(process.env.ORCH_LANE_BRANCH_SWEEP_MS) || 3600_000).unref();
+
 // ---------- File de direction (pool P0-A, 0.22.0) ---------------------------
 //
 // Jusqu'à 0.21.3, écrire au chef pendant qu'il travaillait TUAIT son tour

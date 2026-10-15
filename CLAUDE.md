@@ -842,6 +842,14 @@ etre justifies et documentes. » Conception, état livré (§7) et règles (§3)
   tirée du fragment `changelog.d/`, avance rapide, jamais poussée) ; conflit
   ⇒ pause, branche gardée, chef prévenu, rien d'écrasé. Question ⇒ couloir
   gardé, réponse par `--lane k`.
+- **Branches de tâches terminées** (0.101.1, décisions Q2 « On peut eliminer
+  les branches de taches une fois terminees, apres 1 semaine. » et Q3
+  « Fusion par merge ») : jamais de tag ; gardées une semaine
+  (`logs/lanes/<p>/retained-branches.json`), puis supprimées par
+  `pruneRetainedBranches` (départ d'une tâche de couloir, balayage horaire du
+  serveur, `lanes.mjs prune <p> [--dry-run]`) ; jamais avant, jamais une
+  branche en pause ni une branche modifiée depuis. Intégration = merge, jamais
+  squash. Q1, Q4, Q5 de la conception restent ouvertes.
 - **Exceptions** (`scripts/lane-rules.mjs`) : toute règle a un id, une portée
   et une ligne dans le §3 du document (vérifié par `_test_lane_rules.mjs`).
   Détectée par le code ou déclarée par le Routage (`--ressources`, liste

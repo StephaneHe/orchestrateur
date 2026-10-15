@@ -98,11 +98,31 @@ Two existing mechanisms are the building blocks of this design:
    semantics, `.claude/` and run artefacts excluded) on the task branch.
    Nothing changed ⇒ the branch is deleted, no integration.
 5. **Integration** (§1.4) into the integration branch.
-6. **Cleanup**: task branch deleted after a successful integration (kept as
-   `lane-archive/<task>` tag if the user asked, off by default); the lane is
-   reset to `--detach` on the new integration tip and returned to the pool.
-   Failed or abandoned integrations keep the branch and write
-   `logs/lanes/<p>/<task>.diff`.
+6. **Cleanup**: the lane is reset to `--detach` on the new integration tip
+   and returned to the pool. The task branch of a **finished** task
+   (integrated, or nothing to integrate) is **kept one week, then deleted**
+   (user decision Q2, §6): no tag, no archive. Failed, paused or abandoned
+   integrations keep the branch (never deleted automatically) and write
+   `logs/lanes/<p>/<task>.diff`. Retention rule:
+   - at the end of a finished task, `{branch, task, title, outcome, tip,
+     finishedAt, deleteAfter}` is recorded in
+     `logs/lanes/<p>/retained-branches.json` (`retainBranch`);
+   - `pruneRetainedBranches` deletes (`git branch -D`, in the main checkout) a
+     recorded branch only when `now − finishedAt ≥ 7 days`
+     (`BRANCH_RETENTION_MS`) **and** its tip is still the recorded one; a
+     branch whose tip moved since (someone kept working on it) is kept and
+     flagged `moved`; a branch already gone is dropped from the registry;
+   - it runs at each lane task start (`dispatch.mjs`, event
+     `system/lane_branches_pruned` in the musician's log), from the server's
+     hourly sweep (`sweepLaneBranches`, for a musician that gets no new lane
+     task), and by hand: `node scripts/lanes.mjs prune <p> [--dry-run]`;
+     `lanes.mjs status` and `GET /api/lanes/:project` list
+     `retainedBranches` with their `deleteAfter`;
+   - `ORCH_LANE_BRANCH_RETENTION_MS` overrides the week **for tests only**.
+   - Test: `_test_parallel_lanes.mjs` §1 (branches kept with `deleteAfter` =
+     end + 7 days, no tag) and §9 (nothing deleted one minute before the
+     week; deleted one minute after; moved branch kept; paused branch never
+     deleted; end-to-end pruning at a lane task start, traced; CLI).
 7. **Crash recovery** (server start, and before each lane acquisition), same
    pattern as `recoverInterrupted`: a lane whose lock owner is dead and whose
    task never ended is frozen (commit on its branch), its diff archived, the
@@ -145,6 +165,10 @@ lock). Order = order of task completion (FIFO).
    integrated work into the task branch). Merge rather than rebase: one
    conflict resolution per task instead of one per commit, which is what a
    model resolves reliably; history stays readable in the ⎇ Git panel.
+   **Merge, never squash** (user decision Q3, §6): every commit of the task
+   reaches the integration branch's history (checked by
+   `_test_parallel_lanes.mjs` §1: each task tip is an ancestor of the
+   integration branch).
 2. **Conflict** ⇒ an **integration turn** in the same lane, same session,
    prompt `[INTÉGRATION]` listing the conflicted files and the other task(s)
    that touched them (titles from the Routage, commit subjects). The model
@@ -414,12 +438,30 @@ prod jump. Pilot project: `pipelineLab`, then the user picks the next ones.
 Android app: additive fields ignored until an app update (out of the
 regression scope since 0.73.2).
 
-## 6. Open questions for the user
+## 6. Questions for the user
+
+**Decided (2026-10-15):**
+
+- **Q2 — task branches after integration.** User, verbatim: « On peut
+  eliminer les branches de taches une fois terminees, apres 1 semaine. » ⇒ no
+  tags; a finished task's branch is kept one week, then deleted
+  automatically, never before (retention rule and test: §1.2 step 6).
+  Delivered in 0.101.1.
+- **Q3 — merge or squash.** User, verbatim: « Fusion par merge ». ⇒ the
+  integration branch is merged into the task branch, then the main checkout
+  fast-forwards (§1.4); no squash. Unchanged since 0.101.0, now tested.
+
+**Still open (not validated — the current behaviour is a provisional
+default):**
 
 1. Default `maxParallel` once proven: stay at 1 (opt-in) or raise to 2?
-2. Keep task branches as tags after integration, or delete them?
-3. Integration with a merge commit from the integration branch (proposed) or
-   squash into one commit per task?
+   (Provisional: 1 everywhere.)
+4. The version/CHANGELOG rule change: tasks write a `changelog.d/` fragment,
+   the version is assigned at integration (§2.8). (Provisional: applied only
+   inside lanes ≥ 1; lane 0 and every project without `maxParallel` keep the
+   current rule.)
+5. Pilot on `pipelineLab`, with a checkpoint with the user after P5.
+   (Provisional: no project has `maxParallel` > 1 yet.)
 
 ## 7. Delivered in 0.101.0 (lot 1)
 
@@ -450,7 +492,8 @@ etre justifies et documentes. »
   branch, release from `changelog.d/*.md` fragments (package.json, gradle
   `versionName`/`versionCode` from `versionFiles`, CHANGELOG entry), `merge
   --ff-only` in the main checkout (retried when the branch moved; waits for
-  lane 0's turn when its local changes block the ff), branch deleted. Conflict,
+  lane 0's turn when its local changes block the ff), branch deleted (0.101.0;
+  since 0.101.1 kept one week, then deleted — decision Q2, §8). Conflict,
   failed turn or blocked ff ⇒ **pause**: branch kept, diff archived in
   `logs/lanes/<p>/<task>.diff`, `lane_integration_paused`, notify to the chef
   (`source: lane-integration`). Nothing is overwritten, stashed or pushed.
@@ -483,8 +526,27 @@ guard (§4: `gradle-heavy`), `deps-shared`.
 **Decided by default** (§6 questions, to confirm by the user): `maxParallel`
 stays 1 everywhere (opt-in per project); task branches are deleted after a
 successful integration (no tag); integration merges the integration branch
-into the task branch, then fast-forwards (no squash).
+into the task branch, then fast-forwards (no squash). Q2 and Q3 were then
+answered by the user: see §8.
 
 **Rollback**: remove `maxParallel` from config.json (or set 1): the 0.67.0
 path is used again at the next dispatch, no restart. Code: `git revert` to
 the tag `pre-parallel-lanes-v0.100.3`.
+
+## 8. User decisions Q2 / Q3 applied (0.101.1)
+
+- **Q2** (« On peut eliminer les branches de taches une fois terminees, apres
+  1 semaine. »): the immediate `git branch -D` after integration is replaced
+  by the one-week retention of §1.2 step 6 (`retainBranch`,
+  `pruneRetainedBranches`, `BRANCH_RETENTION_MS`, registry
+  `logs/lanes/<p>/retained-branches.json`, pruning at each lane task start,
+  hourly server sweep `sweepLaneBranches` — needs a server restart —, CLI
+  `lanes.mjs prune`). No tag is ever created.
+- **Q3** (« Fusion par merge »): integration unchanged (merge, then
+  `--ff-only`); the requirement test now checks that no squash happens.
+- Tests: `_test_parallel_lanes.mjs` §1 (the 0.101.0 assertion « branches
+  deleted after integration » is replaced by « kept one week, no tag, task
+  commits in the history », following the user's decision) and §9.
+- Rollback: `git revert` to the tag `pre-lane-branch-retention-v0.101.0`.
+  The retained branches then stay until deleted by hand.
+- Q1, Q4 and Q5 remain open (§6).

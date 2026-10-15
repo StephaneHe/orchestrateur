@@ -13,6 +13,8 @@
 // checked out in the main checkout), and is integrated back at its end:
 // merge of the integration branch into the task branch, release from the
 // changelog fragments, fast-forward of the main checkout. Never pushed.
+// A finished task's branch is kept one week, then deleted (user decision Q2,
+// pruneRetainedBranches); integration is a merge, never a squash (Q3).
 //
 // Opt-in per project: `maxParallel` (config.json project entry, else
 // defaults.maxParallel), default 1 = exactly the 0.67.0 behaviour.
@@ -20,6 +22,9 @@
 // CLI:  node scripts/lanes.mjs status <project> [--json]
 //       node scripts/lanes.mjs release <project> <lane>   (frees a lane held
 //       by a task waiting for an answer; its work stays on its branch)
+//       node scripts/lanes.mjs prune <project> [--dry-run]   (deletes finished
+//       task branches older than one week; also run at each lane task start
+//       and by the server's hourly sweep)
 // ============================================================================
 
 import fs from 'node:fs';
@@ -293,6 +298,46 @@ export function applyFragments(dir, { date = new Date().toISOString().slice(0, 1
   return { version: next, bump, fragments: frags.map(f => f.file) };
 }
 
+// ---------- retention of finished task branches (user decision Q2) -----------
+// « On peut eliminer les branches de taches une fois terminees, apres 1
+// semaine. » A finished task's branch (integrated, or nothing to integrate) is
+// recorded with its tip and deleted by pruneRetainedBranches once a week has
+// passed — never before, never a paused/abandoned task's branch (not recorded),
+// never a branch whose tip moved since (someone kept working on it). No tags.
+export const BRANCH_RETENTION_MS = 7 * 24 * 3600_000;
+export const retainedBranchesFile = (logsDir, p) => path.join(logsDir, 'lanes', p, 'retained-branches.json');
+export function readRetained(logsDir, p) {
+  try { const j = JSON.parse(fs.readFileSync(retainedBranchesFile(logsDir, p), 'utf8')); return Array.isArray(j) ? j : []; } catch { return []; }
+}
+function retentionMs() {
+  const v = Number(process.env.ORCH_LANE_BRANCH_RETENTION_MS);   // tests only
+  return Number.isFinite(v) && v >= 0 && process.env.ORCH_LANE_BRANCH_RETENTION_MS !== '' ? v : BRANCH_RETENTION_MS;
+}
+export function retainBranch(logsDir, p, entry) {
+  const list = readRetained(logsDir, p).filter(e => e.branch !== entry.branch);
+  list.push(entry);
+  writeJson(retainedBranchesFile(logsDir, p), list);
+}
+/** Deletes the retained branches older than the retention. Returns {deleted, kept, moved, gone}. */
+export function pruneRetainedBranches({ logsDir, project, now = Date.now(), retention = retentionMs(), dryRun = false }) {
+  const out = { deleted: [], kept: [], moved: [], gone: [] };
+  const list = readRetained(logsDir, project.name);
+  if (!list.length) return out;
+  const remaining = [];
+  for (const e of list) {
+    const age = now - Date.parse(e.finishedAt);
+    if (!(age >= retention)) { out.kept.push(e.branch); remaining.push(e); continue; }
+    const tip = git(project.path, ['rev-parse', '-q', '--verify', `refs/heads/${e.branch}`]);
+    if (!tip.ok) { out.gone.push(e.branch); continue; }
+    if (tip.out !== e.tip) { out.moved.push(e.branch); remaining.push({ ...e, moved: true }); continue; }
+    if (dryRun) { out.deleted.push(e.branch); remaining.push(e); continue; }
+    const d = git(project.path, ['branch', '-q', '-D', e.branch]);
+    if (d.ok) out.deleted.push(e.branch); else { out.kept.push(e.branch); remaining.push(e); }
+  }
+  if (!dryRun && (out.deleted.length || out.gone.length || out.moved.length)) writeJson(retainedBranchesFile(logsDir, project.name), remaining);
+  return out;
+}
+
 // ---------- end of task: integration ----------------------------------------
 function sleepSync(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
 
@@ -318,10 +363,15 @@ export function finishTask({ logsDir, project, k, dir, turnEnd, title, log = () 
   commitLeftovers(dir, `${turnEnd === 'error' ? 'wip(lane)' : 'chore(lane)'}: ${title || t.title || t.task}`);
   const ahead = git(dir, ['rev-list', '--count', `${t.base}..HEAD`]).out;
   const finish = (outcome, extra = {}) => {
+    git(dir, ['checkout', '-q', '--detach']);
     if (outcome === 'integrated' || outcome === 'nothing') {
-      git(dir, ['checkout', '-q', '--detach']);
-      git(dir, ['branch', '-q', '-D', t.branch]);
-    } else git(dir, ['checkout', '-q', '--detach']);
+      const tip = git(project.path, ['rev-parse', `refs/heads/${t.branch}`]).out;
+      if (tip) {
+        const finishedAt = new Date().toISOString();
+        retainBranch(logsDir, project.name, { branch: t.branch, task: t.task, title: t.title || '', outcome, tip, finishedAt,
+          deleteAfter: new Date(Date.parse(finishedAt) + retentionMs()).toISOString() });
+      }
+    }
     try { fs.unlinkSync(files.task); } catch {}
     return { outcome, task: t.task, branch: t.branch, ...extra };
   };
@@ -406,7 +456,8 @@ export function lanesStatus({ root, logsDir, config, project }) {
     }
   } catch {}
   const ex = lockHolder(exclusiveLockFile(logsDir, project.name), -1);
-  return { project: project.name, maxParallel: max, running: lanes.filter(l => l.busy).length, lanes, resources,
+  const retainedBranches = readRetained(logsDir, project.name).map(e => ({ branch: e.branch, task: e.task, title: e.title, outcome: e.outcome, finishedAt: e.finishedAt, deleteAfter: e.deleteAfter, ...(e.moved ? { moved: true } : {}) }));
+  return { project: project.name, maxParallel: max, running: lanes.filter(l => l.busy).length, lanes, resources, retainedBranches,
     exclusive: ex ? { rule: ex.rule || null, text: ex.text || null, pid: ex.pid, turn: ex.turn || null } : null };
 }
 
@@ -417,14 +468,18 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const [cmd, name, laneArg] = process.argv.slice(2);
   const config = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
   const project = config.projects.find(p => p.name === name);
-  if (!project || !['status', 'release'].includes(cmd)) { console.error('usage: node scripts/lanes.mjs status <projet> [--json] | release <projet> <couloir>'); process.exit(64); }
-  if (cmd === 'status') {
+  if (!project || !['status', 'release', 'prune'].includes(cmd)) { console.error('usage: node scripts/lanes.mjs status <projet> [--json] | release <projet> <couloir> | prune <projet> [--dry-run]'); process.exit(64); }
+  if (cmd === 'prune') {
+    const r = pruneRetainedBranches({ logsDir: LOGS, project, dryRun: process.argv.includes('--dry-run') });
+    console.log(`${project.name} : ${r.deleted.length} branche(s) ${process.argv.includes('--dry-run') ? 'à supprimer' : 'supprimée(s)'}${r.deleted.length ? ` (${r.deleted.join(', ')})` : ''}, ${r.kept.length} gardée(s) (moins d'une semaine)${r.moved.length ? `, ${r.moved.length} gardée(s) car modifiée(s) depuis la fin de la tâche (${r.moved.join(', ')})` : ''}`);
+  } else if (cmd === 'status') {
     const s = lanesStatus({ root: ROOT, logsDir: LOGS, config, project });
     if (process.argv.includes('--json')) console.log(JSON.stringify(s, null, 2));
     else {
       console.log(`${s.project} : ${s.running}/${s.maxParallel} couloir(s) occupé(s)${s.exclusive ? ` — tâche seule en cours (règle ${s.exclusive.rule})` : ''}`);
       for (const l of s.lanes) console.log(`  #${l.lane} ${l.busy ? 'occupé' : 'libre'}${l.task ? ` — ${l.task.state} « ${l.task.title} » (${l.task.branch})` : ''}`);
       for (const r of s.resources) console.log(`  ressource ${r.resource} tenue (règle ${r.rule})`);
+      for (const b of s.retainedBranches) console.log(`  branche terminée ${b.branch} — supprimée après ${b.deleteAfter}${b.moved ? ' (modifiée depuis : gardée)' : ''}`);
     }
   } else {
     const k = Number(laneArg);

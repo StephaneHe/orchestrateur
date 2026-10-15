@@ -1314,6 +1314,10 @@ if (TURN_LOCK && LANES_MAX > 1) {
     const t = resumed ? lanesMod.resumeTask({ logsDir: LOGS, project, k, turn: TURN_ID })
       : lanesMod.startTask({ logsDir: LOGS, project, k, dir, task: TURN_ID, turn: TURN_ID, title });
     Object.assign(LANE, { dir, task: t.task, branch: t.branch, integration: t.integration, resumed });
+    try {
+      const pr = lanesMod.pruneRetainedBranches({ logsDir: LOGS, project });
+      if (pr.deleted.length) laneMainLog({ type: 'system', subtype: 'lane_branches_pruned', branches: pr.deleted, text: `Branches de tâches terminées depuis plus d'une semaine supprimées : ${pr.deleted.join(', ')}` });
+    } catch (e) { console.error(`[dispatch] nettoyage des branches de tâches : ${e.message}`); }
     logPath = files(k).log; sessionPath = files(k).session; pidPath = files(k).pid; WORK_DIR = dir;
     fs.mkdirSync(path.dirname(logPath), { recursive: true });
     sessionId = null;

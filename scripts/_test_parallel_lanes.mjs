@@ -19,7 +19,11 @@
 //   4. maxParallel = 1: exactly the 0.67.0 behaviour, no lane created;
 //   5. a lane question keeps its lane; the answer resumes it (same-task);
 //   6. a merge conflict pauses the integration, nothing overwritten;
-//   7. a lane whose owner died is recovered (work kept, turn closed).
+//   7. a lane whose owner died is recovered (work kept, turn closed);
+//   8. the activity journal shows lane tasks and the justification;
+//   9. user decisions Q2/Q3 (2026-10-15): a finished task branch is kept one
+//      week, then deleted — never before, never a paused one, never one that
+//      moved; no tags; integration is a merge (task commits in the history).
 //
 //   node scripts/_test_parallel_lanes.mjs
 // ============================================================================
@@ -118,7 +122,16 @@ section('1. Deux tâches d’un même musicien tournent en même temps, chacune 
   const vers = marks.filter(m => m.version).map(m => m.version).sort();
   ok(pkg.version === '1.0.2' && vers.join(',') === '1.0.1,1.0.2' && /## \[1\.0\.2\][\s\S]*## \[1\.0\.1\][\s\S]*## \[1\.0\.0\]/.test(cl), `versions attribuées à l’intégration, dans l’ordre (${vers.join(', ')} ; package.json ${pkg.version})`, cl);
   ok(!fs.existsSync(path.join(dirOf('P'), 'changelog.d', 'b.md')) && !fs.existsSync(path.join(dirOf('P'), 'changelog.d', 'c.md')), 'les fragments sont consommés par l’intégration');
-  ok(!g(dirOf('P'), 'branch', '--list', 'lane/*').stdout.trim(), 'branches de tâche supprimées après intégration');
+  // User decisions Q2 (« eliminer les branches de taches une fois terminees,
+  // apres 1 semaine ») and Q3 (« Fusion par merge »).
+  const kept = g(dirOf('P'), 'branch', '--list', 'lane/*').stdout.split('\n').map(s => s.replace(/^[*+ ]+/, '').trim()).filter(Boolean);
+  const ret = JSON.parse(fs.readFileSync(path.join(LOGS, 'lanes', 'P', 'retained-branches.json'), 'utf8'));
+  const week = 7 * 24 * 3600_000;
+  ok(kept.length === 2 && ret.length === 2 && ret.every(e => kept.includes(e.branch) && e.outcome === 'integrated' && Math.abs(Date.parse(e.deleteAfter) - Date.parse(e.finishedAt) - week) < 1000),
+    `branches de tâche gardées une semaine après l’intégration (${kept.join(', ')})`, JSON.stringify(ret));
+  ok(!g(dirOf('P'), 'tag', '--list').stdout.trim(), 'aucun tag créé pour les tâches (décision : pas de tags)');
+  ok(ret.every(e => g(dirOf('P'), 'merge-base', '--is-ancestor', e.tip, 'master').status === 0) && ret.every(e => g(dirOf('P'), 'rev-parse', e.branch).stdout.trim() === e.tip),
+    'fusion par merge, jamais squash : chaque commit de tâche est dans l’historique de la branche d’intégration');
   ok(g(dirOf('P'), 'log', '--oneline').stdout.split('\n').filter(l => /chore\(release\): v1\.0\.[12]/.test(l)).length === 2, 'deux commits de release dans la branche d’intégration, jamais poussés');
   ok(fs.existsSync(path.join(laneDir('P', 1), 'CLAUDE.local.md')) && fs.existsSync(path.join(laneDir('P', 1), '.env')), 'provisionnement : les fichiers locaux ignorés (CLAUDE.local.md, .env) sont copiés dans le couloir');
   const cj = JSON.parse(fs.readFileSync(CLAUDE_JSON, 'utf8'));
@@ -240,6 +253,41 @@ section('8. Journal d’activité : les tâches des couloirs et la justification
   ok(turns.some(t => t.serial?.rule === 'port' && /même port/.test(t.serial.text)), 'le tour retenu porte « ⛓ En série » avec sa règle et sa raison');
   const direct = turns.filter(t => !t.lane || t.lane.lane === 0);
   ok(direct.some(t => /Dialogue direct, lent/.test(t.prompt) && t.outcome === 'ok'), 'les tours du couloir 0 restent intacts dans le journal');
+}
+
+// ---------------------------------------------------------------------------
+section('9. Branches de tâches terminées : supprimées après une semaine, jamais avant');
+{
+  // User decision (2026-10-15), verbatim: « On peut eliminer les branches de
+  // taches une fois terminees, apres 1 semaine. »
+  const L = await import(pathToFileURL(path.join(ROOT, 'scripts', 'lanes.mjs')).href);
+  const P = { name: 'P', path: dirOf('P') };
+  const ret0 = L.readRetained(LOGS, 'P');
+  const paused = mainLog('P').filter(e => e.subtype === 'lane_task' && e.outcome === 'paused').pop()?.branch;
+  const latest = Math.max(...ret0.map(e => Date.parse(e.finishedAt)));
+  const before = L.pruneRetainedBranches({ logsDir: LOGS, project: P, now: Math.min(...ret0.map(e => Date.parse(e.finishedAt))) + L.BRANCH_RETENTION_MS - 60_000 });
+  ok(ret0.length >= 3 && before.deleted.length === 0 && ret0.every(e => g(dirOf('P'), 'rev-parse', '--verify', '-q', e.branch).status === 0),
+    `une minute avant la semaine : aucune branche supprimée (${ret0.length} gardées)`, JSON.stringify(before));
+  // A retained branch whose tip moved after the end of its task is never deleted.
+  const moved = ret0[0].branch;
+  g(dirOf('P'), 'branch', '-f', moved, 'master');
+  const after = L.pruneRetainedBranches({ logsDir: LOGS, project: P, now: latest + L.BRANCH_RETENTION_MS + 60_000 });
+  const exists = (b) => g(dirOf('P'), 'rev-parse', '--verify', '-q', `refs/heads/${b}`).status === 0;
+  ok(after.deleted.length === ret0.length - 1 && ret0.slice(1).every(e => !exists(e.branch)), `une minute après la semaine : branches terminées supprimées (${after.deleted.join(', ')})`, JSON.stringify(after));
+  ok(after.moved.includes(moved) && exists(moved), 'une branche modifiée depuis la fin de sa tâche est gardée');
+  ok(paused && exists(paused) && !ret0.some(e => e.branch === paused), `la branche d’une intégration en pause n’est jamais supprimée (${paused})`);
+  ok(L.readRetained(LOGS, 'P').map(e => e.branch).join() === moved, 'le registre ne garde que ce qui reste à surveiller');
+  // End to end: a new lane task prunes what is due (retention forced to 0 for the test).
+  const due = L.readRetained(LOGS, 'X').map(e => e.branch);
+  const hold = run(['X', 'Occupe la copie principale'], { ...SLOW });
+  await new Promise(r => setTimeout(r, 700));
+  const r = await run(['X', 'Tâche qui déclenche le nettoyage', '--source', 'chef'], { ORCH_LANE_BRANCH_RETENTION_MS: '0', FAKE_CLAUDE_WRITE: 'notes/nettoyage.txt' });
+  await hold;
+  const pr = mainLog('X').filter(e => e.subtype === 'lane_branches_pruned').pop();
+  ok(r.code === 0 && due.length >= 1 && pr && due.every(b => pr.branches.includes(b) && !g(dirOf('X'), 'rev-parse', '--verify', '-q', `refs/heads/${b}`).stdout.trim()),
+    `au départ d’une tâche de couloir, les branches échues sont supprimées et tracées (${pr?.branches?.join(', ')})`, r.out + JSON.stringify(due));
+  const cli = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'lanes.mjs'), 'prune', 'X', '--dry-run'], { env: { ...baseEnv }, encoding: 'utf8' });
+  ok(cli.status === 0 && /gardée\(s\) \(moins d'une semaine\)/.test(cli.stdout), `CLI : lanes.mjs prune --dry-run (${cli.stdout.trim()})`, cli.stderr);
 }
 
 srv.close();
