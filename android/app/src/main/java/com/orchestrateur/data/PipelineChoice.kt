@@ -15,9 +15,12 @@ enum class PipelineChoice(val label: String, val pipeline: String?, val mode: St
     AUTO("auto", null, null),
     DISCUSSION("Discussion", "discussion", null),
     DEV_LEGER("Dév. léger", "dev", "leger"),
-    DEV_COMPLET("Dév. complet", "dev", "complet");
+    DEV_COMPLET("Dév. complet", "dev", "complet"),
 
-    /** Next value on tap: auto → Discussion → Dév. léger → Dév. complet → auto. */
+    /** Meeting minutes and files (server 0.110.0). */
+    REUNION("Réunion", "reunion", null);
+
+    /** Next value on tap: auto → Discussion → Dév. léger → Dév. complet → Réunion → auto. */
     fun next(): PipelineChoice = entries[(ordinal + 1) % entries.size]
 }
 

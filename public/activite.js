@@ -229,7 +229,7 @@
       const p = t.pipeline;
       const PIPE_LABEL = { discussion: "Discussion", dev: p.mode === "complet" ? "Développement complet" : "Développement léger",
         incident: "Incident", recherche: "Recherche", audit: "Audit sécurité", maintenance: "Maintenance", nouveau: "Nouveau projet",
-        donnees: "Données", redaction: "Rédaction", routage: "Routage (chef)", images: "Images", video: "Vidéo", audio: "Audio" };
+        donnees: "Données", redaction: "Rédaction", reunion: "Compte rendu de réunion", routage: "Routage (chef)", images: "Images", video: "Vidéo", audio: "Audio" };
       const ST = { ok: "✓", refused: "✕ refusé", failed: "✕ échec", model_unavailable: "⏸ model indisponible", launch_failed: "⚡ n’a pas démarré", launch_refused: "⛔ lancement refusé par l’orchestrateur", running: "● en cours", skipped: "↷ sautée" };
       const titleOf = (id) => (p.planned.find(x => x.id === id) || {}).title || id;
       const rows = p.steps.map(s => `<li class="jt-step" data-step-status="${esc(s.status || "running")}" data-step="${esc(s.id)}">

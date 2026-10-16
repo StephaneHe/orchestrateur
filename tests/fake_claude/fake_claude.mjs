@@ -521,6 +521,8 @@ function catalogStep(text, step, artefact, bad, w, once) {
   const nothing = line('MARQUEUR_RIEN');
   const files = line('FICHIERS_REQUIS').split(',').map(s => s.trim()).filter(Boolean);
   const wantNothing = String(process.env.FAKE_PIPE_NOTHING || '').split(',').includes(step);
+  const reunion = line('REUNION');
+  if (reunion === 'definitif' || reunion === 'rangement') return meetingStep(reunion, step, artefact, bad, w, wantNothing);
   if (process.env.FAKE_PIPE_SEEN_LOG) fs.appendFileSync(process.env.FAKE_PIPE_SEEN_LOG, JSON.stringify({ step, files: fs.readdirSync(path.dirname(artefact)) }) + '\n');
   const urls = Array.from({ length: nSources }, (_, i) => `- Source ${i + 1} : https://example.org/source-${i + 1}`).join('\n');
   if (jsonKeys.length) {
@@ -562,7 +564,8 @@ function catalogStep(text, step, artefact, bad, w, once) {
     if (bad) w('pollution.txt', `modifié par l'étape ${step}\n`);
     return;
   }
-  if (nothing && wantNothing) { w(artefact, `${nothing}\n\n${body}`); return; }
+  // FAKE_PIPE_MARKER_ONLY=1: the marker alone, exactly as the prompt asks (0.110.0).
+  if (nothing && wantNothing) { w(artefact, process.env.FAKE_PIPE_MARKER_ONLY === '1' ? `${nothing}\n` : `${nothing}\n\n${body}`); return; }
   for (const f of files) {
     if (f === '.orchestrateur/pipeline.json') w(f, JSON.stringify({ testCommand: 'node --test', testGlobs: ['test/**'], versionFiles: ['package.json'], changelog: 'CHANGELOG.md', requirements: 'docs/USER_REQUIREMENTS.md' }));
     else if (f === 'CHANGELOG.md') w(f, '# Changelog\n\n## [1.0.0] - 2026-10-09\n- squelette\n');
@@ -578,6 +581,32 @@ function catalogStep(text, step, artefact, bad, w, once) {
     w(`src/pipe-${step}.mjs`, `export const ${step.replace(/[^a-z]/g, '')} = ${n + 1};\n`);
   }
   w(artefact, `${body}\nModification simulée pour l'étape ${step}.\n`);
+}
+
+// Meeting pipeline (0.110.0), action steps driven by FAKE_PIPE_JSON:
+//   definitif: {"fichier": "…"} — writes FAKE_REUNION_TEXT there (bad: altered
+//              text); FAKE_PIPE_NOTHING=definitif → AUCUN_TEXTE_DEFINITIF
+//   ranger:    {"nom": "…", "index": "…", "moves": {"from": "to"}, "elements": [{role, chemin}]}
+//              moves the files, writes the index (bad: without the meeting name)
+function meetingStep(kind, step, artefact, bad, w, wantNothing) {
+  let spec = {};
+  try { spec = JSON.parse(process.env.FAKE_PIPE_JSON || '{}')[step] || {}; } catch { /* ignored */ }
+  const cwd = process.cwd();
+  if (kind === 'definitif') {
+    if (wantNothing) { w(artefact, 'AUCUN_TEXTE_DEFINITIF\n'); return; }
+    const text = String(process.env.FAKE_REUNION_TEXT || '');
+    w(spec.fichier, bad ? `# Mail définitif\n\n${text.replace(/\.\s*$/, '')} (reformulé).\n` : text);
+    w(artefact, JSON.stringify({ fichier: spec.fichier, source: 'texte fourni dans la demande' }));
+    return;
+  }
+  for (const [from, to] of Object.entries(spec.moves || {})) {
+    fs.mkdirSync(path.dirname(path.join(cwd, to)), { recursive: true });
+    fs.renameSync(path.join(cwd, from), path.join(cwd, to));
+  }
+  const els = spec.elements || [];
+  const title = bad ? '# Réunion' : `# ${spec.nom}`;
+  w(spec.index, `${title}\n\n${els.map(e => `- [${e.role}](${path.posix.relative(path.posix.dirname(spec.index), e.chemin)})`).join('\n')}\n`);
+  w(artefact, JSON.stringify({ index: spec.index, elements: els }));
 }
 
 /** Comme le CLI : lance le serveur MCP de --mcp-config, poignée de main, puis

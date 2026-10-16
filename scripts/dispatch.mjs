@@ -1403,7 +1403,7 @@ if (CHEF_ROUTED || CHEF_DISCUSSION) {
   }));
 }
 if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResumeArg || AUTO_PIPELINE)) {
-  let pipe = pipelineArg, resumeRun = pipelineResumeArg, classification = null, mode = pipelineModeArg, acceptDefects = false;
+  let pipe = pipelineArg, resumeRun = pipelineResumeArg, classification = null, mode = pipelineModeArg, acceptDefects = false, deleteDoubts = false;
   if (!pipe && !resumeRun) {
     // Réponse « continuer » à une exécution en pause : on la reprend.
     const paused = latestPausedRun(projectName);
@@ -1412,6 +1412,12 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
     // 0.65.0: « accepter » — the user explicitly accepts the remaining review
     // defects; the run resumes and delivers, the defects are recorded.
     if (paused && /^accept/i.test(reply)) { resumeRun = paused; acceptDefects = true; }
+    // 0.110.0: « tout supprimer » — the meeting run also deletes the files in doubt (engine: only after a « doutes » pause).
+    if (paused && /^tout\s+supprimer\b/i.test(reply)) {
+      let pausedFor = null;
+      try { pausedFor = JSON.parse(fs.readFileSync(path.join(LOGS, 'runs', paused, 'run.json'), 'utf8')).pausedLimit; } catch { /* unreadable: not a doubts pause */ }
+      if (pausedFor === 'doutes') { resumeRun = paused; deleteDoubts = true; }
+    }
     // Les autres choix proposés par la pause font vraiment quelque chose.
     const answer = !paused ? null
       : /^(abandonner|abandonne|abandon|annuler|annule|arr[eê]te)\b/i.test(reply) ? 'abandonner'
@@ -1514,7 +1520,7 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
         ? `\n\n[Note de l'orchestrateur : cette demande relève du pipeline « ${classification.notInService} », pas encore en service sur ce projet. ` +
           'Elle est traitée en Discussion : ne modifie rien ; si elle demande une action, termine ta réponse en disant à l’utilisateur de la relancer avec /dev.]'
         : ''),
-      promptForLog: prompt, pipeline: pipe, resumeRun, classification, mode, kind, acceptDefects,
+      promptForLog: prompt, pipeline: pipe, resumeRun, classification, mode, kind, acceptDefects, deleteDoubts,
       ...(pipeNotes.length ? { modeNote: pipeNotes.join(' ; ') } : {}),
       callbackProject, sourceProject, obsId, testLabel,
       dispatchScript: fileURLToPath(import.meta.url),

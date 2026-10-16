@@ -22,10 +22,17 @@ class PipelineChoiceTest {
         assertFalse(d.containsKey("pipelineMode"))
     }
 
+    /** User requirement (2026-10-16): a pipeline for meeting minutes, selectable in the app. */
+    @Test fun meetingChoiceTravelsInThePayload() {
+        val p = dispatchPayload("chef", "range la réunion du 16 octobre", choice = PipelineChoice.REUNION)
+        assertEquals("reunion", p["pipeline"]!!.jsonPrimitive.content)
+        assertFalse(p.containsKey("pipelineMode"))
+    }
+
     @Test fun tapCyclesThroughEveryChoice() {
         var c = PipelineChoice.AUTO
         val seen = mutableListOf<PipelineChoice>()
-        repeat(4) { c = c.next(); seen += c }
-        assertEquals(listOf(PipelineChoice.DISCUSSION, PipelineChoice.DEV_LEGER, PipelineChoice.DEV_COMPLET, PipelineChoice.AUTO), seen)
+        repeat(5) { c = c.next(); seen += c }
+        assertEquals(listOf(PipelineChoice.DISCUSSION, PipelineChoice.DEV_LEGER, PipelineChoice.DEV_COMPLET, PipelineChoice.REUNION, PipelineChoice.AUTO), seen)
     }
 }

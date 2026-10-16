@@ -41,6 +41,7 @@ const PREFIXES = [
   [/^\/(nouveau|nouveau-projet)\b/i, 'nouveau'],
   [/^\/(données|donnees|scraping)\b/i, 'donnees'],
   [/^\/(rédaction|redaction|traduction)\b/i, 'redaction'],
+  [/^\/(réunion|reunion|compte-rendu)\b/i, 'reunion'],
   [/^\/images?\b/i, 'images'],
   [/^\/(vidéo|video)\b/i, 'video'],
   [/^\/(audio|son)\b/i, 'audio'],

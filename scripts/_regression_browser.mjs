@@ -1658,14 +1658,14 @@ export async function browserChecks(sb, t) {
       fs.writeFileSync(fc, JSON.stringify(cfg, null, 2) + '\n');
       assert(await until(async () => (await page.locator('.rail-card').count()) > 0, 15_000), 'cadres non rétablis');
     });
-    // ---------------- Models par tâche (0.39.0 → 0.40.0 : 13 pipelines) ----------------
+    // ---------------- Models par tâche (0.39.0 → 0.40.0 : 14 pipelines depuis 0.110.0) ----------------
     // Exigences utilisateur : une vue claire de l'enchaînement des tâches, un
     // model par tâche (menu groupé Anthropic / OpenAI / NVIDIA / OpenRouter) ;
     // puis « tous les pipelines », lisibles, boucles comprises, et le travail
     // images / vidéo / audio avec les models spécialisés et les outils locaux.
     const hasModels = async (pg) => (await pg.locator('#btn-models').count()) > 0;
-    const TABS = 'Développement,Discussion,Routage (chef),Incident,Recherche,Audit sécurité,Maintenance,Nouveau projet,Données,Rédaction,Images,Vidéo,Audio';
-    await check(B, 'models-view', 'Models par tâche : 13 onglets de pipeline, bandeau, légende, chaque étape a titre + quand/quoi + exemple + menu (variantes repliables), boucles et retours dessinés, étape optionnelle distincte, renvois, menus par capacité (outils locaux), conseils, choix enregistré puis relu après rechargement, historique', async () => {
+    const TABS = 'Développement,Discussion,Routage (chef),Incident,Recherche,Audit sécurité,Maintenance,Nouveau projet,Données,Rédaction,Compte rendu de réunion,Images,Vidéo,Audio';
+    await check(B, 'models-view', 'Models par tâche : 14 onglets de pipeline, bandeau, légende, chaque étape a titre + quand/quoi + exemple + menu (variantes repliables), boucles et retours dessinés, étape optionnelle distincte, renvois, menus par capacité (outils locaux), conseils, choix enregistré puis relu après rechargement, historique', async () => {
       if (!(await hasModels(page))) NA('vue absente de cet état du code');
       await setHash(page, '#/');
       await page.click('#btn-models');
@@ -1674,7 +1674,7 @@ export async function browserChecks(sb, t) {
       if (!(await page.locator('#models .mr-tab').count())) NA('structure en pipelines absente de cet état du code');
       assert(!(await visible(page, '#rail')) && !(await visible(page, '#conductor-view')), 'le fil ou le rail reste affiché');
       const tabs = await page.$$eval('#models .mr-tab', els => els.map(e => e.textContent.replace(/\d+\/\d+/, '').replace(/^\W+/u, '').trim()));
-      assert(tabs.length === 13, `${tabs.length} onglets : ${tabs.join(', ')}`);
+      assert(tabs.length === 14, `${tabs.length} onglets : ${tabs.join(', ')}`);
       assert(tabs.join(',') === TABS, `onglets : ${tabs.join(',')}`);
       assert(await page.locator('#models .mr-legend li').count() >= 7, 'légende incomplète');
       for (const sym of ['→', '↻', '↩', '⤳', '◇']) assert((await page.textContent('#models .mr-legend')).includes(sym), `légende sans ${sym}`);
@@ -1898,7 +1898,7 @@ export async function browserChecks(sb, t) {
       assert(await until(async () => (await page.locator('#models .mr-tab').count()) > 0, 10_000), 'vue');
       if (!(await until(async () => (await page.locator('#models .mr-reco-box').count()) > 0, 6000))) NA('suggestions absentes de cet état du code');
       const box = await page.textContent('#models .mr-reco-box');
-      assert(/8 octobre 2026/.test(box) && /a8c5cc2/.test(box) && /102 cases sur 102/.test(box), `encadré : ${box.replace(/\s+/g, ' ').slice(0, 200)}`);
+      assert(/8 octobre 2026/.test(box) && /a8c5cc2/.test(box) && /109 cases sur 109/.test(box), `encadré : ${box.replace(/\s+/g, ' ').slice(0, 200)}`);
       // Sur CHAQUE pipeline, chaque étape et chaque variante a son bloc de suggestion.
       const tabs = await page.$$eval('#models .mr-tab', ts => ts.map(t => t.dataset.pipeline));
       let seen = 0;
@@ -1910,7 +1910,7 @@ export async function browserChecks(sb, t) {
         assert(r.length && !bad.length, `${id} : bloc absent ou incomplet pour ${bad.join(', ')}`);
         seen += r.length;
       }
-      assert(seen === 102, `${seen} blocs au lieu de 102`);
+      assert(seen === 109, `${seen} blocs au lieu de 109`);
       await page.click('#models .mr-tab[data-pipeline="discussion"]');
       assert(await page.locator('#models .mr-panel .mr-reco-und').count() > 0, '« non tranché » non signalé (Discussion)');
       await page.click('#models .mr-tab[data-pipeline="dev"]');
@@ -2594,7 +2594,7 @@ export async function browserChecks(sb, t) {
       if (!(await hasModels(m))) NA('vue absente de cet état du code');
       await m.setViewportSize({ width: 390, height: 844 });
       await setHash(m, '#/models');
-      assert(await until(async () => (await m.locator('#models .mr-tab').count()) === 13, 10_000), 'onglets');
+      assert(await until(async () => (await m.locator('#models .mr-tab').count()) === 14, 10_000), 'onglets');
       if (!(await until(async () => (await m.locator('#models .mr-reco-box').count()) > 0, 6000))) NA('suggestions absentes de cet état du code');
       await m.click('#models .mr-tab[data-pipeline="dev"]');
       await sleep(300);
@@ -2612,7 +2612,7 @@ export async function browserChecks(sb, t) {
       if (!(await hasModels(m))) NA('vue absente de cet état du code');
       await m.setViewportSize({ width: 390, height: 844 });
       await setHash(m, '#/models');
-      assert(await until(async () => (await m.locator('#models .mr-tab').count()) === 13 && (await m.locator('#models .mr-panel .mr-card').count()) > 0, 10_000), 'onglets ou cartes');
+      assert(await until(async () => (await m.locator('#models .mr-tab').count()) === 14 && (await m.locator('#models .mr-panel .mr-card').count()) > 0, 10_000), 'onglets ou cartes');
       await m.click('#models .mr-tab[data-pipeline="dev"]');
       await sleep(300);
       const g = await m.evaluate(() => ({
@@ -2861,7 +2861,7 @@ export async function browserChecks(sb, t) {
         } finally { fs.rmSync(path.join(sb.root, 'model-routing.json'), { force: true }); }
       });
       // 0.52.0 — pipelines, phase 5 : le composer choisit le pipeline (demande du 2026-10-09).
-      await check(B, 'composer-pipeline', 'Composer : sélecteur de pipeline (auto, Discussion, Dév. léger, Dév. complet) — le choix part avec la demande, puis revient à « auto » ; utilisable sur mobile', async () => {
+      await check(B, 'composer-pipeline', 'Composer : sélecteur de pipeline (auto, Discussion, Dév. léger, Dév. complet, Réunion) — le choix part avec la demande, puis revient à « auto » ; utilisable sur mobile', async () => {
         if (!(await lp.goto(`${sb.url}/?token=${sb.token}`).then(() => lp.locator('#composer-pipeline').count()))) NA('sélecteur absent de cet état du code');
         await lp.locator('.brand').waitFor();
         const sent = [];
@@ -2871,7 +2871,7 @@ export async function browserChecks(sb, t) {
         });
         try {
           const opts = await lp.locator('#composer-pipeline option').evaluateAll(os => os.map(o => o.value));
-          assert(opts.join() === 'auto,discussion,dev:leger,dev:complet', `options : ${opts}`);
+          assert(opts.join() === 'auto,discussion,dev:leger,dev:complet,reunion', `options : ${opts}`);
           assert(await lp.getAttribute('#composer-pipeline', 'aria-label'), 'aria-label absent');
           await lp.selectOption('#composer-pipeline', 'dev:complet');
           await lp.fill('#composer-input', 'ajoute une page de statistiques (recette sélecteur)');

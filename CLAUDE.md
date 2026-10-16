@@ -1888,6 +1888,44 @@ par le model de la case `routage.classifier`.**
   en-tête MP4) ; `FAKE_PIPE_TRANSCRIPT`.
 - Recettes : `_test_pipeline_media.mjs`, HTTP `pipeline-media`.
 
+## Pipeline « Compte rendu de réunion » (0.110.0)
+
+Demande utilisateur (2026-10-16) : « Il faut un nouveau pipeline, plus adapté
+aux demandes de gestion de compte rendu de réunions » (une demande de
+rangement des fichiers d'une réunion était partie en Maintenance).
+
+- `reunion` dans `pipeline-catalog.mjs` : Inventorier (`inventaire.json`) →
+  Lister ce qui sera supprimé (`suppression.json`, `askUser: 'doutes'`) →
+  Enregistrer la version définitive (`definitif.json`) → Supprimer (étape de
+  **code** `reunion-supprimer`) → Regrouper, nommer, indexer
+  (`rangement.json`) → Vérifier (code `reunion-verifier`, `verification.md`,
+  le résultat final) → Livrer (`crit: 'livrer'` : version, CHANGELOG, commit
+  local, jamais de push).
+- **Critères** : `scripts/meeting-check.mjs` (`checks.meeting`), appelés par
+  `meetingCheck` / `meetingContext` du moteur : fichiers inventoriés existants,
+  chaque fichier dans UNE seule liste, seuls `brouillon` / `doublon`
+  supprimables, texte définitif = passage de `demande.md` (espaces, guillemets
+  et apostrophes normalisés seulement), éléments gardés dans le dossier et
+  cités par un index qui contient le nom de la réunion, rien d'autre ne change.
+- **Suppression par le code seulement**, depuis la liste explicite, revalidée ;
+  chaque fichier est d'abord copié dans `logs/runs/<run>/corbeille/`.
+- **Doutes** : une liste avec `doutes` met l'exécution en pause `doutes`
+  AVANT toute suppression (`pauseForDoubts`). « continuer » garde les fichiers
+  en doute ; « tout supprimer » (`dispatch.mjs`, seulement si `pausedLimit ===
+  'doutes'`) les supprime aussi (`state.deleteDoubts`).
+- Sélection : préfixes `/reunion`, `/réunion`, `/compte-rendu` ; option
+  « Réunion » du sélecteur (dashboard, app Android 0.12.0) ; sept cases
+  `reunion.*` sur la page Models. Classement par le sens : description du
+  pipeline, Maintenance limitée au code, règle `MEETING_RULE` de
+  `pipeline-classify.mjs` (jamais de mots-clés).
+- **Mise en service** : `enforcement.pipelines` est une liste explicite ;
+  ajouter `reunion` par `node scripts/pipeline-enforce.mjs pipelines all`.
+- Au passage : un artefact réduit au marqueur « rien à faire »
+  (`RIEN_A_NETTOYER`…) n'est plus refusé comme vide (minimum de 20 caractères).
+- Faux claude : `REUNION=definitif|rangement` (`FAKE_PIPE_JSON`,
+  `FAKE_REUNION_TEXT`), `FAKE_PIPE_MARKER_ONLY=1`.
+- Recette : `_test_reunion_pipeline.mjs`.
+
 ## Pipelines obligatoires — phase 7 : mise en service générale (0.56.0)
 
 - **En service** : 20 projets sur 33, le chef en Routage, le terminal routé.

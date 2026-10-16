@@ -2,7 +2,7 @@
 // scripts/model-pipelines.mjs — les pipelines de la vue « Models par tâche »
 // ============================================================================
 //
-// Données pures (0.40.0) : 13 pipelines, chacun une suite d'étapes dans
+// Données pures (0.40.0 ; 14 depuis 0.110.0) : pipelines, chacun une suite d'étapes dans
 // l'ordre, avec ses boucles et ses retours. Une étape (ou une variante) est
 // une « case » à laquelle on assigne un model.
 //
@@ -253,7 +253,7 @@ export const PIPELINES = [
   {
     id: 'maintenance', label: 'Maintenance', icon: '🧹',
     purpose: 'Garder les projets sains sans ajouter de fonctionnalité.',
-    when: 'Entretien périodique, ou quand la dette ralentit le travail.',
+    when: 'Entretien périodique du CODE, ou quand la dette ralentit le travail (dépendances, historique git, tests instables, dette technique). Pas le rangement de documents ou des fichiers d’une réunion.',
     flow: [
       { id: 'dependances', n: '1', title: 'Mise à jour des dépendances', what: 'Monter les versions, lire les changements cassants, retester.',
         example: 'Monter playwright-core puis rejouer la non-régression.' },
@@ -321,7 +321,30 @@ export const PIPELINES = [
     ],
   },
 
-  // ── 11. Images ────────────────────────────────────────────────────────────
+  // ── 11. Compte rendu de réunion (0.110.0) ─────────────────────────────────
+  {
+    id: 'reunion', label: 'Compte rendu de réunion', icon: '🗂',
+    purpose: 'Ranger les fichiers d’une réunion : garder la version définitive fournie, supprimer les brouillons après une liste explicite, tout regrouper sous un nom facile à retrouver — chaque point vérifié par le code.',
+    when: 'Gérer le compte rendu ou les fichiers d’une réunion : enregistrer le mail ou le compte rendu définitif envoyé, supprimer les brouillons, ranger vidéo, transcription, avis et notes de la réunion, les rendre retrouvables sous un nom (ex. « réunion X du 16 octobre »). Ce n’est ni de la maintenance de code, ni la rédaction d’un nouveau texte.',
+    flow: [
+      { id: 'inventorier', n: '1', title: 'Inventorier', what: 'Lister les fichiers de la réunion (mails, brouillons, vidéo, transcription, avis, notes) avec leur rôle, le nom sous lequel la retrouver et son dossier.',
+        example: 'Trois brouillons de mail, la vidéo, la transcription et un avis, pour « réunion de lancement du 16 octobre ».' },
+      { id: 'trier', n: '2', title: 'Lister ce qui sera supprimé', what: 'Chaque fichier va dans « supprimer » (brouillons, doublons), « garder » ou « doutes » ; un doute est posé à l’utilisateur avant toute suppression.',
+        example: '« Ce brouillon du 15 est-il bien à supprimer ? » : l’exécution s’arrête et attend la réponse.' },
+      { id: 'definitif', n: '3', title: 'Enregistrer la version définitive', what: 'Recopier mot pour mot le texte définitif fourni par l’utilisateur ; le code le compare à la demande.',
+        example: 'Le mail envoyé à tous, collé dans la demande, devient mail-definitif.md.' },
+      { id: 'supprimer', n: '4', title: 'Supprimer les brouillons (par le code)', what: 'Exécuté par l’orchestrateur, sans model : il supprime exactement la liste de l’étape 2, en gardant une copie de chaque fichier.',
+        example: 'Les trois brouillons disparaissent du projet ; leur copie reste dans le dossier de l’exécution.' },
+      { id: 'ranger', n: '5', title: 'Regrouper, nommer, indexer', what: 'Tout réunir dans un dossier, avec des noms clairs et un sommaire qui porte le nom de la réunion.',
+        example: 'reunions/2026-10-16-lancement/README.md cite le mail, la vidéo, la transcription et l’avis.' },
+      { id: 'verifier', n: '6', title: 'Vérifier (par le code)', what: 'Exécuté par l’orchestrateur, sans model : ce qui doit rester existe, le sommaire nomme la réunion, les supprimés ont disparu.',
+        example: '« ✓ 4 éléments rangés, sommaire présent, supprimés absents » ; un écart arrête l’exécution, sans rien livrer.' },
+      { id: 'livrer', n: '7', title: 'Livrer', what: 'Un commit local avec version et CHANGELOG ; jamais de push.',
+        example: 'Commit « docs: réunion du 16 octobre rangée », version et CHANGELOG à jour.' },
+    ],
+  },
+
+  // ── 12. Images ────────────────────────────────────────────────────────────
   {
     id: 'images', label: 'Images', icon: '🖼',
     purpose: 'Produire, retoucher ou lire des images, avec une vérification visuelle avant livraison.',
@@ -348,7 +371,7 @@ export const PIPELINES = [
     ],
   },
 
-  // ── 12. Vidéo ─────────────────────────────────────────────────────────────
+  // ── 13. Vidéo ─────────────────────────────────────────────────────────────
   {
     id: 'video', label: 'Vidéo', icon: '🎬',
     purpose: 'Récupérer, analyser et monter des vidéos, puis vérifier le résultat avant de le livrer.',
@@ -382,7 +405,7 @@ export const PIPELINES = [
     ],
   },
 
-  // ── 13. Audio ─────────────────────────────────────────────────────────────
+  // ── 14. Audio ─────────────────────────────────────────────────────────────
   {
     id: 'audio', label: 'Audio', icon: '🔊',
     purpose: 'Transcrire, synthétiser ou traiter du son, avec une vérification à l’écoute.',
@@ -448,6 +471,7 @@ export const JUDGE_STEPS = new Set([
   'recherche.cadrer', 'recherche.recouper', 'recherche.synthetiser',
   'audit.second-avis',
   'redaction.rediger', 'redaction.relire',
+  'reunion.trier',
   'nouveau.cadrage',
   'images.cadrer',
 ]);

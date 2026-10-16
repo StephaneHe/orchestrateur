@@ -186,6 +186,37 @@ const S = {
         role: 'LIVRER : un SEUL commit des documents modifiés (git add -A puis git commit, message clair). Pas de version ni de CHANGELOG pour une simple rédaction. Pas de push.' },
     ],
   },
+  // ── Compte rendu de réunion (0.110.0) ────────────────────────────────────
+  // User request (2026-10-16): « Il faut un nouveau pipeline, plus adapté aux
+  // demandes de gestion de compte rendu de réunions ». Every claim is checked
+  // against the disk by scripts/meeting-check.mjs (`meeting` checks); the
+  // drafts are deleted by the CODE, from the explicit list only, after the
+  // user has answered any doubt (`askUser`: the run pauses).
+  reunion: {
+    needs: { git: true, clean: true },
+    final: 'verifier',
+    steps: [
+      { id: 'inventorier', title: '1 Inventorier', chain: ['reunion.inventorier'], group: 'reunion', artefact: 'inventaire.json', kind: 'judge',
+        role: 'INVENTORIER les fichiers de la réunion dont parle la demande (demande.md) : mails, brouillons, vidéo, enregistrement audio, transcription, avis, notes, pièces jointes. Cherche-les dans tout le projet (Glob, Read). Donne à chacun son rôle, le NOM sous lequel l’ensemble devra être retrouvé (celui de la demande, sinon « réunion <projet> du <date> ») et le DOSSIER, relatif au projet, où tout sera rangé (un dossier existant des réunions s’il y en a un, sinon « reunions/AAAA-MM-JJ-<sujet> »). N’inventorie que ce qui appartient à CETTE réunion. Ne modifie rien.',
+        checks: { json: { nom: 'string', dossier: 'string', fichiers: 'array' }, meeting: 'inventaire' },
+        jsonExample: '{"nom": "réunion de lancement du 16 octobre", "dossier": "reunions/2026-10-16-lancement", "fichiers": [{"chemin": "chemin/relatif", "role": "mail-definitif|brouillon|doublon|video|audio|transcription|avis|notes|piece-jointe|autre", "note": "ce que c’est"}]}' },
+      { id: 'trier', title: '2 Lister ce qui sera supprimé', chain: ['reunion.trier'], group: 'reunion', artefact: 'suppression.json', kind: 'judge', askUser: 'doutes',
+        role: 'LISTER EXPLICITEMENT, fichier par fichier, ce qui sera supprimé et ce qui sera gardé, d’après inventaire.json et la demande : CHAQUE fichier inventorié va dans « supprimer » (seulement un brouillon ou un doublon, avec sa raison), « garder », ou « doutes » (avec la question précise à poser à l’utilisateur). Au moindre doute — un brouillon qui pourrait être la version envoyée, un fichier dont la demande ne dit rien — mets-le dans « doutes » : l’orchestrateur posera la question à l’utilisateur avant toute suppression, et un fichier en doute n’est jamais supprimé sans sa réponse. Tu ne supprimes rien toi-même : c’est le code qui supprimera exactement cette liste.',
+        checks: { json: { supprimer: 'array', garder: 'array', doutes: 'array' }, meeting: 'tri' },
+        jsonExample: '{"supprimer": [{"chemin": "chemin/relatif", "raison": "brouillon remplacé par le mail envoyé"}], "garder": ["chemin/relatif"], "doutes": [{"chemin": "chemin/relatif", "question": "Ce brouillon du 15 est-il bien à supprimer ?"}]}' },
+      { id: 'definitif', title: '3 Enregistrer la version définitive', chain: ['reunion.definitif'], group: 'reunion', artefact: 'definitif.json', kind: 'action',
+        role: 'ENREGISTRER LA VERSION DÉFINITIVE fournie par l’utilisateur dans la demande (le mail envoyé, le compte rendu validé…) : recopie son texte EXACT — mot pour mot, sans titre, sans mise en forme, sans correction ni reformulation — dans un fichier texte du projet (de préférence directement dans le dossier de la réunion, avec un nom clair, ex. « mail-definitif.md »), jamais dans un fichier de la liste « supprimer ». Si la demande ne fournit aucun texte définitif, écris « AUCUN_TEXTE_DEFINITIF » dans l’artefact et ne modifie rien. L’orchestrateur compare le fichier au texte de la demande.',
+        checks: { meeting: 'definitif' },
+        jsonExample: '{"fichier": "reunions/2026-10-16-lancement/mail-definitif.md", "source": "texte fourni dans la demande"}' },
+      { id: 'supprimer', title: '4 Supprimer les brouillons (par le code)', chain: ['reunion.supprimer'], group: 'reunion', artefact: 'suppression-faite.json', kind: 'code', handler: 'reunion-supprimer' },
+      { id: 'ranger', title: '5 Regrouper, nommer, indexer', chain: ['reunion.ranger'], group: 'reunion', artefact: 'rangement.json', kind: 'action',
+        role: 'REGROUPER tous les éléments gardés de la réunion dans le dossier d’inventaire.json (déplace-les ; « git mv » pour un fichier suivi par git), leur donner des noms clairs (date, nature : « 2026-10-16-video.mp4 », « transcription.txt », « avis.md »…) et écrire dans ce dossier un INDEX (README.md) dont le titre contient le nom de la réunion, qui cite chaque élément (lien relatif) et dit ce qu’il est. Si le projet a un index global des réunions, ajoute-y une ligne vers cet index (« index_global »). Ne touche à rien d’autre que les fichiers de la réunion. Les fichiers supprimés ne doivent plus apparaître nulle part.',
+        checks: { meeting: 'rangement' },
+        jsonExample: '{"index": "reunions/2026-10-16-lancement/README.md", "elements": [{"role": "mail-definitif|video|audio|transcription|avis|notes|piece-jointe|autre", "chemin": "reunions/2026-10-16-lancement/…"}], "index_global": "facultatif : reunions/README.md"}' },
+      { id: 'verifier', title: '6 Vérifier (par le code)', chain: ['reunion.verifier'], group: 'reunion', artefact: 'verification.md', kind: 'code', handler: 'reunion-verifier' },
+      { id: 'livrer', title: '7 Livrer', chain: ['reunion.livrer', 'dev.livrer.git', 'dev.livrer'], group: 'code', artefact: 'livraison.md', kind: 'deliver', crit: 'livrer', devRole: 'livrer', ifChanged: true },
+    ],
+  },
 };
 
 // ── Routage (lot B, 0.54.0) : le tour du chef devient lui-même un pipeline ───

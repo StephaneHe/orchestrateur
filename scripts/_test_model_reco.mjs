@@ -24,7 +24,7 @@ t('forme valide (schéma 1, date du rapport, étapes, cases)', validate(raw) ===
 t('date du rapport et commit de la source', raw.report.date === '2026-10-08' && raw.report.commit === 'a8c5cc2');
 t('les 25 étapes du rapport, chacune avec principal, alternative(s), confiance et section', Object.keys(raw.steps).length === 25 && Object.values(raw.steps).every(s => s.principal && Array.isArray(s.alternatives) && s.confidence && s.section && s.why));
 t('étapes « non tranchées » du rapport signalées : Discussion, Refactor, Recherche, Rédaction', ['discussion', 'refactor', 'recherche', 'redaction'].every(k => raw.steps[k].undecided === true) && Object.values(raw.steps).filter(s => s.undecided).length === 4);
-t('CHAQUE case des 13 pipelines a une suggestion explicite', SLOTS.every(s => raw.slots[s.id]), SLOTS.filter(s => !raw.slots[s.id]).map(s => s.id).join(','));
+t('CHAQUE case des 14 pipelines a une suggestion explicite', SLOTS.every(s => raw.slots[s.id]), SLOTS.filter(s => !raw.slots[s.id]).map(s => s.id).join(','));
 t('aucune valeur de model codée en dur dans public/models.js', !/claude-(opus|sonnet|haiku|fable)-|gpt-\d/.test(fs.readFileSync(path.join(ROOT, 'public', 'models.js'), 'utf8')));
 t('aucune valeur de model codée en dur dans scripts/model-reco.mjs', !/claude-(opus|sonnet|haiku|fable)-|gpt-\d/.test(fs.readFileSync(path.join(ROOT, 'scripts', 'model-reco.mjs'), 'utf8')));
 t('aucun nom de projet privé du config.json local dans le fichier (dépôt public)', (() => {
@@ -75,7 +75,7 @@ cat = await mr.getCatalog({ refresh: true });
 
 console.log('\n── 3. Suggestions et application');
 const v = reco.view(mr.effective().slots, cat, incompatibility);
-t('une suggestion pour chacune des 102 cases', v.counts.withSuggestion === SLOTS.length && SLOTS.length === 102, JSON.stringify(v.counts));
+t('une suggestion pour chacune des 109 cases (102 + 7 du pipeline reunion, 0.110.0)', v.counts.withSuggestion === SLOTS.length && SLOTS.length === 109, JSON.stringify(v.counts));
 t('chaque suggestion porte confiance, section et justification', Object.values(v.slots).every(s => s.confidence && s.section && s.why));
 t('applicabilité expliquée (hors listes, non installé…)', v.slots['images.produire.generation'].principal.applicable === false && /hors des listes/.test(v.slots['images.produire.generation'].principal.reason));
 t('cible absente → repli « aujourd\'hui » montré (liste de tests → claude-sonnet-5-5)', (() => { const a = v.slots['dev.liste-tests'].alternatives[0]; return a.model === 'gpt-6.1-sol' && a.available === false && a.today.model === 'claude-sonnet-5-5'; })());

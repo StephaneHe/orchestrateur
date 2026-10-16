@@ -11,6 +11,46 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.110.0] - 2026-10-16
+
+### Added
+
+- (server) New pipeline « Compte rendu de réunion » (`reunion`), for requests
+  that manage the minutes or the files of a meeting (user request of
+  2026-10-16: « Il faut un nouveau pipeline, plus adapté aux demandes de
+  gestion de compte rendu de réunions »; such a request had been classified
+  into Maintenance, which upkeeps code and tidied nothing). Steps: Inventorier
+  (`inventaire.json`: every file of the meeting with its role, the name it must
+  be found under, the folder) → Lister ce qui sera supprimé
+  (`suppression.json`: every inventoried file in exactly one of `supprimer`,
+  `garder`, `doutes`; only drafts and duplicates can be deleted) → Enregistrer
+  la version définitive (the text the user gave, written EXACTLY: compared to
+  the request by code) → Supprimer les brouillons (by the CODE, from the
+  explicit list only, each file copied first to `logs/runs/<run>/corbeille/`)
+  → Regrouper, nommer, indexer (one folder, an index named after the meeting
+  that cites every kept element) → Vérifier (by the code: what must remain
+  exists, what was deleted is gone) → Livrer (local commit, version,
+  CHANGELOG, never a push). Criteria: `scripts/meeting-check.mjs`.
+- (server) Files in doubt are asked BEFORE any deletion: the run pauses
+  (`doutes`) with the explicit list; « continuer » deletes only the sure files
+  and keeps the doubtful ones, « tout supprimer » deletes them too (still
+  copied first), « abandonner » stops with nothing changed.
+- (server) Selection: prefixes `/reunion`, `/réunion`, `/compte-rendu`;
+  « Réunion » in the dashboard's pipeline selector; seven slots on the Models
+  page (`reunion.*`, suggestions extrapolated from the existing report).
+- (server) Classification by meaning: the classifier model sees the new
+  pipeline, a description of Maintenance limited to code upkeep, and a rule
+  (never Maintenance nor Rédaction for a meeting's files) — no keyword rule.
+- (android) « Réunion » in the composer's pipeline selector (0.12.0, code 22).
+
+### Fixed
+
+- (server) A step artefact made of the « nothing to do » marker alone
+  (`RIEN_A_NETTOYER`, 15 characters) was refused as « absent ou vide » (minimum
+  of 20 characters), although the prompt asks to write exactly that: the
+  Maintenance « dette » step of run p-20261016T132118-ddfd3b was refused twice
+  for it. The marker alone is now a valid artefact.
+
 ## [0.109.1] - 2026-10-16
 
 ### Fixed

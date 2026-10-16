@@ -48,6 +48,7 @@ import { backoffConfig, isLaunchFailure, dispatchRefusal, tierAfter, delayFor, w
 import { runModelTest } from './model-test.mjs';
 import { PIPELINES } from './model-pipelines.mjs';
 import { checkMediaFiles, listedFiles, wordErrorRate } from './media-check.mjs';
+import * as Meeting from './meeting-check.mjs';
 import { countTests, addedTests, itemTestsVerdict } from './item-tests.mjs';
 import { groupOf, groupCases, groupReady, insertAttachedCases, worktreeTree, treeDiff } from './item-review.mjs';
 import { foldTo, commitWork, itemCommitMessage, setAsideWork, reapplyWork, head as headOf } from './item-delivery.mjs';
@@ -615,6 +616,7 @@ function catalogStepPrompt(L, ctx, step, art, T) {
   if (mediaKind) machine.push(`MEDIA=${mediaKind}`);
   if (c.media?.optionalWith) machine.push(`MARQUEUR_SANS_MEDIA=${c.media.optionalWith}`);
   if (ctx.localTool) machine.push(`OUTIL_LOCAL=${ctx.localTool}`);
+  if (c.meeting) machine.push(`REUNION=${c.meeting}`);
   L.push(...machine);
   L.push('');
   if (step.kind === 'judge') {
@@ -623,7 +625,7 @@ function catalogStepPrompt(L, ctx, step, art, T) {
     L.push(step.role ? '' : 'Livre en un seul commit.');
     L.push(`Écris ${art(step.artefact)} : le commit et ce qui a été livré. L'orchestrateur vérifie : commit créé, arbre propre.`);
   } else {
-    L.push(`Écris ${art(step.artefact)} : ce que tu as fait et pourquoi.`);
+    L.push(c.meeting && step.jsonExample ? `Écris ${art(step.artefact)}, et UNIQUEMENT ce JSON (format plus bas).` : `Écris ${art(step.artefact)} : ce que tu as fait et pourquoi.`);
     if (c.onlyGlobs) L.push(`Tu ne modifies QUE des documents (motifs : ${c.onlyGlobs.join(', ')}) : aucun code, aucun test.`);
     if (c.protectTests) L.push('Interdit : modifier les tests existants (l’orchestrateur compare leur empreinte).');
     if (c.nothing) L.push(`S'il n'y a rien à faire, écris exactement « ${c.nothing} » dans l'artefact et ne modifie rien : c'est accepté.`);
@@ -991,6 +993,51 @@ export function conversationExcerpt(logFile, { max = 30, maxChars = 30_000, perM
 
 const CODE_STEPS = {
   /**
+   * Meeting pipeline (0.110.0): the drafts are deleted by the CODE, from the
+   * explicit list of suppression.json only (validated again here), never a
+   * file in doubt unless the user answered « tout supprimer », never the
+   * definitive text. Each file is copied to logs/runs/<run>/corbeille/ first.
+   */
+  async 'reunion-supprimer'({ root, logsDir, ctx, state, artDir, run, writeEvent }) {
+    const m = meetingContext(ctx);
+    if (m.why || !m.sorting) return { ok: false, why: m.why || m.sortingWhy };
+    const { plan, refused } = Meeting.deletionPlan(ctx.cwd, m.sorting, { definitive: m.definitive?.fichier, withDoubts: !!state.deleteDoubts });
+    if (refused.length) return { ok: false, why: `suppression refusée : ${refused.map(r => `${r.chemin} (${r.why})`).join(', ')}` };
+    const trash = path.join(logsDir, 'runs', run, 'corbeille');
+    const before = Meeting.parseJson(readArtefact(ctx, 'suppression-faite.json') || '') || {};
+    const r = Meeting.deleteFiles(ctx.cwd, plan, trash);
+    // A resumed run keeps what an earlier pass already deleted.
+    const supprimes = [...(before.supprimes || []), ...r.done];
+    const kept = state.deleteDoubts ? [] : m.sorting.doutes.map(d => d.chemin);
+    const trashRel = path.relative(root, trash).split(path.sep).join('/');
+    fs.writeFileSync(path.join(artDir, 'suppression-faite.json'), JSON.stringify({ supprimes, absents: r.missing, doutes_gardes: kept, corbeille: trashRel }, null, 2));
+    writeEvent({ type: 'system', subtype: 'meeting_deleted', pipeline: { run, step: 'supprimer' }, deleted: supprimes.map(d => d.chemin), kept, trash: trashRel,
+      text: `🗑 ${supprimes.length} fichier(s) supprimé(s) par le code, d’après la liste explicite (copie gardée dans ${trashRel})${kept.length ? ` ; ${kept.length} fichier(s) en doute gardé(s)` : ''}` });
+    return { ok: true };
+  },
+  /** Meeting pipeline (0.110.0): the final check, by code only — what must remain exists, what was deleted is gone. */
+  async 'reunion-verifier'({ ctx, artDir, run, writeEvent }) {
+    const m = meetingContext(ctx);
+    if (m.why || !m.sorting) return { ok: false, why: m.why || m.sortingWhy };
+    const f = Meeting.checkFiling(ctx.cwd, { art: readArtefact(ctx, 'rangement.json'), inv: m.inv, sorting: m.sorting, definitive: m.definitive, demande: m.demande, deleted: m.deleted });
+    if (!f.ok) return { ok: false, why: `vérification finale : ${f.why}` };
+    const v = Meeting.verifyMeeting(ctx.cwd, { inv: m.inv, filing: f.value, deleted: m.deleted, definitive: m.definitive, demande: m.demande });
+    const done = Meeting.parseJson(readArtefact(ctx, 'suppression-faite.json') || '') || {};
+    const md = [
+      `## Réunion « ${m.inv.nom} »`, '',
+      `Retrouvable par son index : \`${f.value.index}\`${f.value.indexGlobal ? ` (cité dans \`${f.value.indexGlobal}\`)` : ''}, dossier \`${m.inv.dossier}\`.`, '',
+      '## Éléments gardés (vérifiés par l’orchestrateur)', ...v.lines, '',
+      '## Supprimés', ...((done.supprimes || []).length ? done.supprimes.map(d => `- \`${d.chemin}\` — ${d.raison || ''}${d.doute ? ' (doute levé par l’utilisateur)' : ''}`) : ['- aucun']),
+      ...((done.supprimes || []).length ? ['', `Une copie de chaque fichier supprimé est gardée dans \`${done.corbeille}\`.`] : []),
+      ...((done.doutes_gardes || []).length ? ['', '## Gardés (en doute, sans réponse « tout supprimer »)', ...done.doutes_gardes.map(c => `- \`${c}\``)] : []),
+      '', `## Vérification : ${v.ok ? '✓ tout ce qui doit rester existe, tout ce qui a été supprimé a disparu' : `✕ ${v.problems.join(' ; ')}`}`,
+    ].join('\n');
+    fs.writeFileSync(path.join(artDir, 'verification.md'), `${md}\n`);
+    writeEvent({ type: 'system', subtype: 'meeting_verified', pipeline: { run, step: 'verifier' }, ok: v.ok, problems: v.problems, index: f.value.index,
+      text: v.ok ? `✓ réunion « ${m.inv.nom} » : ${f.value.elements.length} élément(s) rangé(s), index ${f.value.index}, supprimés absents` : `✕ vérification de la réunion : ${v.problems.join(' ; ')}` });
+    return v.ok ? { ok: true } : { ok: false, why: `vérification finale : ${v.problems.join(' ; ')}` };
+  },
+  /**
    * Split before classify (0.69.0): every unit task of taches.json is
    * classified ON ITS OWN — one call to the routage.classifier model per task,
    * which sees only that task. A task the model finds ambiguous, or that it
@@ -1332,6 +1379,36 @@ export function pausedRuns(logsDir, { max = 20 } = {}) {
   return out;
 }
 
+/**
+ * Meeting pipeline (reunion, 0.110.0): the artefacts read back for every step,
+ * from disk. Later steps read them without existence checks (files moved or
+ * deleted since). → { inv, sorting, definitive, deleted, demande } | { why }
+ */
+export function meetingContext(ctx) {
+  const { cwd } = ctx;
+  const inv = Meeting.checkInventory(cwd, readArtefact(ctx, 'inventaire.json'), { exists: false });
+  if (!inv.ok) return { why: inv.why };
+  const so = Meeting.checkSorting(cwd, inv.value, readArtefact(ctx, 'suppression.json'), { exists: false });
+  const defArt = readArtefact(ctx, 'definitif.json') || '';
+  const defJson = Meeting.parseJson(defArt);
+  const definitive = defJson && Meeting.safeRel(cwd, defJson.fichier) && !new RegExp(`\\b${Meeting.NO_DEFINITIVE}\\b`).test(defArt) ? { fichier: Meeting.safeRel(cwd, defJson.fichier) } : null;
+  const done = Meeting.parseJson(readArtefact(ctx, 'suppression-faite.json') || '') || {};
+  return { inv: inv.value, sorting: so.ok ? so.value : null, sortingWhy: so.ok ? null : so.why, definitive,
+    deleted: (done.supprimes || []).map(d => d.chemin), demande: readArtefact(ctx, 'demande.md') || '' };
+}
+
+function meetingCheck(ctx, kind, art, changed) {
+  const { cwd } = ctx;
+  if (kind === 'inventaire') return Meeting.checkInventory(cwd, art);
+  const m = meetingContext(ctx);
+  if (m.why) return { ok: false, why: m.why };
+  if (kind === 'tri') return Meeting.checkSorting(cwd, m.inv, art);
+  if (!m.sorting) return { ok: false, why: m.sortingWhy };
+  if (kind === 'definitif') return Meeting.checkDefinitive(cwd, { art, demande: m.demande, sorting: m.sorting, changed });
+  if (kind === 'rangement') return Meeting.checkFiling(cwd, { art, inv: m.inv, sorting: m.sorting, definitive: m.definitive, demande: m.demande, deleted: m.deleted, changed });
+  return { ok: false, why: `contrôle de réunion inconnu « ${kind} »` };
+}
+
 /** Critères génériques d'une étape du catalogue. */
 function checkCatalogCriteria(ctx, step, before, after) {
   ctx.lastCheck = null;
@@ -1340,7 +1417,12 @@ function checkCatalogCriteria(ctx, step, before, after) {
   const changed = changedFiles(before, after);
   const art = readArtefact(ctx, step.artefact);
   // Un JSON court (« {"remaining":[]} ») est une vraie réponse : il est jugé sur sa forme.
-  const artOk = art != null && (c.json ? art.trim().length > 1 : art.trim().length >= 20);
+  // 0.110.0: so is the « nothing to do » marker alone, exactly as the prompt
+  // asks (« RIEN_A_NETTOYER » is 15 characters: refused before, run
+  // p-20261016T132118-ddfd3b of 2026-10-16).
+  const markers = [c.nothing, c.media?.optionalWith, c.meeting ? Meeting.NO_DEFINITIVE : null].filter(Boolean);
+  const markerOnly = art != null && markers.some(m => new RegExp(`\\b${m}\\b`).test(art));
+  const artOk = art != null && (c.json || c.meeting ? art.trim().length > 1 : art.trim().length >= 20 || markerOnly);
   const fail = (why, extra = {}) => ({ ok: false, why, changed, ...extra });
   let external = null;
   if (step.kind === 'deliver') {
@@ -1360,7 +1442,12 @@ function checkCatalogCriteria(ctx, step, before, after) {
     external = changed.length && isWalkSnapshot(before) ? changed : null;
     if (changed.length && !external) return fail(`étape en lecture seule, mais des fichiers du projet ont changé : ${changed.slice(0, 8).join(', ')}`);
     if (c.headUnchanged && git(cwd, ['rev-parse', 'HEAD']).out !== ctx.headAtStep) return fail('l’historique git a été modifié : interdit à cette étape (rapport seulement)');
+    if (c.meeting) { const m = meetingCheck(ctx, c.meeting, art, changed); if (!m.ok) return fail(m.why); }
   } else {
+    // Meeting steps (0.110.0): their own criteria; a step that finds everything
+    // already in place (definitive text already written, files already filed) is valid.
+    let meetingOk = false;
+    if (c.meeting) { const m = meetingCheck(ctx, c.meeting, art, changed); if (!m.ok) return fail(m.why); meetingOk = true; }
     // Médias (0.55.0) : chaque fichier annoncé est ouvert et vérifié par le code.
     let media = null, waived = false, wer = null;
     if (c.media) {
@@ -1393,7 +1480,7 @@ function checkCatalogCriteria(ctx, step, before, after) {
       const inArtefactOnly = c.applies.unlessMarker && new RegExp(`\\b${c.applies.unlessMarker}\\b`).test(readArtefact(ctx, c.applies.markerIn) || '');
       if (todo.length && !inArtefactOnly) return fail(`« ${c.nothing} » annoncé, mais ${c.applies.artefact} liste ${todo.length} correction(s) à appliquer : ${todo.slice(0, 5).map(x => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ; ')}`);
     }
-    if (!changed.length && !nothing && !media && !waived) return fail(c.nothing ? `aucune modification — s'il n'y a rien à faire, écris « ${c.nothing} » dans l'artefact` : 'aucune modification');
+    if (!changed.length && !nothing && !media && !waived && !meetingOk) return fail(c.nothing ? `aucune modification — s'il n'y a rien à faire, écris « ${c.nothing} » dans l'artefact` : 'aucune modification');
     if (c.onlyGlobs) {
       const bad = changed.filter(f => !isTestFile(f, c.onlyGlobs));
       if (bad.length) return fail(`seuls des documents peuvent changer à cette étape ; modifiés : ${bad.slice(0, 8).join(', ')}`);
@@ -1864,6 +1951,9 @@ export async function runPipeline(o) {
       : state.pausedLimit === 'review' ? [state.reviewGroup != null ? state.reviewGroup : 'global'] : [];
     state.acceptReview = [...new Set([...(state.acceptReview || []), ...keys])];
   }
+  // Meeting pipeline (0.110.0): « tout supprimer » after the doubts pause — the
+  // files in doubt are deleted too (by the code, from the same explicit list).
+  if (resumed && o.deleteDoubts && state.pausedLimit === 'doutes') state.deleteDoubts = true;
   state.status = 'running';
   state.pid = process.pid;
   saveState();
@@ -2194,6 +2284,24 @@ export async function runPipeline(o) {
     });
     const question = `${projectName} en pause — répondez « continuer » (après correction de l’orchestrateur) ou « abandonner » : le lancement de l’étape « ${plainStep(step.id)} » a été refusé par dispatch.mjs avant d’appeler le model (${plainWhy(rec.refusal || rec.why).slice(0, 120)}).`;
     return finish({ code: 2, paused: true, limit: 'launch_refused', question, result: body, notice });
+  };
+
+  // Meeting pipeline (0.110.0): files in doubt are asked BEFORE any deletion.
+  const pauseForDoubts = async (step, doubts, json) => {
+    const C = commonChoices(step);
+    const sure = (json?.supprimer || []).map(s => `- \`${s.chemin}\` — ${s.raison || ''}`);
+    const notice = `⏸ Question avant suppression — ${projectName} : ${doubts.length} fichier(s) en doute`;
+    writeEvent({ type: 'notification', subtype: 'pipeline_limit', pipeline: { run, step: step.id }, limit: 'doutes', value: doubts.length,
+      why: doubts.map(d => `${d.chemin} : ${d.question}`).join(' ; ').slice(0, 2000), text: notice });
+    const body = pauseText({
+      what: `avant de supprimer quoi que ce soit, voici la liste explicite. Rien n’a encore été supprimé ni déplacé.\n\nÀ supprimer (sûr) :\n${sure.length ? sure.join('\n') : '- aucun'}\n\nEn doute — je ne les supprime pas sans votre réponse :\n${doubts.map(d => `- \`${d.chemin}\` : ${d.question}`).join('\n')}`,
+      options: [['continuer', 'je supprime seulement les fichiers sûrs ci-dessus, je GARDE les fichiers en doute, puis je range, je vérifie et je livre.'],
+        ['tout supprimer', 'je supprime aussi les fichiers en doute (une copie de chaque fichier supprimé est gardée par l’orchestrateur), puis je range, je vérifie et je livre.'],
+        C.abandonner],
+      recommend: ['continuer', 'rien n’est perdu : un fichier gardé pourra toujours être supprimé plus tard.'],
+    });
+    const question = `${projectName} en pause — répondez « continuer » (garder les fichiers en doute), « tout supprimer » ou « abandonner » : ${doubts.length} fichier(s) en doute avant suppression (${doubts.slice(0, 3).map(d => d.chemin).join(', ')}).`;
+    return finish({ code: 2, paused: true, limit: 'doutes', question, result: body, notice });
   };
 
   // ── Une étape : un tour, sur le model de sa case, jeton signé ────────────
@@ -2883,6 +2991,17 @@ export async function runPipeline(o) {
       const to = state.mode === 'complet' && items.length ? '4 (nouveaux items)' : '4b';
       writeEvent({ type: 'system', subtype: 'pipeline_loop', pipeline: { run, from: 'revue', to: state.mode === 'complet' && items.length ? 'tdd' : 'vert', round: state.reviewRounds },
         text: `revue : ${items.length + fixes.length} problème(s)${fixes.length ? ` dont ${fixes.length} constat(s) de documentation` : ''} → retour à ${to} (tour de revue ${state.reviewRounds}/${limits.reviewRounds})` });
+    }
+    // A step that lists questions for the user (meeting: files in doubt) pauses
+    // right after it, once: « continuer » resumes at the next step.
+    if (step.askUser && !state.askedUser?.[step.id]) {
+      const asked = Array.isArray(last.crit?.json?.[step.askUser]) ? last.crit.json[step.askUser] : [];
+      if (asked.length) {
+        state.askedUser = { ...(state.askedUser || {}), [step.id]: true };
+        state.index++;
+        saveState();
+        return pauseForDoubts(step, asked, last.crit.json);
+      }
     }
     state.index++;
     saveState();

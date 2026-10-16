@@ -33,7 +33,7 @@ export function pipelineArgs(o) {
  *  that the chef passes on (its contract, 0.52.0). An existing prefix wins. */
 export function withPipelinePrefix(text, o) {
   if (!o.pipeline && !o.pipelineMode) return text;
-  if (/^\s*\/(dev|developpement|développement|code|discussion|question|discuter|leger|léger|complet|incident|recherche|audit|s[ée]curit[ée]|maintenance|nouveau|nouveau-projet|donn[ée]es|r[ée]daction|traduction|images?|vid[ée]o|audio|routage)\b/i.test(text)) return text;
+  if (/^\s*\/(dev|developpement|développement|code|discussion|question|discuter|leger|léger|complet|incident|recherche|audit|s[ée]curit[ée]|maintenance|nouveau|nouveau-projet|donn[ée]es|r[ée]daction|traduction|r[ée]union|compte-rendu|images?|vid[ée]o|audio|routage)\b/i.test(text)) return text;
   const pipe = o.pipeline || 'dev';
   const pre = [`/${pipe}`, o.pipelineMode && pipe === 'dev' ? `/${o.pipelineMode}` : ''].filter(Boolean).join(' ');
   return `${pre} ${text}`;

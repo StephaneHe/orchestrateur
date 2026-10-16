@@ -2,7 +2,7 @@
 // public/models.js — « MODELS PAR TÂCHE » (0.39.0 → 0.40.0 : pipelines)
 // ============================================================================
 //
-// Niveau routé `#/models` de la salle. 13 pipelines en onglets ; chacun est un
+// Niveau routé `#/models` de la salle. 14 pipelines en onglets ; chacun est un
 // schéma de ses étapes dans l'ordre, avec ses boucles et ses retours dessinés.
 // Sur chaque étape : quand / quoi, un exemple, et le menu de model (groupé par
 // fournisseur, plus « Outil local » pour le travail média). Les étapes à

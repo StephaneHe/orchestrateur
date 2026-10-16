@@ -38,8 +38,8 @@ const fakeWhich = async () => ({ bins: new Set(['ffmpeg', 'whisper']), py: new S
 const make = (dir, extra = {}) => createModelRouting({ root: dir, cacheFile: path.join(dir, 'cache.json'), fetch: fakeFetch(false), env: { CODEX_HOME: dir }, which: fakeWhich, ...extra });
 const stepsOf = (p) => p.flow.flatMap(n => (n.kind === 'loop' ? n.steps : [n]));
 
-console.log('\n── 1. Les 13 pipelines');
-t('13 pipelines dans l’ordre demandé', PIPELINES.map(p => p.id).join() === 'dev,discussion,routage,incident,recherche,audit,maintenance,nouveau,donnees,redaction,images,video,audio');
+console.log('\n── 1. Les 14 pipelines');
+t('14 pipelines dans l’ordre demandé (reunion depuis 0.110.0)', PIPELINES.map(p => p.id).join() === 'dev,discussion,routage,incident,recherche,audit,maintenance,nouveau,donnees,redaction,reunion,images,video,audio');
 t('chaque pipeline a un bandeau (à quoi il sert, quand)', PIPELINES.every(p => p.purpose && p.when));
 const incomplete = PIPELINES.flatMap(p => stepsOf(p).filter(s => !s.title || !s.what || !s.example || !s.n).map(s => `${p.id}.${s.id}`));
 t('chaque étape a numéro, titre, quand/quoi et exemple', !incomplete.length, incomplete.join(', '));

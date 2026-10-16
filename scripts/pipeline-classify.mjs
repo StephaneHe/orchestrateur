@@ -45,6 +45,12 @@ export function classifierCase(root) {
   return { model: a.model, provider: PROVIDER_OF[a.provider] };
 }
 
+// 0.110.0 (user request 2026-10-16): a meeting request had been sent to
+// Maintenance, which upkeeps CODE. A rule of meaning for the model, never a
+// keyword match.
+const MEETING_RULE = 'Managing the minutes or the files of a MEETING (record the final e-mail or minutes the user sent, delete drafts, file the recording, transcript, opinion or notes so they can be found under a name) → reunion, never maintenance (maintenance only upkeeps code: dependencies, git history, flaky tests, technical debt) and never redaction (which writes a new text). ';
+const meetingRule = (choices) => (choices.some(p => p.id === 'reunion') ? MEETING_RULE : '');
+
 // Nature of a dev request (case variants; « mecanique » has no red test).
 const KINDS = { comportement: 'simple', simple: 'simple', bugfix: 'bugfix', mecanique: 'mecanique', 'mécanique': 'mecanique' };
 
@@ -56,6 +62,7 @@ export function classificationPrompt(text, fixed = {}, choices = CHOICES) {
     `Pipelines:\n${list}\n\n` +
     (imposed.length ? `The user already chose ${imposed.join(' and ')}: keep it as is and decide only the rest.\n` : '') +
     'Rules: a question, a remark or a reflection that does not ask for a change → discussion. If nothing fits clearly → discussion (user rule: unclassifiable = Discussion). ' +
+    meetingRule(choices) +
     'For dev: mode "complet" for a new feature or behaviour, "leger" for a small fix or a mechanical edit; if unsure between the two → "leger". ' +
     'For dev, also the nature: "bugfix" (a defect to reproduce then fix), "mecanique" (a mechanical edit that changes no behaviour: rename, replace, reformat), or "comportement" (a behaviour to add or change). ' +
     'Other pipelines: mode "complet" unless the request is clearly small.\n' +
@@ -222,6 +229,7 @@ export function routingTaskPrompt(task, fixed = {}, choices = CHOICES) {
     `Pipelines:\n${list}\n\n` +
     (imposed.length ? `The user already chose ${imposed.join(' and ')}: keep it as is and decide only the rest.\n` : '') +
     'Rules: a question, a remark or a reflection that does not ask for a change → discussion. ' +
+    meetingRule(choices) +
     'For dev: mode "complet" for a new feature or behaviour, "leger" for a small fix or a mechanical edit; if unsure between the two → "leger"; ' +
     'and the nature: "bugfix", "mecanique" (no behaviour change) or "comportement". Other pipelines: mode "complet" unless the task is clearly small.\n' +
     'If the task is ambiguous (you cannot tell what is wanted, or which of two pipelines), do NOT guess: set "question" to the question to ask the user. ' +
