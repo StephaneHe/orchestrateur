@@ -26,6 +26,13 @@
 // ~/.claude.json : sans cela, claude -p ignore les permissions du projet.
 // Voir workspace-trust.mjs.
 //
+// EN SERVICE (0.109.0) — règle utilisateur : « Tout nouveau musicien est sensé
+// en être ». Le projet est mis en service dans les pipelines obligatoires
+// (serviceNewProject de pipeline-onboard.mjs) : dépôt git (dossier neuf
+// seulement), suite de tests vérifiée verte (générée si le projet n'en déclare
+// aucune et n'a pas d'autre pile), .orchestrateur/pipeline.json commité,
+// enforcement.projects. Impossible ⇒ « ⚠ HORS SERVICE » avec la raison, code 67.
+//
 // DESIGN — deterministic + idempotent:
 //   • No LLM in the loop. Pure mechanics, like restart-orchestrateur.mjs.
 //   • NEVER overwrites an existing file. Missing → created. Present →
@@ -39,13 +46,15 @@
 //     call.
 //
 // Exit codes: 0 = success (including full no-op), 64 = usage error,
-//             65 = template missing, 66 = filesystem/config write failure.
+//             65 = template missing, 66 = filesystem/config write failure,
+//             67 = scaffolded but NOT in pipeline service (reason printed).
 // ============================================================================
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { STANDARD_TOOLS, ensureProjectPermissions, trustWorkspace } from './workspace-trust.mjs';
+import { serviceNewProject } from './pipeline-onboard.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Même racine alternative que dispatch.mjs, pour les recettes (jamais en prod).
@@ -128,6 +137,8 @@ if (!fs.existsSync(TEMPLATE_DIR)) {
 
 const created = [];
 const skipped = [];
+const scaffolded = [];      // template files created in this run (committed by step 5)
+let fresh = false;          // folder created or empty: holds nothing but our scaffolding
 
 // 1. Project directory ------------------------------------------------------
 try {
@@ -135,10 +146,12 @@ try {
     if (!fs.statSync(projectPath).isDirectory()) {
       die(`path exists but is not a directory: ${projectPath}`, 66);
     }
+    fresh = fs.readdirSync(projectPath).length === 0;
     log(`dir  ${projectPath} — exists, skipped`);
     skipped.push('<project dir>');
   } else {
     fs.mkdirSync(projectPath, { recursive: true });
+    fresh = true;
     log(`dir  ${projectPath} — created`);
     created.push('<project dir>');
   }
@@ -164,6 +177,7 @@ for (const rel of listTemplateFiles(TEMPLATE_DIR)) {
     fs.writeFileSync(dest, substitute(fs.readFileSync(src, 'utf8')));
     log(`file ${rel} — created`);
     created.push(rel);
+    scaffolded.push(rel);
   } catch (e) {
     warn(`file ${rel} — FAILED: ${e.message}`);
   }
@@ -237,7 +251,23 @@ if (process.env.DISPATCH_ROOT_FOR_TESTS && !process.env.ORCH_CLAUDE_JSON) {
   }
 }
 
-// 5. Summary ----------------------------------------------------------------
+// 5. In service in the mandatory pipelines (0.109.0) ------------------------
+//
+// User rule (2026-10-16): « Tout nouveau musicien est sensé en être ». Any
+// case where it cannot be done is reported loudly with its reason and remedy,
+// and the exit code is 67: never left out of service in silence.
+let service;
+try {
+  service = serviceNewProject(ROOT, { name, dir: projectPath, fresh, scaffolded });
+} catch (e) {
+  service = { status: 'exclu', why: `erreur : ${e.message}`, actions: [] };
+}
+for (const a of service.actions) log(`pipe ${a}`);
+if (service.status === 'service') { log('pipe EN SERVICE dans les pipelines obligatoires'); created.push('pipelines (en service)'); }
+else if (service.status === 'already') { log('pipe déjà en service, skipped'); skipped.push('pipelines (déjà en service)'); }
+else if (service.status === 'chef') log(`pipe ${service.why}`);
+
+// 6. Summary ----------------------------------------------------------------
 
 console.log('');
 log(`project : ${name}`);
@@ -253,5 +283,12 @@ log(`skipped : ${skipped.length ? skipped.join(', ') : '(none)'}`);
 if (configChanged) {
   log('note    : config.json changed — the running server picks up new projects');
   log('          within ~3s for log watchers. Restart only if you need more.');
+}
+if (service.status === 'exclu') {
+  console.error('');
+  console.error(`[new-project] ⚠ HORS SERVICE : ${name} n'a PAS pu être mis en service dans les pipelines obligatoires.`);
+  console.error(`[new-project]   raison : ${service.why}`);
+  console.error('[new-project]   (règle : tout nouveau musicien est en service dès sa création — corriger puis relancer)');
+  process.exit(67);
 }
 process.exit(0);

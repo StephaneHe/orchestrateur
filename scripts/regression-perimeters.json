@@ -467,7 +467,8 @@
         "_test_atomic_rename.mjs",
         "_test_wake_report_only.mjs",
         "_test_busy_never_ready.mjs",
-        "_test_workspace_trust.mjs"
+        "_test_workspace_trust.mjs",
+        "_test_new_project_service.mjs"
       ],
       "uses": [
         {
@@ -554,6 +555,7 @@
             "_test_launch_refused.mjs",
             "_test_maxparallel_default.mjs",
             "_test_model_backoff.mjs",
+            "_test_new_project_service.mjs",
             "_test_parallel_lanes.mjs",
             "_test_queue_edit.mjs",
             "_test_queue_held.mjs",
@@ -561,7 +563,8 @@
             "_test_tools_resolution.mjs",
             "_test_turn_logs.mjs",
             "_test_turn_report.mjs",
-            "_test_wake_report_only.mjs"
+            "_test_wake_report_only.mjs",
+            "_test_workspace_trust.mjs"
           ]
         },
         {
@@ -580,6 +583,7 @@
             "_test_launch_refused.mjs",
             "_test_maxparallel_default.mjs",
             "_test_model_backoff.mjs",
+            "_test_new_project_service.mjs",
             "_test_parallel_lanes.mjs",
             "_test_queue_edit.mjs",
             "_test_queue_held.mjs",
@@ -587,7 +591,8 @@
             "_test_tools_resolution.mjs",
             "_test_turn_logs.mjs",
             "_test_turn_report.mjs",
-            "_test_wake_report_only.mjs"
+            "_test_wake_report_only.mjs",
+            "_test_workspace_trust.mjs"
           ]
         },
         {

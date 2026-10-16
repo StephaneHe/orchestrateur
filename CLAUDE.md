@@ -1047,6 +1047,17 @@ dashboard ne servait alors à rien.
 - `add-tool` (server) pose aussi la confiance.
 - Recette : `node scripts/_test_workspace_trust.mjs` (faux `~/.claude.json`,
   `ORCH_CLAUDE_JSON`).
+- **En service dans les pipelines dès la création** (0.109.0, règle « Tout
+  nouveau musicien est sensé en être ») : `new-project.mjs` appelle
+  `serviceNewProject` (`pipeline-onboard.mjs`). Dossier neuf : `git init` +
+  `.gitignore` ; sans commande de test déclarée ni autre pile : suite Node
+  minimale (`package.json` `"test": "node --test"`, `tests/smoke.test.mjs`) ;
+  commit de ce que la création a écrit, et seulement cela ; suite lancée,
+  verte exigée ; `pipeline.json` commité ; `enforcement.projects`. Impossible
+  (dossier existant sans git, autre pile sans test, suite rouge, arbre sale,
+  tour en cours) ⇒ « ⚠ HORS SERVICE » + raison, **code 67**, jamais en
+  silence. Relance idempotente ; le chef reste au Routage. Recette :
+  `_test_new_project_service.mjs`.
 
 ## « Vu », arrêt par le chef, journal d'activité, cadres du Pilotage (0.31.0)
 

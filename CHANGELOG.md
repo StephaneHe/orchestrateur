@@ -11,6 +11,44 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.109.0] - 2026-10-16
+
+### Added
+
+- (server) Every new musician is in service in the mandatory pipelines from
+  its creation (user request of 2026-10-16: « Ajoutes [projet] dans les services
+  pipeline. Tout nouveau musicien est sensé en être »). `new-project.mjs` now
+  calls `serviceNewProject` (`scripts/pipeline-onboard.mjs`): in a folder it
+  just created, `git init` plus a `.gitignore` (`TODO_LIST.md`,
+  `node_modules/`, `logs/`); when the project declares no test command and has
+  no other stack, a minimal Node suite (`package.json` with `"test": "node
+  --test"` at the CHANGELOG version, `tests/smoke.test.mjs`); a commit of what
+  this run created, and only that; the suite is really run and must be green;
+  then `.orchestrateur/pipeline.json` is committed (phase 7 onboarding) and the
+  project is added to `model-routing.json` → `enforcement.projects` (the rest
+  of the enforcement is kept). Re-running is idempotent (« déjà en service »);
+  the chef and its slots are left to the Routage pipeline.
+
+### Changed
+
+- (server) When the project cannot be put in service (existing folder without
+  git, another stack without a declared test command, red suite, dirty tree,
+  turn running), `new-project.mjs` prints « ⚠ HORS SERVICE » with the reason
+  and the remedy and exits with the new code **67**, instead of leaving the
+  project out of service in silence. An existing folder is never `git init`-ed
+  and nobody else's work is ever committed.
+- (server) `pipeline-onboard.mjs` commits with the fallback identity
+  `orchestrateur <orchestrateur@localhost>` when the repository has no git
+  identity (same rule as item delivery).
+
+### Fixed
+
+- (server) New projects silently stayed out of the mandatory pipelines (as
+  the recent one reported by the user). Cause: only the one-shot phase 7 batch (`pipeline-onboard.mjs --plan … --apply`,
+  0.56.0) ever put projects in service; `new-project.mjs` created no git
+  repository, no test suite, no `pipeline.json` and never touched the
+  enforcement, so every project created afterwards stayed out of service.
+
 ## [0.108.0] - 2026-10-16
 
 ### Added
