@@ -180,7 +180,8 @@
         "scripts/restart-orchestrateur.mjs",
         "scripts/server-watchdog.mjs",
         "scripts/sendmail.mjs",
-        "scripts/copy-build.mjs"
+        "scripts/copy-build.mjs",
+        "public/attach-policy.js"
       ],
       "suites": [
         "_test_network_guard.mjs",
@@ -198,12 +199,14 @@
         "_test_pool_p0a.mjs",
         "_test_pool_chef_dispatch.mjs",
         "_test_queue_api.mjs",
-        "_test_queue_sidecar_sweep.mjs"
+        "_test_queue_sidecar_sweep.mjs",
+        "_test_attach_policy.mjs"
       ],
       "uses": [
         {
           "perimeter": "client",
           "suites": [
+            "_test_attach_policy.mjs",
             "_test_permission_prompt.mjs"
           ]
         },
@@ -211,6 +214,7 @@
           "perimeter": "dispatch",
           "suites": [
             "_test_api_keys.mjs",
+            "_test_attach_policy.mjs",
             "_test_downloads_hot.mjs",
             "_test_network_guard.mjs",
             "_test_permission_prompt.mjs",
@@ -230,6 +234,7 @@
           "perimeter": "noyau",
           "suites": [
             "_test_api_keys.mjs",
+            "_test_attach_policy.mjs",
             "_test_downloads_hot.mjs",
             "_test_network_guard.mjs",
             "_test_permission_prompt.mjs",
@@ -256,6 +261,7 @@
           "perimeter": "panneaux",
           "suites": [
             "_test_api_keys.mjs",
+            "_test_attach_policy.mjs",
             "_test_downloads_hot.mjs",
             "_test_network_guard.mjs",
             "_test_permission_prompt.mjs",
@@ -275,6 +281,7 @@
           "perimeter": "pipelines",
           "suites": [
             "_test_api_keys.mjs",
+            "_test_attach_policy.mjs",
             "_test_downloads_hot.mjs",
             "_test_network_guard.mjs",
             "_test_permission_prompt.mjs",
@@ -294,6 +301,7 @@
           "perimeter": "routage",
           "suites": [
             "_test_api_keys.mjs",
+            "_test_attach_policy.mjs",
             "_test_downloads_hot.mjs",
             "_test_network_guard.mjs",
             "_test_permission_prompt.mjs",

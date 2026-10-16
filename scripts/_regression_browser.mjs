@@ -1250,6 +1250,23 @@ export async function browserChecks(sb, t) {
       assert(await until(async () => !(await visible(page, '#composer-image-strip')), 8000), 'vignette non envoyée');
       assert(await until(async () => (await page.locator('#cv-scroll img').count()) > 0, 5000), 'image absente de la bulle');
     });
+    // User requirement 2026-10-16 (0.108.0): « Acceptes les mkv et les fichiers jusqu'à 500Mo ».
+    await check(B, 'attach-mkv', 'Pièce jointe : .mkv accepté (même sans type), > 500 Mo et type inconnu refusés avec un message clair', async () => {
+      if (!(await page.evaluate(() => typeof AttachPolicy === 'object'))) return 'NA';
+      // Windows browsers often give .mkv no MIME type: the extension must decide.
+      await page.setInputFiles('#composer-file', { name: 'reunion.mkv', mimeType: '', buffer: Buffer.from('\x1aE\xdf\xa3 recette', 'latin1') });
+      assert(await until(async () => (await page.locator('#composer-image-strip .cis-thumb--video').count()) > 0, 5000), 'vignette vidéo absente pour le .mkv');
+      const mt = await page.evaluate(() => App.composer.images.map(i => i.mediaType));
+      assert(mt.includes('video/x-matroska'), `type envoyé : ${mt.join(', ')}`);
+      await page.evaluate(() => App._addAttachFiles([{ name: 'enorme.mkv', type: 'video/x-matroska', size: AttachPolicy.MAX_BYTES + 1 }]));
+      let err = await page.textContent('#composer-error');
+      assert(/trop volumineux/.test(err) && /500 Mo/.test(err), `message de taille : ${err}`);
+      await page.setInputFiles('#composer-file', { name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('x') });
+      err = await page.textContent('#composer-error');
+      assert(/MKV/.test(err) && /500 Mo/.test(err) && /notes\.txt/.test(err), `message de type : ${err}`);
+      assert((await page.evaluate(() => App.composer.images.length)) === 1, 'un fichier refusé a été ajouté');
+      await page.click('#composer-image-strip .cis-del');
+    });
     await check(B, 'realtime', 'Temps réel : un tour lancé par l\'API change l\'état côté client sans rechargement', async () => {
       const before = await page.evaluate(() => App.musicians.get('kappa').state);
       await fetch(`${sb.url}/api/dispatch`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ project: 'kappa', prompt: 'Tour de recette', queueIfBusy: true }) });

@@ -1773,16 +1773,10 @@ const App = {
     // Paste — images and videos from clipboard; text proceeds normally.
     input.addEventListener("paste", (e) => {
       const items = Array.from(e.clipboardData?.items || []);
-      const mediaItems = items.filter(it => it.type.startsWith("image/") || it.type.startsWith("video/"));
+      const mediaItems = items.filter(it => it.kind === "file" && (it.type.startsWith("image/") || it.type.startsWith("video/")));
       if (!mediaItems.length) return;
       e.preventDefault();
-      for (const item of mediaItems) {
-        const blob = item.getAsFile();
-        if (!blob) continue;
-        const objectUrl = URL.createObjectURL(blob);
-        this.composer.images.push({ objectUrl, mediaType: item.type, blob, isVideo: item.type.startsWith("video/") });
-      }
-      this.renderComposerImages();
+      this._addAttachFiles(mediaItems.map(it => it.getAsFile()).filter(Boolean));
       setDraft();
     });
 
@@ -1811,23 +1805,24 @@ const App = {
   },
 
   _addAttachFiles(files) {
-    const ACCEPTED_IMAGE = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
-    const ACCEPTED_VIDEO = new Set(["video/mp4", "video/webm", "video/quicktime"]);
+    // Types, 500 MB cap and wording live in attach-policy.js (shared with the server).
     const rejected = [];
+    const errors = [];
     for (const f of files) {
-      if (ACCEPTED_IMAGE.has(f.type)) {
+      const verdict = AttachPolicy.check(f);
+      if (verdict.ok) {
         const objectUrl = URL.createObjectURL(f);
-        this.composer.images.push({ objectUrl, mediaType: f.type, blob: f, isVideo: false });
-      } else if (ACCEPTED_VIDEO.has(f.type)) {
-        const objectUrl = URL.createObjectURL(f);
-        this.composer.images.push({ objectUrl, mediaType: f.type, blob: f, isVideo: true });
+        this.composer.images.push({ objectUrl, mediaType: verdict.mediaType, blob: f, isVideo: verdict.isVideo });
       } else {
         rejected.push(f.name);
+        if (verdict.reason === "size") errors.push(verdict.message);
       }
     }
-    if (rejected.length) {
-      this.showComposerError(`Type non supporté : ${rejected.join(", ")} — accepté : images (PNG/JPG/WEBP/GIF) et vidéos (MP4/WEBM/MOV).`);
+    const badType = rejected.length - errors.length;
+    if (badType > 0) {
+      errors.unshift(AttachPolicy.unsupportedText(files.filter(f => AttachPolicy.check(f).reason === "type").map(f => f.name)));
     }
+    if (errors.length) this.showComposerError(errors.join(" "));
     if (files.length - rejected.length > 0) {
       this.renderComposerImages();
       const input = $("#composer-input");

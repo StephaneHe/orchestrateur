@@ -11,6 +11,39 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.108.0] - 2026-10-16
+
+### Added
+
+- (server) Chat attachments accept `.mkv` videos (user request of
+  2026-10-16: « Acceptes les mkv et les fichiers jusqu'à 500Mo », after a
+  ~260 MB meeting recording in `.mkv` was refused). `video/x-matroska` and
+  its aliases (`video/matroska`, `video/mkv`, `application/x-matroska`) are
+  stored as `.mkv`; the dashboard also recognises `.mkv` by its extension
+  when the browser gives no type (common on Windows), and the file picker
+  offers it. The Android app needed no change (it forwards the system MIME).
+- (server) New shared module `public/attach-policy.js` (`AttachPolicy`,
+  browser + Node): accepted types, size cap and the user-facing wording, used
+  by both `/api/attach/image` and the composer.
+
+### Changed
+
+- (server) Attachment size cap raised from 100 MB to 500 MB end to end:
+  composer check before upload, `Content-Length` refused up front, streamed
+  byte count, and the HTTP server `requestTimeout` raised from Node's 5 min
+  default to 1 h so a large upload over Tailscale is not cut.
+- (server) Refusal messages are in French and state the 500 MB limit and the
+  accepted formats (PNG/JPG/WEBP/GIF, MP4/WEBM/MOV/MKV); a 413 is now
+  delivered before the socket is closed, and a refused partial file is
+  removed once its handle is closed (Windows).
+
+### Fixed
+
+- (server) Pasted media now goes through the same type/size check as picked
+  or dropped files.
+
+Restart required (server route and limits).
+
 ## [0.107.0] - 2026-10-16
 
 ### Added

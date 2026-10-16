@@ -86,6 +86,7 @@ import { releaseList, lastRelease } from './scripts/release-notes.mjs';
 import { listRequests, buildRequest, TASK_STATES } from './scripts/request-map.mjs';
 import { resolveId, idVocabulary } from './scripts/id-resolve.mjs';
 import { mountGatewayRoutes } from './scripts/responses-gateway.mjs';
+import './public/attach-policy.js';   // sets globalThis.AttachPolicy (chat attachments, 0.108.0)
 // Clés NVIDIA / OpenRouter saisies dans la page Models (0.43.0).
 import { createApiKeys } from './scripts/api-keys.mjs';
 import { createPermissionStore, mountPermissionRoutes } from './scripts/permission-store.mjs';
@@ -1668,6 +1669,9 @@ sessionWatcher.on('all', (event, fp) => {
 
 const app = express();
 const httpServer = createHttpServer(app);
+// Node's default 5 min requestTimeout would cut a 500 MB attachment uploaded
+// over Tailscale; the network guard (loopback + Tailscale) bounds the exposure.
+httpServer.requestTimeout = 60 * 60 * 1000;
 
 // verifyClient runs BEFORE the WebSocket handshake completes, so we can
 // reject bad tokens and disallowed interfaces without ever opening the
@@ -5907,29 +5911,27 @@ function invalidateConductorSession(reason) {
 // Client posts raw image bytes with Content-Type set to the MIME type.
 // Server validates MIME before writing, generates a sanitised filename
 // (timestamp + 4-byte random hex, never trusts the client's filename),
-// enforces a 20 MB cap, and returns the Windows absolute path so the
-// client can insert it into the central pty draft for Claude Code to read.
+// enforces the cap of public/attach-policy.js (500 MB since 0.108.0), and
+// returns the Windows absolute path so the client can pass it on.
 //
 // TODO: add a periodic cleanup cron for old files in attachments/ (v2).
 
-const ATTACH_MIME = new Map([
-  ['image/png',       '.png'],
-  ['image/jpeg',      '.jpg'],
-  ['image/webp',      '.webp'],
-  ['image/gif',       '.gif'],
-  ['video/mp4',       '.mp4'],
-  ['video/webm',      '.webm'],
-  ['video/quicktime', '.mov'],
-]);
-const MAX_ATTACH_BYTES = 100 * 1024 * 1024; // 100 MB for video
+const ATTACH_MIME = globalThis.AttachPolicy.MIME_TO_EXT;
+const MAX_ATTACH_BYTES = globalThis.AttachPolicy.MAX_BYTES;
 
 app.post('/api/attach/image', (req, res) => {
-  const mime = (req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  const mime = globalThis.AttachPolicy.normalizeMime(req.headers['content-type']);
   const ext  = ATTACH_MIME.get(mime);
   if (!ext) {
     return res.status(415).json({
-      error: `unsupported type "${mime}". Allowed: ${[...ATTACH_MIME.keys()].join(', ')}`,
+      error: `${globalThis.AttachPolicy.unsupportedText([mime ? `« ${mime} »` : ''])} ` +
+        `(types acceptés : ${[...ATTACH_MIME.keys()].join(', ')})`,
     });
+  }
+  const declared = Number(req.headers['content-length']);
+  if (Number.isFinite(declared) && declared > MAX_ATTACH_BYTES) {
+    res.set('Connection', 'close');
+    return res.status(413).json({ error: globalThis.AttachPolicy.tooBigText('', declared) });
   }
 
   const filename = `att-${Date.now()}-${crypto.randomBytes(4).toString('hex')}${ext}`;
@@ -5942,16 +5944,22 @@ app.post('/api/attach/image', (req, res) => {
   function abort(statusCode, message) {
     if (aborted) return;
     aborted = true;
+    // Unlink once the fd is closed: on Windows an open file cannot be removed.
+    out.once('close', () => fs.unlink(filePath, () => {}));
     out.destroy();
-    try { fs.unlinkSync(filePath); } catch {}
-    if (!res.headersSent) res.status(statusCode).json({ error: message });
+    if (!res.headersSent) {
+      if (statusCode === 413) res.set('Connection', 'close');
+      res.status(statusCode).json({ error: message });
+    }
   }
 
   req.on('data', (chunk) => {
     received += chunk.length;
     if (received > MAX_ATTACH_BYTES) {
-      abort(413, `file exceeds ${MAX_ATTACH_BYTES / 1024 / 1024} MB limit`);
-      req.destroy();
+      abort(413, globalThis.AttachPolicy.tooBigText('', received));
+      // Let the 413 flush before dropping the socket, or the client only sees a reset.
+      res.on('finish', () => req.destroy());
+      req.pause();
     } else if (!aborted) {
       out.write(chunk);
     }

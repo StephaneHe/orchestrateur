@@ -1821,6 +1821,62 @@ async function apiChecks(sb) {
     const g = await get('/attachments/' + path.basename(p));
     assert(g.ok, `service ${g.status}`);
   });
+  // User requirement 2026-10-16 (0.108.0): « Acceptes les mkv et les fichiers jusqu'à 500Mo ».
+  await check(S, 'attach-mkv-500', 'Pièce jointe : .mkv accepté, 500 Mo acceptés, au-delà refusé (413, message clair), autres types intacts', async () => {
+    const MB = 1024 * 1024, MAX = 500 * MB;
+    const up = (type, body) => fetch(`${sb.url}/api/attach/image`, { method: 'POST', headers: { ...H, 'Content-Type': type }, body });
+    for (const [type, ext] of [['video/x-matroska', '.mkv'], ['video/mkv', '.mkv'], ['video/mp4', '.mp4'], ['video/webm', '.webm'], ['video/quicktime', '.mov'], ['image/jpeg', '.jpg'], ['image/webp', '.webp'], ['image/gif', '.gif']]) {
+      const r = await up(type, Buffer.from('recette'));
+      if (r.status === 415 && type.includes('mkv')) return 'NA';   // ref older than 0.108.0
+      assert(r.ok, `${type} : HTTP ${r.status}`);
+      const { path: p } = await r.json();
+      assert(p.endsWith(ext) && fs.existsSync(p), `${type} : fichier ${p}`);
+      fs.unlinkSync(p);
+    }
+    const bad = await up('text/plain', Buffer.from('x'));
+    const badBody = await bad.json();
+    assert(bad.status === 415 && /MKV/.test(badBody.error) && /500 Mo/.test(badBody.error), `type refusé : ${bad.status} ${badBody.error}`);
+    // Raw HTTP so the body can be streamed without materialising 500 MB in memory.
+    const { request } = await import('node:http');
+    const u = new URL(`${sb.url}/api/attach/image`);
+    const send = (total, { declare }) => new Promise((resolve, reject) => {
+      const headers = { ...H, 'Content-Type': 'video/x-matroska' };
+      if (declare) headers['Content-Length'] = String(total);
+      let answered = false;
+      const req = request({ hostname: u.hostname, port: u.port, path: u.pathname + u.search, method: 'POST', headers }, (res) => {
+        answered = true;
+        let d = ''; res.setEncoding('utf8'); res.on('data', c => { d += c; });
+        const done = () => resolve({ status: res.statusCode, body: d });
+        res.on('end', done); res.on('close', done);
+      });
+      // The server drops the socket after a 413: a write error then is expected.
+      req.on('error', (e) => { if (!answered) reject(e); });
+      const chunk = Buffer.alloc(4 * MB, 0x41);
+      let sent = 0;
+      const pump = () => {
+        while (sent < total && !answered) {
+          const n = Math.min(chunk.length, total - sent);
+          sent += n;
+          if (!req.write(n === chunk.length ? chunk : chunk.subarray(0, n))) { req.once('drain', pump); return; }
+        }
+        req.end();
+      };
+      pump();
+    });
+    const exact = await send(MAX, { declare: false });
+    assert(exact.status === 200, `500 Mo exactement : HTTP ${exact.status} ${exact.body}`);
+    const ep = JSON.parse(exact.body).path;
+    assert(fs.statSync(ep).size === MAX, `taille écrite ${fs.statSync(ep).size}`);
+    fs.unlinkSync(ep);
+    const declared = await send(MAX + 1, { declare: true }).catch(e => ({ status: 0, body: e.message }));
+    assert(declared.status === 413 && /500 Mo/.test(declared.body) && /trop volumineux/.test(declared.body), `> 500 Mo annoncé : ${declared.status} ${declared.body}`);
+    const streamed = await send(MAX + 1, { declare: false }).catch(e => ({ status: 0, body: e.message }));
+    assert(streamed.status === 413 && /500 Mo/.test(streamed.body), `> 500 Mo en flux : ${streamed.status} ${streamed.body}`);
+    const mkvLeft = () => fs.readdirSync(path.join(sb.root, 'attachments')).filter(f => f.endsWith('.mkv'));
+    await until(async () => mkvLeft().length === 0, 5000);
+    assert(!mkvLeft().length, `fichiers refusés laissés sur le disque : ${mkvLeft().join(', ')}`);
+    return '.mkv + 7 types, 500 Mo acceptés, 500 Mo + 1 refusé (annoncé et en flux)';
+  });
   await check(S, 'downloads', '/downloads : carte, APK, rechargement à chaud de downloads.json', async () => {
     let html = await (await fetch(`${sb.url}/downloads`)).text();
     assert(html.includes('Alpha App'), 'carte absente');

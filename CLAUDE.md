@@ -2691,6 +2691,12 @@ Images uploaded via the dashboard (paste / drag-drop / file picker) land in
 The folder is gitignored. **No automatic cleanup is implemented (v1).**
 Purge manually when it grows large, or wire a scheduled task in a future iteration.
 
+Types and cap (0.108.0, « Acceptes les mkv et les fichiers jusqu'à 500Mo ») :
+single source `public/attach-policy.js` (`AttachPolicy`, browser + server):
+PNG/JPG/WEBP/GIF, MP4/WEBM/MOV/MKV (`.mkv` also by extension), 500 MB per
+file; HTTP `requestTimeout` 1 h. Recettes : `_test_attach_policy.mjs`, HTTP
+`attach-mkv-500` (500 MB accepted, +1 byte refused), navigateur `attach-mkv`.
+
 ---
 
 ## Do-not
