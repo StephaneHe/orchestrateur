@@ -55,6 +55,8 @@ function knownQueueIds(logsDir) {
   }
   return ids;
 }
+// An id written as an identifier mark [[…]] (0.107.0): the note goes after the mark.
+const afterMark = (src, at) => (src.startsWith(']]', at) ? at + 2 : at);
 const runExists = (logsDir, run) => fs.existsSync(path.join(logsDir, 'runs', run, 'run.json'));
 
 /**
@@ -72,7 +74,7 @@ export function checkReportIds(text, { logsDir, pending = null, queueIds = null,
 
   for (const m of src.matchAll(HEX8_RE)) {
     const id = m[1];
-    const at = m.index + id.length;
+    const at = afterMark(src, m.index + id.length);
     if (NOT_A_TASK_BEFORE.test(src.slice(Math.max(0, m.index - 20), m.index))) continue;
     const t = byId.get(id);
     const label = labelAfter(src, at);
@@ -102,12 +104,12 @@ export function checkReportIds(text, { logsDir, pending = null, queueIds = null,
   for (const m of src.matchAll(QUEUE_ID_RE)) {
     if (queues.has(m[1])) continue;
     findings.push({ kind: 'unknown-queue', id: m[1] });
-    inserts.push({ at: m.index + m[1].length, note: ' ⚠ [contrôle : absent des files d’attente — déjà lancé, retiré, ou erreur]' });
+    inserts.push({ at: afterMark(src, m.index + m[1].length), note: ' ⚠ [contrôle : absent des files d’attente — déjà lancé, retiré, ou erreur]' });
   }
   for (const m of src.matchAll(RUN_ID_RE)) {
     if (runOk(m[1])) continue;
     findings.push({ kind: 'unknown-run', id: m[1] });
-    inserts.push({ at: m.index + m[1].length, note: ' ⚠ [contrôle : exécution inconnue]' });
+    inserts.push({ at: afterMark(src, m.index + m[1].length), note: ' ⚠ [contrôle : exécution inconnue]' });
   }
   let out = src;
   for (const ins of inserts.sort((a, b) => b.at - a.at)) out = out.slice(0, ins.at) + ins.note + out.slice(ins.at);

@@ -84,6 +84,7 @@ import { createOrderStore, ORDER_FILE, applyOrder, cleanOrder } from './scripts/
 import { readGitGraph, GIT_N_DEFAULT, GIT_N_MAX } from './scripts/git-graph-core.mjs';
 import { releaseList, lastRelease } from './scripts/release-notes.mjs';
 import { listRequests, buildRequest, TASK_STATES } from './scripts/request-map.mjs';
+import { resolveId, idVocabulary } from './scripts/id-resolve.mjs';
 import { mountGatewayRoutes } from './scripts/responses-gateway.mjs';
 // Clés NVIDIA / OpenRouter saisies dans la page Models (0.43.0).
 import { createApiKeys } from './scripts/api-keys.mjs';
@@ -2901,6 +2902,38 @@ app.get('/api/requests/:run', (req, res) => {
   const r = buildRequest(__dirname, { logsDir: LOGS_DIR, run: req.params.run });
   if (!r) return res.status(404).json({ ok: false, error: `requête inconnue : ${req.params.run}` });
   res.json({ ok: true, states: TASK_STATES, request: r });
+});
+
+// ── Identifiers explained (0.107.0) ─────────────────────────────────────────
+// User request (2026-10-16): « il faut que toutes references a un identifiant
+// quelconque soit un lien qui ouvre un overlay qui decrit ou explique ce qu'est
+// cet identifiant ». READ-ONLY (scripts/id-resolve.mjs): the client's links
+// (public/id-links.js) ask what an identifier designates. GET only.
+function idContext(contextProject) {
+  let pipelines = [], assignments = {};
+  try { const eff = modelRouting.effective(); pipelines = eff.pipelines || []; assignments = modelRouting.readRouting().assignments || {}; } catch { /* page Models unreadable: no case */ }
+  return { root: __dirname, logsDir: LOGS_DIR, projects: config.projects || [], conductor: conductorName(), todoOf,
+    pipelines, assignments, serverVersion: PKG_VERSION, contextProject };
+}
+const identifyCache = new Map();
+const IDENTIFY_TTL_MS = 10_000;
+app.get('/api/identify/vocab', (req, res) => {
+  res.json({ ok: true, ...idVocabulary(idContext(null)) });
+});
+app.get('/api/identify', async (req, res) => {
+  const id = typeof req.query.id === 'string' ? req.query.id.slice(0, 300) : '';
+  if (!id.trim()) return res.status(400).json({ ok: false, error: 'paramètre id manquant' });
+  const kind = typeof req.query.kind === 'string' ? req.query.kind.slice(0, 20) : '';
+  const project = typeof req.query.project === 'string' && (config.projects || []).some(p => p?.name === req.query.project) ? req.query.project : null;
+  const key = `${kind}\u0000${project}\u0000${id}`;
+  const hit = identifyCache.get(key);
+  if (hit && Date.now() - hit.at < IDENTIFY_TTL_MS) return res.json(hit.body);
+  try {
+    const body = await resolveId(id, kind, idContext(project));
+    if (identifyCache.size > 500) identifyCache.clear();
+    identifyCache.set(key, { at: Date.now(), body });
+    res.json(body);
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // ── Models par tâche (0.39.0) ───────────────────────────────────────────────

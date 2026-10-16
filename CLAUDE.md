@@ -1163,6 +1163,39 @@ côté models est une autre tâche ; ici, le rendu.
 - Recettes : `_test_html_output.mjs` (dont 20 injections refusées),
   navigateur `html-output`.
 
+## Identifiants cliquables et leur overlay (0.107.0)
+
+Demande utilisateur (2026-10-16) : « il faut que toutes references a un
+identifiant quelconque soit un lien qui ouvre un overlay qui decrit ou explique
+ce qu'est cet identifiant ».
+
+- **Client** (`public/id-links.js` + `id-links.css`, `IdLinks`, testé sous
+  Node) : `mdToHtml` passe sa sortie assainie à `IdLinks.linkify` (option
+  `{idrefs: false}` pour s'en passer). Liens : balises `[[valeur]]` /
+  `[[type:valeur]]` des models, et formats connus (`t-…`, `p-…`, `q-…`,
+  `vX.Y.Z`, chemin de fichier avec `:ligne`, case **exacte** de la page Models,
+  hex de 7 à 40 avec au moins une lettre, noms de projets). Jamais dans `<a>`
+  ni `<pre>`. Un nom en minuscules n'est pas lié après un déterminant (« la
+  garde »), les mots génériques (`COMMON_WORDS`) et le chef seulement balisés,
+  un identifiant en chiffres seuls aussi. Vocabulaire : `GET
+  /api/identify/vocab` (projets, cases). Clic → `#idref-overlay` (✕, Échap en
+  capture qui ne ferme que lui, clic hors zone), liens utiles : volet,
+  onglets TODO / Git / Release / Requêtes, page Models.
+- **Serveur** (`scripts/id-resolve.mjs`, `resolveId`) : `GET
+  /api/identify?id=&kind=&project=`, **lecture seule** : TODO_LIST.md, run.json,
+  file, `routage-pending.json`, `git log -1` (argv, `GIT_OPTIONAL_LOCKS=0`),
+  CHANGELOG.md, config.json, `stat` d'un fichier **dans** un dossier de projet
+  (jamais son contenu), cases de la page Models. Inconnu : `known: false` et un
+  message clair, jamais une erreur.
+- **Consigne** (`idRefRule` de `dispatch.mjs`) : tout tour dont le texte va au
+  lecteur (musiciens, chef, étapes `ID_MARK_STEPS` = Rapporter et Répondre ;
+  pas les branches du mode double ni les autres étapes) ; jamais de balise dans
+  du JSON, du code, une commande ou une valeur lue par un programme.
+- La lecture audio, les résumés du journal (`turn-core.js`) et
+  `report-check.mjs` tiennent compte des balises. **L'app Android affiche
+  encore les balises brutes.** Redémarrage nécessaire (routes, journal).
+- Recettes : `_test_id_links.mjs`, HTTP `identify`, navigateur `id-links`.
+
 ## Lecture audio des réponses du chef (0.35.0)
 
 Demande utilisateur : « implémente une fonction de lecture audio des réponses,

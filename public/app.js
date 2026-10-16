@@ -3937,8 +3937,12 @@ function renderResult(raw, ts) {
 // clickable — href sanitised). Intentionally does NOT handle tables or
 // reference-style links (rare in Claude's prose).
 // --------------------------------------------------------------------------
+// Identifiers become links that open an explanatory overlay (0.107.0,
+// public/id-links.js), on the sanitized output, whichever path produced it.
 function mdToHtml(src, opts) {
   if (!src) return "";
+  const L = globalThis.IdLinks;
+  if (L && opts?.idrefs !== false) return L.linkify(mdToHtml(src, { ...opts, idrefs: false }));
   const H = globalThis.HtmlRender;
   if (opts?.html !== false && H && H.isHtml(src)) return H.sanitize(src);
   // 1. Extract fenced code blocks into placeholders, then escape everything

@@ -1,0 +1,57 @@
+/* Clickable identifiers and their overlay (0.107.0) — public/id-links.js.
+   Above the TODO overlay (9500), below the permission overlay (10000). */
+a.idref {
+  color: inherit; text-decoration: underline dotted; text-decoration-color: var(--st-unread);
+  text-underline-offset: 0.18em; cursor: help;
+}
+a.idref:hover, a.idref:focus-visible { color: var(--fg-0); text-decoration-style: solid; outline: none; background: rgba(232, 161, 92, 0.12); border-radius: 2px; }
+code a.idref { color: inherit; }
+
+.idov { position: fixed; inset: 0; z-index: 9600; display: flex; align-items: center; justify-content: center; }
+.idov[hidden] { display: none; }
+.idov-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.62); }
+.idov-dialog {
+  position: relative; width: min(36rem, calc(100vw - 2rem)); max-height: calc(100vh - 4rem);
+  display: flex; flex-direction: column; background: #14110e; color: var(--fg-1);
+  border: 1px solid var(--card-border); border-radius: 8px; box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.6);
+}
+.idov-head { display: flex; align-items: flex-start; gap: 0.6rem; padding: 0.9rem 1rem 0.6rem; border-bottom: 1px solid var(--card-border); }
+.idov-headtext { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+.idov-kind { font-size: 0.6875rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-3); font-weight: 600; }
+.idov-title { margin: 0; font-size: 1rem; color: var(--fg-0); font-weight: 600; overflow-wrap: anywhere; }
+.idov-close {
+  flex: none; min-width: 2.25rem; min-height: 2.25rem; font-size: 1rem; cursor: pointer;
+  background: transparent; color: var(--fg-1); border: 1px solid var(--card-border); border-radius: 5px;
+}
+.idov-close:hover, .idov-close:focus-visible { color: var(--fg-0); border-color: var(--st-unread); }
+.idov-body { padding: 0.8rem 1rem 1rem; font-size: 0.8125rem; display: flex; flex-direction: column; gap: 0.55rem; overflow-y: auto; min-height: 0; }
+.idov-id code { font-family: var(--font-mono, monospace); font-size: 0.75rem; color: var(--fg-2); overflow-wrap: anywhere; }
+.idov-tags { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: baseline; font-size: 0.75rem; }
+.idov-state { border: 1px solid var(--card-border); border-radius: 4px; padding: 0 0.35rem; color: var(--fg-1); }
+.idov-tone-ok { color: var(--st-live); border-color: rgba(45, 255, 122, 0.35); }
+.idov-tone-live { color: var(--st-think); }
+.idov-tone-todo { color: var(--st-unread); }
+.idov-tone-bad { color: var(--st-error); }
+.idov-tone-muted { color: var(--fg-3); }
+.idov-proj { color: var(--fg-1); }
+.idov-date { color: var(--fg-3); }
+.idov-summary {
+  margin: 0; white-space: normal; overflow-wrap: anywhere; color: var(--fg-1); line-height: 1.5;
+  background: rgba(232, 161, 92, 0.04); border: 1px solid rgba(232, 161, 92, 0.1); border-radius: 5px; padding: 0.55rem 0.7rem;
+}
+.idov-rows { display: flex; flex-direction: column; gap: 0.3rem; }
+.idov-row { display: flex; gap: 0.6rem; align-items: baseline; font-size: 0.75rem; }
+.idov-k { flex: none; min-width: 7rem; color: var(--fg-3); text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.6875rem; }
+.idov-v { color: var(--fg-1); overflow-wrap: anywhere; }
+.idov-links { display: flex; gap: 0.5rem; flex-wrap: wrap; padding-top: 0.3rem; }
+.idov-link {
+  min-height: 2.25rem; padding: 0 0.9rem; font-size: 0.8125rem; cursor: pointer;
+  background: transparent; color: var(--st-live); border: 1px solid rgba(45, 255, 122, 0.35); border-radius: 5px;
+}
+.idov-unknown { margin: 0; color: var(--st-think); font-weight: 600; }
+.idov-msg, .idov-loading { margin: 0; color: var(--fg-2); line-height: 1.5; }
+@media (max-width: 767.98px) {
+  .idov-dialog { width: 100vw; height: 100dvh; max-height: none; border-radius: 0; border: 0; }
+  .idov-close, .idov-link { min-width: 2.75rem; min-height: 2.75rem; }
+  .idov-row { flex-direction: column; gap: 0.1rem; }
+}

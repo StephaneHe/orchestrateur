@@ -1701,6 +1701,25 @@ function todoRule() {
     `node "${todo}" list. Elle date l'entrée et enregistre ton nom au moment où tu coches.`;
 }
 
+// ---------- Identifier marks (0.107.0) ---------------------------------------
+// User request (2026-10-16): « il faut que toutes references a un identifiant
+// quelconque soit un lien qui ouvre un overlay qui decrit ou explique ce qu'est
+// cet identifiant ». The web client (public/id-links.js) links what it
+// recognises; the marks make every identifier recognisable, whatever its form.
+// Prose for the reader only: a mark inside JSON, code or a command would
+// corrupt it, hence the explicit exclusions.
+const ID_MARK_STEPS = new Set(['rapporter', 'repondre']);
+function idRefRule() {
+  return `\n\n---\nIDENTIFIANTS : dans le texte que tu écris pour l'utilisateur ou le chef (réponse, rapport, résumé, question), ` +
+    `encadre chaque identifiant cité par des doubles crochets pour que le tableau de bord en fasse un lien explicatif : ` +
+    `[[t-1a2b3c]] (item TODO), [[p-20261016T101500-a1b2c3]] (exécution de pipeline), [[q-…]] (file d'attente), ` +
+    `[[attente:75627914]] (tâche du Routage en attente), [[commit:3e3b51b]], [[v0.105.0]], [[projet:nom]], ` +
+    `[[fichier:scripts/dispatch.mjs]], [[case:routage.classifier]] (case de la page Models). Le préfixe (todo, run, queue, ` +
+    `attente, commit, version, projet, fichier, case) est facultatif quand la forme suffit. Garde le titre à côté ` +
+    `([[t-1a2b3c]] « titre »). JAMAIS de crochets dans du JSON, du code, une commande, un message de commit, un fichier ` +
+    `écrit ou une valeur lue par un programme (projet, pipeline, identifiant d'un champ) : là, l'identifiant reste nu.`;
+}
+
 /** Lanes (0.101.0): the musician works in a parallel lane, on a task branch. */
 function laneRule() {
   return `\n\n---\nCOULOIR PARALLÈLE : tu travailles dans le couloir ${LANE.k} de ${projectName}, une copie isolée du dépôt (git worktree) : ` +
@@ -1770,6 +1789,9 @@ const LANG_WORK = langMod.workingLanguage(ROOT, LANG_MODEL, LANG_TARGET);
 // autoriser. Il faut aussi donner une explication de celle-ci ». The tool
 // call's `description` is shown to the user next to the command when the call
 // needs an authorisation: ask for it, in the discussion language.
+// 0.107.0 — identifier marks: every turn whose text reaches the reader (not a
+// dual branch, not a pipeline step that writes machine-read artefacts).
+if (!DUAL_BRANCH && (!PIPE_STEP || ID_MARK_STEPS.has(PIPE_STEP.key.replace(/^\d+-/, '')))) prompt = prompt + idRefRule();
 if (projectName !== CONDUCTOR) prompt = prompt + permissionExplainRule(langMod.LANGS[LANG_TARGET]?.name || 'français');
 prompt = prompt + langMod.languageRule(LANG_TARGET, LANG_WORK.working);
 // Le portier ne vérifie que ce qui est destiné à l'utilisateur : ni une branche

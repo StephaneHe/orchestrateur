@@ -343,13 +343,15 @@
         "_test_tts_text.mjs",
         "_test_projects_view.mjs",
         "_test_neutral_stop.mjs",
-        "_test_permission_denial.mjs"
+        "_test_permission_denial.mjs",
+        "_test_id_links.mjs"
       ],
       "uses": [
         {
           "perimeter": "dispatch",
           "suites": [
             "_test_html_output.mjs",
+            "_test_id_links.mjs",
             "_test_neutral_stop.mjs",
             "_test_projects_view.mjs"
           ]
@@ -358,6 +360,7 @@
           "perimeter": "noyau",
           "suites": [
             "_test_html_output.mjs",
+            "_test_id_links.mjs",
             "_test_neutral_stop.mjs",
             "_test_projects_view.mjs"
           ]
@@ -372,6 +375,7 @@
           "perimeter": "panneaux",
           "suites": [
             "_test_html_output.mjs",
+            "_test_id_links.mjs",
             "_test_neutral_stop.mjs",
             "_test_projects_view.mjs"
           ]
@@ -380,6 +384,7 @@
           "perimeter": "pipelines",
           "suites": [
             "_test_html_output.mjs",
+            "_test_id_links.mjs",
             "_test_neutral_stop.mjs",
             "_test_projects_view.mjs"
           ]
@@ -388,6 +393,7 @@
           "perimeter": "routage",
           "suites": [
             "_test_html_output.mjs",
+            "_test_id_links.mjs",
             "_test_neutral_stop.mjs",
             "_test_projects_view.mjs"
           ]
@@ -933,7 +939,8 @@
         "scripts/todo-notes.mjs",
         "scripts/todo-order.mjs",
         "scripts/release-notes.mjs",
-        "scripts/git-graph-core.mjs"
+        "scripts/git-graph-core.mjs",
+        "scripts/id-resolve.mjs"
       ],
       "suites": [
         "_test_todo.mjs",

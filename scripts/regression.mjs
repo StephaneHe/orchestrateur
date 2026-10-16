@@ -1255,6 +1255,50 @@ async function apiChecks(sb) {
       return `${FX.REQ_RUN} : ${r.tasks.map(t => `${t.n} ${t.state}`).join(', ')}`;
     } finally { FX.removeRequestFixture({ logsDir, chefDir }); }
   });
+  // 0.107.0 — user request (2026-10-16): « il faut que toutes references a un
+  // identifiant quelconque soit un lien qui ouvre un overlay qui decrit ou
+  // explique ce qu'est cet identifiant ».
+  await check(S, 'identify', 'Identifiants expliqués : GET /api/identify dit ce que désigne un identifiant à partir des vraies données (item TODO, commit, version, projet, fichier, case de la page Models), « inconnu » avec un message clair sinon, rien hors des projets ; GET /api/identify/vocab donne projets et cases au client ; lecture seule', async () => {
+    if (!fs.existsSync(path.join(sb.root, 'scripts', 'id-resolve.mjs'))) NA('identifiants expliqués absents de cet état du code');
+    const idf = (q) => json(`/api/identify?${new URLSearchParams(q)}`);
+    let r = await idf({ id: 't-a10001' });
+    assert(r.known && r.kind === 'todo' && r.project === 'alpha' && r.title && r.links.some(l => l.open === 'todo'), `item TODO : ${JSON.stringify(r).slice(0, 200)}`);
+    const g = omegaRepo();
+    const sha = g('rev-parse', 'HEAD').stdout.trim();
+    const subject = g('log', '-1', '--format=%s').stdout.trim();
+    r = await idf({ id: sha.slice(0, 7), project: 'omega' });
+    assert(r.known && r.kind === 'commit' && r.project === 'omega' && r.title === subject, `commit : ${JSON.stringify(r).slice(0, 200)}`);
+    // Other walkthroughs rewrite omega's CHANGELOG: write a known entry, put the file back after.
+    const omegaCl = path.join(omegaDir, 'CHANGELOG.md');
+    const clBefore = fs.existsSync(omegaCl) ? fs.readFileSync(omegaCl) : null;
+    fs.writeFileSync(omegaCl, '# Changelog\n\n## [9.8.7] - 2026-10-02\n\n### Added\n\n- IDREF entrée de recette\n');
+    try {
+      r = await idf({ id: 'v9.8.7', project: 'omega' });
+      assert(r.known && r.kind === 'version' && r.project === 'omega' && r.date === '2026-10-02' && /IDREF entrée/.test(r.summary || ''), `version (CHANGELOG d’omega) : ${JSON.stringify(r).slice(0, 200)}`);
+    } finally { if (clBefore) fs.writeFileSync(omegaCl, clBefore); else fs.rmSync(omegaCl, { force: true }); }
+    // The sandbox copies no CHANGELOG.md of the server: the "served version" case only when it has one.
+    if (fs.existsSync(path.join(sb.root, 'CHANGELOG.md'))) {
+      r = await idf({ id: `v${pkgVersion}` });
+      assert(r.known && r.state === 'version servie par ce serveur', `version servie : ${JSON.stringify(r).slice(0, 200)}`);
+    }
+    r = await idf({ id: 'alpha', kind: 'projet' });
+    assert(r.known && r.links.some(l => l.musician === 'alpha'), `projet : ${JSON.stringify(r).slice(0, 200)}`);
+    r = await idf({ id: 'TODO_LIST.md', project: 'alpha' });
+    assert(r.known && r.kind === 'fichier' && r.project === 'alpha' && !('content' in r), `fichier : ${JSON.stringify(r).slice(0, 200)}`);
+    r = await idf({ id: 'routage.classifier' });
+    assert(r.known && r.kind === 'case' && r.links.some(l => l.route === '#/models'), `case : ${JSON.stringify(r).slice(0, 200)}`);
+    r = await idf({ id: 't-ffffff' });
+    assert(r.ok && !r.known && /ne le trouve pas/.test(r.message), `inconnu : ${JSON.stringify(r)}`);
+    for (const bad of ['..\\..\\..\\Windows\\win.ini', 'C:\\Windows\\win.ini', '../../package.json']) {
+      r = await idf({ id: bad, kind: 'fichier', project: 'alpha' });
+      assert(!r.known, `hors des projets accepté : ${bad} → ${JSON.stringify(r).slice(0, 160)}`);
+    }
+    assert((await get('/api/identify')).status === 400, 'identifiant manquant accepté');
+    const v = await json('/api/identify/vocab');
+    assert(v.projects.includes('alpha') && v.slots.includes('routage.classifier') && v.conductor === 'chef', `vocabulaire : ${JSON.stringify(v).slice(0, 200)}`);
+    for (const method of ['POST', 'PUT', 'DELETE']) assert((await fetch(sb.url + '/api/identify?id=t-a10001', { method, headers: H })).status === 404, `${method} accepté`);
+    return `t-a10001, ${sha.slice(0, 7)}, v9.8.7 (omega), alpha, TODO_LIST.md, routage.classifier expliqués ; t-ffffff inconnu ; chemins hors projets refusés`;
+  });
   // 0.56.0 — phase 7 : relevé de la mise en service générale (« une semaine sans contournement »).
   await check(S, 'pipeline-health', 'Pipelines, phase 7 : relevé de la mise en service — exécutions, tours hors pipeline, tours ordinaires, refus (moteur et porte), pauses, jours complets sans contournement', async () => {
     if (!fs.existsSync(path.join(sb.root, 'scripts', 'pipeline-health.mjs'))) NA('relevé absent de cet état du code');

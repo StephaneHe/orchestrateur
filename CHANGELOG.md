@@ -11,6 +11,43 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.107.0] - 2026-10-16
+
+### Added
+
+- (server) Clickable identifiers explained by an overlay (user request of
+  2026-10-16: every reference to an identifier must be a link that opens an
+  overlay describing it). New `public/id-links.js` (+ `id-links.css`): every
+  model text rendered through `mdToHtml` (chef thread, musician panels,
+  result cards, journal, release and request panels) gets its identifiers
+  turned into links — explicit marks `[[value]]` / `[[kind:value]]`, plus
+  the known formats: TODO item `t-xxxxxx`, pipeline run `p-…`, queue entry
+  `q-…`, version `vX.Y.Z`, file path (with `:line`), exact case of the page
+  Models, commit / Routage task (hex with a letter), project names (everyday
+  words such as « veille » only when marked). Never inside `<a>` or `<pre>`.
+  A click opens `#idref-overlay` (kind, title, state, project, date, summary,
+  fields, useful links: TODO item, musician panel, Git / Release / Requests
+  tabs, page Models); « Identifiant inconnu » with a plain explanation when
+  nothing matches; ✕, Escape (only this overlay) or a click outside closes it.
+- (server) `GET /api/identify?id=&kind=&project=` and
+  `GET /api/identify/vocab` (`scripts/id-resolve.mjs`), read-only, from the
+  real data: TODO_LIST.md of each project, `logs/runs/<run>/run.json`,
+  `logs/queue/`, `logs/routage-pending.json`, `git log -1` in the config.json
+  repositories, CHANGELOG.md, config.json, `stat` of a file inside a project
+  folder (never its content, never outside the projects), cases and models of
+  the page Models.
+- (server) `dispatch.mjs` adds an « IDENTIFIANTS » instruction to every turn
+  whose text reaches the reader (musicians, chef, the Routage « Rapporter »
+  and Discussion « Répondre » steps): mark each identifier with `[[…]]`,
+  never inside JSON, code, commands, commit messages or machine-read values.
+
+### Changed
+
+- (server) Speech (`tts.js`) and journal summaries (`turn-core.js`) drop the
+  `[[ ]]` marks; `report-check.mjs` writes its title / control note after a
+  mark instead of inside it. Server restart needed for the routes and the
+  journal summaries.
+
 ## [0.106.0] - 2026-10-16
 
 ### Added

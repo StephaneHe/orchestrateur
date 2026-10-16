@@ -60,6 +60,8 @@
     // HTML answers (0.105.0): back to Markdown-like text, so tags are never read aloud.
     const H = g.HtmlRender;
     if (H && H.isHtml(s)) s = H.toPlain(s);
+    // Identifier marks [[kind:value]] (0.107.0): the value only, never the brackets.
+    s = s.replace(/\[\[([^\[\]\n]{1,200})\]\]/g, (m, inner) => inner.replace(/^(?:todo|t[aâ]che|item|run|ex[ée]cution|queue|attente|pending|commit|sha|version|projet|project|musicien|fichier|file|chemin|path|case|slot)\s*:\s*/i, ""));
     // Blocs de code : jamais lus.
     s = s.replace(/```[\s\S]*?(```|$)/g, "\n(bloc de code)\n");
     // Tableaux : annoncés (et lus s'ils sont courts).

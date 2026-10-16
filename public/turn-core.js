@@ -126,7 +126,9 @@
       .replace(/^\s{0,3}#{1,6}\s+/gm, "")
       .replace(/^\s*[-*•]\s+/gm, "")
       .replace(/^\s*>\s?/gm, "")
-      .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, "$1");
+      .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, "$1")
+      // Identifier marks (0.107.0): [[kind:value]] → value.
+      .replace(/\[\[(?:(?:todo|t[aâ]che|item|run|ex[ée]cution|queue|attente|pending|commit|sha|version|projet|project|musicien|fichier|file|chemin|path|case|slot)\s*:\s*)?([^\[\]\n]{1,200})\]\]/gi, "$1");
   }
 
   /** Texte complet d'une demande, sans boilerplate ni préfixe de relais. */

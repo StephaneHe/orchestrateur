@@ -2153,6 +2153,63 @@ export async function browserChecks(sb, t) {
       await shot(tp, 'html-output-desktop');
       return `bulle HTML rendue et assainie, Markdown inchangé, lu : « ${said.slice(0, 60)}… »`;
     });
+    // 0.107.0 — user request (2026-10-16): « il faut que toutes references a un
+    // identifiant quelconque soit un lien qui ouvre un overlay qui decrit ou
+    // explique ce qu'est cet identifiant ».
+    await check(B, 'id-links', 'Identifiants cliquables : dans une réponse du chef (HTML ou Markdown), un identifiant balisé [[…]] ou reconnu (item TODO, case de la page Models) est un lien ; un clic ouvre un overlay qui décrit ce qu’il désigne (données du serveur), « Identifiant inconnu » avec un message clair sinon ; Échap le ferme sans fermer le reste ; « Ouvrir dans le panneau TODO » mène à l’item', async () => {
+      if (!(await tp.evaluate(() => !!window.IdLinks))) NA('identifiants cliquables absents de cet état du code');
+      const html = '<p>IDREF bilan : item [[t-a10001]] coché, case routage.classifier réglée, [[t-ffffff]] introuvable.</p><ul><li>IDREF suite</li></ul>';
+      appendLog('chef', [
+        { type: 'user_prompt', text: 'Recette identifiants' },
+        { type: 'system', subtype: 'init', model: 'claude-opus-5-5' },
+        { type: 'assistant', message: { content: [{ type: 'text', text: html }] } },
+        { type: 'result', subtype: 'success', is_error: false, num_turns: 1, duration_ms: 1000, duration_api_ms: 800, result: html },
+        { type: 'user_prompt', text: 'Recette identifiants Markdown' },
+        { type: 'system', subtype: 'init', model: 'claude-opus-5-5' },
+        { type: 'assistant', message: { content: [{ type: 'text', text: 'IDREF-MD : voir **[[t-a10001]]** et `t-a10001`.' }] } },
+        { type: 'result', subtype: 'success', is_error: false, num_turns: 1, duration_ms: 1000, duration_api_ms: 800, result: 'IDREF-MD' },
+      ]);
+      await tp.goto(`${sb.url}/?token=${sb.token}`);
+      await tp.locator('.brand').waitFor();
+      const bubble = tp.locator('#cv-scroll .cv-bubble.is-conductor', { hasText: 'IDREF bilan' }).last();
+      assert(await until(async () => (await bubble.count()) > 0, 10_000), 'bulle absente');
+      await until(async () => (await bubble.locator('a.idref[data-idref="routage.classifier"]').count()) > 0, 5000);
+      const refs = await bubble.evaluate((el) => [...el.querySelectorAll('a.idref')].map((a) => a.dataset.idref));
+      assert(refs.includes('t-a10001') && refs.includes('t-ffffff') && refs.includes('routage.classifier'), `liens : ${JSON.stringify(refs)}`);
+      assert(!/\[\[/.test(await bubble.locator('.cv-body').textContent()), 'crochets affichés');
+      const md = await tp.locator('#cv-scroll .cv-bubble.is-conductor', { hasText: 'IDREF-MD' }).last().evaluate((el) => el.querySelectorAll('a.idref[data-idref="t-a10001"]').length);
+      assert(md === 2, `réponse Markdown : ${md} lien(s) au lieu de 2 (gras et code)`);
+      await bubble.evaluate((el) => { const s = document.getElementById('cv-scroll'); s.scrollTop = Math.max(0, el.offsetTop - 20); });
+      await bubble.locator('a.idref[data-idref="t-a10001"]').click();
+      assert(await until(async () => (await tp.locator('#idref-overlay .idov-dialog[data-known="1"]').count()) > 0, 5000), 'overlay non rempli pour t-a10001');
+      const known = await tp.evaluate(() => ({ kind: document.querySelector('.idov-kind').textContent, title: document.querySelector('.idov-title').textContent,
+        body: document.querySelector('.idov-body').textContent, role: document.querySelector('.idov-dialog').getAttribute('role') }));
+      assert(known.kind === 'Item de TODO list' && known.title && known.title !== 't-a10001' && /alpha/.test(known.body) && known.role === 'dialog', `overlay : ${JSON.stringify(known)}`);
+      await shot(tp, 'id-links-known');
+      await tp.keyboard.press('Escape');
+      assert(await until(async () => !(await visible(tp, '#idref-overlay')), 2000), 'Échap ne ferme pas l’overlay');
+      assert(await tp.evaluate(() => !!document.getElementById('cv-scroll')), 'le fil a disparu');
+      await bubble.locator('a.idref[data-idref="t-ffffff"]').click();
+      assert(await until(async () => (await tp.locator('#idref-overlay .idov-dialog[data-known="0"] .idov-unknown').count()) > 0, 5000), 'inconnu non signalé');
+      const msg = await tp.locator('#idref-overlay .idov-msg').textContent();
+      assert(/t-ffffff/.test(msg) && /ne le trouve pas/.test(msg), `message de l’inconnu : ${msg}`);
+      await tp.click('#idref-overlay .idov-close');
+      assert(await until(async () => !(await visible(tp, '#idref-overlay')), 2000), '✕ ne ferme pas');
+      await bubble.locator('a.idref[data-idref="routage.classifier"]').click();
+      assert(await until(async () => (await tp.locator('#idref-overlay .idov-dialog[data-kind="case"][data-known="1"]').count()) > 0, 5000), 'case de la page Models non expliquée');
+      await tp.click('#idref-overlay .idov-backdrop', { position: { x: 5, y: 5 } });
+      assert(await until(async () => !(await visible(tp, '#idref-overlay')), 2000), 'clic hors zone ne ferme pas');
+      let todoOk = 'panneau TODO absent';
+      if (await tp.evaluate(() => !!window.TodoPanel)) {
+        await bubble.locator('a.idref[data-idref="t-a10001"]').click();
+        await tp.locator('#idref-overlay .idov-link', { hasText: 'panneau TODO' }).click();
+        assert(await until(async () => tp.evaluate(() => window.TodoPanel.isItemOpen() && document.querySelector('#todo-overlay .tov-dialog')?.dataset.id === 't-a10001'), 6000), '« Ouvrir dans le panneau TODO » ne mène pas à l’item');
+        await tp.keyboard.press('Escape');
+        todoOk = 'item ouvert dans le panneau TODO';
+        await tp.evaluate(() => window.SidePanel?.close());
+      }
+      return `liens ${refs.join(', ')} ; connu, inconnu et case expliqués ; ${todoOk}`;
+    });
     await check(B, 'tts-settings', 'Lecture audio : réglages (voix, vitesse), lecture automatique d\'une nouvelle réponse, désactivation à chaud', async () => {
       if (!(await tp.evaluate(() => !!window.Tts))) NA('lecture audio absente de cet état du code');
       await tp.click('#btn-tweaks');
