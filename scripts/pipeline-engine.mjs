@@ -1960,7 +1960,26 @@ export async function runPipeline(o) {
 
   // Le musicien est occupé pendant toute l'exécution : le parent tient le .pid.
   try { fs.writeFileSync(pidPath, String(process.pid)); } catch {}
-  let stepDefs = pipeline === 'dev' ? devCatalog({ mode: state.mode, kind }) : Object.fromEntries(planSteps(pipeline, { mode, kind }).map(s => [s.id, s]));
+  // Internal route of a pipeline (meeting → Rédaction, 0.111.0): chosen once,
+  // before any step, by the MEANING of the request (classifier model, never
+  // keywords); the plan becomes that mode. A failure pauses the run (below,
+  // `routeFailure`) — no silent fallback.
+  let routeFailure = null;
+  const route = catalogOf(pipeline)?.route;
+  if (route && !state.route && !state.steps.length) {
+    const { chooseOption } = await import('./pipeline-classify.mjs');
+    const r = await chooseOption({ root, logsDir, project: projectName, request: state.request || prompt, question: route.question,
+      options: Object.entries(route.options).map(([id, what]) => ({ id, what })) });
+    if (!r.ok) routeFailure = r.why;
+    else {
+      state.route = { id: r.id, why: r.raison || '', model: r.model || null };
+      state.mode = r.id;
+      state.plan = planSteps(pipeline, { mode: r.id, kind }).map(s => s.id);
+      state.index = 0;
+      saveState();
+    }
+  }
+  let stepDefs = pipeline === 'dev' ? devCatalog({ mode: state.mode, kind }) : Object.fromEntries(planSteps(pipeline, { mode: state.mode, kind }).map(s => [s.id, s]));
   const catalog = catalogOf(pipeline);
   // Variante d'étape (média, 0.55.0) : sa case passe en tête de la chaîne, et le
   // type de fichier attendu peut en dépendre. Depuis 0.66.0 elle est choisie par
@@ -1997,6 +2016,12 @@ export async function runPipeline(o) {
   writeEvent({ type: 'system', subtype: 'pipeline_start', pipeline: { run, pipeline, mode: state.mode, kind, base },
     text: `${resumed ? 'reprise de l’exécution' : 'exécution'} ${run} : pipeline ${pipelineLabel(pipeline, state.mode)} — ${state.plan.filter(id => id !== '@check' && id !== '@aside').map(id => stepDefs[id].title).join(' → ')}`,
     ...(o.modeNote ? { note: o.modeNote } : {}) });
+  if (state.route && !state.routeAnnounced) {
+    writeEvent({ type: 'system', subtype: 'pipeline_route', pipeline: { run, pipeline, route: state.route.id }, model: state.route.model,
+      text: `↪ routage interne : ${route?.labels?.[state.route.id] || state.route.id}${state.route.why ? ` — ${state.route.why}` : ''} (choisi par le model de la case routage.classifier)` });
+    state.routeAnnounced = true;
+    saveState();
+  }
   if (extended) {
     const what = { items: `${extended.to} items au total`, duration: `${fmtDur(extended.to)} de temps actif`, review: `${extended.to} tours de revue${extended.item != null ? ` pour l’item ${extended.item}` : ''}`,
       items_blocked: `${extended.to} item(s) mis de côté repris un à un, chacun avec une allocation de plus` }[extended.limit];
@@ -2425,6 +2450,17 @@ export async function runPipeline(o) {
   };
   // Variant not classified by the model (0.66.0): a pause with a question,
   // never a keyword guess. « continuer » asks the model again.
+  if (routeFailure) {
+    const opts = Object.entries(route.labels || route.options).map(([id, what]) => `« ${id} » (${what})`).join(', ');
+    return finish({ code: 2, paused: true, limit: 'classifier',
+      notice: `⏸ ${projectName} : le model de classement n’a pas pu choisir le routage interne du pipeline « ${pipelineLabel(pipeline, state.mode)} »`,
+      question: `${projectName} en pause — répondez « continuer » (réessayer, par exemple après avoir choisi un model pour la case routage.classifier) ou « abandonner » : le routage interne (${Object.keys(route.options).join(' / ')}) n’a pas pu être choisi par le model (${routeFailure}).`,
+      result: pauseText({
+        what: `le routage interne de ce pipeline se fait par le sens de la demande, par le model de la case « routage.classifier » de la page Models, jamais par mots-clés. Ce choix a échoué : ${routeFailure}. Routages possibles : ${opts}.`,
+        options: [['continuer', 'je redemande ce choix au model (par exemple après avoir affecté un model à cette case).'], ['abandonner', 'j’arrête sans rien modifier.']],
+        recommend: ['continuer', 'une fois la case routage.classifier affectée à un model disponible.'],
+      }) });
+  }
   if (variantFailure) {
     const sv = variantFailure.step;
     const opts = Object.entries(sv.variants).map(([id, what]) => `« ${id} » (${what})`).join(', ');
@@ -3010,9 +3046,11 @@ export async function runPipeline(o) {
   // ── Fin : la réponse (Discussion) ou la livraison (Développement) ────────
   function catalogResult() {
     const label = pipelineLabel(pipeline, state.mode);
-    const finalStep = catalog.final ? stepDefs[catalog.final] : null;
-    let body = '';
-    if (finalStep) {
+    // `final` may depend on the mode (meeting internal route, 0.111.0): one
+    // step, or several whose answers are put one after the other.
+    const finalIds = [].concat(catalog.final && typeof catalog.final === 'object' && !Array.isArray(catalog.final) ? catalog.final[state.mode] || [] : catalog.final || []);
+    const finalBody = (finalStep) => {
+      let body = '';
       const raw = (readArtefact(ctx, finalStep.artefact) || '').trim();
       const j = finalStep.checks?.json ? parseJsonArtefact(raw) : null;
       if (j && typeof j.final === 'string') body = j.final.trim();
@@ -3023,7 +3061,12 @@ export async function runPipeline(o) {
       } else if (j && typeof j.verdict === 'string') {
         body = `**Vérification** : ${j.verdict === 'ok' ? '✓ conforme' : 'défauts relevés'}${Array.isArray(j.items) && j.items.length ? `\n${j.items.map(x => `- ${typeof x === 'string' ? x : JSON.stringify(x)}`).join('\n')}` : ''}`;
       } else body = raw;
-    }
+      return body;
+    };
+    const finals = finalIds.map(id => stepDefs[id]).filter(Boolean);
+    let body = finals.map(s => [s, finalBody(s)]).filter(([, b]) => b)
+      .map(([s, b]) => (finals.length > 1 ? `**${s.title.replace(/^R?\d+[a-z]?\s+/, '')}** :\n\n${b}` : b)).join('\n\n');
+    if (state.route) body = `**Routage interne** : ${catalog.route?.labels?.[state.route.id] || state.route.id}${state.route.why ? ` — ${state.route.why}` : ''}\n\n${body}`;
     if (catalog.media && state.media?.length) body = `**Fichiers produits (vérifiés par l'orchestrateur)** :\n${state.media.map(f => `- \`${f}\``).join('\n')}\n\n${body}`;
     // Recherche : lecture seule, la synthèse EST la réponse.
     if (pipeline === 'recherche') return body || '(synthèse vide)';

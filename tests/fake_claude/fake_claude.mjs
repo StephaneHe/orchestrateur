@@ -145,7 +145,10 @@ async function run() {
   const isClassify = /^\[CLASSIFY\]/.test(userText);
   if (isClassify && process.env.FAKE_CLAUDE_CLASSIFY_LOG) fs.appendFileSync(process.env.FAKE_CLAUDE_CLASSIFY_LOG, JSON.stringify({ model: askedModel }) + '\n');
   const classifyReply = () => {
-    if (process.env.FAKE_CLAUDE_CLASSIFY) return process.env.FAKE_CLAUDE_CLASSIFY;
+    // An option choice (variant, internal route) scripted by FAKE_CLAUDE_CHOICE wins
+    // over FAKE_CLAUDE_CLASSIFY, so one run can script both answers.
+    const isChoice = /^Options:$/m.test(userText) && !/^Pipelines:$/m.test(userText);
+    if (process.env.FAKE_CLAUDE_CLASSIFY && !(isChoice && process.env.FAKE_CLAUDE_CHOICE)) return process.env.FAKE_CLAUDE_CLASSIFY;
     const req = (/Request:\n<<<\n([\s\S]*)\n>>>/.exec(userText) || [])[1] || '';
     // FAKE_CLAUDE_CLASSIFY_MAP='{"<substring of the request>": <answer>}' (0.69.0):
     // a scripted answer per routed task; the first key found in the request wins.
@@ -352,7 +355,9 @@ async function run() {
 function item(text) { return Number((/^ITEM=(\d+):/m.exec(text) || [])[1] || 0); }
 
 function pipelineStep(text) {
-  const step = (/^PIPELINE_STEP=(\S+)/m.exec(text) || [])[1];
+  const rawStep = (/^PIPELINE_STEP=(\S+)/m.exec(text) || [])[1];
+  // The Rédaction delivery reached from a meeting (0.111.0) is played like Livrer.
+  const step = rawStep === 'livrer-texte' ? 'livrer' : rawStep;
   const artefact = (/^ARTEFACT=(.+)$/m.exec(text) || [])[1]?.trim();
   const cwd = process.cwd();
   const once = (spec, key) => {

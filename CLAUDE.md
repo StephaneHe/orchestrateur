@@ -1925,6 +1925,18 @@ rangement des fichiers d'une réunion était partie en Maintenance).
 - Faux claude : `REUNION=definitif|rangement` (`FAKE_PIPE_JSON`,
   `FAKE_REUNION_TEXT`), `FAKE_PIPE_MARKER_ONLY=1`.
 - Recette : `_test_reunion_pipeline.mjs`.
+- **Lien interne vers la Rédaction** (0.111.0, demande « Fais un lien entre le
+  pipline Réunion vers le pipline Rédaction. Il peut être optionel, un routage
+  interne en fonction du besoin ») : avant toute étape, le model de
+  `routage.classifier` choisit par le sens (`chooseOption`, `catalog.route`)
+  `rangement` (plan de 0.110.0, défaut de `planSteps`), `redaction` (Rédiger,
+  Relire, Mettre en forme, `livrer-texte` sans version : cases et critères de
+  la Rédaction, `fromPipeline: 'redaction'`) ou `les-deux` (rangement puis
+  rédaction, une livraison `livrer`). `state.route`, `state.mode` et
+  `state.plan` suivent le choix ; `final` dépend du mode. Échec ⇒ pause
+  `classifier` avant toute étape. Trace `system/pipeline_route`. Page Models :
+  deux renvois (`ref`), aucune case de plus. Faux claude : `FAKE_CLAUDE_CHOICE`.
+  Recette : `_test_reunion_redaction_route.mjs`.
 
 ## Pipelines obligatoires — phase 7 : mise en service générale (0.56.0)
 

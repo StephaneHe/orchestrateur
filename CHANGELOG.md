@@ -11,6 +11,36 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.111.0] - 2026-10-16
+
+### Added
+
+- (server) Meeting pipeline (`reunion`): optional internal link to the
+  Rédaction pipeline. Before any step, the classifier model (slot
+  `routage.classifier`) chooses by meaning, never by keywords, among three
+  routes: `rangement` (filing the meeting's files: exactly the 0.110.0 plan),
+  `redaction` (writing an e-mail or text about the meeting: Rédiger, Relire,
+  Mettre en forme with the Rédaction slots and criteria, Rédaction delivery
+  without version; no meeting file touched; the reviewed text is the answer)
+  and `les-deux` (filing, then writing, one delivery with version). The choice
+  is traced (`system/pipeline_route`, `run.json.route`, « Routage interne » in
+  the result) and the timeline shows the chosen plan from the start. A failed
+  choice pauses the run before any step (`classifier`; « continuer » retries).
+  Prefixes `/redaction` and `/reunion` still win over the classification.
+  Catalog: `modes`, `route`, mode-dependent `final`; Models page: two
+  reference cards (no new slot). User request of 2026-10-16: « Fais un lien
+  entre le pipline Réunion vers le pipline Rédaction. Il peut être optionel,
+  un routage interne en fonction du besoin ».
+
+### Changed
+
+- (server) Classifier rule for meetings: writing a new text about a meeting
+  may go to `reunion` (internal route to Rédaction); writing with no link to
+  a meeting stays `redaction`.
+- (tests) Fake claude: a scripted option choice (`FAKE_CLAUDE_CHOICE`) wins
+  over `FAKE_CLAUDE_CLASSIFY` for option prompts; `livrer-texte` is played
+  like Livrer.
+
 ## [0.110.1] - 2026-10-16
 
 ### Fixed

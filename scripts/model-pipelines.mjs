@@ -325,8 +325,13 @@ export const PIPELINES = [
   {
     id: 'reunion', label: 'Compte rendu de réunion', icon: '🗂',
     purpose: 'Ranger les fichiers d’une réunion : garder la version définitive fournie, supprimer les brouillons après une liste explicite, tout regrouper sous un nom facile à retrouver — chaque point vérifié par le code.',
-    when: 'Gérer le compte rendu ou les fichiers d’une réunion : enregistrer le mail ou le compte rendu définitif envoyé, supprimer les brouillons, ranger vidéo, transcription, avis et notes de la réunion, les rendre retrouvables sous un nom (ex. « réunion X du 16 octobre »). Ce n’est ni de la maintenance de code, ni la rédaction d’un nouveau texte.',
+    when: 'Gérer le compte rendu ou les fichiers d’une réunion : enregistrer le mail ou le compte rendu définitif envoyé, supprimer les brouillons, ranger vidéo, transcription, avis et notes de la réunion, les rendre retrouvables sous un nom (ex. « réunion X du 16 octobre »). Rédiger un mail ou un texte à propos d’une réunion y passe aussi : un routage interne l’envoie aux étapes de la Rédaction (0.111.0). Ce n’est pas de la maintenance de code.',
     flow: [
+      // 0.111.0: internal route (filing / writing / both) — chosen by the
+      // classifier model, so no slot of its own (a reference to the Routage).
+      { id: 'besoin', n: '0', title: 'Qualifier le besoin (routage interne)', what: 'Exécuté par l’orchestrateur avec le model de « Classer chaque tâche » du Routage, par le sens de la demande : ranger les fichiers de la réunion, rédiger un texte (mail, message) à son sujet, ou les deux.',
+        example: '« Écris le mail à Paul après la réunion de lundi » → rédaction ; « garde le mail définitif, supprime les brouillons » → rangement.',
+        ref: { pipeline: 'routage', label: 'choisi par le model de la case « Classer chaque tâche »' } },
       { id: 'inventorier', n: '1', title: 'Inventorier', what: 'Lister les fichiers de la réunion (mails, brouillons, vidéo, transcription, avis, notes) avec leur rôle, le nom sous lequel la retrouver et son dossier.',
         example: 'Trois brouillons de mail, la vidéo, la transcription et un avis, pour « réunion de lancement du 16 octobre ».' },
       { id: 'trier', n: '2', title: 'Lister ce qui sera supprimé', what: 'Chaque fichier va dans « supprimer » (brouillons, doublons), « garder » ou « doutes » ; un doute est posé à l’utilisateur avant toute suppression.',
@@ -339,6 +344,10 @@ export const PIPELINES = [
         example: 'reunions/2026-10-16-lancement/README.md cite le mail, la vidéo, la transcription et l’avis.' },
       { id: 'verifier', n: '6', title: 'Vérifier (par le code)', what: 'Exécuté par l’orchestrateur, sans model : ce qui doit rester existe, le sommaire nomme la réunion, les supprimés ont disparu.',
         example: '« ✓ 4 éléments rangés, sommaire présent, supprimés absents » ; un écart arrête l’exécution, sans rien livrer.' },
+      { id: 'rediger', n: 'R', title: 'Rédiger le texte (si besoin)', optional: 'selon le routage interne',
+        what: 'Seulement si la demande consiste (aussi) à rédiger un mail ou un texte sur la réunion : les étapes Rédiger, Relire, Mettre en forme de la Rédaction, avec leurs cases et leurs critères.',
+        example: 'Le mail à Paul qui résume les décisions de la réunion, relu puis rendu en entier.',
+        ref: { pipeline: 'redaction', label: 'utilise le pipeline Rédaction' } },
       { id: 'livrer', n: '7', title: 'Livrer', what: 'Un commit local avec version et CHANGELOG ; jamais de push.',
         example: 'Commit « docs: réunion du 16 octobre rangée », version et CHANGELOG à jour.' },
     ],

@@ -48,7 +48,7 @@ export function classifierCase(root) {
 // 0.110.0 (user request 2026-10-16): a meeting request had been sent to
 // Maintenance, which upkeeps CODE. A rule of meaning for the model, never a
 // keyword match.
-const MEETING_RULE = 'Managing the minutes or the files of a MEETING (record the final e-mail or minutes the user sent, delete drafts, file the recording, transcript, opinion or notes so they can be found under a name) → reunion, never maintenance (maintenance only upkeeps code: dependencies, git history, flaky tests, technical debt) and never redaction (which writes a new text). ';
+const MEETING_RULE = 'Managing the minutes or the files of a MEETING (record the final e-mail or minutes the user sent, delete drafts, file the recording, transcript, opinion or notes so they can be found under a name) → reunion, never maintenance (maintenance only upkeeps code: dependencies, git history, flaky tests, technical debt). Writing a new text ABOUT a meeting (an e-mail or message after it) may also go to reunion: it routes internally to the Rédaction steps when needed; a writing request with no link to a meeting → redaction. ';
 const meetingRule = (choices) => (choices.some(p => p.id === 'reunion') ? MEETING_RULE : '');
 
 // Nature of a dev request (case variants; « mecanique » has no red test).

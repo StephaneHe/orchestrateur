@@ -44,17 +44,20 @@ const section = (n) => console.log(`\n── ${n}`);
 section('1. Définition : catalogue, page Models, préfixe, sélecteurs');
 const cat = catalogOf('reunion');
 ok(E.ENGINE_PIPELINES.includes('reunion') && cat, 'pipeline « reunion » connu du moteur');
-ok(cat.steps.map(s => s.id).join() === 'inventorier,trier,definitif,supprimer,ranger,verifier,livrer', `déroulé : ${cat.steps.map(s => s.id).join(' → ')}`);
+// Since 0.111.0 the catalog also holds the Rédaction steps of the internal
+// route (_test_reunion_redaction_route.mjs); filing keeps exactly this plan.
+const own = cat.steps.filter(s => !s.fromPipeline);
+ok(own.map(s => s.id).join() === 'inventorier,trier,definitif,supprimer,ranger,verifier,livrer' && cat.modes.rangement.join() === own.map(s => s.id).join() && E.planSteps('reunion').map(s => s.id).join() === cat.modes.rangement.join(), `déroulé : ${own.map(s => s.id).join(' → ')}`);
 ok(cat.steps.find(s => s.id === 'supprimer').kind === 'code' && cat.steps.find(s => s.id === 'verifier').kind === 'code', 'suppression et vérification exécutées par le CODE');
 ok(cat.steps.find(s => s.id === 'trier').askUser === 'doutes', 'la liste explicite pose les doutes à l’utilisateur');
-ok(cat.steps.filter(s => s.kind !== 'code' && s.kind !== 'deliver').every(s => s.checks?.meeting), 'chaque étape de model a ses critères vérifiés par le code');
+ok(own.filter(s => s.kind !== 'code' && s.kind !== 'deliver').every(s => s.checks?.meeting), 'chaque étape de model a ses critères vérifiés par le code');
 const livrer = cat.steps.find(s => s.id === 'livrer');
 ok(livrer.kind === 'deliver' && livrer.crit === 'livrer' && livrer.version !== false, 'livraison : commit, version et CHANGELOG (critère « livrer »)');
 ok(cat.needs.git && cat.needs.clean, 'exige un dépôt git propre');
 const page = PIPELINES.find(p => p.id === 'reunion');
 ok(page && page.purpose && page.when && /réunion/i.test(page.when) && stepsOf(page).every(s => s.title && s.what && s.example), 'page Models : bandeau et étapes complètes');
 const slots = slotsOf().filter(s => s.pipeline === 'reunion').map(s => s.id);
-ok(cat.steps.every(s => slots.includes(s.chain[0])), `une case par étape : ${slots.join(', ')}`);
+ok(own.every(s => slots.includes(s.chain[0])), `une case par étape : ${slots.join(', ')}`);
 ok(JUDGE_STEPS.has('reunion.trier'), '« Lister ce qui sera supprimé » est une étape de jugement');
 ok(/never maintenance/.test(classificationPrompt('x', {}, PIPELINES.filter(p => p.id !== 'routage'))), 'règle de sens du classement : jamais Maintenance');
 ok(/Pas le rangement/.test(PIPELINES.find(p => p.id === 'maintenance').when), 'Maintenance se décrit comme l’entretien du code seulement');
@@ -166,7 +169,9 @@ fs.writeFileSync(path.join(T, 'model-routing.json'), JSON.stringify({
   assignments: { 'routage.classifier': { provider: 'anthropic', model: 'claude-haiku-5-5' }, 'reunion.definitif': { provider: 'anthropic', model: 'claude-sonnet-5-5' } },
 }, null, 2));
 const baseEnv = { ...process.env, DISPATCH_ROOT_FOR_TESTS: T, CLAUDE_BIN: FAKE, FAKE_CLAUDE_PIPELINE: '1', FAKE_CLAUDE_ECHO_MODEL: '1',
-  FAKE_CLAUDE_LATENCY_MS: '5', ORCH_PERM_DISABLE: '1', ORCH_PORT: '9', ORCH_PIPE_PROGRESS_MS: '200' };
+  FAKE_CLAUDE_LATENCY_MS: '5', ORCH_PERM_DISABLE: '1', ORCH_PORT: '9', ORCH_PIPE_PROGRESS_MS: '200',
+  // Internal route (0.111.0): the classifier model answers « filing » here.
+  FAKE_CLAUDE_CHOICE: 'rangement' };
 for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'ORCH_TURN_PROJECT', 'ORCH_TURN_STEP', 'ORCH_STEP_TOKEN', 'ORCH_OBS_ID', 'DISPATCH_SLOT', 'ORCH_TEST_LABEL', 'CODEX_HOME', 'FAKE_PIPE_JSON', 'FAKE_PIPE_BAD', 'FAKE_PIPE_NOTHING']) delete baseEnv[k];
 const dispatch = (args, env = {}) => {
   const r = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'dispatch.mjs'), ...args], { env: { ...baseEnv, ...env }, encoding: 'utf8', timeout: 240_000, windowsHide: true });

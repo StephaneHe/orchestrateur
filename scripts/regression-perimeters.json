@@ -659,14 +659,16 @@
         "_test_model_routing.mjs",
         "_test_step_key_3digits.mjs",
         "_test_no_lexical_routing.mjs",
-        "_test_reunion_pipeline.mjs"
+        "_test_reunion_pipeline.mjs",
+        "_test_reunion_redaction_route.mjs"
       ],
       "uses": [
         {
           "perimeter": "client",
           "suites": [
             "_test_model_reco.mjs",
-            "_test_reunion_pipeline.mjs"
+            "_test_reunion_pipeline.mjs",
+            "_test_reunion_redaction_route.mjs"
           ]
         },
         {
@@ -689,6 +691,7 @@
             "_test_pipeline_observe.mjs",
             "_test_pipeline_onboard.mjs",
             "_test_reunion_pipeline.mjs",
+            "_test_reunion_redaction_route.mjs",
             "_test_step_key_3digits.mjs",
             "_test_tests_per_item.mjs"
           ]
@@ -713,6 +716,7 @@
             "_test_pipeline_observe.mjs",
             "_test_pipeline_onboard.mjs",
             "_test_reunion_pipeline.mjs",
+            "_test_reunion_redaction_route.mjs",
             "_test_step_key_3digits.mjs",
             "_test_tests_per_item.mjs"
           ]
@@ -743,6 +747,7 @@
             "_test_pipeline_media.mjs",
             "_test_pipeline_observe.mjs",
             "_test_reunion_pipeline.mjs",
+            "_test_reunion_redaction_route.mjs",
             "_test_step_key_3digits.mjs",
             "_test_tests_per_item.mjs"
           ]
@@ -767,6 +772,7 @@
             "_test_pipeline_observe.mjs",
             "_test_pipeline_onboard.mjs",
             "_test_reunion_pipeline.mjs",
+            "_test_reunion_redaction_route.mjs",
             "_test_step_key_3digits.mjs",
             "_test_tests_per_item.mjs"
           ]
