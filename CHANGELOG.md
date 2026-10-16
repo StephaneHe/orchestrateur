@@ -11,7 +11,20 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
-## [0.109.0] - 2026-10-16
+## [0.109.1] - 2026-10-16
+
+### Fixed
+
+- (server) `scripts/pipeline-onboard.mjs`: a partial plan (one project) no
+  longer rewrites the onboarding report. Only the projects named in the plan
+  are evaluated; `logs/pipeline-onboarding.json` is merged (every other line is
+  kept, a never-evaluated project reads « pas encore évalué ») and the table of
+  `logs/pipeline-onboarding.md` is updated in place (row upserted, project
+  removed from a grouped row, rest untouched). `--apply` keeps the existing
+  `enforcement.generalSince` instead of resetting the follow-up counters.
+- (server) `stackOf()` recognises Python projects run with `unittest` (and
+  `python … -m`, `py -m`, tox, nox): their `testGlobs` are Python ones
+  (including unittest's default `test*.py`), no longer Node's.
 
 ### Added
 

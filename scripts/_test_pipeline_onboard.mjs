@@ -118,6 +118,41 @@ const h2 = H.computeHealth(T, { now: new Date('2026-10-09T12:00:00Z') });
 ok(h2.streakDays === 3 && !h2.criterion.met, `au 09/10 : ${h2.streakDays} jour(s), critère pas encore atteint`);
 ok(h.days.find(x => x.date === '2026-10-05')?.ordinaires === 1 && h.perProject[0].name === 'G', 'détail par jour et par projet');
 
+// ---------------------------------------------------------------------------
+// User agreement (2026-10-16): « Il corrigerait au passage les deux défauts de l'outil ».
+section('6. Plan partiel : le relevé (json + md) est FUSIONNÉ, jamais rétrogradé');
+fs.writeFileSync(path.join(T, 'model-routing.json'), JSON.stringify({ version: 2, assignments: {}, history: [], enforcement: { projects: ['G'], pipelines: ['discussion', 'dev'], generalSince: since } }));
+fs.writeFileSync(path.join(T, 'config.json'), JSON.stringify({ conductor: 'chef', projects: [{ name: 'chef', path: T }, { name: 'G', path: path.join(T, 'G') }, { name: 'C2', path: path.join(T, 'C2') }, { name: 'Neuf', path: repo('Neuf') }, { name: 'Jamais', path: repo('Jamais') }] }));
+const prevReport = { at: since, results: [{ name: 'chef', status: 'chef' }, { name: 'G', status: 'service', config: { testCommand: 'node --test' }, actions: [] }, { name: 'C2', status: 'exclu', why: 'arbre non propre : travail.txt' }, { name: 'Ancien', status: 'exclu', why: 'retiré de config' }] };
+fs.writeFileSync(path.join(T, 'logs', 'pipeline-onboarding.json'), JSON.stringify(prevReport));
+fs.writeFileSync(path.join(T, 'logs', 'pipeline-onboarding.md'), '# Tableau\n\n| Projet | État | Commande / raison |\n|---|---|---|\n| G | en service | `node --test` |\n| chef | Routage | — |\n| C2 | exclu | arbre non propre |\n| Neuf, Autre | exclus | Aucune suite de tests |\n\nNote finale.\n');
+fs.writeFileSync(path.join(T, 'plan-neuf.json'), JSON.stringify({ Neuf: entry }));
+o = cli('pipeline-onboard.mjs', '--plan', path.join(T, 'plan-neuf.json'), '--dry-run');
+ok(o.status === 0 && /Neuf\s+EN SERVICE/.test(o.stdout) && !/\bG\s+EXCLU/.test(o.stdout) && !/C2\s+EXCLU/.test(o.stdout), 'simulation : seul le projet du plan est évalué', o.stdout);
+ok(JSON.stringify(JSON.parse(fs.readFileSync(path.join(T, 'logs', 'pipeline-onboarding.json'), 'utf8'))) === JSON.stringify(prevReport), 'simulation : relevé inchangé');
+o = cli('pipeline-onboard.mjs', '--plan', path.join(T, 'plan-neuf.json'), '--apply');
+const merged = JSON.parse(fs.readFileSync(path.join(T, 'logs', 'pipeline-onboarding.json'), 'utf8'));
+const by = (n) => merged.results.find(x => x.name === n);
+ok(o.status === 0 && by('Neuf')?.status === 'service' && by('G')?.status === 'service' && by('C2')?.why === 'arbre non propre : travail.txt' && by('Ancien')?.why === 'retiré de config', 'apply partiel : Neuf ajouté, G reste en service, C2 et Ancien gardent leur ligne', JSON.stringify(merged.results));
+ok(by('Jamais')?.status === 'exclu' && /pas encore évalué/.test(by('Jamais').why), 'projet jamais évalué : « pas encore évalué », pas une fausse raison', JSON.stringify(by('Jamais')));
+enf = E.readEnforcement(T);
+ok(enf.projects.join() === 'G,Neuf' && enf.generalSince === since, 'enforcement : G conservé, Neuf ajouté, date de mise en service générale conservée', JSON.stringify(enf));
+const md = fs.readFileSync(path.join(T, 'logs', 'pipeline-onboarding.md'), 'utf8');
+ok(/\| G \| en service \| `node --test` \|\n\| Neuf \| en service \| `node --test` \|\n\| chef \|/.test(md) && /\| Autre \| exclus \|/.test(md) && !/Neuf, Autre/.test(md) && /\| C2 \| exclu \| arbre non propre \|/.test(md) && md.includes('Note finale.'), 'md : ligne de Neuf ajoutée après les projets en service, retirée de son groupe, le reste intact', md);
+fs.writeFileSync(path.join(T, 'plan-neuf.json'), JSON.stringify({ Neuf: entry }));
+cli('pipeline-onboard.mjs', '--plan', path.join(T, 'plan-neuf.json'), '--apply');
+const md2 = fs.readFileSync(path.join(T, 'logs', 'pipeline-onboarding.md'), 'utf8');
+ok(md2.split('\n').filter(l => l.startsWith('| Neuf |')).length === 1, 'md : une relance met la ligne à jour, sans doublon');
+ok(O.updateOnboardingMd('', [{ name: 'X', status: 'exclu', why: 'a | b' }]).includes('| X | exclu | a \\| b |'), 'md absent : créé avec son en-tête, cellules échappées');
+
+// ---------------------------------------------------------------------------
+section('7. Projet Python sous unittest : motifs de test Python, jamais ceux de Node');
+for (const c of ['.venv\\Scripts\\python.exe -m unittest discover -s tests', 'python -m unittest', 'py -m unittest -v', 'python3 -m pytest -q', 'pytest', 'tox -e py311']) ok(O.stackOf(c) === 'python', `stackOf(« ${c} ») = python`, O.stackOf(c));
+for (const [c, s] of [['npm test', 'node'], ['node --test', 'node'], ['.\\gradlew.bat testDebugUnitTest', 'gradle'], ['dotnet test x.sln', 'dotnet'], ['npx vitest run', 'node']]) ok(O.stackOf(c) === s, `stackOf(« ${c} ») = ${s}`, O.stackOf(c));
+const py = path.join(T, 'Ayor'); fs.mkdirSync(path.join(py, 'tests'), { recursive: true });
+const pyCfg = O.pipelineConfigFor(py, '.venv\\Scripts\\python.exe -m unittest discover -s tests');
+ok(pyCfg.testGlobs.includes('**/test*.py') && pyCfg.testGlobs.includes('tests/**') && !pyCfg.testGlobs.some(x => /\.test\.\*|\.spec\./.test(x)), `unittest : motifs Python (${pyCfg.testGlobs.join(', ')})`);
+
 fs.rmSync(T, { recursive: true, force: true });
 console.log(`\n${pass} ok, ${fail} KO`);
 process.exit(fail ? 1 : 0);

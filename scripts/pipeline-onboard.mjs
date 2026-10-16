@@ -23,7 +23,9 @@
 //      its upstream: there the file stays local (`.git/info/exclude`) so the
 //      history is not touched at all.
 // --apply also writes model-routing.json → enforcement (projects, generalSince).
-// Every action is recorded in logs/pipeline-onboarding.json.
+// Every action is recorded in logs/pipeline-onboarding.json and the table of
+// logs/pipeline-onboarding.md. Both are MERGED: only the projects named in the
+// plan are re-evaluated, every other line is kept as it was (0.110.0).
 // Rollback: `node scripts/pipeline-enforce.mjs off <project>` or `off --all`.
 // ============================================================================
 
@@ -38,15 +40,64 @@ const git = (cwd, ...a) => { const r = spawnSync('git', ['-C', cwd, ...a], { enc
 
 const GLOBS = {
   node: ['test/**', 'tests/**', '**/*.test.*', '**/*.spec.*'],
-  python: ['tests/**', 'test/**', '**/test_*.py', '**/*_test.py'],
+  // `test*.py` is unittest's default discovery pattern.
+  python: ['tests/**', 'test/**', '**/test_*.py', '**/test*.py', '**/*_test.py'],
   gradle: ['**/src/test/**', '**/src/androidTest/**'],
   dotnet: ['**/tests/**', '**/*.Tests/**'],
 };
 export function stackOf(cmd) {
-  if (/gradlew/.test(cmd)) return 'gradle';
-  if (/pytest/.test(cmd)) return 'python';
-  if (/dotnet/.test(cmd)) return 'dotnet';
+  if (/gradlew/i.test(cmd)) return 'gradle';
+  if (/dotnet/i.test(cmd)) return 'dotnet';
+  // pytest, unittest, nose/tox/nox, or any interpreter call (`python.exe -m …`, `py -m …`).
+  if (/pytest|unittest|\bnose2?\b|\btox\b|\bnox\b|\bpython[0-9.]*(\.exe)?\b|(^|[\s\\/"'])py(\.exe)?\s+-/i.test(cmd)) return 'python';
   return 'node';
+}
+
+/**
+ * Merges this run's results into the previous report: only the projects named
+ * in the plan are re-evaluated; every other project keeps its previous line
+ * (never downgraded to « exclu » because a plan was partial).
+ */
+export function mergeReport(prev, planned, { projects = [], enforced = [], at = new Date().toISOString() } = {}) {
+  const before = new Map((prev?.results || []).map(r => [r.name, r]));
+  const fresh = new Map(planned.map(r => [r.name, { ...r, at }]));
+  const names = [...new Set([...projects, ...before.keys(), ...fresh.keys()])];
+  const results = names.map(n => fresh.get(n) || before.get(n)
+    || (enforced.includes(n) ? { name: n, status: 'service', why: 'déjà en service (absent de ce plan)' } : { name: n, status: 'exclu', why: 'pas encore évalué (absent des plans d’intégration)' }));
+  return { at, results };
+}
+
+const mdCell = (s) => String(s ?? '').replace(/\r?\n/g, ' ').replace(/\|/g, '\\|');
+function mdRow(r) {
+  if (r.status === 'service') return `| ${r.name} | en service${r.local ? ' (`pipeline.json` local)' : ''} | \`${mdCell(r.config?.testCommand || r.testCommand || '')}\` |`;
+  return `| ${r.name} | exclu | ${mdCell(r.why)} |`;
+}
+const MD_HEAD = '# Mise en service générale — tableau nominatif (local, non versionné)\n\n| Projet | État | Commande de test (vérifiée verte) / raison |\n|---|---|---|\n';
+
+/**
+ * Upserts the rows of the projects evaluated by this run in the hand-kept
+ * table of logs/pipeline-onboarding.md; every other row is left untouched. A
+ * project listed in a grouped first cell (« a, b, c ») leaves that group.
+ */
+export function updateOnboardingMd(text, planned) {
+  const lines = (text && text.trim() ? text : MD_HEAD).replace(/\r\n/g, '\n').replace(/\n+$/, '').split('\n');
+  const firstCell = (l) => (/^\|/.test(l) ? l.split('|')[1].trim() : null);
+  for (const r of planned) {
+    const row = mdRow(r);
+    let i = lines.findIndex(l => firstCell(l) === r.name);
+    if (i >= 0) { lines[i] = row; continue; }
+    const g = lines.findIndex(l => (firstCell(l) || '').split(/\s*,\s*/).length > 1 && firstCell(l).split(/\s*,\s*/).includes(r.name));
+    if (g >= 0) {
+      const rest = firstCell(lines[g]).split(/\s*,\s*/).filter(n => n !== r.name);
+      lines[g] = lines[g].replace(/^\|[^|]*\|/, `| ${rest.join(', ')} |`);
+    }
+    const sep = lines.findIndex(l => /^\|\s*-/.test(l));
+    const rows = lines.map((l, k) => k).filter(k => k > sep && sep >= 0 && /^\|/.test(lines[k]));
+    const lastService = rows.filter(k => /^\|[^|]*\|\s*en service/.test(lines[k])).pop();
+    const at = r.status === 'service' && lastService != null ? lastService + 1 : (rows.length ? rows[rows.length - 1] + 1 : lines.length);
+    lines.splice(at, 0, row);
+  }
+  return lines.join('\n') + '\n';
 }
 
 /** pipeline.json content for a project, from what really exists in it. */
@@ -261,8 +312,13 @@ if (path.resolve(process.argv[1] || '') === path.resolve(fileURLToPath(import.me
   const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
   const conductor = cfg.conductor || 'chef';
   const results = [];
+  const isChef = (n) => n === conductor || new RegExp(`^${conductor}-\\d+$`).test(n);
+  for (const n of Object.keys(plan)) if (!cfg.projects.some(p => p.name === n)) console.log(`${n.padEnd(18)} IGNORÉ     absent de config.json`);
+  // Only the projects named in the plan are evaluated: a partial plan never
+  // rewrites (nor downgrades) the line of any other project.
   for (const p of cfg.projects) {
-    if (p.name === conductor || new RegExp(`^${conductor}-\\d+$`).test(p.name)) { results.push({ name: p.name, status: 'chef', why: 'le chef : pipeline Routage (pipeline-enforce on --chef)' }); continue; }
+    if (isChef(p.name)) { results.push({ name: p.name, status: 'chef', why: 'le chef : pipeline Routage (pipeline-enforce on --chef)' }); continue; }
+    if (!Object.hasOwn(plan, p.name)) continue;
     // A project whose turn is running is never touched (its working tree is in use).
     let busy = false;
     try { const pid = Number(fs.readFileSync(path.join(ROOT, 'logs', `${p.name}.pid`), 'utf8')); process.kill(pid, 0); busy = true; } catch (e) { busy = e?.code === 'EPERM'; }
@@ -270,12 +326,22 @@ if (path.resolve(process.argv[1] || '') === path.resolve(fileURLToPath(import.me
     results.push(r);
     console.log(`${r.name.padEnd(18)} ${r.status === 'service' ? 'EN SERVICE' : 'EXCLU     '} ${r.why || r.config?.testCommand || ''}`);
   }
+  const untouched = cfg.projects.filter(p => !isChef(p.name) && !Object.hasOwn(plan, p.name)).length;
+  if (untouched) console.log(`(${untouched} autre(s) projet(s) hors de ce plan : relevé inchangé)`);
   if (!dryRun) {
-    fs.writeFileSync(path.join(ROOT, 'logs', 'pipeline-onboarding.json'), JSON.stringify({ at: new Date().toISOString(), results }, null, 2));
+    const jf = path.join(ROOT, 'logs', 'pipeline-onboarding.json');
+    let prev = null;
+    try { prev = JSON.parse(fs.readFileSync(jf, 'utf8')); } catch { /* first run, or unreadable: start a new report */ }
+    const report = mergeReport(prev, results, { projects: cfg.projects.map(p => p.name), enforced: readEnforcement(ROOT).projects });
+    fs.writeFileSync(jf, JSON.stringify(report, null, 2));
+    const mf = path.join(ROOT, 'logs', 'pipeline-onboarding.md');
+    let md = '';
+    try { md = fs.readFileSync(mf, 'utf8'); } catch { /* created below */ }
+    fs.writeFileSync(mf, updateOnboardingMd(md, results.filter(r => r.status !== 'chef')));
     if (args.includes('--apply')) {
       const cur = readEnforcement(ROOT);
       const projects = [...new Set([...cur.projects, ...results.filter(r => r.status === 'service').map(r => r.name)])];
-      const e = writeEnforcement(ROOT, { projects, pipelines: cur.pipelines.length ? cur.pipelines : ENGINE_PIPELINES, generalSince: new Date().toISOString(), by: 'pipeline-onboard --apply (phase 7)' });
+      const e = writeEnforcement(ROOT, { projects, pipelines: cur.pipelines.length ? cur.pipelines : ENGINE_PIPELINES, generalSince: cur.generalSince || new Date().toISOString(), by: 'pipeline-onboard --apply (phase 7)' });
       console.log(`en service : ${e.projects.length} projet(s)`);
     }
   }
