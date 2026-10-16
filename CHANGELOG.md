@@ -11,6 +11,23 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.110.1] - 2026-10-16
+
+### Fixed
+
+- (server) `scripts/pipeline-onboard.mjs`: a project whose `.gitignore`
+  ignores the whole `.orchestrateur/` folder (run artefacts) was left out of
+  service with « commit de pipeline.json impossible : pathspec
+  '.orchestrateur/pipeline.json' did not match any file(s) known to git ».
+  Only `.orchestrateur/pipeline.json` is now added with `git add -f`; the rest
+  of the folder stays ignored and is never forced.
+- (server) `scripts/pipeline-onboard.mjs`: when adding or committing
+  `pipeline.json` fails, nothing is left half-applied: the file is unstaged
+  and removed from the disk (and the `.orchestrateur/` folder too when this
+  run created it and it is empty); the exclusion reason says so, or warns
+  with the path when the file could not be removed. User request of
+  2026-10-16: « corrige l'outil d'intégration ».
+
 ## [0.110.0] - 2026-10-16
 
 ### Added

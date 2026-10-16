@@ -162,17 +162,29 @@ export function onboardProject(project, entry, { dryRun = false } = {}) {
   } else {
     out.config = pipelineConfigFor(dir, entry.testCommand);
     if (!dryRun) {
-      fs.mkdirSync(path.dirname(pj), { recursive: true });
+      const pjDir = path.dirname(pj);
+      const createdDir = !fs.existsSync(pjDir);
+      fs.mkdirSync(pjDir, { recursive: true });
       fs.writeFileSync(pj, JSON.stringify(out.config, null, 2) + '\n');
       if (diverged) {
         addExclude(dir, '.orchestrateur/pipeline.json');
         out.actions.push(`pipeline.json écrit en LOCAL (.git/info/exclude) : la branche a divergé de ${up.out} (+${out.upstream.ahead}/-${out.upstream.behind}), son historique n’est pas touché`);
       } else {
-        git(dir, 'add', '--', '.orchestrateur/pipeline.json');
-        const c = git(dir, ...identityArgs(dir), 'commit', '-q', '-m', 'chore(orchestrator): add .orchestrateur/pipeline.json',
+        // -f: many projects ignore the whole `.orchestrateur/` folder (run
+        // artefacts). Only this one file is forced; nothing else of the folder.
+        const add = git(dir, 'add', '-f', '--', '.orchestrateur/pipeline.json');
+        const c = add.ok && git(dir, ...identityArgs(dir), 'commit', '-q', '-m', 'chore(orchestrator): add .orchestrateur/pipeline.json',
           '-m', 'Exit criteria of the orchestrator pipelines (test command, test globs, version files, changelog). Generated when the project was put in service (orchestrateur 0.56.0); edit freely.',
           '--', '.orchestrateur/pipeline.json');
-        if (!c.ok) return exclude(`commit de pipeline.json impossible : ${c.err.slice(0, 200)}`);
+        if (!add.ok || !c.ok) {
+          // Never leave a half-applied state: unstage and remove what this run wrote.
+          git(dir, 'rm', '-q', '--cached', '--ignore-unmatch', '--', '.orchestrateur/pipeline.json');
+          let cleaned = true;
+          try { fs.rmSync(pj, { force: true }); if (createdDir && !fs.readdirSync(pjDir).length) fs.rmdirSync(pjDir); } catch { cleaned = false; }
+          const why = (add.ok ? c.err : add.err).slice(0, 200);
+          out.actions.push(cleaned ? 'pipeline.json retiré après l’échec du commit (aucun état à moitié appliqué)' : `⚠ pipeline.json n’a pas pu être retiré : ${pj}`);
+          return exclude(`${add.ok ? 'commit' : 'git add'} de pipeline.json impossible : ${why} — ${cleaned ? 'fichier écrit retiré, projet inchangé' : `⚠ fichier écrit resté sur le disque (${pj}), à retirer à la main`}`);
+        }
         out.actions.push(`commit ${git(dir, 'rev-parse', '--short', 'HEAD').out} : .orchestrateur/pipeline.json (seul fichier du commit, aucun push)`);
       }
     } else out.actions.push(`(simulation) pipeline.json ${diverged ? 'local' : 'commité'}`);

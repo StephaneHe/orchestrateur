@@ -153,6 +153,34 @@ const py = path.join(T, 'Ayor'); fs.mkdirSync(path.join(py, 'tests'), { recursiv
 const pyCfg = O.pipelineConfigFor(py, '.venv\\Scripts\\python.exe -m unittest discover -s tests');
 ok(pyCfg.testGlobs.includes('**/test*.py') && pyCfg.testGlobs.includes('tests/**') && !pyCfg.testGlobs.some(x => /\.test\.\*|\.spec\./.test(x)), `unittest : motifs Python (${pyCfg.testGlobs.join(', ')})`);
 
+// ---------------------------------------------------------------------------
+// User request 2026-10-16 « corrige l'outil d'intégration » (t-e8582d, Ayor case).
+section('8. .orchestrateur/ ignoré par le .gitignore : pipeline.json forcé SEUL ; commit en échec → fichier retiré');
+d = path.join(T, 'Ignored'); fs.mkdirSync(d);
+fs.writeFileSync(path.join(d, 'package.json'), JSON.stringify({ name: 'ignored', version: '1.0.0', scripts: { test: 'node --test' } }) + '\n');
+fs.writeFileSync(path.join(d, '.gitignore'), '.orchestrateur/\n');
+g(d, 'init', '-q'); g(d, 'add', '-A'); g(d, 'commit', '-q', '-m', 'init');
+fs.mkdirSync(path.join(d, '.orchestrateur', 'runs', 'p-x'), { recursive: true });
+fs.writeFileSync(path.join(d, '.orchestrateur', 'runs', 'p-x', 'plan.md'), '# artefact\n');
+r = O.onboardProject({ name: 'Ignored', path: d }, entry);
+const ign = g(d, 'show', '--name-only', '--format=%s', 'HEAD').stdout.trim().split('\n').filter(Boolean);
+ok(r.status === 'service' && ign[0] === 'chore(orchestrator): add .orchestrateur/pipeline.json' && ign.slice(1).join() === '.orchestrateur/pipeline.json', `dossier ignoré : pipeline.json commité (git add -f), seul fichier du commit (${r.why || ign.join(' | ')})`);
+ok(g(d, 'ls-files', '.orchestrateur').stdout.trim() === '.orchestrateur/pipeline.json' && g(d, 'check-ignore', '-q', '.orchestrateur/runs/p-x/plan.md').status === 0 && status(d) === '', 'artefacts d’exécution toujours ignorés et jamais suivis, arbre propre');
+
+d = path.join(T, 'HookFail'); fs.mkdirSync(d);
+fs.writeFileSync(path.join(d, 'package.json'), JSON.stringify({ name: 'hookfail', version: '1.0.0', scripts: { test: 'node --test' } }) + '\n');
+fs.writeFileSync(path.join(d, '.gitignore'), '.orchestrateur/\n');
+g(d, 'init', '-q'); g(d, 'add', '-A'); g(d, 'commit', '-q', '-m', 'init');
+fs.writeFileSync(path.join(d, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\necho "refused by test hook" >&2\nexit 1\n', { mode: 0o755 });
+const headBefore = g(d, 'rev-parse', 'HEAD').stdout.trim();
+r = O.onboardProject({ name: 'HookFail', path: d }, entry);
+ok(r.status === 'exclu' && /commit de pipeline\.json impossible/.test(r.why) && /fichier écrit retiré/.test(r.why), `commit refusé : exclu avec la raison et le nettoyage signalé (${r.why})`);
+ok(!fs.existsSync(path.join(d, '.orchestrateur')) && g(d, 'rev-parse', 'HEAD').stdout.trim() === headBefore && status(d) === '' && g(d, 'diff', '--cached', '--name-only').stdout.trim() === '', 'aucun état à moitié appliqué : fichier et dossier retirés, index vide, HEAD inchangé');
+fs.mkdirSync(path.join(d, '.orchestrateur', 'runs'), { recursive: true });
+fs.writeFileSync(path.join(d, '.orchestrateur', 'runs', 'keep.md'), 'artefact\n');
+r = O.onboardProject({ name: 'HookFail', path: d }, entry);
+ok(r.status === 'exclu' && !fs.existsSync(path.join(d, '.orchestrateur', 'pipeline.json')) && fs.existsSync(path.join(d, '.orchestrateur', 'runs', 'keep.md')), 'dossier .orchestrateur/ préexistant : seul pipeline.json est retiré, le reste est gardé');
+
 fs.rmSync(T, { recursive: true, force: true });
 console.log(`\n${pass} ok, ${fail} KO`);
 process.exit(fail ? 1 : 0);
