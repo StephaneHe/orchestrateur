@@ -238,6 +238,10 @@ Ajouter une app Android :
 
 Un doc : entrée dans `docs[]` avec `project`, `id` (slug), `title`, `file`
 (nom simple sous `builds/<project>/`) et `fallbacks` (chemins absolus).
+Sans copie sous `builds/`, la source du projet est relue à chaque requête
+(0.112.0, brouillon de mail `Ayor/mail-retour-reunion`) ; les repères
+`[À COMPLÉTER : …]` / `[À VÉRIFIER : …]` sont mis en évidence (`mark.draft-gap`).
+Recette : `_test_mail_draft_page.mjs`.
 
 **Tout ou rien.** JSON cassé ou une seule entrée invalide ⇒ le fichier entier
 est refusé, la dernière version valide reste servie (jamais de 500) et la

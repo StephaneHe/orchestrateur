@@ -2284,6 +2284,9 @@ function renderMarkdown(md) {
     t = t.replace(/__([^_]+)__/g, '<strong>$1</strong>');
     t = t.replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g, '$1<em>$2</em>');
     t = t.replace(/(^|[\s(])_([^_]+)_(?=$|[\s).,;:!?])/g, '$1<em>$2</em>');
+    // Draft gaps ([À COMPLÉTER : …], [À VÉRIFIER : …]) stay verbatim but stand
+    // out, so a reader never sends a draft with a hole left in it.
+    t = t.replace(/\[À (?:COMPLÉTER|VÉRIFIER)\b[^\]]*\]/g, m => `<mark class="draft-gap">${m}</mark>`);
     t = t.replace(new RegExp(SENT + '(\\d+)' + SENT, 'g'), (_, n) => `<code>${escHtml(codes[n])}</code>`);
     return t;
   }
@@ -2369,6 +2372,7 @@ function docPageHtml({ project, id, title, bodyHtml }) {
     th { background: #1a1a20; color: #f0f0f0; }
     tr:nth-child(even) td { background: #141418; }
     img { max-width: 100%; height: auto; }
+    mark.draft-gap { background: #4a3500; color: #ffd27a; border: 1px solid #a07000; border-radius: 4px; padding: 0 0.25em; }
     footer { max-width: 720px; margin: 0 auto; padding: 0 18px 40px; color: #444; font-size: 12px; }
   </style>
 </head>

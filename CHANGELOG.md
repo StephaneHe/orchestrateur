@@ -11,6 +11,23 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.112.0] - 2026-10-17
+
+### Added
+
+- (server) The mail draft written by a project (meeting follow-up) is
+  readable as a web page: `downloads.json` registers it as a doc
+  (`/downloads/Ayor/doc/mail-retour-reunion`, raw Markdown at `…/raw`). The
+  page reads the source file in the project folder on every request, so a
+  corrected draft shows on the next reload; read-only, the project repository
+  is never written. Registry entry active without restart (hot reload).
+- (server) Rendered docs highlight draft gaps (`[À COMPLÉTER : …]`,
+  `[À VÉRIFIER : …]`) verbatim in a `<mark class="draft-gap">`; markers inside
+  code spans stay code. Needs a server restart.
+- Test: `scripts/_test_mail_draft_page.mjs` (real routes of `server.js` on a
+  private loopback app: 200, every line of the draft present, gaps
+  highlighted, raw identical, source unchanged, edits picked up per request).
+
 ## [0.111.0] - 2026-10-16
 
 ### Added
