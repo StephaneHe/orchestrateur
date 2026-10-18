@@ -1,9 +1,35 @@
 {
+  "testCommand": "node scripts/regression.mjs --targeted --no-browser",
+  "testGlobs": [
+    "scripts/_test_*.mjs",
+    "scripts/_regression*.mjs",
+    "tests/**"
+  ],
+  "versionFiles": [
+    "package.json"
+  ],
+  "changelog": "CHANGELOG.md",
+  "requirements": "docs/USER_REQUIREMENTS.md",
+  "testTimeoutMin": 30,
   "lanes": {
     "dir": "../orchestrateur-dev-lanes",
-    "copy": ["config.json", ".orchestrateur-instance.json", ".token", "model-routing.json", "language-settings.json"],
-    "link": ["node_modules"],
-    "releaseCheck": ["node", "scripts/regression.mjs", "--targeted", "--since", "{base}"],
+    "copy": [
+      "config.json",
+      ".orchestrateur-instance.json",
+      ".token",
+      "model-routing.json",
+      "language-settings.json"
+    ],
+    "link": [
+      "node_modules"
+    ],
+    "releaseCheck": [
+      "node",
+      "scripts/regression.mjs",
+      "--targeted",
+      "--since",
+      "{base}"
+    ],
     "releaseCheckTimeoutMin": 60
   }
 }
