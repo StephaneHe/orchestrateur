@@ -238,6 +238,10 @@ Ajouter une app Android :
 
 Un doc : entrée dans `docs[]` avec `project`, `id` (slug), `title`, `file`
 (nom simple sous `builds/<project>/`) et `fallbacks` (chemins absolus).
+Sans copie sous `builds/`, la source du projet est relue à chaque requête
+(0.112.0, brouillon de mail `Ayor/mail-retour-reunion`) ; les repères
+`[À COMPLÉTER : …]` / `[À VÉRIFIER : …]` sont mis en évidence (`mark.draft-gap`).
+Recette : `_test_mail_draft_page.mjs`.
 
 **Tout ou rien.** JSON cassé ou une seule entrée invalide ⇒ le fichier entier
 est refusé, la dernière version valide reste servie (jamais de 500) et la
@@ -279,6 +283,15 @@ ce sera utile ». Procédure complète : `docs/DEV-PROD.md`.
   Recette : `_test_todo_untracked.mjs`.
 - Contrôle : `node scripts/dev-split.mjs check`. Recette :
   `_test_dev_split.mjs`.
+- **La dev est en service dans les pipelines** (0.113.0, « Il faut que
+  orchestrateur-dev fonctionne avec des pipelines », option A) :
+  `enforcement.projects` ; son `.orchestrateur/pipeline.json` déclare
+  `node scripts/regression.mjs --targeted --no-browser` et `testTimeoutMin: 30`
+  (délai par projet de la commande de test, `testTimeoutMs` du moteur, défaut
+  10 min, plafond 120). Depuis 0.114.0 (P9 en prod), ses exécutions de
+  pipeline tournent en couloir, deux à la fois (`_test_dev_pipeline_lanes.mjs`).
+  Retour arrière : `pipeline-enforce.mjs off orchestrateur-dev`. Recette :
+  `_test_dev_instance_pipelines.mjs`.
 - Supprimer la dev : retirer l'entrée de config.json, `forgetWorkspace()`,
   supprimer le dossier. La prod n'est pas touchée.
 
@@ -919,7 +932,7 @@ etre justifies et documentes. » Conception, état livré (§7) et règles (§3)
 - Lecture : `GET /api/lanes/:projet`, `node scripts/lanes.mjs status <p>`.
 - Recettes : `_test_parallel_lanes.mjs` (série), `_test_lane_rules.mjs`, HTTP
   `lanes-queue` et `lanes-api`.
-- **Pipelines dans un couloir** (0.111.0, P9, demande « Lances-led ») :
+- **Pipelines dans un couloir** (0.114.0, P9, demande « Lances-led ») :
   détail au §12 du document de conception.
   - Une exécution **neuve** prend un couloir ≥ 1 libre, la copie principale
     en dernier et seulement propre (mode `pipeline` de `decide`) ; la règle
@@ -941,6 +954,14 @@ etre justifies et documentes. » Conception, état livré (§7) et règles (§3)
     (`unionMergeArgs`). Dépendances du Routage : marqueur `lane_task`
     (`promptHash`, `turnEnd`).
   - Recette : `_test_lane_pipeline.mjs` (série).
+- **orchestrateur-dev d'abord** (0.114.0, demande « orchestrateur-dev : il
+  faut activer P9 ») : seule une instance de dev (`devOf`) fait tourner ses
+  pipelines en couloir (`pipelineLanesInfo`, `PIPELINE_LANES_PILOT_ONLY`) ;
+  tout autre projet garde ses exécutions de pipeline en série dans la copie
+  principale (règle `pipeline-pilot`) sauf `"pipelineLanes": true` (entrée ou
+  `defaults`, relu à chaque dispatch). Retour arrière : `"pipelineLanes":
+  false` sur la dev. La prod reste à `maxParallel` 1. Recette :
+  `_test_dev_pipeline_lanes.mjs` (série).
 
 ## Contexte calibré par requête (0.99.0)
 
@@ -1947,6 +1968,18 @@ rangement des fichiers d'une réunion était partie en Maintenance).
 - Faux claude : `REUNION=definitif|rangement` (`FAKE_PIPE_JSON`,
   `FAKE_REUNION_TEXT`), `FAKE_PIPE_MARKER_ONLY=1`.
 - Recette : `_test_reunion_pipeline.mjs`.
+- **Lien interne vers la Rédaction** (0.111.0, demande « Fais un lien entre le
+  pipline Réunion vers le pipline Rédaction. Il peut être optionel, un routage
+  interne en fonction du besoin ») : avant toute étape, le model de
+  `routage.classifier` choisit par le sens (`chooseOption`, `catalog.route`)
+  `rangement` (plan de 0.110.0, défaut de `planSteps`), `redaction` (Rédiger,
+  Relire, Mettre en forme, `livrer-texte` sans version : cases et critères de
+  la Rédaction, `fromPipeline: 'redaction'`) ou `les-deux` (rangement puis
+  rédaction, une livraison `livrer`). `state.route`, `state.mode` et
+  `state.plan` suivent le choix ; `final` dépend du mode. Échec ⇒ pause
+  `classifier` avant toute étape. Trace `system/pipeline_route`. Page Models :
+  deux renvois (`ref`), aucune case de plus. Faux claude : `FAKE_CLAUDE_CHOICE`.
+  Recette : `_test_reunion_redaction_route.mjs`.
 
 ## Pipelines obligatoires — phase 7 : mise en service générale (0.56.0)
 

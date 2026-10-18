@@ -1,6 +1,6 @@
 # Parallel tasks for the same musician — design
 
-Status: **lot 1 implemented in 0.101.0** (2026-10-15); **P9 (pipeline engine in a lane) in 0.111.0** (2026-10-18, §12) — see §7 for what is
+Status: **lot 1 implemented in 0.101.0** (2026-10-15); **P9 (pipeline engine in a lane) in 0.114.0** (2026-10-18, §12) — see §7 for what is
 in, what is not, and the decisions taken by default; Q2/Q3 applied in 0.101.1
 (§8); Q4 (version/CHANGELOG rule) and Q5 (pilot = orchestrateur-dev) applied
 in 0.102.0 (§9); Q1 (default `maxParallel` = 2, user decision) applied in
@@ -379,7 +379,8 @@ detected since 0.101.0; `planned` = documented, detector not written yet.
 | `git-unsupported` | submodules, LFS without the filter installed, sparse checkout, detached HEAD, git < 2.20 | project | active | `.gitmodules`, `.gitattributes filter=lfs` + `git lfs version`, `core.sparseCheckout`, `git symbolic-ref HEAD`, `git --version` | worktree content would differ from the checkout; a detached HEAD has no integration branch |
 | `same-task` | answer/resume of a task already holding a lane (`--lane k`, `[CHEF_ANSWER]`, `--meme-tache`, `--resume-session`) | lane | active | task affinity: `logs/lanes/<p>/<k>.task.json` in state `input`; two such lanes without `--lane` ⇒ refused (64), never guessed | session and work tree belong to that lane |
 | `lane0-direct` | direct user dialogue | lane0 | active | no `--source` | the user works in their own checkout by definition |
-| `pipeline-engine` | resume of a pipeline run that started in the main checkout (paused before 0.111.0, or run in lane 0) | lane0 | active | `lanes.mjs pausedPipelineRuns`: the paused run has no lane (or lane 0) | its files are in the main checkout; since P9 (0.111.0) a NEW run goes to a lane (§12) |
+| `pipeline-engine` | resume of a pipeline run that started in the main checkout (paused before 0.114.0, or run in lane 0) | lane0 | active | `lanes.mjs pausedPipelineRuns`: the paused run has no lane (or lane 0) | its files are in the main checkout; since P9 (0.114.0) a NEW run goes to a lane (§12) |
+| `pipeline-pilot` | new pipeline run of a project that is not a P9 pilot: only a dev instance (`devOf`) runs its pipelines in lanes; any other project needs `"pipelineLanes": true` (its entry or `defaults`) | lane0 | active | `lanes.mjs pipelineLanesInfo` (`PIPELINE_LANES_PILOT_ONLY`) | user request 2026-10-18 « orchestrateur-dev : il faut activer P9 », with the 2026-10-15 rule that the dev instance pilots lanes first (§12) |
 | `dual-mode` | `--second-model` on an ordinary dispatch (outside a pipeline) | lane0 | active | flag | `dual-run.mjs` branches its worktrees off the main checkout; inside a pipeline step in a lane, the dual mode works from the lane (§12) |
 | `main-dirty` | main checkout has uncommitted tracked changes and no turn runs in lane 0 | lane0 | active | `git status --porcelain --untracked-files=no` | the task must see the user's work, so it runs in that checkout; changes made by a running lane-0 turn do not count |
 | `machine-state` | scheduled tasks, services, registry, global installs, `~/.claude.json` | task | active | Routage field `ressources: ["poste"]` (`--ressources poste`) | global side effects cannot be merged |
@@ -694,7 +695,7 @@ keeps its branch and diff, nothing to undo. Code: `git revert` to the tag
   production serial without lanes, dev with two concurrent tasks).
 - **Rollback**: `git revert` to the tag `pre-dev-pilot-first-v0.103.0`.
 
-## 12. P9 — the pipeline engine in a lane (0.111.0)
+## 12. P9 — the pipeline engine in a lane (0.114.0)
 
 - **User request** (2026-10-18), verbatim: « Lances-led », answering the
   chef's offer to launch P9 after « Le parallelisme de l'orchestrateur est-il
@@ -764,3 +765,14 @@ keeps its branch and diff, nothing to undo. Code: `git revert` to the tag
 - **Rollback** (no restart): `"maxParallel": 1` on a project (or in
   `defaults`) ⇒ the 0.67.0 path. Code: `git revert` to the tag
   `pre-lane-pipeline-v0.110.1`.
+- **Pilot first** (0.114.0, user request 2026-10-18 « orchestrateur-dev : il
+  faut activer P9 », with the 2026-10-15 rule « il ne faudra passer d'abord
+  que orchestrateur-dev »): P9 shipped to production together with this gate.
+  `lanes.mjs pipelineLanesInfo`: a dev instance (`devOf`) runs its pipelines
+  in lanes; every other project keeps them in lane 0 (rule `pipeline-pilot`,
+  §3) unless its entry or `defaults` sets `"pipelineLanes": true` (read at
+  each dispatch, no restart; `false` on the dev instance turns P9 off for it).
+  Ordinary tasks are unchanged (`maxParallel`). Lifted for the fleet by
+  setting `PIPELINE_LANES_PILOT_ONLY` to false. Permanent requirement test:
+  `_test_dev_pipeline_lanes.mjs` (two pipeline runs of the dev instance in two
+  lanes at once; the production project and an ordinary project stay serial).

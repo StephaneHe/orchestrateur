@@ -47,10 +47,15 @@ export const RULES = [
     text: 'suite de la même tâche : elle reprend le couloir, la session et la copie de cette tâche' },
   { id: 'lane0-direct', scope: 'lane0', status: 'active',
     text: "dialogue direct de l'utilisateur : il travaille dans sa propre copie du projet" },
-  // P9 (0.111.0): a NEW pipeline run goes to a lane (worktree); only a run that
+  // P9 (0.114.0): a NEW pipeline run goes to a lane (worktree); only a run that
   // started in the main checkout resumes there, where its files are.
   { id: 'pipeline-engine', scope: 'lane0', status: 'active',
     text: "reprise d'une exécution de pipeline commencée dans la copie principale : elle reprend là où sont ses fichiers" },
+  // P9 is piloted by the dev instance first (user request 2026-10-18,
+  // « orchestrateur-dev : il faut activer P9 »): every other project keeps its
+  // pipeline runs in lane 0 until it opts in (`pipelineLanes: true`).
+  { id: 'pipeline-pilot', scope: 'lane0', status: 'active',
+    text: "exécution de pipeline d'un projet qui ne fait pas encore tourner ses pipelines dans les couloirs : orchestrateur-dev les pilote d'abord (décision utilisateur du 2026-10-18)" },
   { id: 'dual-mode', scope: 'lane0', status: 'active',
     text: 'mode double model demandé hors pipeline (--second-model) : ses deux branches partent de la copie principale' },
   { id: 'main-dirty', scope: 'lane0', status: 'active',
@@ -145,7 +150,7 @@ export function parseResources(arg) {
  * git facts of the main checkout and the project files.
  *
  * input: { project, conductor, direct, laneArg, laneWhy?, sameTask, sameTaskLanes,
- *          pipeline, pipelineResumeLane0?, dual, resources: [...declared], facts? }
+ *          pipeline, pipelineLanes?, pipelineLanesWhy?, pipelineResumeLane0?, dual, resources: [...declared], facts? }
  * output: { mode: 'project'|'lane0'|'lane'|'alone'|'parallel'|'pipeline', lane?, lane0?, rule?,
  *           evidence?, resources: [{key, rule, evidence}], fired: [{rule, evidence}] }
  *
@@ -194,6 +199,7 @@ export function decide(input) {
   // pauses leaves the main checkout clean; lane 0 only when it is clean (a
   // pipeline that needs a clean tree would refuse it, and the user's
   // uncommitted work is never mixed into a delivery).
+  if (input.pipeline && input.pipelineLanes === false) { const f = fire('pipeline-pilot', input.pipelineLanesWhy || 'pipelines hors couloirs pour ce projet'); return { mode: 'lane0', ...f, resources, fired }; }
   if (input.pipeline) return { mode: 'pipeline', lane0: !(input.mainDirtyMatters !== false && facts.dirty.length), resources, fired };
   if (input.dual) { const f = fire('dual-mode', '--second-model'); return { mode: 'lane0', ...f, resources, fired }; }
   if (input.mainDirtyMatters !== false && facts.dirty.length) {

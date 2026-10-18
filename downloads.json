@@ -27,6 +27,10 @@
     {
       "project": "TradeBot", "id": "review", "title": "TradeBot — Revue critique (Fable)",
       "file": "REVIEW.md", "fallbacks": ["I:\\Dev\\TradeBot\\docs\\REVIEW.md"]
+    },
+    {
+      "project": "Ayor", "id": "mail-retour-reunion", "title": "Brouillon du mail de retour — réunion du 16/10/2026",
+      "file": "mail-retour-reunion.md", "fallbacks": ["I:\\Dev\\Ayor\\meetings\\mails\\2026-10-17-retour-reunion-michael.md"]
     }
   ]
 }

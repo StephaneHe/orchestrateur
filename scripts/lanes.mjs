@@ -58,6 +58,23 @@ export function maxParallelInfo(config, project) {
   return { value: DEFAULT_MAX_PARALLEL, source: 'default' };
 }
 
+// User request (2026-10-18), verbatim: « orchestrateur-dev : il faut activer
+// P9 », with the 2026-10-15 rule that the dev instance pilots lanes first. P9
+// (pipeline runs in lanes) is on for a dev instance (`devOf`) only; any other
+// project keeps its pipeline runs in lane 0 (rule `pipeline-pilot`) unless its
+// own entry, or `defaults`, sets `pipelineLanes`. Lifted once the pilot is
+// judged good, by setting PIPELINE_LANES_PILOT_ONLY to false.
+export const PIPELINE_LANES_PILOT_ONLY = true;
+
+/** { value: boolean, source: 'project'|'defaults'|'dev-pilot'|'pilot-only'|'default', why? } */
+export function pipelineLanesInfo(config, project) {
+  if (typeof project?.pipelineLanes === 'boolean') return { value: project.pipelineLanes, source: 'project' };
+  if (typeof config?.defaults?.pipelineLanes === 'boolean') return { value: config.defaults.pipelineLanes, source: 'defaults' };
+  if (!PIPELINE_LANES_PILOT_ONLY) return { value: true, source: 'default' };
+  if (project?.devOf) return { value: true, source: 'dev-pilot' };
+  return { value: false, source: 'pilot-only', why: `${project?.name || 'ce projet'} : pipelines dans la copie principale ; orchestrateur-dev pilote d'abord les pipelines en couloir (décision utilisateur du 2026-10-18)` };
+}
+
 export function maxParallelFor(config, project) {
   return maxParallelInfo(config, project).value;
 }

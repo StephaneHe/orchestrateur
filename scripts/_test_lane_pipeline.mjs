@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ============================================================================
-// scripts/_test_lane_pipeline.mjs — the pipeline engine runs in a lane (P9, 0.111.0)
+// scripts/_test_lane_pipeline.mjs — the pipeline engine runs in a lane (P9, 0.114.0)
 // ============================================================================
 //
 // User request (2026-10-18), verbatim: « Lances-led », answering the chef's
@@ -53,9 +53,9 @@ section('1. Règles : une exécution neuve n’est plus forcée dans la copie pr
 {
   const clean = { repo: true, top: '.', head: 'x', branch: 'master', unsupported: [], dirty: [] };
   const P = { name: 'p', path: '.' };
-  const d1 = R.decide({ project: P, conductor: 'chef', pipeline: true, facts: clean });
+  const d1 = R.decide({ project: P, conductor: 'chef', pipeline: true, pipelineLanes: true, facts: clean });
   ok(d1.mode === 'pipeline' && d1.lane0 === true && !d1.rule, `exécution neuve : mode « pipeline », aucune règle (${d1.mode}, ${d1.rule || '—'})`);
-  const d2 = R.decide({ project: P, conductor: 'chef', pipeline: true, facts: { ...clean, dirty: ['a.js'] } });
+  const d2 = R.decide({ project: P, conductor: 'chef', pipeline: true, pipelineLanes: true, facts: { ...clean, dirty: ['a.js'] } });
   ok(d2.mode === 'pipeline' && d2.lane0 === false, 'copie principale modifiée : un couloir seulement, jamais la copie de l’utilisateur');
   const d3 = R.decide({ project: P, conductor: 'chef', pipeline: true, pipelineResumeLane0: 'p-20261018T100000-abcd', facts: clean });
   ok(d3.mode === 'lane0' && d3.rule === 'pipeline-engine' && /copie principale/.test(R.ruleText(d3.rule, d3.evidence)), `reprise d’une exécution de la copie principale : règle pipeline-engine (« ${R.ruleText(d3.rule, d3.evidence)} »)`);
@@ -87,7 +87,8 @@ function initRepo(dir) {
 initRepo(P); initRepo(Q);
 const config = {
   conductor: 'chef', defaults: { model: 'claude-haiku-5-5', allowedTools: 'Read,Edit,Write,Bash', provider: 'claude' },
-  projects: [{ name: 'chef', path: path.join(T, 'chef') }, { name: 'P', path: P }, { name: 'Q', path: Q, maxParallel: 1 }],
+  // P opts in to pipeline lanes (outside the dev instance, P9 is opt-in: rule pipeline-pilot).
+  projects: [{ name: 'chef', path: path.join(T, 'chef') }, { name: 'P', path: P, pipelineLanes: true }, { name: 'Q', path: Q, maxParallel: 1 }],
 };
 fs.writeFileSync(path.join(T, 'config.json'), JSON.stringify(config));
 fs.writeFileSync(path.join(T, 'model-routing.json'), JSON.stringify({

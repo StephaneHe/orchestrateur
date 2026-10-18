@@ -11,7 +11,7 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
-## [0.111.0] - 2026-10-18
+## [0.114.0] - 2026-10-18
 
 ### Added
 
@@ -64,6 +64,21 @@ server/dashboard and the Android companion app. Entries are prefixed
 - (server) `finishLane` (`dispatch.mjs`): a paused pipeline turn (code 2) is a
   question, not an error; the lane's end marker carries `promptHash`,
   `turnEnd` and the run.
+- (server) **P9 is piloted by orchestrateur-dev first.** User request of
+  2026-10-18: « orchestrateur-dev : il faut activer P9 », with the 2026-10-15
+  rule that the dev instance gets lanes first. `lanes.mjs pipelineLanesInfo`:
+  a dev instance (`devOf`) runs its pipelines in lanes; every other project
+  keeps its pipeline runs in the main checkout, one after the other, under the
+  new lane rule `pipeline-pilot` (registry, §3 of the design document,
+  `_test_lane_rules.mjs`), unless its entry or `defaults` sets
+  `"pipelineLanes": true` (read at each dispatch). Ordinary tasks keep their
+  lanes (`maxParallel`); the production project keeps `maxParallel` 1.
+  Permanent requirement test: `_test_dev_pipeline_lanes.mjs` (two pipeline
+  runs of the dev instance at once, in lanes 0 and 1; an ordinary project's
+  runs stay serial with rule `pipeline-pilot`).
+- (server) Release renumbered: P9 was 0.111.0 in the dev branch; production
+  meanwhile released 0.111.0 to 0.113.1, merged into the dev branch before
+  this release.
 
 ### Notes
 
@@ -73,8 +88,93 @@ server/dashboard and the Android companion app. Entries are prefixed
   or set `"maxParallel": 1`.
 - A lane's question still reaches the user through the chef only (per-lane
   state on the dashboard = items P7/P11).
-- Rollback without restart: `"maxParallel": 1` (project or `defaults`); code:
-  `git revert` to the tag `pre-lane-pipeline-v0.110.1`.
+- Rollback without restart: `"pipelineLanes": false` on orchestrateur-dev
+  (its pipelines back to lane 0), or `"maxParallel": 1` (project or
+  `defaults`); code: production `git reset --hard prod-before-v0.114.0`.
+
+## [0.113.1] - 2026-10-18
+
+### Fixed
+
+- (server) Browser regression `todo-item-drag`: the 44 px mobile grip check
+  compared raw layout floats and failed intermittently (43.99998 px measured).
+  It now allows 0.01 px of sub-pixel rounding only; a 43.98 px or 43 px grip
+  still fails (self-checked in the test). User agreement « oui » (2026-10-18),
+  recorded in `docs/USER_REQUIREMENTS.md`.
+
+## [0.113.0] - 2026-10-18
+
+### Added
+
+- (server) Per-project test timeout for the pipeline engine: `testTimeoutMin`
+  in a project's `.orchestrateur/pipeline.json` (integer, 1 to 120 minutes)
+  replaces the 10 min default for every run of its test and build commands
+  (`testTimeoutMs` of `scripts/pipeline-engine.mjs`). Active at once (read by
+  `dispatch.mjs` on each turn), no restart.
+
+### Changed
+
+- (server) orchestrateur-dev is in pipeline service (user request « Il faut
+  que orchestrateur-dev fonctionne avec des pipelines », option A): put in
+  `enforcement.projects` by `pipeline-onboard.mjs --apply`; its
+  `.orchestrateur/pipeline.json` (committed alone in the dev repository, no
+  push) declares `node scripts/regression.mjs --targeted --no-browser` as test
+  command, `testTimeoutMin: 30`, its test globs (`scripts/_test_*.mjs`,
+  `scripts/_regression*.mjs`, `tests/**`), version file, changelog and
+  requirements register; its lanes section is kept. With this server's
+  dispatch, pipeline runs stay in lane 0 (rule `pipeline-engine`) until the
+  production gets the in-lane engine (P9, dev branch).
+- Test: `scripts/_test_dev_instance_pipelines.mjs` (timeout rule; real
+  `dispatch.mjs` on a dev instance in service: Discussion and light
+  Development run by the engine, test command run; on this machine every
+  `devOf` project is in service with the declared test command and timeout).
+
+## [0.112.0] - 2026-10-17
+
+### Added
+
+- (server) The mail draft written by a project (meeting follow-up) is
+  readable as a web page: `downloads.json` registers it as a doc
+  (`/downloads/Ayor/doc/mail-retour-reunion`, raw Markdown at `…/raw`). The
+  page reads the source file in the project folder on every request, so a
+  corrected draft shows on the next reload; read-only, the project repository
+  is never written. Registry entry active without restart (hot reload).
+- (server) Rendered docs highlight draft gaps (`[À COMPLÉTER : …]`,
+  `[À VÉRIFIER : …]`) verbatim in a `<mark class="draft-gap">`; markers inside
+  code spans stay code. Needs a server restart.
+- Test: `scripts/_test_mail_draft_page.mjs` (real routes of `server.js` on a
+  private loopback app: 200, every line of the draft present, gaps
+  highlighted, raw identical, source unchanged, edits picked up per request).
+
+## [0.111.0] - 2026-10-16
+
+### Added
+
+- (server) Meeting pipeline (`reunion`): optional internal link to the
+  Rédaction pipeline. Before any step, the classifier model (slot
+  `routage.classifier`) chooses by meaning, never by keywords, among three
+  routes: `rangement` (filing the meeting's files: exactly the 0.110.0 plan),
+  `redaction` (writing an e-mail or text about the meeting: Rédiger, Relire,
+  Mettre en forme with the Rédaction slots and criteria, Rédaction delivery
+  without version; no meeting file touched; the reviewed text is the answer)
+  and `les-deux` (filing, then writing, one delivery with version). The choice
+  is traced (`system/pipeline_route`, `run.json.route`, « Routage interne » in
+  the result) and the timeline shows the chosen plan from the start. A failed
+  choice pauses the run before any step (`classifier`; « continuer » retries).
+  Prefixes `/redaction` and `/reunion` still win over the classification.
+  Catalog: `modes`, `route`, mode-dependent `final`; Models page: two
+  reference cards (no new slot). User request of 2026-10-16: « Fais un lien
+  entre le pipline Réunion vers le pipline Rédaction. Il peut être optionel,
+  un routage interne en fonction du besoin ».
+
+### Changed
+
+- (server) Classifier rule for meetings: writing a new text about a meeting
+  may go to `reunion` (internal route to Rédaction); writing with no link to
+  a meeting stays `redaction`.
+- (tests) Fake claude: a scripted option choice (`FAKE_CLAUDE_CHOICE`) wins
+  over `FAKE_CLAUDE_CLASSIFY` for option prompts; `livrer-texte` is played
+  like Livrer.
 
 ## [0.110.1] - 2026-10-16
 

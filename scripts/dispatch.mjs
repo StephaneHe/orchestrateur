@@ -1286,6 +1286,7 @@ if (TURN_LOCK && LANES_MAX > 1) {
     sameTask: sameTask && !PIPE_RESUME,
     sameTaskLanes: sameTask ? reserved : [],
     pipeline: pipelineish,
+    ...(() => { const pl = lanesMod.pipelineLanesInfo(config, project); return { pipelineLanes: pl.value, pipelineLanesWhy: pl.why || null }; })(),
     dual: !!secondModel, resources: declared.list,
     // A turn running in lane 0 explains its own uncommitted changes.
     mainDirtyMatters: !lanesMod.lockHolder(files(0).lock),

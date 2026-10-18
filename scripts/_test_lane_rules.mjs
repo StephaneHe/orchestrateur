@@ -53,10 +53,13 @@ section('1. Chaque règle active se déclenche sur son cas, et seulement là');
   const sp = repo('sparse'); g(sp, 'config', 'core.sparseCheckout', 'true');
   ok(decide({ name: 'S', path: sp }).rule === 'git-unsupported', 'git-unsupported : extraction partielle');
   ok(decide(clean, { direct: true }).rule === 'lane0-direct' && decide(clean, { direct: true }).mode === 'lane0', 'lane0-direct : dialogue direct dans la copie principale');
-  // P9 (0.111.0, user « Lances-led »): a new pipeline run goes to a lane; the
+  // P9 (0.114.0, user « Lances-led »): a new pipeline run goes to a lane; the
   // rule only keeps the resume of a run paused in the main checkout there.
   ok(decide(clean, { pipeline: true }).mode === 'pipeline' && !decide(clean, { pipeline: true }).rule, 'exécution de pipeline neuve : couloir parallèle, aucune règle (P9)');
-  ok(decide(clean, { pipeline: true, pipelineResumeLane0: 'p-20261018T100000-abcd' }).rule === 'pipeline-engine' && decide(clean, { pipeline: true, pipelineResumeLane0: 'p-20261018T100000-abcd' }).mode === 'lane0', 'pipeline-engine : reprise d’une exécution en pause dans la copie principale');
+  const pilot = decide(clean, { pipeline: true, pipelineLanes: false, pipelineLanesWhy: 'P : pilote d’abord' });
+  ok(pilot.mode === 'lane0' && pilot.rule === 'pipeline-pilot' && /pilote d’abord/.test(pilot.evidence), 'pipeline-pilot : exécution de pipeline d’un projet hors pilote P9 → copie principale');
+  ok(decide(clean, { pipeline: true, pipelineLanes: true }).mode === 'pipeline', 'pipeline-pilot : ne se déclenche pas pour un projet pilote (pipelineLanes)');
+  ok(decide(clean, { pipeline: true, pipelineResumeLane0:'p-20261018T100000-abcd' }).rule === 'pipeline-engine' && decide(clean, { pipeline: true, pipelineResumeLane0: 'p-20261018T100000-abcd' }).mode === 'lane0', 'pipeline-engine : reprise d’une exécution en pause dans la copie principale');
   ok(decide(clean, { dual: true }).rule === 'dual-mode', 'dual-mode : mode double en copie principale');
   const dirty = repo('dirty'); fs.writeFileSync(path.join(dirty, 'a.txt'), 'modifié\n');
   ok(decide({ name: 'Y', path: dirty }).rule === 'main-dirty', 'main-dirty : modifications non commitées dans la copie principale');

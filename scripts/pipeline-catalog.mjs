@@ -192,9 +192,31 @@ const S = {
   // against the disk by scripts/meeting-check.mjs (`meeting` checks); the
   // drafts are deleted by the CODE, from the explicit list only, after the
   // user has answered any doubt (`askUser`: the run pauses).
+  //
+  // Internal link to Rédaction (0.111.0). User request (2026-10-16): « Fais un
+  // lien entre le pipline Réunion vers le pipline Rédaction. Il peut être
+  // optionel, un routage interne en fonction du besoin ». A meeting request may
+  // really be (or also be) the WRITING of an e-mail or text: the classifier
+  // model chooses the route by meaning (`route`), the plan becomes that mode.
+  // Filing only (« rangement ») is the default plan, unchanged.
   reunion: {
     needs: { git: true, clean: true },
-    final: 'verifier',
+    final: { rangement: 'verifier', redaction: 'relire', 'les-deux': ['verifier', 'relire'] },
+    modes: {
+      rangement: ['inventorier', 'trier', 'definitif', 'supprimer', 'ranger', 'verifier', 'livrer'],
+      redaction: ['rediger', 'relire', 'mettre-en-forme', 'livrer-texte'],
+      'les-deux': ['inventorier', 'trier', 'definitif', 'supprimer', 'ranger', 'verifier', 'rediger', 'relire', 'mettre-en-forme', 'livrer'],
+    },
+    route: {
+      slot: 'routage.classifier',
+      question: 'This request is about a MEETING. What does it actually need: filing the meeting\'s files, writing a new text (e-mail, message) about the meeting, or both? A final text the user already wrote and gives in the request is filing, not writing.',
+      options: {
+        rangement: 'file the meeting\'s files: record the final text the user already sent or validated, delete drafts, group video, transcript, opinion and notes under the meeting\'s name; nothing new to write',
+        redaction: 'write a NEW text about the meeting (an e-mail to someone, a message, minutes to send): the work is the writing itself, no meeting file to tidy',
+        'les-deux': 'both: file the meeting\'s files AND write a new text (e-mail, message) about the meeting',
+      },
+      labels: { rangement: 'rangement des fichiers de la réunion', redaction: 'rédaction (pipeline Rédaction)', 'les-deux': 'rangement, puis rédaction (pipeline Rédaction)' },
+    },
     steps: [
       { id: 'inventorier', title: '1 Inventorier', chain: ['reunion.inventorier'], group: 'reunion', artefact: 'inventaire.json', kind: 'judge',
         role: 'INVENTORIER les fichiers de la réunion dont parle la demande (demande.md) : mails, brouillons, vidéo, enregistrement audio, transcription, avis, notes, pièces jointes. Cherche-les dans tout le projet (Glob, Read). Donne à chacun son rôle, le NOM sous lequel l’ensemble devra être retrouvé (celui de la demande, sinon « réunion <projet> du <date> ») et le DOSSIER, relatif au projet, où tout sera rangé (un dossier existant des réunions s’il y en a un, sinon « reunions/AAAA-MM-JJ-<sujet> »). N’inventorie que ce qui appartient à CETTE réunion. Ne modifie rien.',
@@ -218,6 +240,17 @@ const S = {
     ],
   },
 };
+
+// The Rédaction steps reached from a meeting (0.111.0): same slots, artefacts
+// and criteria as the Rédaction pipeline, with the meeting as context. Writing
+// only delivers like Rédaction (no version); after a filing, the meeting's
+// Livrer (version, CHANGELOG) delivers both.
+const MEETING_WRITING = 'Le texte à rédiger concerne une RÉUNION : appuie-toi sur ses fichiers (mails, transcription, notes, avis — rangés juste avant si l’exécution vient de les ranger). ';
+for (const st of S.redaction.steps) {
+  const title = `R${st.title}`;   // « R1 Rédiger »…: never mistaken for the meeting's own numbering
+  if (st.id === 'livrer') S.reunion.steps.push({ ...st, id: 'livrer-texte', title: 'R4 Livrer (rédaction)', fromPipeline: 'redaction' });
+  else S.reunion.steps.push({ ...st, title, ...(st.id === 'rediger' ? { role: `${MEETING_WRITING}${st.role}` } : {}), fromPipeline: 'redaction' });
+}
 
 // ── Routage (lot B, 0.54.0) : le tour du chef devient lui-même un pipeline ───
 // mode « demande » : un message de l'utilisateur (ou une question d'un musicien) ;

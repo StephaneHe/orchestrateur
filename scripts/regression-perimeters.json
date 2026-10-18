@@ -186,6 +186,7 @@
       "suites": [
         "_test_network_guard.mjs",
         "_test_downloads_hot.mjs",
+        "_test_mail_draft_page.mjs",
         "_test_api_keys.mjs",
         "_test_permission_prompt.mjs",
         "_test_responses_shim.mjs",
@@ -216,6 +217,7 @@
             "_test_api_keys.mjs",
             "_test_attach_policy.mjs",
             "_test_downloads_hot.mjs",
+            "_test_mail_draft_page.mjs",
             "_test_network_guard.mjs",
             "_test_permission_prompt.mjs",
             "_test_phase1_backpressure.mjs",
@@ -236,6 +238,7 @@
             "_test_api_keys.mjs",
             "_test_attach_policy.mjs",
             "_test_downloads_hot.mjs",
+            "_test_mail_draft_page.mjs",
             "_test_network_guard.mjs",
             "_test_permission_prompt.mjs",
             "_test_phase1_backpressure.mjs",
@@ -263,6 +266,7 @@
             "_test_api_keys.mjs",
             "_test_attach_policy.mjs",
             "_test_downloads_hot.mjs",
+            "_test_mail_draft_page.mjs",
             "_test_network_guard.mjs",
             "_test_permission_prompt.mjs",
             "_test_phase1_backpressure.mjs",
@@ -283,6 +287,7 @@
             "_test_api_keys.mjs",
             "_test_attach_policy.mjs",
             "_test_downloads_hot.mjs",
+            "_test_mail_draft_page.mjs",
             "_test_network_guard.mjs",
             "_test_permission_prompt.mjs",
             "_test_phase1_backpressure.mjs",
@@ -303,6 +308,7 @@
             "_test_api_keys.mjs",
             "_test_attach_policy.mjs",
             "_test_downloads_hot.mjs",
+            "_test_mail_draft_page.mjs",
             "_test_network_guard.mjs",
             "_test_permission_prompt.mjs",
             "_test_phase1_backpressure.mjs",
@@ -449,6 +455,7 @@
         "_test_lane_rules.mjs",
         "_test_lane_changelog_rule.mjs",
         "_test_lane_pipeline.mjs",
+        "_test_dev_pipeline_lanes.mjs",
         "_test_maxparallel_default.mjs",
         "_test_dev_pilot_first.mjs",
         "_test_context_calibration.mjs",
@@ -488,6 +495,7 @@
             "_test_busy_never_ready.mjs",
             "_test_context_calibration.mjs",
             "_test_dev_pilot_first.mjs",
+            "_test_dev_pipeline_lanes.mjs",
             "_test_dual_model.mjs",
             "_test_examine_after_chef.mjs",
             "_test_explicit_model.mjs",
@@ -522,6 +530,7 @@
             "_test_busy_never_ready.mjs",
             "_test_context_calibration.mjs",
             "_test_dev_pilot_first.mjs",
+            "_test_dev_pipeline_lanes.mjs",
             "_test_dual_model.mjs",
             "_test_examine_after_chef.mjs",
             "_test_explicit_model.mjs",
@@ -549,6 +558,7 @@
             "_test_busy_never_ready.mjs",
             "_test_context_calibration.mjs",
             "_test_dev_pilot_first.mjs",
+            "_test_dev_pipeline_lanes.mjs",
             "_test_dual_model.mjs",
             "_test_examine_after_chef.mjs",
             "_test_explicit_model.mjs",
@@ -578,6 +588,7 @@
             "_test_busy_never_ready.mjs",
             "_test_context_calibration.mjs",
             "_test_dev_pilot_first.mjs",
+            "_test_dev_pipeline_lanes.mjs",
             "_test_dual_model.mjs",
             "_test_examine_after_chef.mjs",
             "_test_explicit_model.mjs",
@@ -663,20 +674,24 @@
         "_test_model_routing.mjs",
         "_test_step_key_3digits.mjs",
         "_test_no_lexical_routing.mjs",
-        "_test_reunion_pipeline.mjs"
+        "_test_reunion_pipeline.mjs",
+        "_test_reunion_redaction_route.mjs",
+        "_test_dev_instance_pipelines.mjs"
       ],
       "uses": [
         {
           "perimeter": "client",
           "suites": [
             "_test_model_reco.mjs",
-            "_test_reunion_pipeline.mjs"
+            "_test_reunion_pipeline.mjs",
+            "_test_reunion_redaction_route.mjs"
           ]
         },
         {
           "perimeter": "dispatch",
           "suites": [
             "_test_defect_blocks.mjs",
+            "_test_dev_instance_pipelines.mjs",
             "_test_item_delivery.mjs",
             "_test_item_review.mjs",
             "_test_item_tests.mjs",
@@ -693,6 +708,7 @@
             "_test_pipeline_observe.mjs",
             "_test_pipeline_onboard.mjs",
             "_test_reunion_pipeline.mjs",
+            "_test_reunion_redaction_route.mjs",
             "_test_step_key_3digits.mjs",
             "_test_tests_per_item.mjs"
           ]
@@ -701,6 +717,7 @@
           "perimeter": "noyau",
           "suites": [
             "_test_defect_blocks.mjs",
+            "_test_dev_instance_pipelines.mjs",
             "_test_item_delivery.mjs",
             "_test_item_review.mjs",
             "_test_item_tests.mjs",
@@ -717,6 +734,7 @@
             "_test_pipeline_observe.mjs",
             "_test_pipeline_onboard.mjs",
             "_test_reunion_pipeline.mjs",
+            "_test_reunion_redaction_route.mjs",
             "_test_step_key_3digits.mjs",
             "_test_tests_per_item.mjs"
           ]
@@ -724,6 +742,7 @@
         {
           "perimeter": "outillage",
           "suites": [
+            "_test_dev_instance_pipelines.mjs",
             "_test_model_reco.mjs",
             "_test_pipeline_entries.mjs"
           ]
@@ -732,6 +751,7 @@
           "perimeter": "panneaux",
           "suites": [
             "_test_defect_blocks.mjs",
+            "_test_dev_instance_pipelines.mjs",
             "_test_item_delivery.mjs",
             "_test_item_review.mjs",
             "_test_item_tests.mjs",
@@ -747,6 +767,7 @@
             "_test_pipeline_media.mjs",
             "_test_pipeline_observe.mjs",
             "_test_reunion_pipeline.mjs",
+            "_test_reunion_redaction_route.mjs",
             "_test_step_key_3digits.mjs",
             "_test_tests_per_item.mjs"
           ]
@@ -755,6 +776,7 @@
           "perimeter": "routage",
           "suites": [
             "_test_defect_blocks.mjs",
+            "_test_dev_instance_pipelines.mjs",
             "_test_item_delivery.mjs",
             "_test_item_review.mjs",
             "_test_item_tests.mjs",
@@ -771,6 +793,7 @@
             "_test_pipeline_observe.mjs",
             "_test_pipeline_onboard.mjs",
             "_test_reunion_pipeline.mjs",
+            "_test_reunion_redaction_route.mjs",
             "_test_step_key_3digits.mjs",
             "_test_tests_per_item.mjs"
           ]
