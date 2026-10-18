@@ -11,6 +11,32 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.114.1] - 2026-10-18
+
+### Fixed
+
+- (server) Pipeline « Livrer » step accepts a version already bumped earlier
+  in the same run. With per-item delivery, the version check compared against
+  the last delivered item, so a plan whose items bumped the version and wrote
+  the CHANGELOG entry (run `p-20261018T091024-0e199e`) was refused
+  « version non incrémentée », then « aucun commit créé » when the model
+  rightly refused a second bump — a dead-end pause. Rule
+  (`bumpedInRun`, `scripts/pipeline-engine.mjs`): when every version file
+  already reads a different version at the last delivered item than at the
+  start of the run (or its previous release), Livrer is checked from that
+  point: version changed, CHANGELOG entry `## [<version>]`, requirement line,
+  clean tree, green suite. A release commit holding only docs is accepted;
+  no commit at all is accepted when all of that is already committed. The
+  Livrer prompt says the version is already bumped and must not be bumped
+  again. Unchanged: a run where nothing bumped the version is still refused
+  (« version non incrémentée » / « aucun commit créé »), and a bump without
+  its CHANGELOG entry too. Test: `scripts/_test_release_prebump.mjs`
+  (reproduces the incident; fails on 0.114.0).
+- (server) Regression check `attach-mkv-500`: the « > 500 MB declared » case
+  now waits for the server's 413 (sent on the header alone) before streaming
+  the body, instead of racing the connection close (intermittent
+  `write ECONNRESET`). Same assertions (413, clear message).
+
 ## [0.114.0] - 2026-10-18
 
 ### Added

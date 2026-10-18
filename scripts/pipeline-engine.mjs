@@ -426,6 +426,25 @@ export function readVersion(file, text) {
   return m ? m[1] : null;
 }
 
+/**
+ * Version already bumped by a delivered item of this run (0.114.1, run
+ * p-20261018T091024-0e199e): every version file reads a different version at
+ * `to` (last delivered item) than at `from` (start of the run, or its previous
+ * release). Null when one file is unchanged or unreadable: the strict rule applies.
+ */
+export function bumpedInRun(cwd, cfg, from, to) {
+  const files = cfg.versionFiles || [];
+  if (!files.length || !from || !to || from === to) return null;
+  let first = null;
+  for (const vf of files) {
+    const pv = readVersion(vf, git(cwd, ['show', `${from}:${vf}`]).out);
+    const v = readVersion(vf, git(cwd, ['show', `${to}:${vf}`]).out);
+    if (!v || !pv || v === pv) return null;
+    first = first || { from: pv, to: v };
+  }
+  return first;
+}
+
 /** Chemins cités entre accents graves qui n'existent pas. */
 export function missingCitedPaths(text, cwd) {
   const out = [];
@@ -591,19 +610,27 @@ function stepPrompt(ctx, step, extra) {
       if (ctx.coveredItems?.length) L.push(`Comportement(s) DÉJÀ assuré(s) par le code existant, sans nouveau code de production (le test ajouté sert de documentation) : ${ctx.coveredItems.map(coveredLabel).join(' ; ')}. Mentionne-le dans l'entrée CHANGELOG et dans ${art('livraison.md')}.`);
       if (ctx.acceptedDefects?.length) L.push(`Défauts ACCEPTÉS explicitement par l'utilisateur, livrés en connaissance de cause : ${ctx.acceptedDefects.map(d => `${d.item != null ? `[item ${d.item}] ` : ''}${d.description}`).join(' ; ')}. Mentionne-les dans l'entrée CHANGELOG (problèmes connus) et dans ${art('livraison.md')}.`);
       if (ctx.deliveryFixes?.length) L.push(`0. d'abord, les corrections relevées par la relecture qui ne relèvent pas des tests (documentation, commentaires…) :\n${ctx.deliveryFixes.map(f => `   - ${f}`).join('\n')}`);
-      L.push(`1. incrémente la version (patch pour une correction, minor pour une fonctionnalité) dans : ${(cfg.versionFiles || []).join(', ') || '(fichier de version du projet)'} ;`);
-      L.push(`2. ajoute l'entrée « ## [X.Y.Z] - AAAA-MM-JJ » correspondante dans ${cfg.changelog || 'CHANGELOG.md'} ;`);
+      if (ctx.prebump) {
+        // 0.114.1: an item of this run already bumped the version — never bump it twice.
+        L.push(`1. la version est DÉJÀ incrémentée par un item de cette exécution (${ctx.prebump.from} → ${ctx.prebump.to}) : ne l'incrémente PAS de nouveau ;`);
+        L.push(`2. vérifie et complète au besoin l'entrée « ## [${ctx.prebump.to}] » de ${cfg.changelog || 'CHANGELOG.md'} ;`);
+      } else {
+        L.push(`1. incrémente la version (patch pour une correction, minor pour une fonctionnalité) dans : ${(cfg.versionFiles || []).join(', ') || '(fichier de version du projet)'} ;`);
+        L.push(`2. ajoute l'entrée « ## [X.Y.Z] - AAAA-MM-JJ » correspondante dans ${cfg.changelog || 'CHANGELOG.md'} ;`);
+      }
       if (cfg.requirements) L.push(`3. ajoute D'OFFICE la ligne de la demande dans ${cfg.requirements} (date, demande verbatim, tests associés, version) — c'est obligatoire à chaque livraison, personne d'autre ne le fera ;`);
       if (ctx.release) {
         // Per-item delivery (0.64.0): the items are already committed; this is the release commit.
         const it = (d) => (d.group === 0 ? 'travail d’avant la montée en complet' : `item ${d.group} « ${d.text} »`);
         L.splice(L.length - (cfg.requirements ? 3 : 2), 0, `Les items sont DÉJÀ livrés par l'orchestrateur, chacun dans son propre commit — ne les refais pas : ${ctx.release.delivered.map(d => `${it(d)} (${d.commit.slice(0, 7)})`).join(' ; ')}. Cette livraison est la VERSION qui les regroupe : l'entrée CHANGELOG et la ligne d'exigence décrivent ces items.`);
         if (ctx.release.aside.length) L.push(`Items MIS DE CÔTÉ, non livrés (ne les mentionne que comme « restant à faire ») : ${ctx.release.aside.map(a => it(a)).join(' ; ')}.`);
-        L.push(`${cfg.requirements ? 4 : 3}. un commit de version avec ces seuls changements (git add -A puis git commit) — l'arbre doit être propre ensuite ;`);
+        L.push(ctx.prebump
+          ? `${cfg.requirements ? 4 : 3}. un commit de livraison avec ces seuls changements (git add -A puis git commit) s'il reste quelque chose à compléter ; si version, entrée CHANGELOG${cfg.requirements ? ' et ligne d’exigence' : ''} sont déjà commitées, AUCUN commit — l'arbre doit être propre ensuite ;`
+          : `${cfg.requirements ? 4 : 3}. un commit de version avec ces seuls changements (git add -A puis git commit) — l'arbre doit être propre ensuite ;`);
       } else L.push(`${cfg.requirements ? 4 : 3}. un SEUL commit avec tout le changement (git add -A puis git commit) — l'arbre doit être propre ensuite ;`);
       L.push('Pas de git push (il reste soumis à autorisation). Hormis les corrections de documentation ci-dessus, aucune nouvelle modification de code ni de test.');
       L.push(`Écris ${art('livraison.md')} : version, commit, ce qui a été livré.`);
-      L.push(`L'orchestrateur vérifie ensuite : commit créé, arbre propre, version incrémentée, entrée CHANGELOG${cfg.requirements ? ', ligne d’exigence' : ''}, ${T} vert${cfg.buildCommand ? `, build (« ${cfg.buildCommand} »)` : ''}.`);
+      L.push(`L'orchestrateur vérifie ensuite : ${ctx.prebump ? `depuis le début de l'exécution` : 'commit créé'}, arbre propre, version incrémentée, entrée CHANGELOG${cfg.requirements ? ', ligne d’exigence' : ''}, ${T} vert${cfg.buildCommand ? `, build (« ${cfg.buildCommand} »)` : ''}.`);
       break;
     }
   }
@@ -1821,8 +1848,15 @@ function checkCriteria(ctx, step, before, after) {
   }
   if (step.id === 'livrer') {
     // Per-item delivery: the release is checked against the last delivered item.
-    const relBase = ctx.releaseBase || ctx.base;
+    let relBase = ctx.releaseBase || ctx.base;
     const head = git(cwd, ['rev-parse', 'HEAD']).out;
+    // Version already bumped by a delivered item of this run (0.114.1): the
+    // release is checked from the run's start (or its previous release), so the
+    // bump counts, and a release commit is optional — none is needed when the
+    // version, CHANGELOG entry and requirement line are already committed.
+    // Never relaxed when no item bumped the version.
+    const prebump = ctx.releaseBase ? bumpedInRun(cwd, cfg, ctx.versionBase, ctx.releaseBase) : null;
+    if (prebump) relBase = ctx.versionBase;
     if (!head || head === relBase) return { ok: false, why: 'aucun commit créé', changed };
     const dirty = git(cwd, ['status', '--porcelain']).out.split('\n').filter(l => l && !isLocalOnly(l.slice(3)));
     if (dirty.length) return { ok: false, why: `arbre non propre après le commit : ${dirty.slice(0, 6).join(' ; ')}`, changed };
@@ -1853,7 +1887,7 @@ function checkCriteria(ctx, step, before, after) {
       const b = runCommand(cwd, cfg.buildCommand, ctx.testEnv, testTimeoutMs(cfg));
       if (!b.ok) return { ok: false, why: `le build échoue (${cfg.buildCommand}) :\n${b.out.slice(-1500)}`, changed };
     }
-    return { ok: true, changed, commit: head, version };
+    return { ok: true, changed, commit: head, version, ...(prebump ? { prebump, noCommit: head === ctx.releaseBase } : {}) };
   }
   return { ok: artOk, why: artOk ? '' : `artefact ${step.artefact} absent`, changed };
 }
@@ -2817,6 +2851,9 @@ export async function runPipeline(o) {
     const foldBase = state.itemDelivery && step.id === 'livrer' ? (state.lastDelivered || base) : base;
     ctx.releaseBase = state.itemDelivery && step.id === 'livrer' ? foldBase : null;
     ctx.release = ctx.releaseBase ? { delivered: (state.delivered || []).filter(d => !d.released), aside: state.aside || [] } : null;
+    // Where this release's version bump is measured from: the run's previous release, else its start.
+    ctx.versionBase = ctx.releaseBase ? ((state.releases || []).at(-1)?.commit || base) : null;
+    ctx.prebump = ctx.releaseBase ? bumpedInRun(cwd, cfg, ctx.versionBase, ctx.releaseBase) : null;
     if (state.itemDelivery && step.id === 'livrer' && !state.releasePending) {
       const why = (state.delivered || []).length ? 'tous les items livrés sont déjà dans une version' : 'aucun item livré';
       const key = `${String(state.steps.length + 1).padStart(2, '0')}-${id}`;

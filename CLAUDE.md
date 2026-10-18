@@ -2572,6 +2572,14 @@ probleme pour le model utilise ».
     Une réponse du menu (« simplifier »…) arrivée avec `--pipeline-resume`
     (Routage) fait son effet (`pauseAnswer` de `dispatch.mjs`).
   - Recette : `_test_item_delivery.mjs`.
+  - **Version déjà incrémentée par un item** (0.114.1, « les deux », exécution
+    bloquée du 2026-10-18) : si chaque fichier de version diffère entre le
+    début de l'exécution (ou sa version précédente, `ctx.versionBase`) et le
+    dernier item livré (`bumpedInRun`), Livrer est contrôlé depuis ce point :
+    commit de doc seule accepté, **aucun commit** accepté si version, entrée
+    CHANGELOG et ligne d'exigence sont déjà commitées ; la consigne interdit
+    un second incrément. Sans incrément dans l'exécution, rien ne change
+    (refus). Recette : `_test_release_prebump.mjs`.
 - **Montée léger → complet** : après 4b en léger, `lightScope` mesure le
   changement (plus de 3 fichiers, plus de 150 lignes, ou un nouveau fichier de
   code, hors tests). Au-delà :

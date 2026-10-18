@@ -1861,7 +1861,10 @@ async function apiChecks(sb) {
         }
         req.end();
       };
-      pump();
+      // Declared size: the server answers 413 on the header alone, then closes.
+      // Streaming meanwhile raced that close (write ECONNRESET before the
+      // response was read, 0.114.1): wait for the answer first, body only if none comes.
+      if (declare) { req.flushHeaders(); setTimeout(() => { if (!answered) pump(); }, 3000); } else pump();
     });
     const exact = await send(MAX, { declare: false });
     assert(exact.status === 200, `500 Mo exactement : HTTP ${exact.status} ${exact.body}`);
