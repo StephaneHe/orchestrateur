@@ -919,6 +919,28 @@ etre justifies et documentes. » Conception, état livré (§7) et règles (§3)
 - Lecture : `GET /api/lanes/:projet`, `node scripts/lanes.mjs status <p>`.
 - Recettes : `_test_parallel_lanes.mjs` (série), `_test_lane_rules.mjs`, HTTP
   `lanes-queue` et `lanes-api`.
+- **Pipelines dans un couloir** (0.111.0, P9, demande « Lances-led ») :
+  détail au §12 du document de conception.
+  - Une exécution **neuve** prend un couloir ≥ 1 libre, la copie principale
+    en dernier et seulement propre (mode `pipeline` de `decide`) ; la règle
+    `pipeline-engine` ne garde plus que la reprise d'une exécution commencée
+    dans la copie principale.
+  - Une réponse à une pause va au couloir de l'exécution
+    (`pausedPipelineRuns`, avant le choix du couloir) ; plusieurs candidates
+    sans `--lane` ⇒ 64.
+  - Le moteur reçoit `cwd`, journal et `.pid` du couloir (`run.json.lane`) ;
+    chaque étape recalcule le dossier du couloir. Livrer y écrit
+    `changelog.d/<tâche>.md` (`FRAGMENT=`), jamais la version ni le
+    CHANGELOG ; l'intégrateur fait la release.
+  - Pause ⇒ couloir gardé, travail non commité ; « abandonner » ⇒ rien
+    d'intégré, travail sur sa branche, couloir libéré.
+  - Couloir d'un pipeline : `node_modules`, `.venv`, `venv` liés,
+    `local.properties` copié (`provisionPipelineLane`) ; le reste par
+    `lanes.copy` / `lanes.link`.
+  - Registre des exigences fusionné par union à l'intégration seulement
+    (`unionMergeArgs`). Dépendances du Routage : marqueur `lane_task`
+    (`promptHash`, `turnEnd`).
+  - Recette : `_test_lane_pipeline.mjs` (série).
 
 ## Contexte calibré par requête (0.99.0)
 

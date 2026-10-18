@@ -52,6 +52,10 @@ import * as Meeting from './meeting-check.mjs';
 import { countTests, addedTests, itemTestsVerdict } from './item-tests.mjs';
 import { groupOf, groupCases, groupReady, insertAttachedCases, worktreeTree, treeDiff } from './item-review.mjs';
 import { foldTo, commitWork, itemCommitMessage, setAsideWork, reapplyWork, head as headOf } from './item-delivery.mjs';
+import { readFragments } from './lanes.mjs';
+
+/** Changelog fragment a lane task delivers (P9; same slug as the integrator's, scripts/lanes.mjs). */
+export function laneFragmentPath(task) { return `changelog.d/${String(task).replace(/[^\w.-]/g, '_')}.md`; }
 
 export const RUN_RE = /^p-\d{8}T\d{6}-[a-z0-9]{4,8}$/;
 // Keys are padStart(2) of the step count: 3 digits from the 100th step (0.64.1).
@@ -471,6 +475,10 @@ function stepPrompt(ctx, step, extra) {
   if (ctx.item && ['rouge', 'vert', 'refactor'].includes(step.id)) L.push(`ITEM=${ctx.item.n}: ${ctx.item.text}`);
   L.push('');
   L.push(`Demande d'origine : ${art('demande.md')} (lis-la d'abord). Les artefacts des étapes précédentes sont dans le même dossier : lis ceux qui existent.`);
+  if (ctx.lane) {
+    L.push(`COULOIR=${ctx.lane.k}`);
+    L.push(`Tu travailles dans le couloir ${ctx.lane.k} du projet : une copie isolée du dépôt (git worktree) ${String(ctx.lane.dir).replace(/\\/g, '/')}, sur la branche ${ctx.lane.branch}. D'autres tâches de ce musicien tournent peut-être en même temps dans d'autres copies : reste dans ce dossier, n'écris jamais dans ${String(ctx.lane.main).replace(/\\/g, '/')}.`);
+  }
   L.push('');
   const T = cfg.testCommand ? `« ${cfg.testCommand} »` : 'la suite de tests du projet';
   if (!step.devRole && (step.checks || step.role)) {
@@ -572,19 +580,27 @@ function stepPrompt(ctx, step, extra) {
       if (ctx.coveredItems?.length) L.push(`Comportement(s) DÉJÀ assuré(s) par le code existant, sans nouveau code de production (le test ajouté sert de documentation) : ${ctx.coveredItems.map(coveredLabel).join(' ; ')}. Mentionne-le dans l'entrée CHANGELOG et dans ${art('livraison.md')}.`);
       if (ctx.acceptedDefects?.length) L.push(`Défauts ACCEPTÉS explicitement par l'utilisateur, livrés en connaissance de cause : ${ctx.acceptedDefects.map(d => `${d.item != null ? `[item ${d.item}] ` : ''}${d.description}`).join(' ; ')}. Mentionne-les dans l'entrée CHANGELOG (problèmes connus) et dans ${art('livraison.md')}.`);
       if (ctx.deliveryFixes?.length) L.push(`0. d'abord, les corrections relevées par la relecture qui ne relèvent pas des tests (documentation, commentaires…) :\n${ctx.deliveryFixes.map(f => `   - ${f}`).join('\n')}`);
-      L.push(`1. incrémente la version (patch pour une correction, minor pour une fonctionnalité) dans : ${(cfg.versionFiles || []).join(', ') || '(fichier de version du projet)'} ;`);
-      L.push(`2. ajoute l'entrée « ## [X.Y.Z] - AAAA-MM-JJ » correspondante dans ${cfg.changelog || 'CHANGELOG.md'} ;`);
+      if (ctx.lane) {
+        // P9 / design §2.8: two parallel tasks must never both write the same
+        // version; the integrator numbers each task's release in turn.
+        L.push(`FRAGMENT=${ctx.lane.fragment}`);
+        L.push(`1. NE MODIFIE NI le numéro de version (${(cfg.versionFiles || []).join(', ') || 'fichiers de version'}) NI ${cfg.changelog || 'CHANGELOG.md'} : tu travailles dans un couloir parallèle, c'est l'orchestrateur qui attribue la version en intégrant la branche ;`);
+        L.push(`2. écris à la place le fragment ${ctx.lane.fragment} : il commence par « ---\\nbump: patch|minor|major\\n--- » (patch pour une correction, minor pour une fonctionnalité), suivi des sections Keep a Changelog (### Added, ### Fixed…) de cette livraison ;`);
+      } else {
+        L.push(`1. incrémente la version (patch pour une correction, minor pour une fonctionnalité) dans : ${(cfg.versionFiles || []).join(', ') || '(fichier de version du projet)'} ;`);
+        L.push(`2. ajoute l'entrée « ## [X.Y.Z] - AAAA-MM-JJ » correspondante dans ${cfg.changelog || 'CHANGELOG.md'} ;`);
+      }
       if (cfg.requirements) L.push(`3. ajoute D'OFFICE la ligne de la demande dans ${cfg.requirements} (date, demande verbatim, tests associés, version) — c'est obligatoire à chaque livraison, personne d'autre ne le fera ;`);
       if (ctx.release) {
         // Per-item delivery (0.64.0): the items are already committed; this is the release commit.
         const it = (d) => (d.group === 0 ? 'travail d’avant la montée en complet' : `item ${d.group} « ${d.text} »`);
         L.splice(L.length - (cfg.requirements ? 3 : 2), 0, `Les items sont DÉJÀ livrés par l'orchestrateur, chacun dans son propre commit — ne les refais pas : ${ctx.release.delivered.map(d => `${it(d)} (${d.commit.slice(0, 7)})`).join(' ; ')}. Cette livraison est la VERSION qui les regroupe : l'entrée CHANGELOG et la ligne d'exigence décrivent ces items.`);
         if (ctx.release.aside.length) L.push(`Items MIS DE CÔTÉ, non livrés (ne les mentionne que comme « restant à faire ») : ${ctx.release.aside.map(a => it(a)).join(' ; ')}.`);
-        L.push(`${cfg.requirements ? 4 : 3}. un commit de version avec ces seuls changements (git add -A puis git commit) — l'arbre doit être propre ensuite ;`);
+        L.push(`${cfg.requirements ? 4 : 3}. un commit ${ctx.lane ? 'de livraison' : 'de version'} avec ces seuls changements (git add -A puis git commit) — l'arbre doit être propre ensuite ;`);
       } else L.push(`${cfg.requirements ? 4 : 3}. un SEUL commit avec tout le changement (git add -A puis git commit) — l'arbre doit être propre ensuite ;`);
       L.push('Pas de git push (il reste soumis à autorisation). Hormis les corrections de documentation ci-dessus, aucune nouvelle modification de code ni de test.');
-      L.push(`Écris ${art('livraison.md')} : version, commit, ce qui a été livré.`);
-      L.push(`L'orchestrateur vérifie ensuite : commit créé, arbre propre, version incrémentée, entrée CHANGELOG${cfg.requirements ? ', ligne d’exigence' : ''}, ${T} vert${cfg.buildCommand ? `, build (« ${cfg.buildCommand} »)` : ''}.`);
+      L.push(`Écris ${art('livraison.md')} : ${ctx.lane ? 'fragment, commit' : 'version, commit'}, ce qui a été livré.`);
+      L.push(`L'orchestrateur vérifie ensuite : commit créé, arbre propre, ${ctx.lane ? `version et ${cfg.changelog || 'CHANGELOG.md'} inchangés, fragment ${ctx.lane.fragment} valide` : 'version incrémentée, entrée CHANGELOG'}${cfg.requirements ? ', ligne d’exigence' : ''}, ${T} vert${cfg.buildCommand ? `, build (« ${cfg.buildCommand} »)` : ''}.`);
       break;
     }
   }
@@ -1754,7 +1770,22 @@ function checkCriteria(ctx, step, before, after) {
     if (dirty.length) return { ok: false, why: `arbre non propre après le commit : ${dirty.slice(0, 6).join(' ; ')}`, changed };
     const diffNames = git(cwd, ['diff', '--name-only', `${relBase}..HEAD`]).out.split('\n').filter(Boolean);
     let version = null;
-    for (const vf of cfg.versionFiles || []) {
+    if (ctx.lane) {
+      // P9, rule changelog.d (design §2.8): in a lane the delivery carries a
+      // fragment; the version and the CHANGELOG are the integrator's.
+      const cl = cfg.changelog || 'CHANGELOG.md';
+      for (const vf of cfg.versionFiles || []) {
+        if (!diffNames.includes(vf)) continue;
+        const v = readVersion(vf, git(cwd, ['show', `HEAD:${vf}`]).out), pv = readVersion(vf, git(cwd, ['show', `${relBase}:${vf}`]).out);
+        if (v !== pv) return { ok: false, why: `version modifiée dans ${vf} (${pv} → ${v}) : dans un couloir, la version est attribuée à l’intégration — remets ${pv} et écris le fragment ${ctx.lane.fragment}`, changed };
+      }
+      if (diffNames.includes(cl)) return { ok: false, why: `${cl} modifié : dans un couloir, l’entrée est écrite à l’intégration — annule cette modification et écris le fragment ${ctx.lane.fragment}`, changed };
+      if (!diffNames.includes(ctx.lane.fragment)) return { ok: false, why: `fragment ${ctx.lane.fragment} absent du commit`, changed };
+      const frag = readFragments(cwd).find(f => f.file === ctx.lane.fragment);
+      if (!frag || frag.invalid || frag.bumpDefaulted) return { ok: false, why: `fragment ${ctx.lane.fragment} : ${frag?.invalid || 'en-tête « ---\\nbump: patch|minor|major\\n--- » manquant'}`, changed };
+      if (!frag.body) return { ok: false, why: `fragment ${ctx.lane.fragment} vide : décris la livraison (### Added, ### Fixed…)`, changed };
+    }
+    for (const vf of ctx.lane ? [] : cfg.versionFiles || []) {
       if (!diffNames.includes(vf)) return { ok: false, why: `version non incrémentée : ${vf} inchangé`, changed };
       let txt = ''; try { txt = fs.readFileSync(path.join(cwd, vf), 'utf8'); } catch {}
       const prev = git(cwd, ['show', `${relBase}:${vf}`]).out;
@@ -1763,7 +1794,7 @@ function checkCriteria(ctx, step, before, after) {
       version = version || v;
     }
     const cl = cfg.changelog || 'CHANGELOG.md';
-    if (fs.existsSync(path.join(cwd, cl)) || (cfg.versionFiles || []).length) {
+    if (!ctx.lane && (fs.existsSync(path.join(cwd, cl)) || (cfg.versionFiles || []).length)) {
       if (!diffNames.includes(cl)) return { ok: false, why: `${cl} sans nouvelle entrée`, changed };
       if (version) {
         let txt = ''; try { txt = fs.readFileSync(path.join(cwd, cl), 'utf8'); } catch {}
@@ -1794,9 +1825,11 @@ function checkCriteria(ctx, step, before, after) {
 export async function runPipeline(o) {
   const { root, logsDir, project, projectName, prompt, dispatchScript, callbackProject, sourceProject, obsId, classification } = o;
   const say = (m) => console.log(`[pipeline] ${m}`);
-  const cwd = project.path;
-  const projectLog = path.join(logsDir, `${projectName}.jsonl`);
-  const pidPath = path.join(logsDir, `${projectName}.pid`);
+  // P9: a run may work in a lane of the musician (git worktree, task branch):
+  // o.cwd, o.logFile, o.pidFile and o.lane come from dispatch.mjs.
+  const cwd = o.cwd || project.path;
+  const projectLog = o.logFile || path.join(logsDir, `${projectName}.jsonl`);
+  const pidPath = o.pidFile || path.join(logsDir, `${projectName}.pid`);
   const writeEvent = (ev) => { try { fs.appendFileSync(projectLog, JSON.stringify({ ...(process.env.ORCH_TURN_ID ? { orch_turn: process.env.ORCH_TURN_ID } : {}), ...ev, timestamp: new Date().toISOString() }) + '\n'); } catch {} };
   const limits = {
     criteriaAttempts: Number(process.env.ORCH_PIPE_CRITERIA_ATTEMPTS) || LIMITS.criteriaAttempts,
@@ -1824,6 +1857,11 @@ export async function runPipeline(o) {
     state = readJson(path.join(logsDir, 'runs', o.resumeRun, 'run.json'));
     if (!state || state.project !== projectName) return refuse(64, `exécution ${o.resumeRun} introuvable pour ${projectName}`);
     if (state.status !== 'paused') return refuse(65, `exécution ${o.resumeRun} : statut « ${state.status} », seule une exécution en pause se reprend`);
+    // Its files are in the lane it started in: resumed there, or not at all.
+    const was = Number(state.lane?.k) || 0, now = Number(o.lane?.k) || 0;
+    if (was !== now || (was && state.lane.task !== o.lane.task)) {
+      return refuse(65, `exécution ${o.resumeRun} : elle travaille dans ${was ? `le couloir ${was} (branche ${state.lane.branch})` : 'la copie principale'}, pas dans ${now ? `le couloir ${now}` : 'la copie principale'} — reprise refusée, rien n'est modifié`);
+    }
   }
   const cfg = readJson(path.join(cwd, '.orchestrateur', 'pipeline.json')) || {};
   const pipeline = state?.pipeline || o.pipeline;
@@ -1846,7 +1884,8 @@ export async function runPipeline(o) {
 
   // Artefacts jamais versionnés, même si le projet ne les ignore pas.
   if (isGit) try {
-    const gitDir = git(cwd, ['rev-parse', '--git-dir']).out;
+    // The COMMON dir: a worktree (lane, P9) reads info/exclude from there only.
+    const gitDir = git(cwd, ['rev-parse', '--git-common-dir']).out;
     const excl = path.join(path.isAbsolute(gitDir) ? gitDir : path.join(cwd, gitDir), 'info', 'exclude');
     const cur = fs.existsSync(excl) ? fs.readFileSync(excl, 'utf8') : '';
     if (!cur.split(/\r?\n/).includes(RUNS_PREFIX)) { fs.mkdirSync(path.dirname(excl), { recursive: true }); fs.appendFileSync(excl, `${cur && !cur.endsWith('\n') ? '\n' : ''}${RUNS_PREFIX}\n`); }
@@ -1891,6 +1930,7 @@ export async function runPipeline(o) {
       ...(pipeline === 'dev' && mode === 'complet' ? { itemReview: true, itemDelivery: true, lastDelivered: base, delivered: [], aside: [] } : {}),
       ...(classification ? { classification } : {}), ...(o.modeNote ? { modeNote: o.modeNote } : {}),
       callback: callbackProject || null, source: sourceProject || null,
+      ...(o.lane ? { lane: { k: o.lane.k, task: o.lane.task, branch: o.lane.branch, integration: o.lane.integration || null } } : {}),
     };
     // Per-item delivery: set-aside items are put back (or the run paused for
     // them) at « @aside », just before the release step.
@@ -1988,14 +2028,14 @@ export async function runPipeline(o) {
     .map(p => ({ ...p, title: stepDefs[p.id].title, slot: stepDefs[p.id].kind === 'code' ? { slot: stepDefs[p.id].chain[0], model: null, provider: null, second: null, source: 'code' } : resolveCase(assignments, stepDefs[p.id].chain) }));
   writeEvent({
     type: 'user_prompt', text: o.promptForLog ?? prompt,
-    pipeline: { run, pipeline, mode: state.mode, kind, resumed: resumed || undefined, steps: planned.map(p => ({ id: p.id, title: p.title, loop: p.loop || undefined, slot: p.slot.slot, model: p.slot.model, provider: p.slot.provider, second: p.slot.second, source: p.slot.source })) },
+    pipeline: { run, pipeline, mode: state.mode, kind, resumed: resumed || undefined, ...(state.lane ? { lane: state.lane.k, branch: state.lane.branch } : {}), steps: planned.map(p => ({ id: p.id, title: p.title, loop: p.loop || undefined, slot: p.slot.slot, model: p.slot.model, provider: p.slot.provider, second: p.slot.second, source: p.slot.source })) },
     ...(sourceProject ? { source: sourceProject } : {}),
     ...(callbackProject ? { callback: callbackProject } : {}),
     ...(o.ticket ? { ticket: o.ticket } : {}), ...(o.slot != null ? { slot: o.slot } : {}),
     ...(o.testLabel ? { test: { label: o.testLabel } } : {}),
   });
-  writeEvent({ type: 'system', subtype: 'pipeline_start', pipeline: { run, pipeline, mode: state.mode, kind, base },
-    text: `${resumed ? 'reprise de l’exécution' : 'exécution'} ${run} : pipeline ${pipelineLabel(pipeline, state.mode)} — ${state.plan.filter(id => id !== '@check' && id !== '@aside').map(id => stepDefs[id].title).join(' → ')}`,
+  writeEvent({ type: 'system', subtype: 'pipeline_start', pipeline: { run, pipeline, mode: state.mode, kind, base, ...(state.lane ? { lane: state.lane.k, branch: state.lane.branch } : {}) },
+    text: `${resumed ? 'reprise de l’exécution' : 'exécution'} ${run} : pipeline ${pipelineLabel(pipeline, state.mode)} — ${state.plan.filter(id => id !== '@check' && id !== '@aside').map(id => stepDefs[id].title).join(' → ')}${state.lane ? ` — couloir ${state.lane.k} (branche ${state.lane.branch})` : ''}`,
     ...(o.modeNote ? { note: o.modeNote } : {}) });
   if (extended) {
     const what = { items: `${extended.to} items au total`, duration: `${fmtDur(extended.to)} de temps actif`, review: `${extended.to} tours de revue${extended.item != null ? ` pour l’item ${extended.item}` : ''}`,
@@ -2025,7 +2065,9 @@ export async function runPipeline(o) {
   const testEnv = { ...childEnv };
   delete testEnv.ORCH_OBS_ID;
   const ctx = { root, request: state.request || prompt, run, pipeline, kind, mode: state.mode, cwd, cfg, artDir, base, testEnv, reviewItems: null, testPrint: null, limits,
-    item: state.item || null, itemTestBase: state.itemTestBase || null, reviewScope: null, acceptedDefects: state.acceptedDefects || [], escalated: !!state.escalated, coveredItems: state.coveredItems || [], deliveryFixes: state.deliveryFixes || [], suiteRedAtStart: !!state.suiteRedAtStart, lastMedia: state.lastMedia || null };
+    item: state.item || null, itemTestBase: state.itemTestBase || null, reviewScope: null, acceptedDefects: state.acceptedDefects || [], escalated: !!state.escalated, coveredItems: state.coveredItems || [], deliveryFixes: state.deliveryFixes || [], suiteRedAtStart: !!state.suiteRedAtStart, lastMedia: state.lastMedia || null,
+    // P9: in a lane, Livrer writes a changelog.d fragment; the integrator assigns the version.
+    lane: state.lane?.k >= 1 ? { ...state.lane, dir: cwd, main: project.path, fragment: laneFragmentPath(state.lane.task) } : null };
   // Durée ACTIVE : le temps passé en pause à attendre l'utilisateur ne compte
   // pas dans la limite de 90 min (une reprise repart du temps déjà consommé).
   const sessionStart = Date.now();
@@ -2462,7 +2504,7 @@ export async function runPipeline(o) {
           ? `la suite (${cfg.testCommand}) échoue avant l'étape 4a pour une raison d'ENVIRONNEMENT, probablement pas un test cassé : ${envSigns}`
           : `la suite (${cfg.testCommand}) est déjà rouge avant l'étape 4a`,
         output: t.out.slice(-2000) });
-      await reportDefects({ id: 'precondition', title: 'Préconditions' }, [`la suite (${cfg.testCommand}) échoue avant toute modification${failure.cause === 'environment' ? ` (environnement : ${envSigns})` : ''}`], 'test');
+      await reportDefects({ id: 'precondition', title: 'Préconditions' }, [`la suite (${cfg.testCommand}) échoue avant toute modification${failure.cause === 'environment' ? ` (environnement : ${envSigns})` : ''}${ctx.lane ? ` — dans le couloir ${ctx.lane.k} (copie isolée) : s’il manque un fichier non suivi, le déclarer dans « lanes.copy » / « lanes.link » de .orchestrateur/pipeline.json, ou « maxParallel »: 1 pour ce projet` : ''}`], 'test');
       if (failure.cause === 'environment') {
         return finish({ code: 2, paused: true, limit: 'precondition', notice: `⏸ ${projectName} : les tests échouent à cause de l'environnement (${failure.signals[0].label}), pas forcément d'un test cassé`,
           question: `${projectName} en pause — répondez « continuer » (une fois le réseau ou le service revenu) ou « abandonner » (je recommande « continuer » plus tard) : ses tests échouent pour une raison d'environnement (${envSigns}).`,
@@ -2476,7 +2518,8 @@ export async function runPipeline(o) {
       return finish({ code: 2, paused: true, limit: 'precondition', notice: `⏸ ${projectName} : les tests du projet échouent déjà avant toute modification`,
         question: `${projectName} en pause — répondez « continuer » (tests réparés) ou « abandonner » (je recommande « abandonner ») : ses tests échouent déjà avant toute modification.`,
         result: pauseText({
-          what: `avant de commencer, j’ai lancé les tests du projet (« ${cfg.testCommand} ») : ils échouent déjà. Or chaque nouveau test doit d’abord échouer à cause de lui seul ; sur une base déjà cassée, ce contrôle n’a plus de sens.`,
+          what: `avant de commencer, j’ai lancé les tests du projet (« ${cfg.testCommand} ») : ils échouent déjà. Or chaque nouveau test doit d’abord échouer à cause de lui seul ; sur une base déjà cassée, ce contrôle n’a plus de sens.`
+            + (ctx.lane ? ` Le travail se fait dans le couloir ${ctx.lane.k}, une copie isolée du dépôt qui ne contient que les fichiers suivis par git (plus les dépendances installées, partagées par lien) : si les tests passent dans la copie principale, il manque probablement un fichier non suivi, à déclarer dans « lanes.copy » ou « lanes.link » de .orchestrateur/pipeline.json (ou « maxParallel »: 1 pour ce projet).` : ''),
           options: [['continuer', 'je relance les tests et, s’ils passent (vous les avez réparés entre-temps), je commence le travail.'],
             ['abandonner', 'j’arrête sans rien modifier ; vous m’envoyez d’abord une demande pour réparer les tests.']],
           recommend: ['abandonner', 'il faut d’abord une base de tests qui passe.'],
@@ -3094,7 +3137,8 @@ export async function runPipeline(o) {
       ((state.delivered || []).length ? `- Livraison par item : ${state.delivered.map(d => `${d.group === 0 ? 'travail d’avant la montée en complet' : `item ${d.group}`} → ${d.commit.slice(0, 7)}`).join(' ; ')}, puis la version (${(state.releases || []).map(r => `${r.version || '?'} ${r.commit.slice(0, 7)}`).join(', ')})\n` : '') +
       (state.escalated ? '- ⇧ Monté de léger en complet : la demande dépassait le périmètre du mode léger\n' : '') +
       ((state.coveredItems || []).length ? `- ↺ Déjà assuré par le code existant (test ajouté comme documentation, sans nouveau code) : ${state.coveredItems.map(coveredLabel).join(' ; ')}\n` : '') +
-      `- Critères vérifiés par l'orchestrateur : test rouge puis vert, tests inchangés en 4b, revue, version, CHANGELOG${cfg.requirements ? ', exigence' : ''}, suite verte\n` +
+      `- Critères vérifiés par l'orchestrateur : test rouge puis vert, tests inchangés en 4b, revue, ${ctx.lane ? `fragment ${ctx.lane.fragment}` : 'version, CHANGELOG'}${cfg.requirements ? ', exigence' : ''}, suite verte\n` +
+      (ctx.lane ? `- Couloir ${ctx.lane.k} (branche ${ctx.lane.branch}) : l’orchestrateur intègre la branche dans ${ctx.lane.integration || 'la branche d’intégration'} à la fin de ce tour et attribue la version\n` : '') +
       `- Pas de push (soumis à autorisation).\n\n${(readArtefact(ctx, 'livraison.md') || '').trim().slice(0, 4000)}`;
   }
   return finish({ code: 0, result });
@@ -3108,11 +3152,13 @@ export async function runPipeline(o) {
  *   changer le model → reste en pause, dit quelle case changer, attend « continuer ».
  * Un tour côté musicien : user_prompt + result. Renvoie le code de sortie.
  */
-export async function answerPausedRun({ logsDir, project, projectName, run, answer, promptForLog, sourceProject, callbackProject, testLabel }) {
+export async function answerPausedRun({ logsDir, project, projectName, run, answer, promptForLog, sourceProject, callbackProject, testLabel, logFile = null, cwd = null }) {
   const f = path.join(logsDir, 'runs', run, 'run.json');
   const state = readJson(f);
   if (!state || state.status !== 'paused' || state.project !== projectName) { console.error(`[pipeline] aucune exécution en pause ${run} pour ${projectName}`); return 65; }
-  const projectLog = path.join(logsDir, `${projectName}.jsonl`);
+  // P9: the run's lane (log, worktree) when it works in one.
+  const projectLog = logFile || path.join(logsDir, `${projectName}.jsonl`);
+  const workDir = cwd || project.path;
   const writeEvent = (ev) => { try { fs.appendFileSync(projectLog, JSON.stringify({ ...(process.env.ORCH_TURN_ID ? { orch_turn: process.env.ORCH_TURN_ID } : {}), ...ev, timestamp: new Date().toISOString() }) + '\n'); } catch {} };
   writeEvent({ type: 'user_prompt', text: promptForLog, pipeline: { run, pipeline: state.pipeline, mode: state.mode, answer },
     ...(sourceProject ? { source: sourceProject } : {}), ...(callbackProject ? { callback: callbackProject } : {}), ...(testLabel ? { test: { label: testLabel } } : {}) });
@@ -3134,7 +3180,7 @@ export async function answerPausedRun({ logsDir, project, projectName, run, answ
     text = `D’accord. Ouvrez la page Models et choisissez un autre model pour l’étape « ${plainStep(last.id)} »${last.slot ? ` (case « ${last.slot} »${last.model ? `, actuellement ${last.model}` : ''})` : ''}. Le changement est pris en compte tout de suite, sans redémarrage.\n\nNEEDS_USER_INPUT: ${projectName} attend toujours : une fois le model changé dans la page Models, répondez « continuer » pour reprendre là où je me suis arrêté.`;
     paused = true;
   } else {
-    const changed = git(project.path, ['status', '--porcelain']).out.split('\n').filter(l => l && !isLocalOnly(l.slice(3))).map(l => l.slice(3));
+    const changed = git(workDir, ['status', '--porcelain']).out.split('\n').filter(l => l && !isLocalOnly(l.slice(3))).map(l => l.slice(3));
     state.status = 'abandoned'; state.abandonedBy = answer; state.endedAt = new Date().toISOString();
     save();
     writeEvent({ type: 'system', subtype: 'pipeline_summary', pipeline: { run, pipeline: state.pipeline, mode: state.mode, status: 'abandoned' },
@@ -3144,7 +3190,12 @@ export async function answerPausedRun({ logsDir, project, projectName, run, answ
       ? `■ Exécution arrêtée à votre demande (« ${answer} »). Les items déjà livrés restent dans leurs commits : ${ds.map(d => `${d.group === 0 ? 'travail d’avant la montée en complet' : `item ${d.group}`} (${d.commit.slice(0, 7)})`).join(' ; ')}. Le reste n’est pas livré.\n\n`
       : `■ Exécution arrêtée à votre demande (« ${answer} »). Rien n’est livré, aucun commit n’a été fait.\n\n`) +
       (as.length ? `Items mis de côté, non livrés — leurs modifications sont gardées hors du projet (à réappliquer avec « git apply » si vous voulez les reprendre) :\n${as.map(a => `- ${a.group === 0 ? 'travail d’avant la montée en complet' : `item ${a.group}`} : \`${a.patch}\` (${(a.files || []).slice(0, 10).join(', ')})`).join('\n')}\n\n` : '') +
-      (changed.length
+      (state.lane?.k >= 1
+        // P9: the lane is freed; its work is committed on the task branch, never integrated.
+        ? (changed.length
+          ? `Cette exécution travaillait dans le couloir ${state.lane.k} (copie isolée) : rien n’est intégré au projet. Les modifications déjà faites sont gardées sur la branche ${state.lane.branch} (et leurs différences archivées sous logs/lanes/) :\n${changed.slice(0, 30).map(c => `- ${c}`).join('\n')}${changed.length > 30 ? `\n- … et ${changed.length - 30} autre(s)` : ''}`
+          : `Cette exécution travaillait dans le couloir ${state.lane.k} (copie isolée) : rien n’est intégré au projet, aucune modification n’y était restée.`)
+        : changed.length
         ? `Les modifications déjà faites restent dans le projet, non enregistrées dans git (vous pouvez les examiner, les garder ou les annuler) :\n${changed.slice(0, 30).map(c => `- ${c}`).join('\n')}${changed.length > 30 ? `\n- … et ${changed.length - 30} autre(s)` : ''}`
         : 'Aucune modification n’est restée dans le projet.') +
       (answer === 'simplifier' ? '\n\nEnvoyez-moi maintenant une demande plus petite pour la suite : elle partira dans une nouvelle exécution.' : '');

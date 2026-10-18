@@ -57,6 +57,8 @@ const dispatch = (args, env = {}) => {
   return { code: r.status, out: `${r.stdout || ''}${r.stderr || ''}` };
 };
 const logOf = (n) => { try { return fs.readFileSync(path.join(T, 'logs', `${n}.jsonl`), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)); } catch { return []; } };
+// P9 (0.111.0): a pipeline run launched by the chef works in a parallel lane, its turn in the lane's log.
+const laneLogsOf = (n) => { const d = path.join(T, 'logs', 'lanes', n); try { return fs.readdirSync(d).filter(f => /^\d+\.jsonl$/.test(f)).flatMap(f => fs.readFileSync(path.join(d, f), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l))); } catch { return []; } };
 const runState = (run) => JSON.parse(fs.readFileSync(path.join(T, 'logs', 'runs', run, 'run.json'), 'utf8'));
 function chefTurn(text, env = {}, extra = []) {
   const n0 = logOf('chef').length;
@@ -94,7 +96,7 @@ ok(/\| P \| Discussion/.test(aff) && /projet hors service : tour ordinaire/.test
 let pUp = null, qUp = null;
 for (let i = 0; i < 300 && !(pUp && qUp); i++) {
   await sleep(100);
-  pUp = logOf('P').slice(nP).find(e => e.type === 'user_prompt');
+  pUp = [...logOf('P').slice(nP), ...laneLogsOf('P')].find(e => e.type === 'user_prompt');
   qUp = logOf('Q').slice(nQ).find(e => e.type === 'user_prompt');
 }
 ok(pUp?.pipeline?.pipeline === 'discussion' && pUp.source === 'chef' && pUp.callback === 'chef', 'P reçoit une exécution Discussion, lancée par le chef, avec retour au chef');

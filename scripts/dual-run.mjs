@@ -142,14 +142,33 @@ function synthesisPrompt({ prompt, run, mode, dir, branches, failed, testCommand
  * tour resté ouvert dans le log du musicien est clos explicitement. Rien n'est
  * perdu, et le panneau ne reste pas « en cours » sans fin.
  */
-export function recoverInterrupted({ projectPath, projectName, logsDir, writeEvent, say = () => {} }) {
+/** Worktree folder of the dual branches of a project; one per lane (P9), so parallel lanes never share it. */
+export function dualWtRoot(logsDir, projectName, scope = null) {
+  return path.join(logsDir, 'dual', 'wt', scope ? `${projectName}~${scope}` : projectName);
+}
+/** branch → worktree path, from `git worktree list --porcelain`. */
+function worktreeOfBranch(projectPath) {
+  const map = new Map();
+  let cur = null;
+  for (const l of git(projectPath, ['worktree', 'list', '--porcelain']).out.split('\n')) {
+    if (l.startsWith('worktree ')) cur = l.slice(9).trim();
+    else if (l.startsWith('branch refs/heads/') && cur) map.set(l.slice(18).trim(), path.resolve(cur));
+  }
+  return map;
+}
+
+export function recoverInterrupted({ projectPath, projectName, logsDir, writeEvent, say = () => {}, scope = null }) {
   const recovered = [];
-  const wtRoot = path.join(logsDir, 'dual', 'wt', projectName);
+  const wtRoot = dualWtRoot(logsDir, projectName, scope);
   const branches = git(projectPath, ['branch', '--list', 'dual/*', '--format=%(refname:short)']).out.split('\n').filter(Boolean);
+  const wtOf = worktreeOfBranch(projectPath);
   const runs = new Set();
   for (const br of branches) {
     const m = /^dual\/(d-\d{8}T\d{6}-[a-z0-9]{4,8})\/(principal|second)$/.exec(br);
     if (!m) continue;
+    // Another lane's dual run (P9): its worktrees live elsewhere — never touched here.
+    const own = wtOf.get(br);
+    if (own && !own.toLowerCase().startsWith(path.resolve(wtRoot).toLowerCase() + path.sep)) continue;
     const [, run, role] = m;
     runs.add(run);
     const dir = path.join(logsDir, 'dual', run);
@@ -227,7 +246,7 @@ export async function runDual(o) {
   if (!base) { console.error('[double] refusé : dépôt sans commit.'); return 65; }
 
   // Avant le nouveau tour : clore et archiver une exécution double interrompue.
-  recoverInterrupted({ projectPath: project.path, projectName, logsDir, writeEvent, say });
+  recoverInterrupted({ projectPath: project.path, projectName, logsDir, writeEvent, say, scope: o.wtScope || null });
 
   const run = newRunId();
   const dir = path.join(logsDir, 'dual', run);
@@ -254,7 +273,7 @@ export async function runDual(o) {
   const branches = ROLES.map(role => ({
     role, ...(role === 'principal' ? principal : second),
     gitBranch: `dual/${run}/${role}`,
-    wt: path.join(logsDir, 'dual', 'wt', projectName, role),
+    wt: path.join(dualWtRoot(logsDir, projectName, o.wtScope || null), role),
   }));
   const cleanupWorktrees = () => {
     for (const b of branches) {

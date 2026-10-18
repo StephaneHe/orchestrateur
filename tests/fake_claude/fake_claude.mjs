@@ -488,6 +488,15 @@ function pipelineStep(text) {
       break;
     }
     case 'livrer': {
+      // P9: in a lane (« FRAGMENT=… »), a changelog.d fragment instead of the version and the CHANGELOG.
+      const fragment = (/^FRAGMENT=(\S+)/m.exec(text) || [])[1];
+      if (fragment) {
+        w(fragment, `---\nbump: ${process.env.FAKE_PIPE_BUMP || 'minor'}\n---\n\n### Added\n\n- double() (${path.basename(fragment, '.md')})\n`);
+        if (fs.existsSync(path.join(cwd, 'docs', 'USER_REQUIREMENTS.md'))) fs.appendFileSync(path.join(cwd, 'docs', 'USER_REQUIREMENTS.md'), `| 2026-10-18 | « double » ${path.basename(fragment, '.md')} | test/pipe.test.mjs | à l'intégration |\n`);
+        w(artefact, `# Livraison\n\nFragment ${fragment}.\n`);
+        if (!bad) { g('add', '-A'); g('commit', '-q', '-m', 'feat: double (fragment)'); }
+        break;
+      }
       const pkgF = path.join(cwd, 'package.json');
       const pkg = JSON.parse(fs.readFileSync(pkgF, 'utf8'));
       const v = String(pkg.version || '1.0.0').split('.').map(Number); v[2]++;

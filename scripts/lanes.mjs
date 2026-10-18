@@ -276,7 +276,7 @@ export function recoverLane({ logsDir, project, k, dir }) {
  * Task start in lane k ≥ 1 (lane lock held): a dirty lane is archived and
  * reset, then the task branch is created from the integration tip.
  */
-export function startTask({ logsDir, project, k, dir, task, turn, title }) {
+export function startTask({ logsDir, project, k, dir, task, turn, title, promptHash = null }) {
   const files = laneFiles(logsDir, project.name, k);
   const intBranch = currentBranch(project.path);
   if (!intBranch) throw new Error('copie principale sans branche (HEAD détachée)');
@@ -292,10 +292,95 @@ export function startTask({ logsDir, project, k, dir, task, turn, title }) {
   const r = git(dir, ['checkout', '-q', '-B', branch, base]);
   if (!r.ok) throw new Error(`git checkout -B ${branch} : ${r.err}`);
   provisionLane(project.path, dir);
-  const t = { task, turn, branch, base, integration: intBranch, lane: k, state: 'running', pid: process.pid, title: String(title || '').slice(0, 140), startedAt: new Date().toISOString() };
+  const t = { task, turn, branch, base, integration: intBranch, lane: k, state: 'running', pid: process.pid, title: String(title || '').slice(0, 140), startedAt: new Date().toISOString(),
+    // Fingerprint of the task's request: its end marker keeps it across answers (P9).
+    ...(promptHash ? { promptHash } : {}) };
   writeJson(files.task, t);
   return { ...t, orphan };
 }
+/**
+ * The task stays parked in its lane, waiting for an answer, without a turn
+ * (a pipeline run still paused after « changer le model » / « tester le
+ * model »). Nothing is committed: the run resumes on its working tree.
+ */
+export function holdTask({ logsDir, project, k }) {
+  const files = laneFiles(logsDir, project.name, k);
+  const t = readTask(files.task);
+  if (!t) return null;
+  Object.assign(t, { state: 'input', pid: null, pausedAt: new Date().toISOString() });
+  writeJson(files.task, t);
+  return t;
+}
+/**
+ * The task is abandoned (a pipeline run closed by « abandonner » /
+ * « simplifier »): nothing is integrated. Its work is archived and committed
+ * on its branch, which is kept (never pruned automatically), and the lane is
+ * freed.
+ */
+export function abandonTask({ logsDir, project, k, dir, title }) {
+  const files = laneFiles(logsDir, project.name, k);
+  const t = readTask(files.task);
+  if (!t) return { outcome: 'nothing', why: 'aucune tâche' };
+  const diff = archiveLane(logsDir, project.name, dir, `${t.task}.abandoned`, t.base);
+  const commit = commitLeftovers(dir, `wip(lane): tâche abandonnée — ${title || t.title || t.task}`);
+  git(dir, ['checkout', '-q', '--detach']);
+  try { fs.unlinkSync(files.task); } catch {}
+  return { outcome: 'abandoned', task: t.task, branch: t.branch, diff, ...(commit ? { commit: commit.slice(0, 7) } : {}) };
+}
+/**
+ * What a pipeline run needs in a worktree beyond the tracked files (P9): the
+ * engine runs the project's test command itself. Installed dependency folders
+ * of the main checkout (node_modules, a Python virtualenv) are shared by a
+ * junction, as the dual mode does; `local.properties` (Android SDK path) is
+ * copied. Only IGNORED, untracked entries; `lanes.link` / `lanes.copy` of
+ * pipeline.json still add more. Returns what was provisioned.
+ */
+export const PIPELINE_LINKS = ['node_modules', '.venv', 'venv'];
+export const PIPELINE_COPIES = ['local.properties'];
+export function provisionPipelineLane(mainDir, dir) {
+  const done = [];
+  const ignored = (rel) => fs.existsSync(path.join(mainDir, rel)) && !git(mainDir, ['ls-files', '--error-unmatch', rel]).ok && git(mainDir, ['check-ignore', '-q', rel]).ok;
+  for (const rel of PIPELINE_LINKS) {
+    const src = path.join(mainDir, rel), dst = path.join(dir, rel);
+    if (fs.existsSync(dst) || !ignored(rel) || !fs.statSync(src).isDirectory()) continue;
+    try { fs.symlinkSync(src, dst, 'junction'); done.push(`${rel} (lien)`); } catch (e) { console.error(`[lanes] lien ${rel} : ${e.message}`); }
+  }
+  for (const rel of PIPELINE_COPIES) {
+    const src = path.join(mainDir, rel), dst = path.join(dir, rel);
+    if (!ignored(rel) || !fs.statSync(src).isFile()) continue;
+    try { fs.copyFileSync(src, dst); done.push(rel); } catch (e) { console.error(`[lanes] copie ${rel} : ${e.message}`); }
+  }
+  return done;
+}
+
+/**
+ * Paused pipeline runs of a project and the lane each one waits in (P9).
+ * A run of lane k ≥ 1 is `held` while lane k still parks its task (state
+ * input); lane 0 keeps the legacy rule: only its latest run counts, a newer
+ * run in the main checkout supersedes an older pause there.
+ */
+export function pausedPipelineRuns(logsDir, projectName, { max = 300 } = {}) {
+  const dir = path.join(logsDir, 'runs');
+  let runs = [];
+  try { runs = fs.readdirSync(dir).filter(r => /^p-\d{8}T\d{6}-[a-z0-9]{4,8}$/.test(r)).sort().reverse().slice(0, max); } catch { return []; }
+  const out = [];
+  let lane0Seen = false;
+  for (const r of runs) {
+    let s; try { s = JSON.parse(fs.readFileSync(path.join(dir, r, 'run.json'), 'utf8')); } catch { continue; }
+    if (s.project !== projectName) continue;
+    const k = Number(s.lane?.k) || 0;
+    if (k >= 1) {
+      if (s.status !== 'paused') continue;
+      const t = readTask(laneFiles(logsDir, projectName, k).task);
+      out.push({ run: r, lane: k, task: s.lane.task, branch: s.lane.branch || null, pausedLimit: s.pausedLimit || null, held: !!(t && t.task === s.lane.task && t.state === 'input') });
+    } else if (!lane0Seen) {
+      lane0Seen = true;
+      if (s.status === 'paused') out.push({ run: r, lane: 0, pausedLimit: s.pausedLimit || null, held: true });
+    }
+  }
+  return out;
+}
+
 /** The same task continues (answer to its question): the lane keeps its branch. */
 export function resumeTask({ logsDir, project, k, turn }) {
   const files = laneFiles(logsDir, project.name, k);
@@ -520,6 +605,24 @@ export function pruneRetainedBranches({ logsDir, project, now = Date.now(), rete
 function sleepSync(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
 
 /**
+ * The requirements registry (`requirements` of pipeline.json, e.g.
+ * docs/USER_REQUIREMENTS.md) is an append-only table: every delivery adds a
+ * line at its end, so two parallel deliveries always "conflict" there (P9).
+ * For the integration merge only, that one file uses git's built-in union
+ * driver: both sides' lines are kept, nothing is dropped. Any other file keeps
+ * the strict rule (a conflict pauses, never -X ours/theirs). The attributes go
+ * through `core.attributesFile` of this command: nothing is written in the
+ * repository or its configuration.
+ */
+export function unionMergeArgs(logsDir, projectName, dir) {
+  const reg = laneConfig(dir).requirements;
+  if (typeof reg !== 'string' || !/^[\w.\-/]+$/.test(reg) || reg.includes('..')) return [];
+  const f = path.join(logsDir, 'lanes', projectName, 'merge.attributes');
+  try { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, `/${reg} merge=union\n`); } catch { return []; }
+  return ['-c', `core.attributesFile=${f.replace(/\\/g, '/')}`];
+}
+
+/**
  * Integrates the task of lane k into the integration branch. Synchronous (it
  * runs in dispatch.mjs after the turn, lane lock still held). Never pushes,
  * never stashes nor overwrites the user's work, never resolves a conflict by
@@ -528,12 +631,14 @@ function sleepSync(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 
  * outcome: 'input' (question: lane kept for the answer) | 'nothing' |
  *          'integrated' | 'paused'
  */
-export function finishTask({ logsDir, project, k, dir, turnEnd, title, log = () => {}, waitMs = Number(process.env.ORCH_LANE_INTEGRATE_WAIT_MS) || 30 * 60_000 }) {
+export function finishTask({ logsDir, project, k, dir, turnEnd, title, log = () => {}, waitMs = Number(process.env.ORCH_LANE_INTEGRATE_WAIT_MS) || 30 * 60_000, commitOnInput = true }) {
   const files = laneFiles(logsDir, project.name, k);
   const t = readTask(files.task);
   if (!t) return { outcome: 'nothing', why: 'aucune tâche' };
   if (turnEnd === 'input') {
-    commitLeftovers(dir, `wip(lane): ${title || t.title || t.task}`);
+    // A paused pipeline run keeps its work uncommitted: the engine resumes on
+    // the working tree exactly as it left it (P9).
+    if (commitOnInput) commitLeftovers(dir, `wip(lane): ${title || t.title || t.task}`);
     Object.assign(t, { state: 'input', pid: null, pausedAt: new Date().toISOString() });
     writeJson(files.task, t);
     return { outcome: 'input', task: t.task, branch: t.branch };
@@ -583,7 +688,7 @@ export function finishTask({ logsDir, project, k, dir, turnEnd, title, log = () 
         return finish('paused', { reason: 'integration-branch-changed', diff: archiveLane(logsDir, project.name, dir, t.task, t.base),
           why: `la copie principale n'est plus sur ${t.integration}` });
       }
-      const m = git(dir, [...identityArgs(dir), 'merge', '--no-edit', '-q', t.integration]);
+      const m = git(dir, [...identityArgs(dir), ...unionMergeArgs(logsDir, project.name, dir), 'merge', '--no-edit', '-q', t.integration]);
       if (!m.ok) {
         const conflicted = git(dir, ['diff', '--name-only', '--diff-filter=U']).out.split('\n').filter(Boolean);
         git(dir, ['merge', '--abort']);

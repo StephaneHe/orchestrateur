@@ -11,6 +11,71 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.111.0] - 2026-10-18
+
+### Added
+
+- (server) **The pipeline engine runs in a lane** (item P9 of
+  `docs/PLAN-parallel-tasks-same-musician.md`, §12). User request of
+  2026-10-18: « Lances-led » (launch P9). Pipeline runs of one project now run
+  in parallel, like ordinary tasks:
+  - a new run takes a free worktree lane first, the main checkout last and
+    only when it is clean (`lane-rules.mjs`, mode `pipeline`);
+  - `pipeline-engine.mjs` works in the lane: `cwd`, log, `.pid`,
+    `run.json.lane`, artefacts under `<lane>/.orchestrateur/runs/`, run
+    artefacts excluded through the common `info/exclude`; every step's
+    `dispatch.mjs --pipeline-step` recomputes the lane folder from the run's
+    lane number; the step prompt names the lane;
+  - Livrer in a lane writes `changelog.d/<task>.md` (`FRAGMENT=` line),
+    never the version nor `CHANGELOG.md`, and its criterion checks exactly
+    that; the integrator makes the release at the end of the turn;
+  - a paused run keeps its lane (work left uncommitted) without blocking the
+    next tasks; « continuer », « accepter », « tout supprimer » or
+    `--pipeline-resume` resume it in its lane (`lanes.mjs
+    pausedPipelineRuns`); « changer / tester le model » keep it paused
+    (`holdTask`); « abandonner » / « simplifier » close it, nothing
+    integrated, work kept on its branch, lane freed (`abandonTask`); several
+    paused runs without `--lane` ⇒ refused (64);
+  - lanes of a pipeline share the main checkout's ignored `node_modules`,
+    `.venv`, `venv` (junction) and get `local.properties`
+    (`provisionPipelineLane`);
+  - the requirements registry is merged with git's union driver during the
+    integration merge only (`unionMergeArgs`): two parallel deliveries keep
+    both lines;
+  - the dual mode inside a step in a lane branches off the lane, with its own
+    worktree folder (`logs/dual/wt/<p>~lane<k>/`); `recoverInterrupted` never
+    touches another lane's dual branches;
+  - a Routage task waiting for a task that ran in a lane is released by the
+    lane's end marker (`system/lane_task` with `promptHash`, `turnEnd`); the
+    fingerprint is the original request's, kept in the lane task across
+    answers (a paused-then-resumed task releases its waiters once integrated).
+- Test: `scripts/_test_lane_pipeline.mjs` (permanent requirement test, serial
+  suite): two dev runs of one project at the same time (one in a worktree),
+  a paused run that does not block the next task then resumes in its lane,
+  « abandonner », Routage dependency, `maxParallel: 1` unchanged.
+
+### Changed
+
+- (server) Lane rule `pipeline-engine` restricted to the resume of a run that
+  started in the main checkout; rule `dual-mode` now only concerns an explicit
+  `--second-model` outside a pipeline. `_test_lane_rules.mjs` checks the new
+  behaviour (the 0.101.0 assertion « pipeline run in lane 0 » is replaced, as
+  the user asked).
+- (server) `finishLane` (`dispatch.mjs`): a paused pipeline turn (code 2) is a
+  question, not an error; the lane's end marker carries `promptHash`,
+  `turnEnd` and the run.
+
+### Notes
+
+- A lane holds only tracked files (plus what is provisioned): a project whose
+  tests need another untracked file must declare it in `lanes.copy` /
+  `lanes.link` of `.orchestrateur/pipeline.json` (the pause message says so),
+  or set `"maxParallel": 1`.
+- A lane's question still reaches the user through the chef only (per-lane
+  state on the dashboard = items P7/P11).
+- Rollback without restart: `"maxParallel": 1` (project or `defaults`); code:
+  `git revert` to the tag `pre-lane-pipeline-v0.110.1`.
+
 ## [0.110.1] - 2026-10-16
 
 ### Fixed

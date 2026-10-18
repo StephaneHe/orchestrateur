@@ -47,10 +47,12 @@ export const RULES = [
     text: 'suite de la même tâche : elle reprend le couloir, la session et la copie de cette tâche' },
   { id: 'lane0-direct', scope: 'lane0', status: 'active',
     text: "dialogue direct de l'utilisateur : il travaille dans sa propre copie du projet" },
+  // P9 (0.111.0): a NEW pipeline run goes to a lane (worktree); only a run that
+  // started in the main checkout resumes there, where its files are.
   { id: 'pipeline-engine', scope: 'lane0', status: 'active',
-    text: "exécution de pipeline : le moteur ne sait pas encore travailler dans un couloir (item P9)" },
+    text: "reprise d'une exécution de pipeline commencée dans la copie principale : elle reprend là où sont ses fichiers" },
   { id: 'dual-mode', scope: 'lane0', status: 'active',
-    text: 'mode double model : ses deux branches partent de la copie principale (item P9)' },
+    text: 'mode double model demandé hors pipeline (--second-model) : ses deux branches partent de la copie principale' },
   { id: 'main-dirty', scope: 'lane0', status: 'active',
     text: "la copie principale a des modifications non commitées : la tâche doit les voir, elle tourne donc dans cette copie" },
   { id: 'machine-state', scope: 'task', status: 'active',
@@ -142,9 +144,9 @@ export function parseResources(arg) {
  * Decides how a turn may use the musician's lanes. Pure apart from reading the
  * git facts of the main checkout and the project files.
  *
- * input: { project, conductor, direct, laneArg, sameTask, sameTaskLanes,
- *          pipeline, dual, resources: [...declared], facts? }
- * output: { mode: 'project'|'lane0'|'lane'|'alone'|'parallel', lane?, rule?,
+ * input: { project, conductor, direct, laneArg, laneWhy?, sameTask, sameTaskLanes,
+ *          pipeline, pipelineResumeLane0?, dual, resources: [...declared], facts? }
+ * output: { mode: 'project'|'lane0'|'lane'|'alone'|'parallel'|'pipeline', lane?, lane0?, rule?,
  *           evidence?, resources: [{key, rule, evidence}], fired: [{rule, evidence}] }
  *
  * `resources` and `alone` add to the lane decision: a pinned task may still
@@ -179,7 +181,8 @@ export function decide(input) {
   if (declared.has('migration')) { const f = fire('migration', 'déclarée par le Routage (« migration »)'); return { mode: 'alone', ...f, resources, fired }; }
 
   // Lane choice.
-  if (input.laneArg != null) { const f = fire('same-task', `couloir ${input.laneArg} demandé (--lane)`); return { mode: 'lane', lane: Number(input.laneArg), ...f, resources, fired }; }
+  if (input.laneArg != null) { const f = fire('same-task', input.laneWhy || `couloir ${input.laneArg} demandé (--lane)`); return { mode: 'lane', lane: Number(input.laneArg), ...f, resources, fired }; }
+  if (input.pipelineResumeLane0) { const f = fire('pipeline-engine', input.pipelineResumeLane0 === true ? 'exécution en pause dans la copie principale' : `exécution ${input.pipelineResumeLane0} en pause dans la copie principale`); return { mode: 'lane0', ...f, resources, fired }; }
   if (input.sameTask) {
     const lanes = input.sameTaskLanes || [];
     if (lanes.length === 1) { const f = fire('same-task', `réponse à la tâche du couloir ${lanes[0]}`); return { mode: 'lane', lane: lanes[0], ...f, resources, fired }; }
@@ -187,7 +190,11 @@ export function decide(input) {
     const f = fire('same-task', 'suite de la tâche de la copie principale'); return { mode: 'lane0', ...f, resources, fired };
   }
   if (input.direct) { const f = fire('lane0-direct', "message direct de l'utilisateur"); return { mode: 'lane0', ...f, resources, fired }; }
-  if (input.pipeline) { const f = fire('pipeline-engine', 'exécution de pipeline'); return { mode: 'lane0', ...f, resources, fired }; }
+  // A new pipeline run (P9): a free worktree lane first, so that a run that
+  // pauses leaves the main checkout clean; lane 0 only when it is clean (a
+  // pipeline that needs a clean tree would refuse it, and the user's
+  // uncommitted work is never mixed into a delivery).
+  if (input.pipeline) return { mode: 'pipeline', lane0: !(input.mainDirtyMatters !== false && facts.dirty.length), resources, fired };
   if (input.dual) { const f = fire('dual-mode', '--second-model'); return { mode: 'lane0', ...f, resources, fired }; }
   if (input.mainDirtyMatters !== false && facts.dirty.length) {
     const f = fire('main-dirty', `${facts.dirty.length} fichier(s) modifié(s) : ${facts.dirty.slice(0, 5).join(', ')}${facts.dirty.length > 5 ? '…' : ''}`);

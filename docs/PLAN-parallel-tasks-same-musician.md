@@ -1,6 +1,6 @@
 # Parallel tasks for the same musician — design
 
-Status: **lot 1 implemented in 0.101.0** (2026-10-15) — see §7 for what is
+Status: **lot 1 implemented in 0.101.0** (2026-10-15); **P9 (pipeline engine in a lane) in 0.111.0** (2026-10-18, §12) — see §7 for what is
 in, what is not, and the decisions taken by default; Q2/Q3 applied in 0.101.1
 (§8); Q4 (version/CHANGELOG rule) and Q5 (pilot = orchestrateur-dev) applied
 in 0.102.0 (§9); Q1 (default `maxParallel` = 2, user decision) applied in
@@ -379,8 +379,8 @@ detected since 0.101.0; `planned` = documented, detector not written yet.
 | `git-unsupported` | submodules, LFS without the filter installed, sparse checkout, detached HEAD, git < 2.20 | project | active | `.gitmodules`, `.gitattributes filter=lfs` + `git lfs version`, `core.sparseCheckout`, `git symbolic-ref HEAD`, `git --version` | worktree content would differ from the checkout; a detached HEAD has no integration branch |
 | `same-task` | answer/resume of a task already holding a lane (`--lane k`, `[CHEF_ANSWER]`, `--meme-tache`, `--resume-session`) | lane | active | task affinity: `logs/lanes/<p>/<k>.task.json` in state `input`; two such lanes without `--lane` ⇒ refused (64), never guessed | session and work tree belong to that lane |
 | `lane0-direct` | direct user dialogue | lane0 | active | no `--source` | the user works in their own checkout by definition |
-| `pipeline-engine` | pipeline run (`--pipeline`, `--pipeline-resume`, project in service) | lane0 | active | the dispatch delegates to `pipeline-engine.mjs` | the engine writes the musician's log and works in its checkout; lane-aware engine = item P9 |
-| `dual-mode` | `--second-model` | lane0 | active | flag | `dual-run.mjs` branches its worktrees off the main checkout (item P9) |
+| `pipeline-engine` | resume of a pipeline run that started in the main checkout (paused before 0.111.0, or run in lane 0) | lane0 | active | `lanes.mjs pausedPipelineRuns`: the paused run has no lane (or lane 0) | its files are in the main checkout; since P9 (0.111.0) a NEW run goes to a lane (§12) |
+| `dual-mode` | `--second-model` on an ordinary dispatch (outside a pipeline) | lane0 | active | flag | `dual-run.mjs` branches its worktrees off the main checkout; inside a pipeline step in a lane, the dual mode works from the lane (§12) |
 | `main-dirty` | main checkout has uncommitted tracked changes and no turn runs in lane 0 | lane0 | active | `git status --porcelain --untracked-files=no` | the task must see the user's work, so it runs in that checkout; changes made by a running lane-0 turn do not count |
 | `machine-state` | scheduled tasks, services, registry, global installs, `~/.claude.json` | task | active | Routage field `ressources: ["poste"]` (`--ressources poste`) | global side effects cannot be merged |
 | `migration` | schema migration | task | active | Routage field `ressources: ["migration"]`; also holds resource `db` | ordering of migrations is global |
@@ -693,3 +693,74 @@ keeps its branch and diff, nothing to undo. Code: `git revert` to the tag
 - Test: `_test_dev_pilot_first.mjs` (unit, `lanesStatus`, real dispatch:
   production serial without lanes, dev with two concurrent tasks).
 - **Rollback**: `git revert` to the tag `pre-dev-pilot-first-v0.103.0`.
+
+## 12. P9 — the pipeline engine in a lane (0.111.0)
+
+- **User request** (2026-10-18), verbatim: « Lances-led », answering the
+  chef's offer to launch P9 after « Le parallelisme de l'orchestrateur est-il
+  en ligne ? » (yes for ordinary tasks, no for pipelines: rule
+  `pipeline-engine` pinned every run to lane 0, so no project in service ran
+  two tasks at once, and a paused run blocked the next ones).
+- **Lane choice** (`lane-rules.mjs decide`, mode `pipeline`): a new run takes
+  a free worktree lane first, lane 0 last and only when the main checkout is
+  clean (`git status --untracked-files=no`), so that a run that pauses never
+  leaves the user's checkout dirty. No free lane ⇒ wait or queue, as any task.
+  `lane0-direct` still comes first (a direct dialogue stays in lane 0).
+- **Affinity of a paused run** (`dispatch.mjs`, before the lane choice): a
+  reply offered by the pause (« continuer », « accepter », « tout supprimer »,
+  « abandonner », « simplifier », « changer le model », « tester le model »,
+  or `--pipeline-resume`) goes to the lane holding the run
+  (`lanes.mjs pausedPipelineRuns`: run.json `lane`, lane task in state
+  `input`), rule `same-task`; a run paused in the main checkout resumes
+  there, rule `pipeline-engine` (restricted). Several paused runs and no
+  `--lane` ⇒ refused (64), never guessed. The engine refuses a resume in
+  another lane than the run's (65).
+- **Engine** (`pipeline-engine.mjs runPipeline`): `cwd`, log and `.pid` of
+  the lane; `run.json` records `lane {k, task, branch, integration}`;
+  artefacts under `<lane>/.orchestrateur/runs/`, excluded through the
+  COMMON `info/exclude` (a worktree reads only that one). Each step's
+  `dispatch.mjs --pipeline-step` recomputes the lane folder from the run's
+  lane number (never a path read from a file) and works there; the steps'
+  prompt says which lane and forbids writing in the main checkout.
+- **Livrer in a lane** (design §2.8): line `FRAGMENT=changelog.d/<task>.md`;
+  the step writes the fragment (`bump: patch|minor|major` + sections), never
+  the version nor CHANGELOG.md; the criterion checks exactly that (version
+  files and CHANGELOG unchanged, fragment present and valid), plus the
+  requirements line, tests and build. The integrator then makes the release
+  (fragments → version, CHANGELOG entry, release commit with hooks).
+- **End of the turn** (`laneExit` → `finishLane`): done ⇒ integration; pause
+  (`result.pipeline_paused`, code 2) ⇒ lane kept in state `input`, its work
+  left UNCOMMITTED for the engine (`finishTask commitOnInput: false`);
+  « changer / tester le model » ⇒ still paused (`holdTask`); « abandonner » /
+  « simplifier » ⇒ nothing integrated, work archived and committed on its
+  branch (kept, never pruned), lane freed (`abandonTask`); a request the
+  classifier could not classify ⇒ lane freed, the question sent to the chef.
+- **Provisioning for pipelines** (`provisionPipelineLane`): the engine runs
+  the test command itself, so the main checkout's ignored `node_modules`,
+  `.venv`, `venv` are shared by junction (as the dual mode does) and
+  `local.properties` is copied. Anything else a project's tests need must be
+  declared in `lanes.copy` / `lanes.link`; a red base in a lane says so in
+  the pause message. Per-project way out: `"maxParallel": 1`.
+- **Requirements registry**: every delivery appends a line at the end of
+  `requirements` (pipeline.json), so two parallel deliveries always collide
+  there. For the integration merge only, that one file uses git's union driver
+  (`unionMergeArgs`, through `-c core.attributesFile`: nothing written in the
+  repository): both lines kept. Every other file keeps the strict rule.
+- **Dual mode inside a step in a lane**: its branches start from the lane
+  (`project.path` = the lane), its worktrees under
+  `logs/dual/wt/<p>~lane<k>/`; `recoverInterrupted` never touches the dual
+  branches whose worktree belongs to another lane.
+- **Routage dependencies** (`routage-pending dependencyResult`): the end
+  marker `system/lane_task` written in the musician's log carries
+  `promptHash` (fingerprint of the task text) and `turnEnd`: integrated or
+  nothing to integrate = success; integration paused, abandoned or failed
+  turn = failed; a lane waiting for an answer has not finished.
+- **Still not done**: per-lane state on the dashboard and the Android app
+  (P7/P11: a lane's question reaches the user through the chef), the
+  model-driven conflict turn (P5: a conflict pauses), runtime detectors (P10).
+- **Tests**: `_test_lane_pipeline.mjs` (permanent requirement test, serial),
+  `_test_lane_rules.mjs` (rule restricted; the 0.101.0 assertion « pipeline
+  run in lane 0 » replaced, following the user's request).
+- **Rollback** (no restart): `"maxParallel": 1` on a project (or in
+  `defaults`) ⇒ the 0.67.0 path. Code: `git revert` to the tag
+  `pre-lane-pipeline-v0.110.1`.

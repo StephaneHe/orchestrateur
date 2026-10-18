@@ -298,6 +298,16 @@ export function dependencyResult(logsDir, after) {
   for (const l of text.split('\n')) {
     if (!l.includes('"type"')) continue;
     let e; try { e = JSON.parse(l); } catch { continue; }
+    // A task that ran in a parallel lane (0.101.0, pipelines since P9) has its
+    // turn in the lane's log; its end is marked here (system/lane_task with the
+    // fingerprint of its text): integrated or nothing to integrate = success;
+    // integration paused, abandoned = failed. A lane waiting for an answer
+    // (state input) has not finished: its work is not integrated yet.
+    if (after.hash && e.type === 'system' && e.subtype === 'lane_task' && e.promptHash === after.hash && ['done', 'paused', 'abandoned'].includes(e.state)) {
+      const okEnd = e.state === 'done' && e.turnEnd !== 'error';
+      return { type: 'result', subtype: okEnd ? 'success' : 'error_lane', is_error: !okEnd, lane: e.lane ?? null, outcome: e.outcome || e.state,
+        result: e.why || e.text || `${after.projet}, couloir ${e.lane} : ${e.outcome || e.state}`, timestamp: e.timestamp || null, fromLane: true };
+    }
     // Only a prompt that opens a turn re-arms (a notify message is no turn).
     // 0.67.0: the awaited task is recognised by the fingerprint of its whole
     // text (`after.hash`); a shared opening sentence is not enough any more.
