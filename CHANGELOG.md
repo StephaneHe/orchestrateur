@@ -11,6 +11,28 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.113.2] - 2026-10-18
+
+### Fixed
+
+- (server) A pipeline run paused on `aside_conflict` (a set-aside item whose
+  patch no longer applies on the work delivered since) could never be
+  unblocked. « continuer » left the stale item set aside, so the run paused
+  on `items_blocked`, whose « continuer » re-applied the same patch and fell
+  back into `aside_conflict`, forever. « continuer » after `aside_conflict`
+  now sets the conflicting item apart (`discardedAside`, event
+  `system/pipeline_aside_discarded`; its patch stays on disk, never
+  re-applied, listed in the result, the pauses and the closing message) and
+  goes on with the other set-aside items, kept in the queue at the conflict.
+  A run paused by an older engine (no conflict marker, queue emptied) is
+  handled the same way.
+- (server) « simplifier », « abandonner », « changer le model » and « tester
+  le model » were treated as « continuer » when the answer came with
+  `--pipeline-resume` (how the chef's Routage launches every answer to a
+  paused run): « simplifier » resumed the run instead of closing it. The
+  pause menu choice now wins whatever flag carried it (`pauseAnswer` in
+  `dispatch.mjs`). Test: section 7 of `_test_item_delivery.mjs`.
+
 ## [0.113.1] - 2026-10-18
 
 ### Fixed

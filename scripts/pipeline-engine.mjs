@@ -64,6 +64,13 @@ const ASIDE_WORDS = {
   review: 'la relecture trouve encore des défauts', item_tests: 'plus de tests écrits que prévu',
   green: 'le code ne fait pas passer le test', criteria: 'refusé par les vérifications automatiques',
 };
+// Set-aside items dropped because their patch no longer applies (0.113.2): always listed, never silent.
+function discardedText(state, lead = '') {
+  const ds = state.discardedAside || [];
+  if (!ds.length) return '';
+  return `${lead}⊘ Écarté(s), non livré(s) — leurs modifications ne s’appliquaient plus sur le travail livré depuis ; elles restent gardées (à réappliquer à la main avec « git apply » si besoin) : `
+    + `${ds.map(a => `${a.group === 0 ? 'travail d’avant la montée en complet' : `item ${a.group}`} → \`${a.patch}\``).join(' ; ')}\n`;
+}
 export const LIMITS = {
   criteriaAttempts: 2,     // essais d'une étape dont le critère échoue
   greenAttempts: 3,        // essais de 4b pour un même test
@@ -1954,6 +1961,23 @@ export async function runPipeline(o) {
     state.restoreQueue = state.aside.map(a => a.group);
     extended = { limit: 'items_blocked', to: state.restoreQueue.length };
   }
+  // « continuer » after aside_conflict (0.113.2): the stale patch is set apart
+  // (kept on disk, listed, never re-applied) and the other set-aside items go
+  // on. Retrying it would only fall back into the same conflict, forever
+  // (items_blocked → continuer → aside_conflict → … , user report 2026-10-18).
+  if (resumed && state.pausedLimit === 'aside_conflict') {
+    const stale = (state.aside || []).filter(a => a.conflict || a.group === state.asideConflict);
+    // A run paused by an older engine has no marker: the item it tried first.
+    if (!stale.length && state.aside?.length) stale.push(state.aside[0]);
+    const goneGroups = new Set(stale.map(a => a.group));
+    state.discardedAside = [...(state.discardedAside || []), ...stale.map(a => ({ ...a, discardedAt: new Date().toISOString() }))];
+    state.aside = (state.aside || []).filter(a => !goneGroups.has(a.group));
+    // An older engine emptied the queue at the conflict: the remaining items are put back.
+    const queued = (state.restoreQueue || []).filter(g => !goneGroups.has(g));
+    state.restoreQueue = queued.length ? queued : state.aside.map(a => a.group);
+    state.asideConflict = null;
+    extended = { limit: 'aside_conflict', to: state.restoreQueue.length, discarded: stale };
+  }
   // « accepter » (0.65.0): the review defects that paused the run are accepted
   // explicitly by the user — the next Review of that item (or of the run) is
   // replaced by the acceptance, recorded and handed to Livrer (CHANGELOG).
@@ -2033,9 +2057,14 @@ export async function runPipeline(o) {
     state.routeAnnounced = true;
     saveState();
   }
+  for (const a of extended?.discarded || []) {
+    writeEvent({ type: 'system', subtype: 'pipeline_aside_discarded', pipeline: { run, item: a.group }, patch: a.patch,
+      text: `⊘ ${a.group === 0 ? 'le travail d’avant la montée en complet' : `l’item ${a.group}`} écarté : ses modifications ne s’appliquent plus sur le travail livré depuis ; elles restent gardées dans ${a.patch}, non réappliquées` });
+  }
   if (extended) {
     const what = { items: `${extended.to} items au total`, duration: `${fmtDur(extended.to)} de temps actif`, review: `${extended.to} tours de revue${extended.item != null ? ` pour l’item ${extended.item}` : ''}`,
-      items_blocked: `${extended.to} item(s) mis de côté repris un à un, chacun avec une allocation de plus` }[extended.limit];
+      items_blocked: `${extended.to} item(s) mis de côté repris un à un, chacun avec une allocation de plus`,
+      aside_conflict: `item en conflit écarté, ${extended.to} autre(s) item(s) mis de côté repris un à un` }[extended.limit];
     writeEvent({ type: 'system', subtype: 'pipeline_limit_extended', pipeline: { run }, limit: extended.limit, to: extended.to,
       text: `↻ « continuer » après la limite « ${extended.limit} » : une allocation de plus accordée pour cette exécution (${what})` });
   }
@@ -2211,7 +2240,8 @@ export async function runPipeline(o) {
         return {
           short: `${as.length} item(s) mis de côté, ${ds.length} livré(s)`,
           what: `chaque item est livré séparément. ${ds.length ? `Déjà livré(s), chacun dans son propre commit : ${ds.map(d => `${it(d)} (${d.commit.slice(0, 7)})`).join(' ; ')}${rel?.version ? ` — version ${rel.version}` : ''}.` : 'Aucun item n’a encore pu être livré.'} `
-            + `Mis de côté, sans bloquer les autres : ${as.map(a => `${it(a)} — ${ASIDE_WORDS[a.limit] || a.limit} (${plainWhy(a.why)}) ; ses modifications sont gardées dans \`${a.patch}\``).join(' ; ')}.`,
+            + `Mis de côté, sans bloquer les autres : ${as.map(a => `${it(a)} — ${ASIDE_WORDS[a.limit] || a.limit} (${plainWhy(a.why)}) ; ses modifications sont gardées dans \`${a.patch}\``).join(' ; ')}.`
+            + (discardedText(state) ? ` ${discardedText(state).trim()}` : ''),
           cont: `je reprends les item(s) mis de côté, un à un, là où ils se sont arrêtés, avec une allocation de plus chacun ; ceux qui aboutissent sont livrés à leur tour, puis une nouvelle version.`,
           rec: as.some(a => a.limit === 'item_tests') ? ['simplifier', 'un point qui demande plus de tests que prévu est trop large : mieux vaut le redécouper dans une nouvelle demande.'] : ['continuer', 'les items mis de côté ont un défaut précis : un tour de plus suffit en général.'],
         };
@@ -2219,8 +2249,10 @@ export async function runPipeline(o) {
       aside_conflict: {
         short: `un item mis de côté ne s’applique plus sur le travail livré depuis`,
         what: `${plainWhy(why)}. Le projet est resté tel qu’il était après la dernière livraison.`,
-        cont: 'je réessaie de réappliquer ses modifications (utile si vous avez ajusté le projet ou le correctif entre-temps).',
-        rec: ['simplifier', 'cet item a été dépassé par les suivants : mieux vaut le redemander dans une nouvelle demande.'],
+        cont: `j’écarte cet item (ses modifications restent gardées dans son correctif, sans être réappliquées) et je continue avec ${(state.restoreQueue || []).length ? `les ${state.restoreQueue.length} autre(s) item(s) mis de côté` : 'la fin de l’exécution : ce qui est déjà livré le reste'}.`,
+        rec: (state.restoreQueue || []).length
+          ? ['continuer', 'cet item a été dépassé par les suivants ; les autres items mis de côté peuvent encore aboutir.']
+          : ['simplifier', 'cet item a été dépassé par les suivants : mieux vaut le redemander dans une nouvelle demande.'],
       },
       duration: {
         short: 'durée maximale de travail atteinte',
@@ -2656,7 +2688,9 @@ export async function runPipeline(o) {
         foldTo(cwd, from);
         const r = reapplyWork(cwd, path.join(root, a.patch));
         if (!r.ok) {
-          state.restoreQueue = [];
+          // The rest of the queue is kept: « continuer » sets this one apart and goes on with them.
+          a.conflict = { at: new Date().toISOString(), err: String(r.err || '').split('\n')[0].slice(0, 500) };
+          state.asideConflict = g;
           saveState();
           return pauseForLimit({ limit: 'aside_conflict', value: g, step: stepDefs.vert,
             why: `les modifications de ${groupLabel(g)} (« ${a.text} »), gardées dans ${a.patch}, ne s’appliquent plus sur le travail livré depuis : ${String(r.err).split('\n')[0]}` });
@@ -3146,6 +3180,7 @@ export async function runPipeline(o) {
       `- Étapes : ${state.steps.filter(s => s.status === 'ok').map(s => `${s.title.split(' ')[0]} ${s.model || 'défaut'}`).join(' → ')}\n` +
       (state.mode === 'complet' ? `- TDD : ${state.itemsDone || 0} item(s) de la liste de tests, un à la fois (4a → 4b → 4c)\n` : '') +
       ((state.delivered || []).length ? `- Livraison par item : ${state.delivered.map(d => `${d.group === 0 ? 'travail d’avant la montée en complet' : `item ${d.group}`} → ${d.commit.slice(0, 7)}`).join(' ; ')}, puis la version (${(state.releases || []).map(r => `${r.version || '?'} ${r.commit.slice(0, 7)}`).join(', ')})\n` : '') +
+      discardedText(state, '- ') +
       (state.escalated ? '- ⇧ Monté de léger en complet : la demande dépassait le périmètre du mode léger\n' : '') +
       ((state.coveredItems || []).length ? `- ↺ Déjà assuré par le code existant (test ajouté comme documentation, sans nouveau code) : ${state.coveredItems.map(coveredLabel).join(' ; ')}\n` : '') +
       `- Critères vérifiés par l'orchestrateur : test rouge puis vert, tests inchangés en 4b, revue, version, CHANGELOG${cfg.requirements ? ', exigence' : ''}, suite verte\n` +
@@ -3197,7 +3232,8 @@ export async function answerPausedRun({ logsDir, project, projectName, run, answ
     text = (ds.length
       ? `■ Exécution arrêtée à votre demande (« ${answer} »). Les items déjà livrés restent dans leurs commits : ${ds.map(d => `${d.group === 0 ? 'travail d’avant la montée en complet' : `item ${d.group}`} (${d.commit.slice(0, 7)})`).join(' ; ')}. Le reste n’est pas livré.\n\n`
       : `■ Exécution arrêtée à votre demande (« ${answer} »). Rien n’est livré, aucun commit n’a été fait.\n\n`) +
-      (as.length ? `Items mis de côté, non livrés — leurs modifications sont gardées hors du projet (à réappliquer avec « git apply » si vous voulez les reprendre) :\n${as.map(a => `- ${a.group === 0 ? 'travail d’avant la montée en complet' : `item ${a.group}`} : \`${a.patch}\` (${(a.files || []).slice(0, 10).join(', ')})`).join('\n')}\n\n` : '') +
+      (as.length ? `Items mis de côté, non livrés — leurs modifications sont gardées hors du projet (à réappliquer avec « git apply » si vous voulez les reprendre) :\n${as.map(a => `- ${a.group === 0 ? 'travail d’avant la montée en complet' : `item ${a.group}`} : \`${a.patch}\` (${(a.files || []).slice(0, 10).join(', ')})${a.conflict ? ' — ne s’applique plus sur le travail livré depuis' : ''}`).join('\n')}\n\n` : '') +
+      (discardedText(state) ? `${discardedText(state)}\n` : '') +
       (changed.length
         ? `Les modifications déjà faites restent dans le projet, non enregistrées dans git (vous pouvez les examiner, les garder ou les annuler) :\n${changed.slice(0, 30).map(c => `- ${c}`).join('\n')}${changed.length > 30 ? `\n- … et ${changed.length - 30} autre(s)` : ''}`
         : 'Aucune modification n’est restée dans le projet.') +

@@ -2558,6 +2558,13 @@ probleme pour le model utilise ».
     - sinon, s'il reste des items de côté : la version de ce qui est livré,
       puis la pause `items_blocked`.
   - Une exécution en pause sans `itemDelivery` garde son commit unique.
+  - **Correctif périmé** (0.113.2, « toujours bloque ») : au conflit, l'item
+    est marqué (`conflict`, `asideConflict`) et la file restante est gardée ;
+    « continuer » après `aside_conflict` l'écarte (`discardedAside`,
+    `system/pipeline_aside_discarded`, correctif gardé, listé partout) et
+    reprend les autres — jamais de boucle `items_blocked` ↔ `aside_conflict`.
+    Une réponse du menu (« simplifier »…) arrivée avec `--pipeline-resume`
+    (Routage) fait son effet (`pauseAnswer` de `dispatch.mjs`).
   - Recette : `_test_item_delivery.mjs`.
 - **Montée léger → complet** : après 4b en léger, `lightScope` mesure le
   changement (plus de 3 fichiers, plus de 150 lignes, ou un nouveau fichier de

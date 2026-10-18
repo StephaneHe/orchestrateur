@@ -1404,6 +1404,16 @@ if (CHEF_ROUTED || CHEF_DISCUSSION) {
 }
 if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResumeArg || AUTO_PIPELINE)) {
   let pipe = pipelineArg, resumeRun = pipelineResumeArg, classification = null, mode = pipelineModeArg, acceptDefects = false, deleteDoubts = false;
+  // 0.113.2: the Routage launches every answer to a paused run with
+  // --pipeline-resume — « simplifier » included (user report 2026-10-18: it
+  // resumed the run instead of closing it). A reply that IS one of the pause's
+  // other choices is that choice, whatever flag carried it.
+  if (resumeRun && !pipe) {
+    const answer = pauseAnswer(prompt.replace(/^\s*\[CHEF_ANSWER\]\s*/i, '').trim());
+    if (answer) {
+      process.exit(await pipeEngine.answerPausedRun({ logsDir: LOGS, project, projectName, run: resumeRun, answer, promptForLog: prompt, sourceProject, callbackProject, testLabel }));
+    }
+  }
   if (!pipe && !resumeRun) {
     // Réponse « continuer » à une exécution en pause : on la reprend.
     const paused = latestPausedRun(projectName);
@@ -1419,11 +1429,7 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
       if (pausedFor === 'doutes') { resumeRun = paused; deleteDoubts = true; }
     }
     // Les autres choix proposés par la pause font vraiment quelque chose.
-    const answer = !paused ? null
-      : /^(abandonner|abandonne|abandon|annuler|annule|arr[eê]te)\b/i.test(reply) ? 'abandonner'
-      : /^simplifi/i.test(reply) ? 'simplifier'
-      : /^changer?\s+(de\s+|le\s+)?mod[eè]le?/i.test(reply) ? 'changer le model'
-      : /^tester?(\s+(le|du|un)\s+mod[eè]le?)?\b/i.test(reply) ? 'tester le model' : null;
+    const answer = paused ? pauseAnswer(reply) : null;
     if (answer) {
       process.exit(await pipeEngine.answerPausedRun({ logsDir: LOGS, project, projectName, run: paused, answer, promptForLog: prompt, sourceProject, callbackProject, testLabel }));
     }
@@ -1530,6 +1536,14 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
 }
 
 /** Dernière exécution EN PAUSE de ce projet (logs/runs/<run>/run.json), ou null. */
+/** The pause menu choices other than « continuer » / « accepter » (explicit answers, not keyword routing). */
+function pauseAnswer(reply) {
+  return /^(abandonner|abandonne|abandon|annuler|annule|arr[eê]te)\b/i.test(reply) ? 'abandonner'
+    : /^simplifi/i.test(reply) ? 'simplifier'
+    : /^changer?\s+(de\s+|le\s+)?mod[eè]le?/i.test(reply) ? 'changer le model'
+    : /^tester?(\s+(le|du|un)\s+mod[eè]le?)?\b/i.test(reply) ? 'tester le model' : null;
+}
+
 function latestPausedRun(name) {
   try {
     const dir = path.join(LOGS, 'runs');

@@ -15,7 +15,10 @@
 //   - an item stopped by one of ITS limits is set aside (patch kept, work tree
 //     cleaned) and does not prevent the delivery of the others; « continuer »
 //     puts it back where it stopped, then a new release;
-//   - a run paused by an older engine keeps its single commit.
+//   - a run paused by an older engine keeps its single commit;
+//   - a set-aside item whose patch no longer applies (« aside_conflict »,
+//     0.113.2): « continuer » sets it apart and goes on, never loops;
+//     « simplifier » closes the run, even sent with --pipeline-resume.
 //
 // Real dispatch.mjs, real engine, fake claude, throwaway root (never 7777).
 //
@@ -201,6 +204,59 @@ fs.writeFileSync(runFile(run6), JSON.stringify(s6, null, 2));
 r = await go(['continuer'], { FAKE_PIPE_ITEMS: '4', ORCH_PIPE_ITEMS: '3' });
 ok(r.code === 0 && r.run === run6 && subjects().length === 1 && /^feat: double/.test(subjects()[0]) && !r.evs.some(e => e.subtype === 'pipeline_item_delivered'),
   `reprise : comportement d’origine, un seul commit pour toute l’exécution (${subjects().join(' | ')})`, r.out.slice(-600));
+reset();
+
+// ---------------------------------------------------------------------------
+// User report (2026-10-18, run stuck in « aside_conflict »):
+// « toujours bloque » — « continuer » fell back into the same conflict forever
+// and « simplifier » (sent by the Routage with --pipeline-resume) resumed the
+// run instead of closing it.
+section('7. Item mis de côté en conflit : « continuer » l’écarte sans reboucler, « simplifier » clôt');
+const conflictPause = async () => {
+  let x = await go(['Ajoute la multiplication par deux, trois et quatre', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '3', FAKE_PIPE_REVIEW_ITEM: '1,3', ORCH_PIPE_REVIEW_ROUNDS: '1' });   // item 2 = the case item 1's Review attached
+  const run = x.run;
+  const st = runState(run);
+  const stale = st.aside?.[0];
+  // The delivered work moves on under the first set-aside item: its patch no longer applies.
+  const added = (stale?.files || []).find(f => /^src\//.test(f));
+  if (added) { fs.writeFileSync(path.join(P, added), 'export const other = 1;\n'); g('add', '-A'); g('commit', '-q', '-m', 'delivered meanwhile'); }
+  x = await go(['continuer'], { FAKE_PIPE_ITEMS: '3', ORCH_PIPE_REVIEW_ROUNDS: '1' });
+  return { run, first: x, stale, others: (st.aside || []).slice(1).map(a => a.group), blocked: st.pausedLimit };
+};
+let c7 = await conflictPause();
+const st7 = runState(c7.run);
+ok(c7.blocked === 'items_blocked' && c7.stale && c7.first.code === 2 && st7.pausedLimit === 'aside_conflict' && st7.asideConflict === c7.stale.group && st7.aside.find(a => a.group === c7.stale.group)?.conflict,
+  `cas reproduit : pause « aside_conflict » sur l’item ${c7.stale?.group} (marqué en conflit), après « continuer » sur « items_blocked »`, c7.first.out.slice(-800));
+ok(c7.others.length > 0 && JSON.stringify(st7.restoreQueue) === JSON.stringify(c7.others), `les autres items mis de côté restent en file (${JSON.stringify(st7.restoreQueue)})`);
+const q7 = c7.first.evs.find(e => e.type === 'result')?.result || '';
+ok(/j’écarte cet item/.test(q7) && /recommande « continuer »/i.test(q7), 'le message dit que « continuer » écarte l’item en conflit (recommandé : d’autres items restent)', q7.slice(0, 1200));
+r = await go(['continuer'], { FAKE_PIPE_ITEMS: '3', ORCH_PIPE_REVIEW_ROUNDS: '1' });
+const s7b = runState(c7.run);
+ok(!r.evs.some(e => e.subtype === 'pipeline_limit' && e.limit === 'aside_conflict') && r.evs.some(e => e.subtype === 'pipeline_aside_discarded' && e.pipeline.item === c7.stale.group),
+  `« continuer » ne reboucle pas : l’item ${c7.stale.group} est écarté (événement), pas de nouvelle pause « aside_conflict » (code ${r.code})`, r.out.slice(-800));
+ok(r.code === 0 && s7b.status === 'done' && s7b.aside.length === 0 && s7b.discardedAside.map(a => a.group).join() === String(c7.stale.group)
+  && c7.others.every(gr => s7b.delivered.some(d => d.group === gr)), `les autres items repris sont livrés, l’exécution se termine (${s7b.status})`);
+const res7 = r.evs.find(e => e.type === 'result')?.result || '';
+ok(fs.existsSync(path.join(T, c7.stale.patch)) && res7.includes(c7.stale.patch) && /Écarté/.test(res7), 'le correctif écarté reste sur le disque et le résultat le liste', res7.slice(0, 900));
+r = await go(['continuer'], { FAKE_PIPE_ITEMS: '3', ORCH_PIPE_REVIEW_ROUNDS: '1' });
+ok(r.run !== c7.run, '« continuer » suivant : l’exécution close n’est plus reprise');
+reset();
+
+// Old engine state (the real stuck run): no conflict marker, queue emptied.
+c7 = await conflictPause();
+{ const s = runState(c7.run); for (const a of s.aside) delete a.conflict; delete s.asideConflict; s.restoreQueue = []; fs.writeFileSync(runFile(c7.run), JSON.stringify(s, null, 2)); }
+r = await go(['continuer'], { FAKE_PIPE_ITEMS: '3', ORCH_PIPE_REVIEW_ROUNDS: '1' });
+ok(r.code === 0 && !r.evs.some(e => e.subtype === 'pipeline_limit') && runState(c7.run).discardedAside?.[0]?.group === c7.stale.group,
+  `pause écrite par un moteur antérieur : « continuer » écarte l’item tenté, reprend les autres et termine (code ${r.code})`, r.out.slice(-800));
+reset();
+
+// « simplifier » carried by the Routage: --pipeline-resume + « (Rattachée à : …) ».
+c7 = await conflictPause();
+r = await go([`simplifier\n\n(Rattachée à : P en pause — répondez « continuer », « simplifier »… — réponse de l'utilisateur : « simplifier »)`, '--pipeline-resume', c7.run, '--source', 'chef']);
+const s7s = runState(c7.run);
+ok(r.code === 0 && s7s.status === 'abandoned' && s7s.abandonedBy === 'simplifier' && !r.evs.some(e => e.subtype === 'pipeline_start'),
+  `« simplifier » lancé avec --pipeline-resume clôt l’exécution au lieu de la reprendre (${s7s.status})`, r.out.slice(-800));
+ok(/aside-item-/.test(r.evs.find(e => e.type === 'result')?.result || ''), 'la clôture liste les correctifs des items mis de côté');
 reset();
 
 srv.close();
