@@ -1686,6 +1686,12 @@ Suite de la demande du 2026-10-09. Plan : `docs/PLAN-pipeline-enforcement.md`.
     models), `system/pipeline_*` (frise, `pipeline_progress` toutes les
     30 s), puis UN result, ou une pause (texte synthétique + result
     `NEEDS_USER_INPUT`).
+  - **Exécution orpheline** (0.114.0) : `running` avec un `pid` mort (tour
+    tué par kill-stalled, plantage) ⇒ `reclaimOrphanedRun` la met en pause
+    `orphaned` (question claire, `system/pipeline_orphaned`, **sans** result :
+    ni drain ni réveil), reprise à l'étape interrompue. Appliqué par
+    `--pipeline-resume`, « continuer » et le départ d'une nouvelle exécution
+    (fini `interrupted` sans reprise). Recette : `_test_orphaned_run.mjs`.
 - **Étape** : `dispatch.mjs --pipeline-step <run>:<clé> --pipeline-session
   <groupe>`, avec `ORCH_STEP_TOKEN`.
   - La clé vaut `<n>-<étape>`, avec n = `padStart(2)` du nombre d'étapes :

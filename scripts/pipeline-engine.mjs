@@ -87,6 +87,7 @@ const PLAIN_STEP = {
   rouge: 'écrire un test, qui doit d’abord échouer', vert: 'écrire le code qui fait passer le test', refactor: 'nettoyer le code',
   revue: 'relecture', livrer: 'livraison (version, journal des changements, commit)',
   rechercher: 'rechercher', repondre: 'rédiger la réponse', '@loop': 'boucle des tests',
+  '@check': 'cocher l’item terminé', '@aside': 'reprendre les items mis de côté',
 };
 /** Nom d'étape compréhensible par l'utilisateur, sans vocabulaire interne. */
 export function plainStep(id) {
@@ -1397,6 +1398,61 @@ export function pausedRuns(logsDir, { max = 20 } = {}) {
   return out;
 }
 
+/** Is the process `pid` alive? (EPERM: alive, owned by someone else.) */
+export function pidAlive(pid) {
+  if (!Number.isInteger(Number(pid)) || Number(pid) <= 0) return false;
+  try { process.kill(Number(pid), 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+
+/**
+ * A run left « running » whose recorded process is dead (turn killed by
+ * kill-stalled.mjs, crash) is orphaned (0.114.0): it becomes a pause with a
+ * clear question, so « continuer » / --pipeline-resume restarts it at the step
+ * where it stopped — before, it stayed « running » forever and every resume was
+ * refused. Nothing is launched and nothing in the project is touched. Returns
+ * the paused state, or null when the run is not orphaned.
+ */
+export function reclaimOrphanedRun(logsDir, run, { alive = pidAlive, why = null } = {}) {
+  if (!RUN_RE.test(String(run || ''))) return null;
+  const f = path.join(logsDir, 'runs', run, 'run.json');
+  const state = readJson(f);
+  if (!state || state.status !== 'running' || alive(state.pid)) return null;
+  const at = new Date().toISOString();
+  const stepId = (state.plan || [])[state.index] || null;
+  const lastDone = [...(state.steps || [])].reverse()[0] || null;
+  const where = stepId ? `à l’étape « ${plainStep(stepId)} »` : 'avant sa fin';
+  const cause = why || `son processus (${state.pid ?? 'inconnu'}) n’existe plus — tour arrêté (kill-stalled) ou arrêt brutal`;
+  state.status = 'paused';
+  state.pausedLimit = 'orphaned';
+  state.orphaned = { pid: state.pid ?? null, at, index: state.index ?? null, step: stepId, lastStep: lastDone?.key || null, why: cause };
+  state.question = `${state.project} : l’exécution ${run} (${pipelineLabel(state.pipeline, state.mode)}) s’est arrêtée ${where} sans finir : ${cause}. `
+    + `Répondez « continuer » pour la reprendre là où elle s’est arrêtée (je recommande), ou « abandonner » pour la clore (ce qui est déjà livré reste livré).`;
+  state.endedAt = at;
+  state.updatedAt = at;
+  writeFileAtomic(f, JSON.stringify(state, null, 2));
+  // Traced in the musician's log, without a result: a result would wake the
+  // pump (queue drain, chef notification) — only the next real turn does that.
+  try {
+    fs.appendFileSync(path.join(logsDir, `${state.project}.jsonl`), JSON.stringify({ type: 'system', subtype: 'pipeline_orphaned',
+      pipeline: { run, pipeline: state.pipeline, mode: state.mode, status: 'paused', step: stepId }, orphaned: state.orphaned,
+      text: `⏸ exécution ${run} orpheline (${cause}) : mise en pause ${where}, reprise par « continuer »`, timestamp: at }) + '\n');
+  } catch { /* the run.json is the source of truth */ }
+  return state;
+}
+
+/** Every orphaned run of `projectName` becomes a pause (see reclaimOrphanedRun). */
+export function reclaimOrphanedRuns(logsDir, projectName, opts = {}) {
+  let dirs = [];
+  try { dirs = fs.readdirSync(path.join(logsDir, 'runs')).filter(d => RUN_RE.test(d)); } catch { return []; }
+  const out = [];
+  for (const r of dirs) {
+    const s = readJson(path.join(logsDir, 'runs', r, 'run.json'));
+    if (!s || s.project !== projectName || s.status !== 'running' || r === opts.except) continue;
+    if (reclaimOrphanedRun(logsDir, r, opts)) out.push(r);
+  }
+  return out;
+}
+
 /**
  * Meeting pipeline (reunion, 0.110.0): the artefacts read back for every step,
  * from disk. Later steps read them without existence checks (files moved or
@@ -1841,6 +1897,8 @@ export async function runPipeline(o) {
     if (!RUN_RE.test(o.resumeRun)) return refuse(64, `exécution invalide : ${o.resumeRun}`);
     state = readJson(path.join(logsDir, 'runs', o.resumeRun, 'run.json'));
     if (!state || state.project !== projectName) return refuse(64, `exécution ${o.resumeRun} introuvable pour ${projectName}`);
+    // « running » with a dead process: orphaned, resumable (0.114.0).
+    if (state.status === 'running') state = reclaimOrphanedRun(logsDir, o.resumeRun) || state;
     if (state.status !== 'paused') return refuse(65, `exécution ${o.resumeRun} : statut « ${state.status} », seule une exécution en pause se reprend`);
   }
   const cfg = readJson(path.join(cwd, '.orchestrateur', 'pipeline.json')) || {};
@@ -1870,22 +1928,10 @@ export async function runPipeline(o) {
     if (!cur.split(/\r?\n/).includes(RUNS_PREFIX)) { fs.mkdirSync(path.dirname(excl), { recursive: true }); fs.appendFileSync(excl, `${cur && !cur.endsWith('\n') ? '\n' : ''}${RUNS_PREFIX}\n`); }
   } catch { /* le critère « fichiers changés » ignore déjà ce dossier */ }
 
-  // Exécution restée « running » dont le processus est mort (tour tué) : close
-  // comme interrompue, pour qu'elle ne passe jamais pour une exécution en cours.
-  try {
-    const dir = path.join(logsDir, 'runs');
-    for (const r of fs.readdirSync(dir).filter(x => RUN_RE.test(x))) {
-      const f = path.join(dir, r, 'run.json');
-      const s = readJson(f);
-      if (!s || s.project !== projectName || s.status !== 'running' || r === state?.run) continue;
-      let alive = false;
-      try { process.kill(s.pid, 0); alive = true; } catch (e) { alive = e.code === 'EPERM'; }
-      if (alive) continue;
-      s.status = 'interrupted'; s.endedAt = new Date().toISOString();
-      writeFileAtomic(f, JSON.stringify(s, null, 2));
-      say(`exécution ${r} close comme interrompue (processus ${s.pid} mort)`);
-    }
-  } catch { /* aucun dossier d'exécutions */ }
+  // Exécution restée « running » dont le processus est mort (tour tué) : jamais
+  // une exécution en cours — mise en pause, reprenable (0.114.0 ; elle était
+  // close « interrupted », sans reprise possible).
+  for (const r of reclaimOrphanedRuns(logsDir, projectName, { except: state?.run })) say(`exécution ${r} orpheline (processus mort) : mise en pause, reprise par « continuer »`);
 
   const run = state?.run || newRunId();
   const runDir = path.join(logsDir, 'runs', run);
@@ -2608,6 +2654,13 @@ export async function runPipeline(o) {
     state.item = ctx.item = null;
     state.itemTestBase = ctx.itemTestBase = null;
     state.reviewGroup = null; ctx.reviewScope = null;
+    // Its pending doc correction goes aside with it (0.114.0): left behind, the
+    // NEXT item's 4b took it as its own and re-reviewed this group mid-item,
+    // which cleared state.item and crashed « @check » (frozen run, 2026-10-18).
+    if (state.fixGroup === g) {
+      state.aside[state.aside.length - 1].fixes = state.reviewItems || ctx.reviewItems || [];
+      state.fixGroup = null; state.reviewItems = ctx.reviewItems = null;
+    }
     state.checkpoints = 0;
     ctx.testPrint = testsNow();
     writeEvent({ type: 'system', subtype: 'pipeline_item_aside', pipeline: { run, item: g }, limit, why: String(why || '').slice(0, 2000), patch, files: r.files,
@@ -2702,6 +2755,7 @@ export async function runPipeline(o) {
         state.itemTestBase = ctx.itemTestBase = a.itemTestBase || null;
         state.reviewGroup = a.reviewGroup ?? null;
         state.lastGreenLines = a.lastGreenLines;
+        if (a.fixes?.length) { state.fixGroup = g; state.reviewItems = ctx.reviewItems = a.fixes; }
         if (a.limit === 'review') state.itemReviewBudgets = { ...(state.itemReviewBudgets || {}), [g]: (state.itemReviewRounds?.[g] || 0) + limits.reviewRounds };
         ctx.testPrint = testsNow();
         state.plan.splice(state.index, 0, ...a.prefix, '@loop');

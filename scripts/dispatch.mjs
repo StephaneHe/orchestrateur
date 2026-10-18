@@ -1551,6 +1551,8 @@ function latestPausedRun(name) {
     for (const r of runs.slice(0, 50)) {
       let s; try { s = JSON.parse(fs.readFileSync(path.join(dir, r, 'run.json'), 'utf8')); } catch { continue; }
       if (s.project !== name) continue;
+      // An orphaned run (« running », process dead) is paused first (0.114.0).
+      if (s.status === 'running' && pipeEngine.reclaimOrphanedRun(LOGS, r)) return r;
       return s.status === 'paused' ? r : null;
     }
   } catch { /* aucun dossier */ }

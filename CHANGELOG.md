@@ -11,6 +11,34 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.114.0] - 2026-10-18
+
+### Added
+
+- (server) Orphaned pipeline runs become resumable. A run still `running`
+  whose recorded process is dead (turn killed by `kill-stalled.mjs`, engine
+  crash) is now recognised as orphaned (`reclaimOrphanedRun` /
+  `reclaimOrphanedRuns`, `scripts/pipeline-engine.mjs`): it is paused with
+  `pausedLimit: "orphaned"`, an `orphaned {pid, at, index, step, why}` record
+  and a clear question (« continuer » resumes at the step where it stopped,
+  « abandonner » closes it), traced by `system/pipeline_orphaned` in the
+  musician's log (no result: no queue drain, no chef wake-up). Applied by
+  `--pipeline-resume` (it was refused: « seule une exécution en pause se
+  reprend »), by « continuer » (`latestPausedRun` of `dispatch.mjs`) and by the
+  sweep at the start of a new run on the project, which closed such runs as
+  `interrupted` with no way to resume them. Test: `_test_orphaned_run.mjs`.
+
+### Fixed
+
+- (server) Frozen full-Development run (2026-10-18): an item set aside while
+  its review's doc correction was failing left that correction pending
+  (`fixGroup`, `reviewItems`). The NEXT item's 4b took it as its own,
+  re-reviewed the set-aside group in the middle of the item, which cleared
+  `state.item`, and « @check » crashed (`Cannot read properties of null
+  (reading 'n')`), leaving the run `running` with a dead process. The pending
+  correction now goes aside with its item (`aside[].fixes`) and comes back with
+  it when « continuer » puts it back.
+
 ## [0.113.2] - 2026-10-18
 
 ### Fixed
