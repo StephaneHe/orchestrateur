@@ -815,7 +815,13 @@ export async function browserChecks(sb, t) {
           await m.evaluate(() => SidePanel.open('todo'));
           await m.locator('#side-panel .todo-item .ti-grip').first().waitFor({ timeout: 8000 });
           const g = await m.locator('#side-panel .todo-item .ti-grip').first().boundingBox();
-          assert(g && g.width >= 44 && g.height >= 44, `poignée mobile ${JSON.stringify(g)}`);
+          // boundingBox() returns layout floats (43.99998 seen for a 44 px rule): allow
+          // 0.01 px of sub-pixel rounding only, so a real 43 px grip still fails.
+          // User agreement 2026-10-18 (« oui »), see docs/USER_REQUIREMENTS.md.
+          const GRIP_MIN_PX = 44, SUBPIXEL_EPS_PX = 0.01;
+          const gripOk = px => px >= GRIP_MIN_PX - SUBPIXEL_EPS_PX;
+          assert(gripOk(43.99998) && !gripOk(43.98) && !gripOk(43), 'tolérance de la poignée trop large');
+          assert(g && gripOk(g.width) && gripOk(g.height), `poignée mobile ${JSON.stringify(g)}`);
           assert((await keysIn(m, 'open')).join(' ') === want2.join(' '), 'mobile : ordre enregistré non repris');
         } finally { await mctx.close(); }
         return `glisser : ${open0[2]} en tête, enregistré, revenu après rechargement ; clic simple → overlay ; Alt+↓ ; un fait reste en bas ; poignée mobile 44 px`;

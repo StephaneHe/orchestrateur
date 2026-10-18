@@ -11,6 +11,16 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.113.1] - 2026-10-18
+
+### Fixed
+
+- (server) Browser regression `todo-item-drag`: the 44 px mobile grip check
+  compared raw layout floats and failed intermittently (43.99998 px measured).
+  It now allows 0.01 px of sub-pixel rounding only; a 43.98 px or 43 px grip
+  still fails (self-checked in the test). User agreement « oui » (2026-10-18),
+  recorded in `docs/USER_REQUIREMENTS.md`.
+
 ## [0.113.0] - 2026-10-18
 
 ### Added
