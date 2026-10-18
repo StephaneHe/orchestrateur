@@ -11,6 +11,33 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.113.0] - 2026-10-18
+
+### Added
+
+- (server) Per-project test timeout for the pipeline engine: `testTimeoutMin`
+  in a project's `.orchestrateur/pipeline.json` (integer, 1 to 120 minutes)
+  replaces the 10 min default for every run of its test and build commands
+  (`testTimeoutMs` of `scripts/pipeline-engine.mjs`). Active at once (read by
+  `dispatch.mjs` on each turn), no restart.
+
+### Changed
+
+- (server) orchestrateur-dev is in pipeline service (user request « Il faut
+  que orchestrateur-dev fonctionne avec des pipelines », option A): put in
+  `enforcement.projects` by `pipeline-onboard.mjs --apply`; its
+  `.orchestrateur/pipeline.json` (committed alone in the dev repository, no
+  push) declares `node scripts/regression.mjs --targeted --no-browser` as test
+  command, `testTimeoutMin: 30`, its test globs (`scripts/_test_*.mjs`,
+  `scripts/_regression*.mjs`, `tests/**`), version file, changelog and
+  requirements register; its lanes section is kept. With this server's
+  dispatch, pipeline runs stay in lane 0 (rule `pipeline-engine`) until the
+  production gets the in-lane engine (P9, dev branch).
+- Test: `scripts/_test_dev_instance_pipelines.mjs` (timeout rule; real
+  `dispatch.mjs` on a dev instance in service: Discussion and light
+  Development run by the engine, test command run; on this machine every
+  `devOf` project is in service with the declared test command and timeout).
+
 ## [0.112.0] - 2026-10-17
 
 ### Added

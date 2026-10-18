@@ -283,6 +283,15 @@ ce sera utile ». Procédure complète : `docs/DEV-PROD.md`.
   Recette : `_test_todo_untracked.mjs`.
 - Contrôle : `node scripts/dev-split.mjs check`. Recette :
   `_test_dev_split.mjs`.
+- **La dev est en service dans les pipelines** (0.113.0, « Il faut que
+  orchestrateur-dev fonctionne avec des pipelines », option A) :
+  `enforcement.projects` ; son `.orchestrateur/pipeline.json` déclare
+  `node scripts/regression.mjs --targeted --no-browser` et `testTimeoutMin: 30`
+  (délai par projet de la commande de test, `testTimeoutMs` du moteur, défaut
+  10 min, plafond 120). Tant que la prod n'a pas le moteur en couloir (P9,
+  branche dev), ses exécutions restent au couloir 0 (règle `pipeline-engine`).
+  Retour arrière : `pipeline-enforce.mjs off orchestrateur-dev`. Recette :
+  `_test_dev_instance_pipelines.mjs`.
 - Supprimer la dev : retirer l'entrée de config.json, `forgetWorkspace()`,
   supprimer le dossier. La prod n'est pas touchée.
 

@@ -94,6 +94,17 @@ export function pipelineLabel(pipeline, mode) {
 }
 const PROGRESS_MS = Number(process.env.ORCH_PIPE_PROGRESS_MS) > 0 ? Number(process.env.ORCH_PIPE_PROGRESS_MS) : 30_000;
 const TEST_TIMEOUT_MS = 10 * 60_000;
+export const TEST_TIMEOUT_MAX_MIN = 120;
+/**
+ * Timeout of the project's test (and build) command: `testTimeoutMin` of its
+ * .orchestrateur/pipeline.json (integer, 1 to TEST_TIMEOUT_MAX_MIN minutes),
+ * else 10 min. Needed by projects whose suite is slower, such as
+ * orchestrateur-dev (targeted regression, 0.113.0).
+ */
+export function testTimeoutMs(cfg) {
+  const m = cfg?.testTimeoutMin;
+  return Number.isInteger(m) && m >= 1 && m <= TEST_TIMEOUT_MAX_MIN ? m * 60_000 : TEST_TIMEOUT_MS;
+}
 
 /** Pipelines que le moteur sait exécuter (phase 6 : catalogue déclaratif en plus). */
 export const ENGINE_PIPELINES = ['discussion', 'dev', ...CATALOG_PIPELINES];
@@ -369,12 +380,12 @@ export function globToRe(glob) {
 }
 export function isTestFile(f, globs) { return (globs || []).some(g => globToRe(g).test(f)); }
 
-function runCommand(cwd, command, env) {
+function runCommand(cwd, command, env, timeoutMs = TEST_TIMEOUT_MS) {
   if (!command) return { ok: true, code: 0, out: '' };
   const t0 = Date.now();
   // La commande vient du fichier VERSIONNÉ du projet (.orchestrateur/pipeline.json),
   // jamais d'une entrée réseau : un shell est nécessaire (« npm test »).
-  const r = spawnSync(command, { cwd, shell: true, encoding: 'utf8', windowsHide: true, timeout: TEST_TIMEOUT_MS, env, maxBuffer: 32 * 1024 * 1024 });
+  const r = spawnSync(command, { cwd, shell: true, encoding: 'utf8', windowsHide: true, timeout: timeoutMs, env, maxBuffer: 32 * 1024 * 1024 });
   const out = `${r.stdout || ''}${r.stderr || ''}`;
   return { ok: r.status === 0, code: r.status, out: out.slice(-12_000), ms: Date.now() - t0, timedOut: r.error?.code === 'ETIMEDOUT' };
 }
@@ -1496,7 +1507,7 @@ function checkCatalogCriteria(ctx, step, before, after) {
     // verte ; les étapes d'avant ne peuvent pas être jugées sur elle.
     if (ctx.cfg.testCommand && changed.length && !ctx.suiteRedAtStart) {
       for (let i = 0; i < (c.suiteTwice ? 2 : 1); i++) {
-        const t = runCommand(cwd, ctx.cfg.testCommand, ctx.testEnv);
+        const t = runCommand(cwd, ctx.cfg.testCommand, ctx.testEnv, testTimeoutMs(ctx.cfg));
         if (!t.ok) return fail(`la suite échoue${c.suiteTwice ? ` (passage ${i + 1}/2)` : ''} (${ctx.cfg.testCommand}, code ${t.code}) :\n${t.out.slice(-1500)}`, { test: t });
       }
     }
@@ -1700,7 +1711,7 @@ function checkCriteria(ctx, step, before, after) {
       const v = checkItemTests({ cwd, files: [...after.keys()].filter(f => isTestFile(f, cfg.testGlobs)), base: ctx.itemTestBase, item: ctx.item });
       if (!v.ok) return { ok: false, why: v.why, changed, itemTests: v };
     }
-    const t = runCommand(cwd, cfg.testCommand, ctx.testEnv);
+    const t = runCommand(cwd, cfg.testCommand, ctx.testEnv, testTimeoutMs(cfg));
     if (t.ok) {
       // Décision utilisateur Q10 (« A », 2026-10-09) : un comportement DÉJÀ
       // assuré par le code existant est accepté si le model le DÉCLARE
@@ -1729,7 +1740,7 @@ function checkCriteria(ctx, step, before, after) {
     const tests = ctx.testPrint;  // empreinte des tests à protéger
     const touched = [...tests.keys()].filter(f => after.get(f) !== tests.get(f));
     if (touched.length) return { ok: false, why: `fichiers de test modifiés (interdit à cette étape) : ${touched.slice(0, 8).join(', ')}`, changed };
-    const t = runCommand(cwd, cfg.testCommand, ctx.testEnv);
+    const t = runCommand(cwd, cfg.testCommand, ctx.testEnv, testTimeoutMs(cfg));
     if (!t.ok) return { ok: false, why: `la suite échoue encore (${cfg.testCommand}, code ${t.code}) :\n${t.out.slice(-1500)}`, changed, test: t };
     return { ok: true, changed, test: t };
   }
@@ -1741,7 +1752,7 @@ function checkCriteria(ctx, step, before, after) {
     const touched = [...tests.keys()].filter(f => after.get(f) !== tests.get(f));
     if (touched.length) return { ok: false, why: `fichiers de test modifiés (interdit au refactor) : ${touched.slice(0, 8).join(', ')}`, changed };
     if (nothing) return { ok: true, changed, nothing: true };
-    const t = runCommand(cwd, cfg.testCommand, ctx.testEnv);
+    const t = runCommand(cwd, cfg.testCommand, ctx.testEnv, testTimeoutMs(cfg));
     if (!t.ok) return { ok: false, why: `le refactor casse la suite (${cfg.testCommand}) :\n${t.out.slice(-1500)}`, changed, test: t };
     return { ok: true, changed, test: t };
   }
@@ -1773,10 +1784,10 @@ function checkCriteria(ctx, step, before, after) {
     const leaked = diffNames.filter(f => isLocalOnly(f));
     if (leaked.length) return { ok: false, why: `fichiers locaux commités (jamais livrés) : ${leaked.slice(0, 6).join(', ')}`, changed };
     if (cfg.requirements && !diffNames.includes(cfg.requirements)) return { ok: false, why: `${cfg.requirements} : pas de ligne pour cette demande`, changed };
-    const t = runCommand(cwd, cfg.testCommand, ctx.testEnv);
+    const t = runCommand(cwd, cfg.testCommand, ctx.testEnv, testTimeoutMs(cfg));
     if (!t.ok) return { ok: false, why: `la suite échoue après la livraison (${cfg.testCommand}) :\n${t.out.slice(-1500)}`, changed, test: t };
     if (cfg.buildCommand) {
-      const b = runCommand(cwd, cfg.buildCommand, ctx.testEnv);
+      const b = runCommand(cwd, cfg.buildCommand, ctx.testEnv, testTimeoutMs(cfg));
       if (!b.ok) return { ok: false, why: `le build échoue (${cfg.buildCommand}) :\n${b.out.slice(-1500)}`, changed };
     }
     return { ok: true, changed, commit: head, version };
@@ -2477,7 +2488,7 @@ export async function runPipeline(o) {
   // ── Préconditions de Développement : la suite doit être verte au départ ──
   // Incident : une suite déjà rouge reproduit le problème — l'étape « test qui
   // reproduit » est alors sautée (dit), et la correction doit la rendre verte.
-  if (pipeline === 'incident' && state.index === 0 && !resumed && cfg.testCommand && !runCommand(cwd, cfg.testCommand, testEnv).ok) {
+  if (pipeline === 'incident' && state.index === 0 && !resumed && cfg.testCommand && !runCommand(cwd, cfg.testCommand, testEnv, testTimeoutMs(cfg)).ok) {
     state.suiteRedAtStart = ctx.suiteRedAtStart = true;
     const i = state.plan.indexOf('corriger-rouge');
     if (i >= 0) {
@@ -2489,7 +2500,7 @@ export async function runPipeline(o) {
     }
   }
   if ((pipeline === 'dev' || pipeline === 'maintenance') && state.index === 0 && (!resumed || state.pausedLimit === 'precondition')) {
-    const t = runCommand(cwd, cfg.testCommand, testEnv);
+    const t = runCommand(cwd, cfg.testCommand, testEnv, testTimeoutMs(cfg));
     if (!t.ok) {
       const failure = classifyTestFailure(t.out);
       const envSigns = failure.signals.map(s => `${s.label} (${s.match})`).join(', ');

@@ -666,7 +666,8 @@
         "_test_step_key_3digits.mjs",
         "_test_no_lexical_routing.mjs",
         "_test_reunion_pipeline.mjs",
-        "_test_reunion_redaction_route.mjs"
+        "_test_reunion_redaction_route.mjs",
+        "_test_dev_instance_pipelines.mjs"
       ],
       "uses": [
         {
@@ -681,6 +682,7 @@
           "perimeter": "dispatch",
           "suites": [
             "_test_defect_blocks.mjs",
+            "_test_dev_instance_pipelines.mjs",
             "_test_item_delivery.mjs",
             "_test_item_review.mjs",
             "_test_item_tests.mjs",
@@ -706,6 +708,7 @@
           "perimeter": "noyau",
           "suites": [
             "_test_defect_blocks.mjs",
+            "_test_dev_instance_pipelines.mjs",
             "_test_item_delivery.mjs",
             "_test_item_review.mjs",
             "_test_item_tests.mjs",
@@ -730,6 +733,7 @@
         {
           "perimeter": "outillage",
           "suites": [
+            "_test_dev_instance_pipelines.mjs",
             "_test_model_reco.mjs",
             "_test_pipeline_entries.mjs"
           ]
@@ -738,6 +742,7 @@
           "perimeter": "panneaux",
           "suites": [
             "_test_defect_blocks.mjs",
+            "_test_dev_instance_pipelines.mjs",
             "_test_item_delivery.mjs",
             "_test_item_review.mjs",
             "_test_item_tests.mjs",
@@ -762,6 +767,7 @@
           "perimeter": "routage",
           "suites": [
             "_test_defect_blocks.mjs",
+            "_test_dev_instance_pipelines.mjs",
             "_test_item_delivery.mjs",
             "_test_item_review.mjs",
             "_test_item_tests.mjs",
