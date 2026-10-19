@@ -1692,6 +1692,17 @@ Suite de la demande du 2026-10-09. Plan : `docs/PLAN-pipeline-enforcement.md`.
     ni drain ni réveil), reprise à l'étape interrompue. Appliqué par
     `--pipeline-resume`, « continuer » et le départ d'une nouvelle exécution
     (fini `interrupted` sans reprise). Recette : `_test_orphaned_run.mjs`.
+  - **Message joint à une reprise** (0.114.2, « Corriger la cause ») : le
+    texte d'une reprise (`--pipeline-resume <run> "<texte>"`, `[CHEF_ANSWER]`,
+    « continuer … »), sauf simple décision (`resumeMessage`), va tel quel dans
+    `run.json` (`resumeMessages`) et dans les consignes de l'étape reprise,
+    de ses nouveaux essais et des suivantes (`resumeMessagesBlock`). Trace
+    `system/pipeline_resume_message`. Recette : `_test_resume_message.mjs`.
+  - **Artefact = travail** (0.114.3, « corriges les tests qui font que ca
+    bloque ») : `checks.artefactIsWork` (Données › Présenter) juge l'étape sur
+    son artefact et ses sections, jamais « aucune modification ». Un marqueur
+    « rien à faire » combiné à des sections : consigne et refus les nomment
+    (`nothingHint`). Recette : `_test_presenter_artefact.mjs`.
 - **Étape** : `dispatch.mjs --pipeline-step <run>:<clé> --pipeline-session
   <groupe>`, avec `ORCH_STEP_TOKEN`.
   - La clé vaut `<n>-<étape>`, avec n = `padStart(2)` du nombre d'étapes :

@@ -599,6 +599,10 @@ function catalogStep(text, step, artefact, bad, w, once) {
   }
   // FAKE_PIPE_MARKER_ONLY=1: the marker alone, exactly as the prompt asks (0.110.0).
   if (nothing && wantNothing) { w(artefact, process.env.FAKE_PIPE_MARKER_ONLY === '1' ? `${nothing}\n` : `${nothing}\n\n${body}`); return; }
+  // FAKE_PIPE_ARTEFACT_ONLY=<step,…> (0.114.3): a step whose artefact is the work
+  // writes the artefact only, no project file — as a real presenter does.
+  const artefactOnly = String(process.env.FAKE_PIPE_ARTEFACT_ONLY || '').split(',').includes(step);
+  if (artefactOnly && line('ARTEFACT_EST_LE_TRAVAIL') === 'oui') { w(artefact, `${body}\nPrésentation simulée, aucun fichier du projet modifié.\n`); return; }
   for (const f of files) {
     if (f === '.orchestrateur/pipeline.json') w(f, JSON.stringify({ testCommand: 'node --test', testGlobs: ['test/**'], versionFiles: ['package.json'], changelog: 'CHANGELOG.md', requirements: 'docs/USER_REQUIREMENTS.md' }));
     else if (f === 'CHANGELOG.md') w(f, '# Changelog\n\n## [1.0.0] - 2026-10-09\n- squelette\n');

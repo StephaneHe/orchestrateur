@@ -497,6 +497,27 @@ function postNotify(root, project, text, source) {
 // ---------------------------------------------------------------------------
 // Consignes d'étape (le contrat du musicien) — le code vérifie, pas le prompt
 // ---------------------------------------------------------------------------
+/** The message carried by a resume, verbatim — null when it is only the bare
+ *  decision (« continuer », « accepter », « tout supprimer »…), already acted on. */
+export function resumeMessage(text) {
+  const t = String(text || '').replace(/^\s*\[CHEF_ANSWER\]\s*/i, '').trim();
+  if (!t) return null;
+  if (/^(continue|continuer|reprends|reprendre|on continue|oui|go|vas-y|accepter?|tout\s+supprimer)[\s.!…]*$/i.test(t)) return null;
+  return t.slice(0, 20_000);
+}
+
+/** Step-prompt block quoting every message joined to a resume of this run. */
+export function resumeMessagesBlock(messages) {
+  if (!messages?.length) return '';
+  const L = ['MESSAGE(S) JOINT(S) À LA REPRISE DE CETTE EXÉCUTION — transmis tels quels ; c’est la réponse de l’utilisateur (ou relayée pour lui par le chef) à la pause. Applique-les : une autorisation donnée ici EST accordée, ne la redemande pas. Le plus récent prime en cas de contradiction.'];
+  messages.forEach((m, i) => {
+    L.push(`--- message ${i + 1}/${messages.length} (${m.at || '?'}${m.step ? `, reprise à l’étape « ${plainStep(m.step)} »` : ''}) ---`);
+    L.push(m.text);
+  });
+  L.push('--- fin des messages joints ---');
+  return L.join('\n');
+}
+
 function stepPrompt(ctx, step, extra) {
   const { run, pipeline, artDir, cfg } = ctx;
   const art = (f) => path.join(artDir, f).replace(/\\/g, '/');
@@ -510,7 +531,9 @@ function stepPrompt(ctx, step, extra) {
   L.push('');
   L.push(`Demande d'origine : ${art('demande.md')} (lis-la d'abord). Les artefacts des étapes précédentes sont dans le même dossier : lis ceux qui existent.`);
   L.push('');
-  const T = cfg.testCommand ? `« ${cfg.testCommand} »` : 'la suite de tests du projet';
+  const resumeBlock = resumeMessagesBlock(ctx.resumeMessages);
+  if (resumeBlock) { L.push(resumeBlock); L.push(''); }
+  const T =cfg.testCommand ? `« ${cfg.testCommand} »` : 'la suite de tests du projet';
   if (!step.devRole && (step.checks || step.role)) {
     catalogStepPrompt(L, ctx, step, art, T);
     if (extra?.retryWhy) L.push(`\n⚠ L'essai précédent de cette étape a été REFUSÉ par l'orchestrateur : ${extra.retryWhy}\nCorrige précisément ce point.`);
@@ -639,6 +662,13 @@ function stepPrompt(ctx, step, extra) {
   return L.join('\n');
 }
 
+/** The « nothing to do » instruction, with every section the artefact must still
+ *  carry: the marker alone would otherwise be refused by the sections check. */
+export function nothingHint(c, exact = false) {
+  const secs = c.sections?.length ? `, avec les sections « ${c.sections.map(s => `## ${s}`).join(' », « ')} »` : '';
+  return `écris${exact ? ' exactement' : ''} « ${c.nothing} » dans l'artefact${secs}`;
+}
+
 /** Consigne d'une étape du catalogue (phase 6) : rôle, artefact, et les critères
  *  que le code vérifiera, dits explicitement (lignes ATTENDU_* lisibles par tous). */
 function catalogStepPrompt(L, ctx, step, art, T) {
@@ -657,6 +687,7 @@ function catalogStepPrompt(L, ctx, step, art, T) {
   if (c.jsonEnum) machine.push(`ATTENDU_ENUM=${Object.entries(c.jsonEnum).map(([k, v]) => `${k}:${v.join('|')}`).join(';')}`);
   if (step.jsonExample) machine.push(`JSON_EXEMPLE=${step.jsonExample}`);
   if (c.nothing) machine.push(`MARQUEUR_RIEN=${c.nothing}`);
+  if (c.artefactIsWork) machine.push('ARTEFACT_EST_LE_TRAVAIL=oui');
   if (c.requireFiles?.length) machine.push(`FICHIERS_REQUIS=${c.requireFiles.join(', ')}`);
   const mediaKind = c.media ? (step.mediaKind || c.media.kind) : null;
   if (mediaKind) machine.push(`MEDIA=${mediaKind}`);
@@ -674,7 +705,8 @@ function catalogStepPrompt(L, ctx, step, art, T) {
     L.push(c.meeting && step.jsonExample ? `Écris ${art(step.artefact)}, et UNIQUEMENT ce JSON (format plus bas).` : `Écris ${art(step.artefact)} : ce que tu as fait et pourquoi.`);
     if (c.onlyGlobs) L.push(`Tu ne modifies QUE des documents (motifs : ${c.onlyGlobs.join(', ')}) : aucun code, aucun test.`);
     if (c.protectTests) L.push('Interdit : modifier les tests existants (l’orchestrateur compare leur empreinte).');
-    if (c.nothing) L.push(`S'il n'y a rien à faire, écris exactement « ${c.nothing} » dans l'artefact et ne modifie rien : c'est accepté.`);
+    if (c.nothing) L.push(`S'il n'y a rien à faire, ${nothingHint(c, true)} et ne modifie rien : c'est accepté.`);
+    if (c.artefactIsWork) L.push(`Cet artefact EST le travail de l'étape : complet, il suffit, même si aucun fichier du projet ne change.`);
     if (c.requireFiles?.length) L.push(`À la fin, ces fichiers doivent exister : ${c.requireFiles.join(', ')}.`);
     if (ctx.cfg.testCommand || c.needTestCommand) L.push(`Après ton tour, l'orchestrateur lance ${c.needTestCommand ? 'la commande de test déclarée dans .orchestrateur/pipeline.json' : T}${c.suiteTwice ? ' DEUX fois' : ''} : elle doit PASSER.`);
     L.push('Ne commite pas (l’étape de livraison le fera).');
@@ -1581,7 +1613,10 @@ function checkCatalogCriteria(ctx, step, before, after) {
       const inArtefactOnly = c.applies.unlessMarker && new RegExp(`\\b${c.applies.unlessMarker}\\b`).test(readArtefact(ctx, c.applies.markerIn) || '');
       if (todo.length && !inArtefactOnly) return fail(`« ${c.nothing} » annoncé, mais ${c.applies.artefact} liste ${todo.length} correction(s) à appliquer : ${todo.slice(0, 5).map(x => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ; ')}`);
     }
-    if (!changed.length && !nothing && !media && !waived && !meetingOk) return fail(c.nothing ? `aucune modification — s'il n'y a rien à faire, écris « ${c.nothing} » dans l'artefact` : 'aucune modification');
+    // 0.114.3: a step whose deliverable is the artefact itself (artefactIsWork) is
+    // judged on the artefact, never refused for leaving the project untouched; the
+    // hint names everything the next check will demand (marker AND sections).
+    if (!changed.length && !nothing && !media && !waived && !meetingOk && !c.artefactIsWork) return fail(c.nothing ? `aucune modification — s'il n'y a rien à faire, ${nothingHint(c)}` : 'aucune modification');
     if (c.onlyGlobs) {
       const bad = changed.filter(f => !isTestFile(f, c.onlyGlobs));
       if (bad.length) return fail(`seuls des documents peuvent changer à cette étape ; modifiés : ${bad.slice(0, 8).join(', ')}`);
@@ -2069,6 +2104,17 @@ export async function runPipeline(o) {
   // Meeting pipeline (0.110.0): « tout supprimer » after the doubts pause — the
   // files in doubt are deleted too (by the code, from the same explicit list).
   if (resumed && o.deleteDoubts && state.pausedLimit === 'doutes') state.deleteDoubts = true;
+  // The text sent with a resume (the user's answer, an authorization, details
+  // relayed by the chef) is kept verbatim and handed to every following step
+  // (0.114.2). It used to be dropped: only the « continuer » decision reached
+  // the paused step, which then asked again for an authorization already given.
+  if (resumed) {
+    const msg = resumeMessage(o.promptForLog ?? prompt);
+    if (msg) {
+      state.resumeMessages = [...(state.resumeMessages || []), { at: new Date().toISOString(), step: state.plan?.[state.index] || null, pausedLimit: state.pausedLimit || null, text: msg }];
+      writeEvent({ type: 'system', subtype: 'pipeline_resume_message', pipeline: { run, step: state.plan?.[state.index] || null }, text: `message joint à la reprise transmis aux étapes suivantes (${msg.length} caractères)` });
+    }
+  }
   state.status = 'running';
   state.pid = process.pid;
   saveState();
@@ -2170,7 +2216,8 @@ export async function runPipeline(o) {
   const testEnv = { ...childEnv };
   delete testEnv.ORCH_OBS_ID;
   const ctx = { root, request: state.request || prompt, run, pipeline, kind, mode: state.mode, cwd, cfg, artDir, base, testEnv, reviewItems: null, testPrint: null, limits,
-    item: state.item || null, itemTestBase: state.itemTestBase || null, reviewScope: null, acceptedDefects: state.acceptedDefects || [], escalated: !!state.escalated, coveredItems: state.coveredItems || [], deliveryFixes: state.deliveryFixes || [], suiteRedAtStart: !!state.suiteRedAtStart, lastMedia: state.lastMedia || null };
+    item: state.item || null, itemTestBase: state.itemTestBase || null, reviewScope: null, acceptedDefects: state.acceptedDefects || [], escalated: !!state.escalated, coveredItems: state.coveredItems || [], deliveryFixes: state.deliveryFixes || [], suiteRedAtStart: !!state.suiteRedAtStart, lastMedia: state.lastMedia || null,
+    resumeMessages: state.resumeMessages || [] };
   // Durée ACTIVE : le temps passé en pause à attendre l'utilisateur ne compte
   // pas dans la limite de 90 min (une reprise repart du temps déjà consommé).
   const sessionStart = Date.now();

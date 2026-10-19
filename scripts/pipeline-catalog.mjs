@@ -163,7 +163,10 @@ const S = {
         checks: { nothing: 'RIEN_A_STOCKER' } },
       { id: 'presenter', title: '4 Présenter', chain: ['donnees.presenter'], group: 'donnees', artefact: 'presentation.md', kind: 'action',
         role: 'PRÉSENTER le résultat à l’utilisateur : chiffres clés, tableau ou graphique, limites des données. Écris la présentation dans l’artefact (et un fichier du projet si utile).',
-        checks: { nothing: 'PRESENTATION_SEULE', sections: ['Résultats', 'Limites'] } },
+        // 0.114.3: the presentation IS the work. A complete presentation.md with no
+        // project file changed is valid; the old « PRESENTATION_SEULE » marker was
+        // offered on refusal, then refused for lacking the required sections.
+        checks: { artefactIsWork: true, sections: ['Résultats', 'Limites'] } },
       { id: 'livrer', title: '5 Livrer', chain: ['dev.livrer.git', 'dev.livrer'], group: 'code', artefact: 'livraison.md', kind: 'deliver', crit: 'livrer', devRole: 'livrer', ifChanged: true },
     ],
   },

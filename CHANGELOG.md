@@ -11,6 +11,43 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.114.3] - 2026-10-19
+
+### Fixed
+
+- (server) Data pipeline, Présenter step: two exit checks contradicted each
+  other and blocked a run. A presentation written only in `presentation.md`
+  was refused for « aucune modification — écris « PRESENTATION_SEULE » dans
+  l'artefact », then that exact marker was refused for missing the required
+  « ## Résultats » / « ## Limites » sections. The presentation is the step's
+  work: the step now carries `artefactIsWork` (no « nothing to do » marker),
+  is judged on its artefact and its sections, and is never refused for
+  leaving the project untouched (prompt line `ARTEFACT_EST_LE_TRAVAIL=oui`).
+  Generic guard: when a step has both a « nothing to do » marker and required
+  sections, the prompt and the refusal hint (`nothingHint`) now name the
+  sections too, so a hint can never ask for what the next check refuses.
+  Checked across the catalogue: Présenter was the only step combining both.
+  Applies to a run already paused on that step when it is resumed
+  (catalogue and engine are read by each dispatch); no server restart needed.
+  Regression suite: `_test_presenter_artefact.mjs`.
+
+## [0.114.2] - 2026-10-19
+
+### Fixed
+
+- (server) The message joined to the resume of a paused pipeline run now
+  reaches the resumed step. `--pipeline-resume <run>` (or a « continuer … »
+  reply) only applied the decision: the text carried with it — the user's
+  answer relayed by the chef, e.g. an authorization to adapt requirement
+  tests — was dropped, so the resumed Livrer step asked for the same
+  authorization again on each new attempt and the run paused once more. The
+  engine now keeps that text verbatim in `run.json` (`resumeMessages`), traces
+  it (`system/pipeline_resume_message`) and quotes every such message in the
+  prompt of the resumed step, its new attempts and the following steps. A
+  bare decision (« continuer », « accepter », « tout supprimer ») adds
+  nothing. Active at once (dispatch/engine), no server restart needed.
+  Regression suite: `_test_resume_message.mjs`.
+
 ## [0.114.1] - 2026-10-18
 
 ### Fixed
