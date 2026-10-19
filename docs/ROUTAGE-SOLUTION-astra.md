@@ -12,11 +12,11 @@ La priorité n'est pas un meilleur prompt de classification. C'est de rendre imp
 
 ### 2.1 Corpus effectivement examiné
 
-- Dépôt de développement : I:/Dev/orchestrateur-dev, HEAD 7a9676584ecbaaa785d9bdebcb571addc45453a1, package 0.114.0.
+- Dépôt de développement : I:/Dev/orchestrateur-dev, HEAD [[commit:7a9676584ecbaaa785d9bdebcb571addc45453a1]], package [[v0.114.0]].
 - Code : scripts/pipeline-engine.mjs, pipeline-catalog.mjs, pipeline-classify.mjs, routage-pending.mjs, chef-action-deferred.mjs, dispatch.mjs, request-map.mjs, server.js ; définitions, critères, reprise, effets, suivi et réveils.
 - Journaux réels : I:/orchestrateur/logs/runs/*/run.json, pipeline-classify.ndjson, chef.jsonl, chef-actions.log, routage-released.ndjson et routage-pending.json.
 - Artefacts de routage : I:/Dev/Chef/.orchestrateur/runs/<run>/dispatch.json et rapport.md, plus les tâches persistées dans run.json.
-- Production au moment de la lecture : package 0.114.3. Les fichiers de production ont été comparés en lecture seule à ceux du développement. Le classificateur, le gestionnaire de renvoi différé et server.js sont identiques ; moteur, catalogue, dispatch et attentes diffèrent.
+- Production au moment de la lecture : package [[v0.114.3]]. Les fichiers de production ont été comparés en lecture seule à ceux du développement. Le classificateur, le gestionnaire de renvoi différé et server.js sont identiques ; moteur, catalogue, dispatch et attentes diffèrent.
 - Les quatre fichiers non commités indiqués dans la mission sont laissés intacts. Le correctif local resumeNotes n'est pas assimilé au correctif resumeMessages présent en production.
 - La configuration de production porte déjà « pipeline-enforce off --chef », daté du 19 octobre à 18:27:54 UTC ; orchestrateur-dev n'est plus dans les projets soumis aux pipelines. C'est un constat, pas une action de cette étude.
 
@@ -42,6 +42,50 @@ Les 650 run.json lisibles comprennent 613 exécutions du chef, toutes en Routage
 
 Le relevé de chef.jsonl parcourt 825 070 lignes. Il retient seulement les user_prompt dont le texte commence par DÉFAUT ou RENVOI_CHEF, sans compter les citations de ces messages dans les réponses.
 
+### 2.3 Durée de chaque étape et d'un tour complet
+
+Complément mesuré lors de la reprise : lecture seule des run.json du même corpus, filtré sur project=chef et createdAt au plus tard le 19 octobre 2026 à 18:25:00.449 UTC ; on retrouve exactement 613 exécutions. Pour chaque étape, toutes les tentatives non skipped avec durationMs numérique sont incluses, y compris les tentatives refusées ou échouées. Les quantiles sont la valeur triée à l'indice floor(n × q), base zéro ; la médiane utilise q=0,5. Les étapes ajoutées au fil des versions n'ont pas toutes le même effectif. Les durées sont en secondes.
+
+| Étape | Tentatives mesurées | Médiane | p95 | Maximum |
+|---|---:|---:|---:|---:|
+| Lire | 615 | 22,569 | 35,453 | 53,158 |
+| Comprendre | 271 | 8,455 | 14,272 | 20,985 |
+| Découper | 365 | 32,282 | 68,405 | 884,445 |
+| Classifier | 338 | 11,468 | 36,635 | 73,379 |
+| Affecter | 313 | 0,047 | 0,073 | 0,192 |
+| Dispatcher | 313 | 0,044 | 0,416 | 1,747 |
+| Rapporter | 609 | 25,804 | 42,720 | 347,870 |
+| Relancer, mode callback | 196 | 0,060 | 0,417 | 0,648 |
+| Callback, mode callback | 198 | 36,550 | 67,274 | 224,682 |
+| Discuter, mode discussion | 3 | 52,898 | 84,876 | 84,876 |
+
+| Tour terminé | Nombre | Temps actif médian / p95 / maximum | Temps écoulé médian / p95 / maximum |
+|---|---:|---|---|
+| Demande | 411 | 104,103 / 171,778 / 966,084 s | 104,193 / 171,849 / 966,178 s |
+| Callback | 195 | 87,388 / 123,650 / 270,273 s | 87,446 / 123,702 / 270,338 s |
+| Discussion | 3 | 109,689 / 129,477 / 129,477 s | 109,793 / 129,530 / 129,530 s |
+
+Le temps actif est activeMs, avec repli sur endedAt − createdAt si absent ; le temps écoulé est toujours endedAt − createdAt. Les quatre pauses ouvertes sont exclues de ces quantiles de tours terminés : leur attente ne vaut pas zéro. Le temps avant création de l'exécution, les attentes ultérieures des musiciens et la réalisation du travail demandé ne sont pas mesurés ici. Les médianes des étapes ne s'additionnent pas pour produire la médiane des tours, notamment à cause des étapes sautées et des versions différentes. Le p95 Discussion, sur trois observations seulement, n'est pas une estimation robuste.
+
+Cas lents : [[p-20261014T145525-24a1d7]] dure 966,084 s actives, soit 16 min 6 s ; [[p-20261015T141111-4cac75]] dure 438,730 s, soit 7 min 19 s. Le callback [[p-20261014T145028-cec785]] atteint 270,273 s, soit 4 min 30 s. Cela justifie de supprimer des tours de modèle plutôt que d'optimiser les quelques dizaines de millisecondes d'affectation.
+
+### 2.4 Estimation avant/après et budget de latence
+
+Les valeurs après sont des objectifs de conception, pas des performances déjà obtenues. Aucune implémentation ni mesure comparative du nouveau parcours n'a été réalisée.
+
+| Parcours | Avant observé | Après visé | Hypothèse et limite |
+|---|---|---|---|
+| Demande ordinaire, jusqu'à accusé et état affiché | Médiane 104 s ; p95 172 s | Médiane 25–45 s ; p95 60–90 s | Un appel structuré remplace Lire/Comprendre/Découper/Classifier ; validation, affectation, émission et rapport d'état par le code. Gain médian visé de 57–76 % |
+| Commande simple explicitement ciblée dans UI/CLI | Pas de sous-corpus comparable isolé ; référence générale 104 s | Moins de 2 s pour enregistrer la commande et afficher son état local | Aucun appel de modèle ; ne signifie pas que l'effet externe est terminé en 2 s |
+| Callback opérationnel | Médiane 87 s ; p95 124 s | Moins de 2 s pour intégrer le résultat et évaluer les dépendances | Accusés structurés et traitement local ; une synthèse rédactionnelle facultative prendrait séparément environ 15–35 s |
+| Demande complexe ou ambiguë | Sous-corpus non isolé | Budget de 45–90 s avant plan ou question explicite | Un complément ciblé au maximum ; sinon needs_action, sans attente indéfinie ni suppression des contraintes |
+
+Le budget 25–45 s suppose un contexte court préparé par le code, un seul appel sémantique et environ 1–2 s de traitement local/accusé en fonctionnement normal. Il s'appuie sur les ordres de grandeur actuels de Découper et Callback, sans supposer que fusionner plusieurs tâches donne automatiquement le coût d'une seule. La qualité du plan fusionné doit être évaluée sur les incidents et leurs paraphrases.
+
+Pour les cas simples, utiliser une action typée issue d'une carte sélectionnée ou d'une commande explicite : la présence d'un identifiant dans du texte libre ne suffit jamais. Les messages en langage naturel restent interprétés sémantiquement. Le code prépare les projets existants, capacités, états, autorisations et références utiles ; il ne redemande pas à un modèle de les découvrir à chaque étape. Les retours structurés et commandes d'administration ne passent plus par Lire puis Rapporter.
+
+Un modèle plus léger peut être choisi explicitement pour la planification courante après évaluation du corpus ; aucun gain supplémentaire n'est inclus dans les chiffres ci-dessus. Les cas ambigus gardent le modèle choisi ou demandent une décision ; pas de substitution silencieuse ni d'escalade automatique coûteuse. Le pilote compare latence et erreurs à modèle constant, puis évalue séparément le changement de modèle. Mesurer médiane/p95, temps jusqu'au premier accusé, temps jusqu'au résultat métier, nombre d'appels, coût et corrections utilisateur, sur le même mélange de demandes.
+
 ## 3. Fonctionnement réel
 
 Le parcours actuel « demande » n'est plus exactement Lire → Classifier → Découper. Dans scripts/pipeline-catalog.mjs:261-317, il est :
@@ -60,31 +104,31 @@ Des récupérations existent déjà : reprise d'une pause, abandon, simplificati
 
 ### 4.1 Un identifiant cité devient une commande : le Routage fait autre chose que la demande
 
-**Preuve forte : p-20261019T180056-e8254b**, tâche « vérifier : échec de tests = relance ou correction ? ». run.json conserve pipeline=discussion, route=true, sans reprise. La demande exige lecture seule, aucune modification, et cite comme exemple p-20261019T144511-44d707. dispatch.json contient pourtant reprise=p-20261019T144511-44d707.
+**Preuve forte : [[p-20261019T180056-e8254b]]**, tâche « vérifier : échec de tests = relance ou correction ? ». run.json conserve pipeline=discussion, route=true, sans reprise. La demande exige lecture seule, aucune modification, et cite comme exemple [[p-20261019T144511-44d707]]. dispatch.json contient pourtant reprise=[[p-20261019T144511-44d707]].
 
-Même mécanisme sur p-20261012T073703-b610a9, tâche 4 : « Cette tâche est indépendante de ton exécution dev en pause ... ne la reprends pas et n'y touche pas » ; le dispatch reprend p-20261009T123458-82d93b. p-20261012T075424-47deee annonce aussi une nouvelle Rédaction, « ne reprends PAS » cette exécution, mais le lancement porte encore cette reprise.
+Même mécanisme sur [[p-20261012T073703-b610a9]], tâche 4 : « Cette tâche est indépendante de ton exécution dev en pause ... ne la reprends pas et n'y touche pas » ; le dispatch reprend [[p-20261009T123458-82d93b]]. [[p-20261012T075424-47deee]] annonce aussi une nouvelle Rédaction, « ne reprends PAS » cette exécution, mais le lancement porte encore cette reprise.
 
-Sur p-20261016T163603-9c57b2, le texte demande une nouvelle exécution faststart après une reprise déjà rebloquée ; le lancement reprend encore p-20261016T155123-18ff0c. p-20261017T084436-c012a2 transforme une nouvelle rédaction de mail en reprise de p-20261016T155415-e67865.
+Sur [[p-20261016T163603-9c57b2]], le texte demande une nouvelle exécution faststart après une reprise déjà rebloquée ; le lancement reprend encore [[p-20261016T155123-18ff0c]]. [[p-20261017T084436-c012a2]] transforme une nouvelle rédaction de mail en reprise de [[p-20261016T155415-e67865]].
 
 Cause actuelle : detectReprise parcourt les identifiants présents dans demande, sans distinguer citation, négation et instruction ; le dispatcher applique cette détection à toutes les tâches. Sources : routage-pending.mjs:220-227 ; pipeline-engine.mjs:1215-1217. Ce comportement est encore dans les deux copies lues.
 
 **Impasse :** préciser davantage le contexte peut renforcer le mauvais rattachement. Une nouvelle tâche et une correction explicite rebasculent vers la même pause. Le classement peut être juste et toutes les étapes être vertes. Il faut séparer les références documentaires d'un ordre typé de reprise.
 
-Huit dispatchs sans champ reprise explicite ont été trouvés. Tous ne sont pas fautifs : p-20261016T163309-8fbcca et les deux p-20261019T144257-7734d9 / p-20261019T144257-e2903d peuvent traduire une continuation voulue. Ils ne doivent pas être comptés automatiquement comme huit erreurs.
+Huit dispatchs sans champ reprise explicite ont été trouvés. Tous ne sont pas fautifs : [[p-20261016T163309-8fbcca]] et les deux [[p-20261019T144257-7734d9]] / [[p-20261019T144257-e2903d]] peuvent traduire une continuation voulue. Ils ne doivent pas être comptés automatiquement comme huit erreurs.
 
 ### 4.2 Les dépendances impliquant le chef sont interdites, puis déplacées dans la prose
 
-Dix-sept refus avérés : douze « renvoi_chef ne peut pas attendre » et cinq « apres ne peut pas désigner une tâche renvoyée au chef ». Exemples : p-20261014T181424-996bab, p-20261015T110935-f9a1a7, p-20261018T090045-234c79 et p-20261019T181739-7e7851. Liste exhaustive en annexe.
+Dix-sept refus avérés : douze « renvoi_chef ne peut pas attendre » et cinq « apres ne peut pas désigner une tâche renvoyée au chef ». Exemples : [[p-20261014T181424-996bab]], [[p-20261015T110935-f9a1a7]], [[p-20261018T090045-234c79]] et [[p-20261019T181739-7e7851]]. Liste exhaustive en annexe.
 
 Cause actuelle : validateTasks refuse un prédécesseur renvoyé au chef ; handoffProblem refuse apres sur le renvoi lui-même ; classer refuse aussi une action du chef différée. Sources : pipeline-engine.mjs:719, 851-855, 1137-1153.
 
 **Impasse :** « faire A puis B » est une demande légitime mais le moteur ne sait pas en représenter l'ordre si A ou B relève du chef. Le second essai peut enlever apres pour passer le validateur, en laissant « après » dans le texte. Le moteur n'applique alors plus la contrainte.
 
-Cas établi sur p-20261019T181739-7e7851 : l'utilisateur demande « mettre en TODO avec les details, puis oublie ». Après refus, le plan validé n'a plus de dépendance. Le dispatcher exécute kill-stalled avant le renvoi chargé d'écrire le TODO. Le rapport final reconnaît explicitement l'inversion de l'ordre. Un routage « done » peut donc avoir perdu une exigence essentielle.
+Cas établi sur [[p-20261019T181739-7e7851]] : l'utilisateur demande « mettre en TODO avec les details, puis oublie ». Après refus, le plan validé n'a plus de dépendance. Le dispatcher exécute kill-stalled avant le renvoi chargé d'écrire le TODO. Le rapport final reconnaît explicitement l'inversion de l'ordre. Un routage « done » peut donc avoir perdu une exigence essentielle.
 
 ### 4.3 Action autorisée, mais mauvaise opération : abandonner est traduit en tuer un processus
 
-Même exécution p-20261019T181739-7e7851. La tâche demande de clore la pause p-20261019T144511-44d707. pipeline-classify.ndjson, 18:19:43 UTC, répond chef=kill-stalled avec ok:true. dispatch.json annonce status=done, code=0, mais sa sortie dit « no pid file ... nothing to kill ». Le rapport constate que l'exécution reste paused.
+Même exécution [[p-20261019T181739-7e7851]]. La tâche demande de clore la pause [[p-20261019T144511-44d707]]. pipeline-classify.ndjson, 18:19:43 UTC, répond chef=kill-stalled avec ok:true. dispatch.json annonce status=done, code=0, mais sa sortie dit « no pid file ... nothing to kill ». Le rapport constate que l'exécution reste paused.
 
 **Cause :** la liste blanche protège l'exécutable mais pas la postcondition métier. kill-stalled est une opération sur un tour/processus ; abandonner une pause est une transition sur une exécution. Le code retour ne prouve pas la clôture demandée.
 
@@ -96,11 +140,11 @@ Cinq cas prouvés par chef-actions.log :
 
 | Routage | Refus différé |
 |---|---|
-| p-20261014T181424-996bab | sortie 65 à 18:16:52 UTC |
-| p-20261014T193744-22be72 | sortie 65 à 19:40:26 UTC |
-| p-20261015T072034-dc447d | sortie 65 à 07:22:12 UTC |
-| p-20261015T085629-5371e8 | sortie 65 à 08:57:55 UTC |
-| p-20261015T110935-f9a1a7 | sortie 65 à 11:13:25 UTC |
+| [[p-20261014T181424-996bab]] | sortie 65 à 18:16:52 UTC |
+| [[p-20261014T193744-22be72]] | sortie 65 à 19:40:26 UTC |
+| [[p-20261015T072034-dc447d]] | sortie 65 à 07:22:12 UTC |
+| [[p-20261015T085629-5371e8]] | sortie 65 à 08:57:55 UTC |
+| [[p-20261015T110935-f9a1a7]] | sortie 65 à 11:13:25 UTC |
 
 Motif identique : « délégation chef → chef non disponible (P0-B) ». Les run.json restent done ; les dispatch.json lus gardent handoff.status=scheduled.
 
@@ -114,10 +158,10 @@ Les quatre pauses du chef encore présentes au relevé :
 
 | Exécution | Cause observée | Pourquoi « continuer » ne suffit pas |
 |---|---|---|
-| p-20261009T193025-d2f51b | Deux étapes sans résultat, code 1, pause criteria | Le journal résumé ne distingue pas le lancement de la production d'artefact ; il faut diagnostiquer le transport |
-| p-20261012T085659-061170 | Deux refus du fournisseur à Callback, pause criteria | Répéter le même contexte et le même appel ne résout pas le refus |
-| p-20261012T102220-3a6fde | Quota de session jusqu'au 12 octobre 11:50 UTC, pause model_unavailable | L'échéance passée n'a pas suffi à clôturer ou reprendre cette exécution |
-| p-20261014T044705-556920 | Deux échecs OAuth expiré, pause criteria | Il faut reconnecter le fournisseur ; régénérer un JSON ne répare pas une authentification |
+| [[p-20261009T193025-d2f51b]] | Deux étapes sans résultat, code 1, pause criteria | Le journal résumé ne distingue pas le lancement de la production d'artefact ; il faut diagnostiquer le transport |
+| [[p-20261012T085659-061170]] | Deux refus du fournisseur à Callback, pause criteria | Répéter le même contexte et le même appel ne résout pas le refus |
+| [[p-20261012T102220-3a6fde]] | Quota de session jusqu'au 12 octobre 11:50 UTC, pause model_unavailable | L'échéance passée n'a pas suffi à clôturer ou reprendre cette exécution |
+| [[p-20261014T044705-556920]] | Deux échecs OAuth expiré, pause criteria | Il faut reconnecter le fournisseur ; régénérer un JSON ne répare pas une authentification |
 
 Ce sont des pauses persistantes, pas une preuve d'absence totale de choix : des menus existent. Leur maintien jusqu'au 19 octobre démontre au minimum une dette de récupération et une responsabilité mal définie.
 
@@ -127,14 +171,14 @@ Les messages DÉFAUT du chef emploient souvent « aucune livraison tant qu'il n'
 
 Huit tâches portent lacune dans six routages :
 
-- p-20261010T190323-2556e1 : deux tâches, supervision et nettoyage ;
-- p-20261010T190920-c977f2 : deux tâches, supervision et sortie hors pipeline autorisée ;
-- p-20261010T191443-2ede19 : nettoyage ponctuel autorisé ;
-- p-20261013T095206-96fdf6 : tâche 2, mise en production ;
-- p-20261019T103517-b0c80f : tâche 5, mise en production ;
-- p-20261019T112409-4ebe4d : tâche 2, construction/déploiement APK.
+- [[p-20261010T190323-2556e1]] : deux tâches, supervision et nettoyage ;
+- [[p-20261010T190920-c977f2]] : deux tâches, supervision et sortie hors pipeline autorisée ;
+- [[p-20261010T191443-2ede19]] : nettoyage ponctuel autorisé ;
+- [[p-20261013T095206-96fdf6]] : tâche 2, mise en production ;
+- [[p-20261019T103517-b0c80f]] : tâche 5, mise en production ;
+- [[p-20261019T112409-4ebe4d]] : tâche 2, construction/déploiement APK.
 
-Sur p-20261013T095206-96fdf6, la préparation est dispatchée ; l'application de production n'est ni dispatchée ni enregistrée dans waiting. Le rapport promet de reprendre l'application après retour du plan.
+Sur [[p-20261013T095206-96fdf6]], la préparation est dispatchée ; l'application de production n'est ni dispatchée ni enregistrée dans waiting. Le rapport promet de reprendre l'application après retour du plan.
 
 **Impasse :** un catalogue incomplet est traité comme l'impossibilité de travailler. La continuation survit dans une promesse textuelle, sans obligation durable comparable à une tâche en attente. Ajouter toujours plus de pipelines ne résout pas la classe de problème.
 
@@ -142,11 +186,11 @@ Aujourd'hui les actions de chef et l'autorisation hors pipeline ont déjà des b
 
 ### 4.7 États orphelins et réponses perdues : incidents historiques, correctifs à préserver
 
-p-20261018T101119-ce3136 refuse de reprendre p-20261018T091024-0e199e car cette dernière est encore running après arrêt de son processus. Le rapport décrit le gel et renvoie la réparation au chef. Une nouvelle exécution aurait été refusée à cause des fichiers non commités : c'est une véritable impasse entre deux gardes.
+[[p-20261018T101119-ce3136]] refuse de reprendre [[p-20261018T091024-0e199e]] car cette dernière est encore running après arrêt de son processus. Le rapport décrit le gel et renvoie la réparation au chef. Une nouvelle exécution aurait été refusée à cause des fichiers non commités : c'est une véritable impasse entre deux gardes.
 
 La production contient désormais reclaimOrphanedRun (pipeline-engine.mjs:1466-1511) : un running sans processus devient paused/orphaned et peut être repris. Le développement lu conserve encore le chemin interrupted. Ne pas présenter la panne historique comme dépourvue de correctif actuel ; le risque résiduel est notamment le rejeu d'effets déjà produits et l'identification par PID seul.
 
-Le problème de message joint à « continuer » est attesté par les demandes et défauts autour de p-20261019T144511-44d707. La version locale en pause coupe resumeNotes à 4 000 caractères et cinq notes ; le DÉFAUT du 19 octobre 15:34:02 UTC le relève. La production contient déjà resumeMessages, horodatés, transmis aux étapes, avec un plafond de 20 000 caractères par message. Ce plafond reste à rendre explicite ou à remplacer par un stockage intégral référencé. L'étude ne modifie aucun des deux correctifs.
+Le problème de message joint à « continuer » est attesté par les demandes et défauts autour de [[p-20261019T144511-44d707]]. La version locale en pause coupe resumeNotes à 4 000 caractères et cinq notes ; le DÉFAUT du 19 octobre 15:34:02 UTC le relève. La production contient déjà resumeMessages, horodatés, transmis aux étapes, avec un plafond de 20 000 caractères par message. Ce plafond reste à rendre explicite ou à remplacer par un stockage intégral référencé. L'étude ne modifie aucun des deux correctifs.
 
 ### 4.8 Contrats de forme et conflits de frontières
 
@@ -154,7 +198,7 @@ Les 49 refus d'étape se répartissent en : 17 dépendances du chef ; 16 listes 
 
 Toutes ces exécutions ont terminé ensuite : ce sont des rejets et des risques d'impasse, pas 49 impasses définitives. Les listes vides ont maintenant un contrat aucun_dispatch/question ; l'interdiction générale du chef dispose du renvoi ; les changements externes du dossier du chef sont maintenant exposés. Les protections utiles doivent rester.
 
-Autres refus métier : p-20261013T205934-731d5e (action hors liste blanche), p-20261014T181424-996bab et p-20261018T084859-4a7d53 (découpeur et classificateur en désaccord sur le destinataire chef), p-20261017T161836-defca2 (redémarrage une fois et en dernier). Tous sont done avec une question/refused, sans correction typée de la tâche.
+Autres refus métier : [[p-20261013T205934-731d5e]] (action hors liste blanche), [[p-20261014T181424-996bab]] et [[p-20261018T084859-4a7d53]] (découpeur et classificateur en désaccord sur le destinataire chef), [[p-20261017T161836-defca2]] (redémarrage une fois et en dernier). Tous sont done avec une question/refused, sans correction typée de la tâche.
 
 **Impasse possible :** l'utilisateur doit expliquer le schéma interne ou changer le texte pour franchir un contrat, au lieu de corriger directement le projet, l'action ou la dépendance. Un retry peut faire accepter la forme en sacrifiant le sens. Les plafonds de charge doivent entraîner un lotissement, pas l'abandon d'une partie de la demande.
 
@@ -359,10 +403,10 @@ Cette étude ne crée aucun test de comportement ni ne modifie docs/USER_REQUIRE
 
 | Scénario automatisé | Incident ou risque couvert | Résultat vérifié |
 |---|---|---|
-| Une demande de Discussion cite une exécution paused, avec ou sans « ne pas reprendre » | p-20261019T180056-e8254b ; p-20261012T073703-b610a9 | Zéro reprise ; tâche de lecture seule conservée |
+| Une demande de Discussion cite une exécution paused, avec ou sans « ne pas reprendre » | [[p-20261019T180056-e8254b]] ; [[p-20261012T073703-b610a9]] | Zéro reprise ; tâche de lecture seule conservée |
 | Une commande resume cible explicitement une exécution | Reprise volontaire | Même run, notes intégrales, aucun redémarrage des effets confirmés |
 | Le chef attend A ; B attend le chef | Les 17 refus de dépendances | Ordre vérifié par événements, sans suppression de lien |
-| TODO puis abandon | p-20261019T181739-7e7851 | TODO confirmé avant cancel_run ; aucun kill-stalled substitué |
+| TODO puis abandon | [[p-20261019T181739-7e7851]] | TODO confirmé avant cancel_run ; aucun kill-stalled substitué |
 | Le fils reçoit un PID puis refuse | Les cinq renvois sortie 65 | Tâche non réussie, erreur visible, reprise de la même opération disponible |
 | Crash avant envoi, après envoi et avant accusé, après accusé, après résultat | Fenêtres de persistance | Ni perte ni double acceptation ; état inconnu explicite si nécessaire |
 | Deux libérations concurrentes, double clic, réponse tardive | Concurrence | Une opération ; révision périmée refusée sans perte de la correction |
@@ -370,7 +414,7 @@ Cette étude ne crée aucun test de comportement ni ne modifie docs/USER_REQUIRE
 | OAuth expiré, quota, refus fournisseur, JSON invalide | Quatre pauses historiques | Cause juste, retries bornés, réparation et annulation sans modèle |
 | Sept puis dix-sept tâches, zéro tâche avec réponse directe | Plafond et listes vides | Toutes conservées ; lotissement ; aucune omission pour franchir le contrat |
 | Lacune alors qu'une autorisation applicable existe ; puis sans autorisation | Huit lacunes | Parcours autorisé disponible ; sinon question ciblée conservant la tâche |
-| Service redémarré, PID réutilisé, exécution orpheline | p-20261018T101119-ce3136 | Réconciliation par tentative/bail/accusé, pas PID seul |
+| Service redémarré, PID réutilisé, exécution orpheline | [[p-20261018T101119-ce3136]] | Réconciliation par tentative/bail/accusé, pas PID seul |
 | Annulation d'un parent avec descendants en file ou actifs | Abandon propre | Aucun nouveau départ ; descendants traités ; effets acquis explicités |
 | Message de reprise supérieur à 20 000 caractères et corrections successives | Perte de contexte | Texte intégral accessible et référencé ; aucune coupe silencieuse |
 | Chef occupé, budget de réveil épuisé, plus de vingt résultats | Réveils | Tous les résultats consultables ; dépendances libérées sans synthèse LLM |
@@ -428,24 +472,58 @@ Les lignes ci-dessous couvrent les 56 événements refused, failed et model_unav
 
 | Cause enregistrée | Tentatives | Exécutions |
 |---|---:|---|
-| taches.json : 17 tâches (au plus 6 par message : découper) | 1 | p-20261009T113003-6fb43a |
-| taches.json : tâche 1 : « apres » doit désigner une tâche précédente (1 à 0) | 2 | p-20261009T155431-22e10e, p-20261009T191151-80eaf2 |
-| aucun résultat (code 1) | 2 | p-20261009T193025-d2f51b |
-| Chef exclu des destinataires | 6 | p-20261009T194110-385a6e, p-20261012T090302-104e01, p-20261012T121417-b696ce, p-20261014T044834-2601c2, p-20261014T070908-f73a62, p-20261016T080754-38dedf |
-| taches.json : aucune tâche | 16 | p-20261009T211219-9972bc, p-20261009T222017-56bdf1, p-20261009T223520-ba5287, p-20261009T230229-64976e, p-20261010T090927-06522f, p-20261010T193119-6e8112, p-20261010T193435-08c2d3, p-20261010T200454-616091, p-20261010T200830-8b2b1c, p-20261010T203520-fd7fb6, p-20261011T082353-8c1993, p-20261012T065613-1fb969, p-20261012T081436-07169b, p-20261012T082133-dbb1c5, p-20261012T085303-8ec7b2, p-20261012T085907-0fbc82 |
-| étape en lecture seule, mais des fichiers du projet ont changé : docs/ROUTAGE-PROBLEMES.md | 1 | p-20261010T210614-034d0d |
-| classement.json n’est pas un JSON valide | 1 | p-20261012T074740-2d21c7 |
-| Refus fournisseur | 2 | p-20261012T085659-061170 |
-| limite de session Claude jusqu'à 2026-10-12T11:50:00.000Z | 1 | p-20261012T102220-3a6fde |
-| taches.json : tâche 2 : projet inconnu « divers » | 1 | p-20261013T124219-ebf448 |
-| taches.json : 7 tâches (au plus 6 par message : découper) | 1 | p-20261013T202938-f29b0e |
-| Failed to authenticate: OAuth session expired and could not be refreshed | 2 | p-20261014T044705-556920 |
-| Renvoi chef ne peut pas attendre | 12 | p-20261014T145525-24a1d7, p-20261014T181424-996bab, p-20261014T193744-22be72, p-20261015T085122-5e9386, p-20261015T110935-f9a1a7, p-20261015T143258-127cd3, p-20261016T043850-a0106b, p-20261016T102815-e75edf, p-20261019T142547-a86bfa, p-20261019T151215-af4324, p-20261019T181739-7e7851, p-20261019T182500-d0171a |
-| Tâche ne peut pas attendre le chef | 5 | p-20261015T210716-da95c0, p-20261016T164356-3b9838, p-20261017T084436-c012a2, p-20261018T090045-234c79, p-20261019T165050-4d7b7f |
-| taches.json : tâche 1 : l'exécution p-20261018T091024-0e199e n'est pas une exécution en pause de youtube-live | 1 | p-20261018T101119-ce3136 |
-| sens.json n’est pas un JSON valide | 2 | p-20261019T112141-7a656b, p-20261019T144550-cf6b8b |
+| taches.json : 17 tâches (au plus 6 par message : découper) | 1 | [[p-20261009T113003-6fb43a]] |
+| taches.json : tâche 1 : « apres » doit désigner une tâche précédente (1 à 0) | 2 | [[p-20261009T155431-22e10e]], [[p-20261009T191151-80eaf2]] |
+| aucun résultat (code 1) | 2 | [[p-20261009T193025-d2f51b]] |
+| Chef exclu des destinataires | 6 | [[p-20261009T194110-385a6e]], [[p-20261012T090302-104e01]], [[p-20261012T121417-b696ce]], [[p-20261014T044834-2601c2]], [[p-20261014T070908-f73a62]], [[p-20261016T080754-38dedf]] |
+| taches.json : aucune tâche | 16 | [[p-20261009T211219-9972bc]], [[p-20261009T222017-56bdf1]], [[p-20261009T223520-ba5287]], [[p-20261009T230229-64976e]], [[p-20261010T090927-06522f]], [[p-20261010T193119-6e8112]], [[p-20261010T193435-08c2d3]], [[p-20261010T200454-616091]], [[p-20261010T200830-8b2b1c]], [[p-20261010T203520-fd7fb6]], [[p-20261011T082353-8c1993]], [[p-20261012T065613-1fb969]], [[p-20261012T081436-07169b]], [[p-20261012T082133-dbb1c5]], [[p-20261012T085303-8ec7b2]], [[p-20261012T085907-0fbc82]] |
+| étape en lecture seule, mais des fichiers du projet ont changé : docs/ROUTAGE-PROBLEMES.md | 1 | [[p-20261010T210614-034d0d]] |
+| classement.json n’est pas un JSON valide | 1 | [[p-20261012T074740-2d21c7]] |
+| Refus fournisseur | 2 | [[p-20261012T085659-061170]] |
+| limite de session Claude jusqu'à 2026-10-12T11:50:00.000Z | 1 | [[p-20261012T102220-3a6fde]] |
+| taches.json : tâche 2 : projet inconnu « divers » | 1 | [[p-20261013T124219-ebf448]] |
+| taches.json : 7 tâches (au plus 6 par message : découper) | 1 | [[p-20261013T202938-f29b0e]] |
+| Failed to authenticate: OAuth session expired and could not be refreshed | 2 | [[p-20261014T044705-556920]] |
+| Renvoi chef ne peut pas attendre | 12 | [[p-20261014T145525-24a1d7]], [[p-20261014T181424-996bab]], [[p-20261014T193744-22be72]], [[p-20261015T085122-5e9386]], [[p-20261015T110935-f9a1a7]], [[p-20261015T143258-127cd3]], [[p-20261016T043850-a0106b]], [[p-20261016T102815-e75edf]], [[p-20261019T142547-a86bfa]], [[p-20261019T151215-af4324]], [[p-20261019T181739-7e7851]], [[p-20261019T182500-d0171a]] |
+| Tâche ne peut pas attendre le chef | 5 | [[p-20261015T210716-da95c0]], [[p-20261016T164356-3b9838]], [[p-20261017T084436-c012a2]], [[p-20261018T090045-234c79]], [[p-20261019T165050-4d7b7f]] |
+| taches.json : tâche 1 : l'exécution [[p-20261018T091024-0e199e]] n'est pas une exécution en pause de youtube-live | 1 | [[p-20261018T101119-ce3136]] |
+| sens.json n’est pas un JSON valide | 2 | [[p-20261019T112141-7a656b]], [[p-20261019T144550-cf6b8b]] |
+
+
+
+## Annexe B — repères précis de lecture du code
+
+Les numéros ci-dessous désignent la copie de développement lue, sauf mention explicite « production ». Les symboles sont donnés pour retrouver le passage si les numéros changent.
+
+| Source | Passage déterminant |
+|---|---|
+| scripts/pipeline-catalog.mjs:261-317 | S.routage, plans demande/callback/discussion et contrat du découpeur |
+| scripts/pipeline-engine.mjs:705-779 | validateTasks et validateUnitTasks |
+| scripts/pipeline-engine.mjs:789-878 | Liste blanche, handoffProblem, handoffPrompt et launchHandoff |
+| scripts/pipeline-engine.mjs:930-942 | userSaid, vérification de la provenance des autorisations |
+| scripts/pipeline-engine.mjs:1075-1183 | classer : lacunes, questions, reprise, désaccord sur le chef |
+| scripts/pipeline-engine.mjs:1212-1280 | dispatcher : détection de reprise, lancements, attentes, actions et renvoi |
+| scripts/pipeline-engine.mjs:1867-1875 | Reprise uniquement d'un état paused, vérification du couloir |
+| scripts/pipeline-engine.mjs:2009-2016 | Correctif local resumeNotes non commité, hors de cette étude |
+| scripts/pipeline-engine.mjs:2123-2176 | finish : distinction statut du run / result success / pipeline_paused |
+| scripts/pipeline-engine.mjs:2497-2512 | reportDefects : notification immédiate générique |
+| scripts/pipeline-engine.mjs:3211-3274 | answerPausedRun : abandon, simplification et choix du modèle |
+| scripts/routage-pending.mjs:67-94 | Identités et empreintes, normalisation du rattachement |
+| scripts/routage-pending.mjs:220-227 | detectReprise, identifiants cherchés dans le texte |
+| scripts/routage-pending.mjs:283-325 | dependencyResult, lecture des résultats et des couloirs |
+| scripts/routage-pending.mjs:336-430 | launchTask et releaseReady, retrait avant lancement |
+| scripts/chef-action-deferred.mjs:45-103 | Attente du parent et notification d'échec de renvoi |
+| scripts/dispatch.mjs:1462-1499 | Interprétation des réponses à une pause : les verbes ne sont traités que sans pipeline/resume explicite |
+| scripts/request-map.mjs:58,263-328 | Agrégation reconstruite et états considérés terminaux |
+| server.js:500-734 | Limites, regroupement, persistance et émission des réveils |
+| I:/orchestrateur/scripts/pipeline-engine.mjs:502-520 | Production : resumeMessage et resumeMessagesBlock |
+| I:/orchestrateur/scripts/pipeline-engine.mjs:1466-1511 | Production : récupération des exécutions orphelines |
+
+Point supplémentaire de récupération : dans dispatch.mjs, fournir --pipeline-resume sélectionne déjà resumeRun, ce qui saute la branche d'interprétation d'« abandonner ». Il ne faut pas recommander aveuglément « --pipeline-resume <run> abandonner » comme commande de clôture ciblée. L'API proposée sépare explicitement resume_run et cancel_run.
+
+Le journal chef.wake-log.ndjson contient 216 déclenchements depuis le 9 octobre à 00:00 UTC, aucun avec reportOnly=true dans cet intervalle. Les limites de génération sont donc une protection observée dans le code, pas une cause de blocage démontrée par ces déclenchements.
 
 
 ## Note de reprise du 19 octobre 2026
 
-La rédaction préparée dans le tour de 21:32 à 21:56 a été récupérée directement dans son transcript, avec les compléments enregistrés avant interruption. Les chiffres décrivent le relevé de ce tour, sans nouveau parcours des journaux de production. Aucun test ni parcours navigateur supplémentaire n’a été lancé pour cette livraison documentaire, conformément à la consigne de reprise. La vérification préalable du tour interrompu ne vaut pas validation complète : un échec de nettoyage temporaire Windows a été relevé dans scripts/_test_hors_pipeline_task.mjs, après passage de ses assertions ; aucune conclusion globale verte n’est revendiquée.
+La rédaction préparée dans le tour de 21:32 à 21:56 a été récupérée directement dans son transcript, avec les compléments enregistrés avant interruption. Les chiffres décrivent le relevé de ce tour, avec une seule lecture complémentaire des durées des run.json du même corpus pour compléter le tableau par étape. Aucun test ni parcours navigateur supplémentaire n’a été lancé pour cette livraison documentaire, conformément à la consigne de reprise. La vérification préalable du tour interrompu ne vaut pas validation complète : un échec de nettoyage temporaire Windows a été relevé dans scripts/_test_hors_pipeline_task.mjs, après passage de ses assertions ; aucune conclusion globale verte n’est revendiquée.
