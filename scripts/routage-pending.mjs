@@ -279,8 +279,17 @@ export function duplicatesText(duplicates) {
  *    already running when the task got queued does not count).
  *  - legacy entries (`after.since` only): a timestamped result after it.
  * Phantom results (num_turns 0 and duration_api_ms 0) never count.
+ *  - phase 0 d (Routage v3, 2026-10-19): a PAUSED awaited task has not ended.
+ *    A pipeline run paused (result `success` + `pipeline_paused`) is followed
+ *    until its own final result (any later result of the same run); a turn that
+ *    ends on a question (NEEDS_USER_INPUT / NEEDS_CHEF_INPUT) until the answer
+ *    turn's result, or its acknowledgement (question_resolved). A run closed
+ *    without delivery (« abandonner », « simplifier », close-run) is a failure.
+ *  `info.held` (optional out-param) says what the waiter still waits for.
  */
-export function dependencyResult(logsDir, after) {
+const QUESTION_RE = /(^|\n)\s*NEEDS_(USER|CHEF)_INPUT\s*:/;
+const isPauseResult = (e) => !e.is_error && (e.pipeline_paused === true || e.pipeline?.status === 'paused' || QUESTION_RE.test(String(e.result || '')));
+export function dependencyResult(logsDir, after, info = {}) {
   if (!after?.projet) return null;
   const file = path.join(logsDir, `${after.projet}.jsonl`);
   let text = '';
@@ -295,6 +304,8 @@ export function dependencyResult(logsDir, after) {
   } catch { return null; }
   const legacy = !Number.isFinite(after.offset);
   let armed = legacy || !(after.key || after.hash);
+  // The awaited task paused: { run } (pipeline run) or { question } (ordinary turn).
+  let held = null;
   for (const l of text.split('\n')) {
     if (!l.includes('"type"')) continue;
     let e; try { e = JSON.parse(l); } catch { continue; }
@@ -308,19 +319,37 @@ export function dependencyResult(logsDir, after) {
       return { type: 'result', subtype: okEnd ? 'success' : 'error_lane', is_error: !okEnd, lane: e.lane ?? null, outcome: e.outcome || e.state,
         result: e.why || e.text || `${after.projet}, couloir ${e.lane} : ${e.outcome || e.state}`, timestamp: e.timestamp || null, fromLane: true };
     }
+    // A paused run closed by command (close-run.mjs) writes no result.
+    if (held?.run && e.type === 'system' && e.subtype === 'pipeline_summary' && e.pipeline?.run === held.run && e.pipeline?.status === 'abandoned' && e.closed) {
+      return { type: 'result', subtype: 'error_run_abandoned', is_error: true, pipeline: e.pipeline, result: e.text || `exécution ${held.run} close`, timestamp: e.timestamp || null };
+    }
+    // « Marquer comme répondue »: the question is settled, the task is over.
+    if (held?.question && e.type === 'notification' && e.subtype === 'question_resolved') {
+      return { type: 'result', subtype: 'success', is_error: false, result: `question marquée répondue${e.note ? ` : ${e.note}` : ''}`, timestamp: e.timestamp || null, resolved: true };
+    }
     // Only a prompt that opens a turn re-arms (a notify message is no turn).
     // 0.67.0: the awaited task is recognised by the fingerprint of its whole
     // text (`after.hash`); a shared opening sentence is not enough any more.
     // Entries written before keep the legacy prefix match.
     if (!legacy && (after.hash || after.key) && e.type === 'user_prompt' && typeof e.text === 'string' && (!e.source || e.pipeline || e.callback)) {
-      armed = after.hash ? textHash(e.text) === after.hash : (taskKey(e.text).startsWith(after.key.slice(0, 60)) || taskKey(e.text) === after.key);
+      const own = after.hash ? textHash(e.text) === after.hash : (taskKey(e.text).startsWith(after.key.slice(0, 60)) || taskKey(e.text) === after.key);
+      // After a pause, the turns that continue the awaited task count: its run
+      // resumed or answered, or the answer to its question.
+      const continues = held?.run ? e.pipeline?.run === held.run
+        : held?.question ? (e.context?.resume === true || /^\s*\[CHEF_ANSWER\]/.test(e.text)) : false;
+      armed = own || continues;
       continue;
     }
-    if (e.type !== 'result' || !armed) continue;
+    if (e.type !== 'result') continue;
+    const sameRun = held?.run && e.pipeline?.run === held.run;
+    if (!armed && !sameRun) continue;
     if (!e.synthetic && e.num_turns === 0 && e.duration_api_ms === 0) continue;
     if (legacy && (!e.timestamp || e.timestamp <= after.since)) continue;
+    if (isPauseResult(e)) { held = e.pipeline?.run ? { run: e.pipeline.run } : { question: true }; continue; }
+    if (e.pipeline?.status === 'abandoned') return { ...e, is_error: true, subtype: 'error_run_abandoned' };
     return e;
   }
+  if (held) info.held = held;
   return null;
 }
 
@@ -378,7 +407,7 @@ export function launchTask(root, t, dispatchScript) {
  * same waiter twice. `onlyAfter` limits the scan to waiters of that project.
  */
 export function releaseReady({ root, logsDir = path.join(root, 'logs'), dispatchScript, onlyAfter = null, ids = null, force = false, launch = launchTask }) {
-  const ready = [], blocked = [], twins = [];
+  const ready = [], blocked = [], twins = [], held = [];
   const still = withLock(logsDir, () => {
     const tasks = readPending(logsDir);
     const keep = [];
@@ -387,10 +416,16 @@ export function releaseReady({ root, logsDir = path.join(root, 'logs'), dispatch
       const id = idOf(t);
       if (ids && !ids.includes(id)) { keep.push(t); continue; }
       if (!ids && onlyAfter && t.after?.projet !== onlyAfter) { keep.push(t); continue; }
-      const r = force ? { forced: true } : dependencyResult(logsDir, t.after);
-      if (!r) { keep.push(t); continue; }
+      const dep = {};
+      const r = force ? { forced: true } : dependencyResult(logsDir, t.after, dep);
+      if (!r) {
+        // Phase 0 d: a paused awaited task keeps its waiter, and says so.
+        if (dep.held) held.push({ id, label: pendingLabel(t).text, projet: t.projet, after: t.after?.projet, run: dep.held.run || null,
+          why: dep.held.run ? `la tâche attendue (${t.after?.projet}) est en pause dans l’exécution ${dep.held.run} : attente maintenue jusqu’à sa fin` : `la tâche attendue (${t.after?.projet}) attend la réponse à sa question : attente maintenue` });
+        keep.push(t); continue;
+      }
       if (r.is_error || (typeof r.subtype === 'string' && r.subtype.startsWith('error'))) {
-        blocked.push({ id, label: pendingLabel(t).text, projet: t.projet, after: t.after?.projet, why: `la tâche attendue (${t.after?.projet}) a échoué : non relancée` });
+        blocked.push({ id, label: pendingLabel(t).text, projet: t.projet, after: t.after?.projet, why: r.subtype === 'error_run_abandoned' ? `la tâche attendue (${t.after?.projet}) a été arrêtée sans livraison : non relancée` : `la tâche attendue (${t.after?.projet}) a échoué : non relancée` });
         keep.push({ ...t, blocked: t.blocked || new Date().toISOString() });
         continue;
       }
@@ -427,7 +462,7 @@ export function releaseReady({ root, logsDir = path.join(root, 'logs'), dispatch
         projet: l.projet, offset: l.offset ?? null, hash: l.hash || null, pid: l.pid ?? null, titre: l.titre || null })).join('\n') + '\n');
     } catch { /* never blocks a release */ }
   }
-  return { launched, blocked, still, duplicates: twins };
+  return { launched, blocked, held, still, duplicates: twins };
 }
 
 /** Waiters older than `maxMs` (default 2 h), not yet reported. */

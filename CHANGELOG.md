@@ -11,6 +11,23 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.115.1] - 2026-10-20
+
+### Fixed
+
+- (server) Routage v3, phase 0 d: a paused task no longer releases the task
+  that waits for it (`routage-pending.mjs dependencyResult`). A pipeline run
+  paused (result `success` + `pipeline_paused`) is followed until its own
+  final result (any later result of the same run, its resume prompt being
+  « continuer », not the awaited text); a turn ending on a question
+  (`NEEDS_USER_INPUT` / `NEEDS_CHEF_INPUT`) until the answer turn's result
+  or « Marquer comme répondue » (`question_resolved`). A run closed without
+  delivery (« abandonner », « simplifier ») blocks the waiter, which is kept
+  and reported. `releaseReady` returns `held` (waiters kept on a pause, with
+  the reason). Real case replayed: Routage p-20261018T122954-17ac13, whose
+  tasks 2 and 3 were released on two pauses of the run they waited for (task 3
+  was then refused). Test: `_test_paused_dependency.mjs` (requirement test).
+
 ## [0.115.0] - 2026-10-19
 
 ### Added

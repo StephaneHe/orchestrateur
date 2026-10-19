@@ -2329,6 +2329,12 @@ ne se passe. Il faut corriger la situation ».
   (`routage-duplicate`). `dispatch.json.waiting` ne liste que ce qui est
   vraiment en file. La tâche attendue est reconnue à `after.hash` (texte
   complet). Recette : `_test_routage_dedupe.mjs`.
+- **Une pause ne libère pas** (0.115.1, phase 0 d de la refonte du Routage) :
+  une exécution en pause (`pipeline_paused`) ou un tour fini sur une question
+  garde la tâche qui l'attend (`releaseReady` → `held`, avec la raison) ;
+  libération au résultat final de cette exécution, au tour qui répond ou à
+  « Marquer comme répondue » ; exécution close sans livraison ⇒ bloquée.
+  Recette : `_test_paused_dependency.mjs`.
 - **Tous les `result` sont horodatés** par `dispatch.mjs`.
 - **Actif tout de suite** (`dispatch.mjs`, moteur, catalogue) : reprise,
   libération en fin de tour, dépendance, dédoublonnage, CLI.
