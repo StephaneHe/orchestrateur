@@ -1444,6 +1444,37 @@ if (CHEF_TARGET && !CHEF_DISCUSSION && !sourceProject && !PIPE_STEP && !DUAL_BRA
     prompt = error ? `${prompt}\n\n[Routeur] ${text}` : `${rest}\n\n[Routeur] ${text}`;
   }
 }
+// Routage v3 phase 0 b: an answer to a paused Routage run of the chef reaches
+// that run. The Routage branch below used to start a NEW run for every message,
+// « continuer » and « abandonner » included, so a paused run of the chef stayed
+// paused for good. The run is the one cited with the answer, or --pipeline-resume,
+// or the chef's latest Routage run when it is paused (a newer run supersedes
+// an older pause: never guessed among several).
+if (CHEF_ROUTED && !CHEF_DISCUSSION) {
+  const reply = prompt.replace(/^\s*\[CHEF_ANSWER\]\s*/i, '').trim();
+  // Only a bare menu answer (optionally with the run id) is a pause answer:
+  // « Arrête le tour de Q », « Abandonne la tâche de P » are requests to route.
+  const bare = reply.replace(/\bp-\d{8}T\d{6}-[a-z0-9]{4,8}\b/g, '').replace(/[\s.!…:,;«»"]+/g, ' ').trim();
+  const isMenu = /^(continue|continuer|reprends|reprendre|on continue|accepter?|abandonner|abandonne|annuler|simplifier|changer (?:de |le )?mod[eè]le?|tester (?:le )?mod[eè]le?)$/i.test(bare);
+  const resume = isMenu && /^(continue|continuer|reprends|reprendre|on continue)$/i.test(bare);
+  const accept = isMenu && /^accept/i.test(bare);
+  const other = isMenu ? pauseAnswer(bare) : null;
+  const target = pipelineResumeArg || (isMenu ? chefPausedRun(projectName, reply) : null);
+  if (target) {
+    let st = null;
+    try { st = JSON.parse(fs.readFileSync(path.join(LOGS, 'runs', target, 'run.json'), 'utf8')); } catch { /* unknown run */ }
+    if (st?.status === 'running') st = pipeEngine.reclaimOrphanedRun(LOGS, target) || st;
+    if (st && st.project === projectName && st.pipeline === 'routage' && st.status === 'paused') {
+      if (other) process.exit(await pipeEngine.answerPausedRun({ logsDir: LOGS, project, projectName, run: target, answer: other, promptForLog: prompt, sourceProject, callbackProject, testLabel }));
+      process.exit(await pipeEngine.runPipeline({
+        root: ROOT, logsDir: LOGS, project, projectName, prompt, promptForLog: prompt, pipeline: 'routage', mode: st.mode, resumeRun: target,
+        acceptDefects: accept, classification: null, callbackProject: null, sourceProject, obsId, testLabel,
+        ticket: CHEF_TICKET || null, slot: CHEF_SLOT, dispatchScript: fileURLToPath(import.meta.url),
+      }));
+    }
+    if (pipelineResumeArg) die(`--pipeline-resume ${pipelineResumeArg} : aucune exécution du Routage de ${projectName} en pause sous cet identifiant (${st ? `${st.project}, ${st.pipeline}, ${st.status}` : 'inconnue'})`, 64);
+  }
+}
 if (CHEF_ROUTED || CHEF_DISCUSSION) {
   // Demande (message, question d'un musicien) ou réveil apportant des résultats.
   // 0.96.0: a discussion runs the Routage even when the chef is not routed:
@@ -1664,6 +1695,24 @@ function pauseAnswer(reply) {
     : /^simplifi/i.test(reply) ? 'simplifier'
     : /^changer?\s+(de\s+|le\s+)?mod[eè]le?/i.test(reply) ? 'changer le model'
     : /^tester?(\s+(le|du|un)\s+mod[eè]le?)?\b/i.test(reply) ? 'tester le model' : null;
+}
+
+/** The chef's paused Routage run an answer targets: the one cited with it, else the latest Routage run if paused (or orphaned). */
+function chefPausedRun(name, reply) {
+  const runsDir = path.join(LOGS, 'runs');
+  const read = (r) => { try { return JSON.parse(fs.readFileSync(path.join(runsDir, r, 'run.json'), 'utf8')); } catch { return null; } };
+  for (const id of reply.match(/\bp-\d{8}T\d{6}-[a-z0-9]{4,8}\b/g) || []) {
+    const s = read(id);
+    if (s?.project === name && s.pipeline === 'routage') return id;
+  }
+  let runs = [];
+  try { runs = fs.readdirSync(runsDir).filter(r => pipeEngine.RUN_RE.test(r)).sort().reverse(); } catch { return null; }
+  for (const r of runs.slice(0, 400)) {
+    const s = read(r);
+    if (!s || s.project !== name || s.pipeline !== 'routage') continue;
+    return s.status === 'paused' || s.status === 'running' ? r : null;
+  }
+  return null;
 }
 
 function latestPausedRun(name) {

@@ -2173,6 +2173,29 @@ j'accepte ».
   et `noDispatch`.
 - Recette : `_test_no_dispatch_chef.mjs`.
 
+## Routage : réponse à une pause du chef, clôture par commande (0.117.0)
+
+Refonte du Routage, phase 0 b (`docs/ROUTAGE-SYNTHESE.md`, décisions de
+l'utilisateur du 2026-10-19).
+
+- `dispatch.mjs`, AVANT la branche du Routage (qui lance toujours une
+  exécution neuve) : une réponse de pause du chef (« continuer », « accepter »,
+  « abandonner », « simplifier », « changer / tester le model », SEULE,
+  éventuellement avec l’identifiant ; « Arrête le tour de Q… » est une demande ;
+  pas « oui » ni « go ») va à l'exécution du Routage citée dans la réponse, à
+  `--pipeline-resume <run>`, ou à la dernière exécution du Routage du chef si
+  elle est en pause (`chefPausedRun` ; une exécution plus récente remplace
+  une ancienne pause : jamais deviné entre plusieurs).
+- **Clore une exécution en pause** : `node scripts/close-run.mjs <run>
+  [--reason "…"] [--by utilisateur|chef]` — `abandoned`, résumé et
+  `question_resolved` dans le log, aucun result ; exécution vivante refusée
+  (3), orpheline mise en pause puis close, couloir k ≥ 1 refusé (64, répondre
+  « abandonner » avec `--lane k`), déjà terminée (2). Rien n'est annulé dans
+  le projet.
+- Les 4 pauses mortes du chef en prod ne sont PAS closes (point 7 en attente
+  de l'utilisateur).
+- Recette : `_test_chef_pause_reply.mjs`.
+
 ## Routage : renvoi au chef, qui agit lui-même (0.88.0)
 
 Demande utilisateur (2026-10-14) : « IL faut que le routage puisse renvoyer au

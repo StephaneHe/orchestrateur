@@ -11,6 +11,39 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.117.0] - 2026-10-20
+
+### Added
+
+- (server) `scripts/close-run.mjs <run> [--reason "…"] [--by …]`: closes a paused
+  pipeline run cleanly from outside any turn (the chef's Routage included).
+  run.json → `abandoned` (`abandonedBy: "commande"`, `closed {by, reason,
+  at}`); the project's log gets `system/pipeline_summary` (abandoned) and
+  `notification/question_resolved` — the pause question is acknowledged, NO
+  result event (no queue drain, no chef wake-up). Postcondition: run.json is
+  re-read. A live run is refused (3), an orphaned one is paused then closed, a
+  run in a lane k ≥ 1 is refused with the `--lane` answer to use (64), an
+  already terminal run says so (2). Nothing is undone in the project.
+
+### Fixed
+
+- (server) Routage v3, phase 0 b: **an answer to a paused Routage run of the
+  chef reaches it.** `dispatch.mjs` left on the Routage branch (a NEW run)
+  before reading pause answers, so « continuer » / « abandonner » never
+  reached a paused run of the chef (4 dead pauses in production). Now, before
+  that branch: the run cited with the answer, `--pipeline-resume <run>`, or
+  the chef's latest Routage run when it is paused (a newer run supersedes an
+  older pause; never guessed) receives « continuer » / « accepter » (resumed,
+  same run) or « abandonner », « simplifier », « changer / tester le model »
+  (`answerPausedRun`). Only a bare menu answer counts (optionally with the
+  run id): « Arrête le tour de Q… » or « Abandonne la tâche de P » are
+  requests to route, and « oui » / « go » are not resume words for the chef.
+  Real case replayed: p-20261014T044705-556920.
+- (server) `answerPausedRun`: closing a run whose folder is not a git
+  checkout (the chef's) no longer claims « Aucune modification n'est restée
+  dans le projet ».
+- Test: `_test_chef_pause_reply.mjs` (requirement test).
+
 ## [0.116.0] - 2026-10-20
 
 ### Changed

@@ -3406,6 +3406,8 @@ export async function answerPausedRun({ logsDir, project, projectName, run, answ
     paused = true;
   } else {
     const changed = git(workDir, ['status', '--porcelain']).out.split('\n').filter(l => l && !isLocalOnly(l.slice(3))).map(l => l.slice(3));
+    // A folder outside git (the chef's): nothing can be said about leftovers.
+    const inGit = git(workDir, ['rev-parse', '--is-inside-work-tree']).out === 'true';
     state.status = 'abandoned'; state.abandonedBy = answer; state.endedAt = new Date().toISOString();
     save();
     writeEvent({ type: 'system', subtype: 'pipeline_summary', pipeline: { run, pipeline: state.pipeline, mode: state.mode, status: 'abandoned' },
@@ -3423,7 +3425,7 @@ export async function answerPausedRun({ logsDir, project, projectName, run, answ
           : `Cette exécution travaillait dans le couloir ${state.lane.k} (copie isolée) : rien n’est intégré au projet, aucune modification n’y était restée.`)
         : changed.length
         ? `Les modifications déjà faites restent dans le projet, non enregistrées dans git (vous pouvez les examiner, les garder ou les annuler) :\n${changed.slice(0, 30).map(c => `- ${c}`).join('\n')}${changed.length > 30 ? `\n- … et ${changed.length - 30} autre(s)` : ''}`
-        : 'Aucune modification n’est restée dans le projet.') +
+        : inGit ? 'Aucune modification n’est restée dans le projet.' : 'Le dossier du projet n’est pas suivi par git : cet arrêt n’y a rien annulé ni modifié.') +
       (answer === 'simplifier' ? '\n\nEnvoyez-moi maintenant une demande plus petite pour la suite : elle partira dans une nouvelle exécution.' : '');
   }
   text = await localize(path.dirname(logsDir), text, languageFor(path.dirname(logsDir), projectName));
