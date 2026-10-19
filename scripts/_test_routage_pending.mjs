@@ -62,8 +62,11 @@ section('1. Briques : clé de tâche, dédoublonnage, reprise détectée');
   ok(RP.taskKey('Corriger   le pipeline\n\n(Rattachée à : la question 3)') === 'corriger le pipeline', 'taskKey : rattachement retiré, espaces normalisés');
   pausedRun('p-20261009T123458-82d93b', 'fr');
   pausedRun('p-20261009T123458-aaaaaa', 'fr', 'done');
-  ok(RP.detectReprise(LOGS, { projet: 'fr', demande: 'Reprendre l’exécution en pause `p-20261009T123458-82d93b` avec « continuer »' }) === 'p-20261009T123458-82d93b', 'identifiant d’une exécution EN PAUSE du projet cité dans la demande → reprise');
-  ok(RP.detectReprise(LOGS, { projet: 'autre', demande: 'p-20261009T123458-82d93b' }) === null && RP.detectReprise(LOGS, { projet: 'fr', demande: 'p-20261009T123458-aaaaaa' }) === null, 'exécution d’un autre projet, ou plus en pause : pas de reprise');
+  // Inverted with the user's agreement (decision 4, 2026-10-19, « ok »): a
+  // cited id is only a reference; the explicit « reprise » field resumes.
+  ok(RP.detectReprise(LOGS, { projet: 'fr', demande: 'Reprendre l’exécution en pause `p-20261009T123458-82d93b` avec « continuer »' }) === null, 'identifiant d’une exécution EN PAUSE cité dans la demande, sans champ « reprise » → simple référence, aucune reprise (décision 4)');
+  ok(RP.detectReprise(LOGS, { projet: 'fr', reprise: 'p-20261009T123458-82d93b', demande: 'Reprendre avec « continuer »' }) === 'p-20261009T123458-82d93b', 'champ « reprise » explicite d’une exécution EN PAUSE du projet → reprise');
+  ok(RP.detectReprise(LOGS, { projet: 'autre', reprise: 'p-20261009T123458-82d93b' }) === null && RP.detectReprise(LOGS, { projet: 'fr', reprise: 'p-20261009T123458-aaaaaa' }) === null, 'exécution d’un autre projet, ou plus en pause : pas de reprise');
   const dir = path.join(T, 'dedupe'); fs.mkdirSync(dir);
   const a = { run: 'r1', projet: 'fr', reprise: 'p-20261009T123458-82d93b', demande: 'Reprendre (après le correctif)', after: { projet: 'orch', offset: 0, key: 'x' } };
   const b = { run: 'r2', projet: 'fr', reprise: 'p-20261009T123458-82d93b', demande: 'Autre formulation de la même reprise', after: { projet: 'pan', offset: 0, key: 'y' } };
@@ -148,8 +151,8 @@ fs.writeFileSync(path.join(T, 'config.json'), JSON.stringify({ conductor: 'chef'
   r = RP.releaseReady({ root: T, logsDir: dir, dispatchScript: REC });
   ok(r.launched.length === 0 && r.blocked.length === 1 && RP.readPending(dir).some(t => t.projet === 'fr' && t.blocked), 'tâche attendue en échec : gardée, signalée « bloquée », non lancée');
   // Entry written before 0.58.0 (no `reprise`, heure seule), citing a paused
-  // run: released as a RESUME, never as a new run (incident of 2026-10-09,
-  // 19:39 — such an entry started a duplicate run before this guard).
+  // run. Inverted with the user's agreement (decision 4, 2026-10-19): without
+  // the explicit field it is released as its own task, never as a resume.
   RP.dropPending(dir, { all: true });
   fs.appendFileSync(path.join(dir, 'pan.jsonl'), J([{ type: 'result', subtype: 'success', num_turns: 4, duration_api_ms: 9, result: 'Incident réparé', timestamp: '2026-10-09T16:05:43.592Z' }]));
   pausedRun('p-20261009T123458-2a1135', 'pan');
@@ -158,8 +161,8 @@ fs.writeFileSync(path.join(T, 'config.json'), JSON.stringify({ conductor: 'chef'
   fs.rmSync(RECF, { force: true });
   r = RP.releaseReady({ root: T, logsDir: dir, dispatchScript: REC });
   const leg = (await launches(1))[0];
-  ok(r.launched.length === 1 && r.launched[0].reprise === 'p-20261009T123458-2a1135' && leg?.argv.includes('--pipeline-resume') && !leg.argv.includes('--pipeline'),
-    `ancienne entrée sans « reprise » citant une exécution en pause : lancée en --pipeline-resume, jamais en nouvelle exécution (${leg?.argv.slice(1).join(' ')})`);
+  ok(r.launched.length === 1 && !r.launched[0].reprise && !leg?.argv.includes('--pipeline-resume') && leg?.argv.includes('--pipeline'),
+    `ancienne entrée sans « reprise » citant une exécution en pause : lancée comme tâche neuve, l’identifiant cité n’est qu’une référence (${leg?.argv.slice(1).join(' ')})`);
   // Resume of a run no longer paused: removed, nothing launched (no double run).
   RP.dropPending(dir, { all: true });
   RP.addPending(dir, [{ run: 'rC', projet: 'fr', reprise: 'p-20261009T123458-aaaaaa', demande: 'Reprendre une exécution déjà finie', after: okAfter }]);
@@ -298,7 +301,7 @@ section('7. De bout en bout (vrai dispatch.mjs) : « après O » libéré par le
   const O_TASK = 'Corriger le pipeline dev pour le cas déjà couvert';
   const after = { projet: 'O', offset: RP.logOffset(L2, 'O'), key: RP.taskKey(O_TASK) };
   const add = RP.addPending(L2, [
-    { run: 'p-20261009T183025-9087e2', projet: 'P', pipeline: 'dev', mode: 'leger', served: true, demande: `Reprendre l’exécution en pause ${run} avec « continuer »`, reprise: RP.detectReprise(L2, { projet: 'P', demande: run }), after },
+    { run: 'p-20261009T183025-9087e2', projet: 'P', pipeline: 'dev', mode: 'leger', served: true, demande: `Reprendre l’exécution en pause ${run} avec « continuer »`, reprise: RP.detectReprise(L2, { projet: 'P', reprise: run }), after },
     { run: 'p-20261009T155055-b3e351', projet: 'P', pipeline: 'dev', mode: 'complet', served: true, demande: `Reprendre ${run} après la réparation`, reprise: run, after: { projet: 'P', offset: RP.logOffset(L2, 'P'), key: 'reparation' } },
   ]);
   ok(add.added.length === 1 && add.duplicates.length === 1, 'deux décisions pour la même exécution en pause : une seule attente');

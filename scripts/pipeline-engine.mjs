@@ -1276,8 +1276,8 @@ const CODE_STEPS = {
   async dispatcher({ root, logsDir, ctx, state, artDir, dispatchScript, run, writeEvent }) {
     if (process.env.DISPATCH_REPORT_ONLY === '1') return { ok: false, why: 'réveil en rapport seul : aucun dispatch permis (chaîne de réveils au maximum)' };
     const done = [], waiting = [];
-    // A task citing a paused run of its project resumes it (0.58.0), even if the
-    // Decomposer forgot the « reprise » field: never a second, new run.
+    // Only the explicit « reprise » field resumes a paused run (phase 0 c, user
+    // decision 4): a run id cited in the demand is a reference, never a resume.
     const tasks = (state.tasks || []).map(t => ({ ...t, reprise: detectReprise(logsDir, t) }));
     tasks.forEach((t, i) => {
       // Not launched (question, gap, failed classification): said in the report.

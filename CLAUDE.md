@@ -2315,8 +2315,11 @@ ne se passe. Il faut corriger la situation ».
 - **Dépendance** : `after: {projet, offset, key}`, c'est-à-dire la position
   dans le log de la tâche attendue au lancement, puis le texte de sa demande.
   Un `result` fantôme ou celui d'un autre tour ne comptent pas.
-- **Reprise** : une tâche `reprise: <run>` part en `--pipeline-resume`. Le
-  `dispatcher` la détecte aussi d'après un identifiant cité.
+- **Reprise** : une tâche `reprise: <run>` part en `--pipeline-resume`.
+  **Seul ce champ reprend** (0.116.0, phase 0 c, décision 4 de l'utilisateur) :
+  un identifiant d'exécution cité dans une demande n'est qu'une référence,
+  jamais une reprise (`detectReprise` ne lit plus le texte). Recette :
+  `_test_resume_explicit_only.mjs`.
 - **Doublons** (0.67.1, `identities`) : refusés sur une identité explicite,
   **jamais sur un début de texte** :
   - même tâche du même Routage (`run#n`) ;

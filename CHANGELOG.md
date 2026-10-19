@@ -11,6 +11,26 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.116.0] - 2026-10-20
+
+### Changed
+
+- (server) Routage v3, phase 0 c: **a paused run is resumed on explicit request
+  only.** User decision 4 (2026-10-19, « ok »). `detectReprise`
+  (`routage-pending.mjs`) reads the explicit `reprise` field only: a run id
+  cited in a task's text is a reference, never a resume. Before, the
+  Dispatcher and the release of waiting tasks turned any cited paused run of
+  the task's project into `--pipeline-resume`, against the classification.
+  Real cases replayed: Routage p-20261019T180056-e8254b (a read-only check
+  classified Discussion went out as the resume of the run it quoted) and task
+  2 of p-20261018T122954-17ac13 (a new dev task resumed the run it quoted).
+  The Decomposer's instruction says so: « reprise » only when the user asks to
+  resume. Test: `_test_resume_explicit_only.mjs` (requirement test).
+- (server) `_test_routage_pending.mjs`: the two implicit-resume assertions
+  (cited id → resume; legacy entry citing a paused run → `--pipeline-resume`)
+  are inverted, with the user's explicit agreement (decision 4), recorded in
+  `docs/USER_REQUIREMENTS.md`. The explicit resume stays protected there.
+
 ## [0.115.1] - 2026-10-20
 
 ### Fixed

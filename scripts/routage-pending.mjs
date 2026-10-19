@@ -217,14 +217,17 @@ export function logOffset(logsDir, projet) {
   try { return fs.statSync(path.join(logsDir, `${projet}.jsonl`)).size; } catch { return 0; }
 }
 
-/** Paused pipeline run of this project cited in the task text (or given), else null. */
+/**
+ * The paused pipeline run this task explicitly resumes (its `reprise` field),
+ * else null. Routage v3 phase 0 c (user decision 4, 2026-10-19): a run id
+ * cited in the task text is only a reference — it never turns the task into
+ * a resume (it used to: a Discussion citing a paused run resumed that run).
+ */
 export function detectReprise(logsDir, t) {
-  const cands = [...(t.reprise ? [t.reprise] : []), ...(String(t.demande || '').match(RUN_ID_RE) || [])];
-  for (const run of cands) {
-    const st = readJson(path.join(logsDir, 'runs', run, 'run.json'));
-    if (st && st.project === t.projet && st.status === 'paused') return run;
-  }
-  return null;
+  if (!t.reprise || !RUN_ID_RE.test(String(t.reprise))) { RUN_ID_RE.lastIndex = 0; return null; }
+  RUN_ID_RE.lastIndex = 0;
+  const st = readJson(path.join(logsDir, 'runs', t.reprise, 'run.json'));
+  return st && st.project === t.projet && st.status === 'paused' ? t.reprise : null;
 }
 
 const DUP_REASON = {
@@ -446,9 +449,8 @@ export function releaseReady({ root, logsDir = path.join(root, 'logs'), dispatch
   });
   const launched = ready.map(t => {
     // A resume is re-checked at launch time: a run already resumed (or closed)
-    // is not paused any more, and the engine would refuse it anyway.
-    // A demand citing a paused run of its project is a resume even without the
-    // field (entries written before 0.58.0): never a second, new run.
+    // is not paused any more, and the engine would refuse it anyway. Only the
+    // explicit field resumes (phase 0 c): a run cited in the text is a reference.
     const reprise = detectReprise(logsDir, t);
     if (t.reprise && !reprise) return { id: t.id, label: pendingLabel(t).text, projet: t.projet, skipped: `exécution ${t.reprise} plus en pause : rien relancé` };
     return { id: t.id, run: t.run || null, n: t.n ?? null, label: pendingLabel(t).text, ...launch(root, { ...t, reprise }, dispatchScript), after: t.after?.projet };
