@@ -53,7 +53,7 @@ section('1. Chaque règle active se déclenche sur son cas, et seulement là');
   const sp = repo('sparse'); g(sp, 'config', 'core.sparseCheckout', 'true');
   ok(decide({ name: 'S', path: sp }).rule === 'git-unsupported', 'git-unsupported : extraction partielle');
   ok(decide(clean, { direct: true }).rule === 'lane0-direct' && decide(clean, { direct: true }).mode === 'lane0', 'lane0-direct : dialogue direct dans la copie principale');
-  // P9 (0.114.0, user « Lances-led »): a new pipeline run goes to a lane; the
+  // P9 (0.115.0, user « Lances-led »): a new pipeline run goes to a lane; the
   // rule only keeps the resume of a run paused in the main checkout there.
   ok(decide(clean, { pipeline: true }).mode === 'pipeline' && !decide(clean, { pipeline: true }).rule, 'exécution de pipeline neuve : couloir parallèle, aucune règle (P9)');
   const pilot = decide(clean, { pipeline: true, pipelineLanes: false, pipelineLanesWhy: 'P : pilote d’abord' });

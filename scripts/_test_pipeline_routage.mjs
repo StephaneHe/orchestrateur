@@ -57,7 +57,7 @@ const dispatch = (args, env = {}) => {
   return { code: r.status, out: `${r.stdout || ''}${r.stderr || ''}` };
 };
 const logOf = (n) => { try { return fs.readFileSync(path.join(T, 'logs', `${n}.jsonl`), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)); } catch { return []; } };
-// P9 (0.114.0): a pipeline run launched by the chef works in a parallel lane, its turn in the lane's log.
+// P9 (0.115.0): a pipeline run launched by the chef works in a parallel lane, its turn in the lane's log.
 const laneLogsOf = (n) => { const d = path.join(T, 'logs', 'lanes', n); try { return fs.readdirSync(d).filter(f => /^\d+\.jsonl$/.test(f)).flatMap(f => fs.readFileSync(path.join(d, f), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l))); } catch { return []; } };
 const runState = (run) => JSON.parse(fs.readFileSync(path.join(T, 'logs', 'runs', run, 'run.json'), 'utf8'));
 function chefTurn(text, env = {}, extra = []) {

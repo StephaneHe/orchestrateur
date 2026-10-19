@@ -47,7 +47,7 @@ export const RULES = [
     text: 'suite de la même tâche : elle reprend le couloir, la session et la copie de cette tâche' },
   { id: 'lane0-direct', scope: 'lane0', status: 'active',
     text: "dialogue direct de l'utilisateur : il travaille dans sa propre copie du projet" },
-  // P9 (0.114.0): a NEW pipeline run goes to a lane (worktree); only a run that
+  // P9 (0.115.0): a NEW pipeline run goes to a lane (worktree); only a run that
   // started in the main checkout resumes there, where its files are.
   { id: 'pipeline-engine', scope: 'lane0', status: 'active',
     text: "reprise d'une exécution de pipeline commencée dans la copie principale : elle reprend là où sont ses fichiers" },

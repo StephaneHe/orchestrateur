@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // ============================================================================
 // scripts/_test_dev_pipeline_lanes.mjs — P9 is active for orchestrateur-dev:
-// its pipeline runs work in parallel lanes (0.114.0)
+// its pipeline runs work in parallel lanes (0.115.0)
 // ============================================================================
 //
 // User request (2026-10-18), verbatim: « orchestrateur-dev : il faut activer

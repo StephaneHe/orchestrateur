@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ============================================================================
-// scripts/_test_lane_pipeline.mjs — the pipeline engine runs in a lane (P9, 0.114.0)
+// scripts/_test_lane_pipeline.mjs — the pipeline engine runs in a lane (P9, 0.115.0)
 // ============================================================================
 //
 // User request (2026-10-18), verbatim: « Lances-led », answering the chef's

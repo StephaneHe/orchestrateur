@@ -374,9 +374,11 @@ export function provisionPipelineLane(mainDir, dir) {
  * Paused pipeline runs of a project and the lane each one waits in (P9).
  * A run of lane k ≥ 1 is `held` while lane k still parks its task (state
  * input); lane 0 keeps the legacy rule: only its latest run counts, a newer
- * run in the main checkout supersedes an older pause there.
+ * run in the main checkout supersedes an older pause there. `reclaim(run)`
+ * (the engine's reclaimOrphanedRun) first turns the latest main-checkout run
+ * left « running » by a dead process into a pause, as latestPausedRun does.
  */
-export function pausedPipelineRuns(logsDir, projectName, { max = 300 } = {}) {
+export function pausedPipelineRuns(logsDir, projectName, { max = 300, reclaim = null } = {}) {
   const dir = path.join(logsDir, 'runs');
   let runs = [];
   try { runs = fs.readdirSync(dir).filter(r => /^p-\d{8}T\d{6}-[a-z0-9]{4,8}$/.test(r)).sort().reverse().slice(0, max); } catch { return []; }
@@ -392,6 +394,7 @@ export function pausedPipelineRuns(logsDir, projectName, { max = 300 } = {}) {
       out.push({ run: r, lane: k, task: s.lane.task, branch: s.lane.branch || null, pausedLimit: s.pausedLimit || null, held: !!(t && t.task === s.lane.task && t.state === 'input') });
     } else if (!lane0Seen) {
       lane0Seen = true;
+      if (s.status === 'running' && reclaim?.(r)) s.status = 'paused';
       if (s.status === 'paused') out.push({ run: r, lane: 0, pausedLimit: s.pausedLimit || null, held: true });
     }
   }

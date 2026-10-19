@@ -288,7 +288,7 @@ ce sera utile ». Procédure complète : `docs/DEV-PROD.md`.
   `enforcement.projects` ; son `.orchestrateur/pipeline.json` déclare
   `node scripts/regression.mjs --targeted --no-browser` et `testTimeoutMin: 30`
   (délai par projet de la commande de test, `testTimeoutMs` du moteur, défaut
-  10 min, plafond 120). Depuis 0.114.0 (P9 en prod), ses exécutions de
+  10 min, plafond 120). Depuis 0.115.0 (P9 en prod), ses exécutions de
   pipeline tournent en couloir, deux à la fois (`_test_dev_pipeline_lanes.mjs`).
   Retour arrière : `pipeline-enforce.mjs off orchestrateur-dev`. Recette :
   `_test_dev_instance_pipelines.mjs`.
@@ -932,7 +932,7 @@ etre justifies et documentes. » Conception, état livré (§7) et règles (§3)
 - Lecture : `GET /api/lanes/:projet`, `node scripts/lanes.mjs status <p>`.
 - Recettes : `_test_parallel_lanes.mjs` (série), `_test_lane_rules.mjs`, HTTP
   `lanes-queue` et `lanes-api`.
-- **Pipelines dans un couloir** (0.114.0, P9, demande « Lances-led ») :
+- **Pipelines dans un couloir** (0.115.0, P9, demande « Lances-led ») :
   détail au §12 du document de conception.
   - Une exécution **neuve** prend un couloir ≥ 1 libre, la copie principale
     en dernier et seulement propre (mode `pipeline` de `decide`) ; la règle
@@ -954,7 +954,7 @@ etre justifies et documentes. » Conception, état livré (§7) et règles (§3)
     (`unionMergeArgs`). Dépendances du Routage : marqueur `lane_task`
     (`promptHash`, `turnEnd`).
   - Recette : `_test_lane_pipeline.mjs` (série).
-- **orchestrateur-dev d'abord** (0.114.0, demande « orchestrateur-dev : il
+- **orchestrateur-dev d'abord** (0.115.0, demande « orchestrateur-dev : il
   faut activer P9 ») : seule une instance de dev (`devOf`) fait tourner ses
   pipelines en couloir (`pipelineLanesInfo`, `PIPELINE_LANES_PILOT_ONLY`) ;
   tout autre projet garde ses exécutions de pipeline en série dans la copie
@@ -1716,6 +1716,23 @@ Suite de la demande du 2026-10-09. Plan : `docs/PLAN-pipeline-enforcement.md`.
     models), `system/pipeline_*` (frise, `pipeline_progress` toutes les
     30 s), puis UN result, ou une pause (texte synthétique + result
     `NEEDS_USER_INPUT`).
+  - **Exécution orpheline** (0.114.0) : `running` avec un `pid` mort (tour
+    tué par kill-stalled, plantage) ⇒ `reclaimOrphanedRun` la met en pause
+    `orphaned` (question claire, `system/pipeline_orphaned`, **sans** result :
+    ni drain ni réveil), reprise à l'étape interrompue. Appliqué par
+    `--pipeline-resume`, « continuer » et le départ d'une nouvelle exécution
+    (fini `interrupted` sans reprise). Recette : `_test_orphaned_run.mjs`.
+  - **Message joint à une reprise** (0.114.2, « Corriger la cause ») : le
+    texte d'une reprise (`--pipeline-resume <run> "<texte>"`, `[CHEF_ANSWER]`,
+    « continuer … »), sauf simple décision (`resumeMessage`), va tel quel dans
+    `run.json` (`resumeMessages`) et dans les consignes de l'étape reprise,
+    de ses nouveaux essais et des suivantes (`resumeMessagesBlock`). Trace
+    `system/pipeline_resume_message`. Recette : `_test_resume_message.mjs`.
+  - **Artefact = travail** (0.114.3, « corriges les tests qui font que ca
+    bloque ») : `checks.artefactIsWork` (Données › Présenter) juge l'étape sur
+    son artefact et ses sections, jamais « aucune modification ». Un marqueur
+    « rien à faire » combiné à des sections : consigne et refus les nomment
+    (`nothingHint`). Recette : `_test_presenter_artefact.mjs`.
 - **Étape** : `dispatch.mjs --pipeline-step <run>:<clé> --pipeline-session
   <groupe>`, avec `ORCH_STEP_TOKEN`.
   - La clé vaut `<n>-<étape>`, avec n = `padStart(2)` du nombre d'étapes :
@@ -2588,7 +2605,22 @@ probleme pour le model utilise ».
     - sinon, s'il reste des items de côté : la version de ce qui est livré,
       puis la pause `items_blocked`.
   - Une exécution en pause sans `itemDelivery` garde son commit unique.
+  - **Correctif périmé** (0.113.2, « toujours bloque ») : au conflit, l'item
+    est marqué (`conflict`, `asideConflict`) et la file restante est gardée ;
+    « continuer » après `aside_conflict` l'écarte (`discardedAside`,
+    `system/pipeline_aside_discarded`, correctif gardé, listé partout) et
+    reprend les autres — jamais de boucle `items_blocked` ↔ `aside_conflict`.
+    Une réponse du menu (« simplifier »…) arrivée avec `--pipeline-resume`
+    (Routage) fait son effet (`pauseAnswer` de `dispatch.mjs`).
   - Recette : `_test_item_delivery.mjs`.
+  - **Version déjà incrémentée par un item** (0.114.1, « les deux », exécution
+    bloquée du 2026-10-18) : si chaque fichier de version diffère entre le
+    début de l'exécution (ou sa version précédente, `ctx.versionBase`) et le
+    dernier item livré (`bumpedInRun`), Livrer est contrôlé depuis ce point :
+    commit de doc seule accepté, **aucun commit** accepté si version, entrée
+    CHANGELOG et ligne d'exigence sont déjà commitées ; la consigne interdit
+    un second incrément. Sans incrément dans l'exécution, rien ne change
+    (refus). Recette : `_test_release_prebump.mjs`.
 - **Montée léger → complet** : après 4b en léger, `lightScope` mesure le
   changement (plus de 3 fichiers, plus de 150 lignes, ou un nouveau fichier de
   code, hors tests). Au-delà :

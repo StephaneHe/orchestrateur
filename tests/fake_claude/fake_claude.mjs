@@ -434,6 +434,21 @@ function pipelineStep(text) {
       const k = item(text);
       if (k) {
         w(`src/pipe-${k}.mjs`, `export const f = (x) => x * ${k};\n`);
+        // FAKE_PIPE_ITEM_BUMP=<k>[:req|:nolog]: item k also bumps the version (and
+        // adds its CHANGELOG entry unless « nolog », its requirement line with
+        // « req ») — like an item « bump version + CHANGELOG » of the plan (0.114.1).
+        const [bk, bopt] = String(process.env.FAKE_PIPE_ITEM_BUMP || '').split(':');
+        if (Number(bk) === k) {
+          const pkgF = path.join(cwd, 'package.json');
+          const pkg = JSON.parse(fs.readFileSync(pkgF, 'utf8'));
+          const v = String(pkg.version || '1.0.0').split('.').map(Number); v[2]++;
+          pkg.version = v.join('.');
+          fs.writeFileSync(pkgF, JSON.stringify(pkg, null, 2) + '\n');
+          const cl = path.join(cwd, 'CHANGELOG.md');
+          const old = fs.existsSync(cl) ? fs.readFileSync(cl, 'utf8') : '# Changelog\n';
+          fs.writeFileSync(cl, bopt === 'nolog' ? `${old}\n- note sans version\n` : old.replace(/^(# Changelog\s*\n)/, `$1\n## [${pkg.version}] - 2026-10-18\n### Fixed\n- multiplier par ${k}\n`));
+          if (bopt === 'req') fs.appendFileSync(path.join(cwd, 'docs', 'USER_REQUIREMENTS.md'), `| 2026-10-18 | « multiplier » | test/pipe-${k}.test.mjs | ${pkg.version} |\n`);
+        }
         if (bad) fs.appendFileSync(path.join(cwd, `test/pipe-${k}.test.mjs`), '// affaibli\n');
         w(artefact, `# Vert\n\nsrc/pipe-${k}.mjs : f(x) = ${k}x.\n`);
         break;
@@ -500,6 +515,19 @@ function pipelineStep(text) {
         if (fs.existsSync(path.join(cwd, 'docs', 'USER_REQUIREMENTS.md'))) fs.appendFileSync(path.join(cwd, 'docs', 'USER_REQUIREMENTS.md'), `| 2026-10-18 | « double » ${path.basename(fragment, '.md')} | test/pipe.test.mjs | à l'intégration |\n`);
         w(artefact, `# Livraison\n\nFragment ${fragment}.\n`);
         if (!bad) { g('add', '-A'); g('commit', '-q', '-m', 'feat: double (fragment)'); }
+        break;
+      }
+      // 0.114.1: FAKE_PIPE_LIVRER_NO_BUMP=1 — the model refuses to bump the
+      // version again (run p-20261018T091024-0e199e): it only completes the
+      // CHANGELOG and the requirement line, and commits them;
+      // FAKE_PIPE_LIVRER_NOTHING=1 — everything is already committed: no commit.
+      if (process.env.FAKE_PIPE_LIVRER_NOTHING === '1') { w(artefact, '# Livraison\n\nVersion déjà livrée par un item, rien à commiter.\n'); break; }
+      if (process.env.FAKE_PIPE_LIVRER_NO_BUMP === '1') {
+        const ver = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8')).version;
+        fs.appendFileSync(path.join(cwd, 'CHANGELOG.md'), '- complément de la livraison\n');
+        fs.appendFileSync(path.join(cwd, 'docs', 'USER_REQUIREMENTS.md'), `| 2026-10-18 | « double » | test/pipe.test.mjs | ${ver} |\n`);
+        w(artefact, `# Livraison\n\nVersion ${ver} (déjà incrémentée).\n`);
+        if (!bad) { g('add', '-A'); g('commit', '-q', '-m', `docs: release notes (v${ver})`); }
         break;
       }
       const pkgF = path.join(cwd, 'package.json');
@@ -580,6 +608,10 @@ function catalogStep(text, step, artefact, bad, w, once) {
   }
   // FAKE_PIPE_MARKER_ONLY=1: the marker alone, exactly as the prompt asks (0.110.0).
   if (nothing && wantNothing) { w(artefact, process.env.FAKE_PIPE_MARKER_ONLY === '1' ? `${nothing}\n` : `${nothing}\n\n${body}`); return; }
+  // FAKE_PIPE_ARTEFACT_ONLY=<step,…> (0.114.3): a step whose artefact is the work
+  // writes the artefact only, no project file — as a real presenter does.
+  const artefactOnly = String(process.env.FAKE_PIPE_ARTEFACT_ONLY || '').split(',').includes(step);
+  if (artefactOnly && line('ARTEFACT_EST_LE_TRAVAIL') === 'oui') { w(artefact, `${body}\nPrésentation simulée, aucun fichier du projet modifié.\n`); return; }
   for (const f of files) {
     if (f === '.orchestrateur/pipeline.json') w(f, JSON.stringify({ testCommand: 'node --test', testGlobs: ['test/**'], versionFiles: ['package.json'], changelog: 'CHANGELOG.md', requirements: 'docs/USER_REQUIREMENTS.md' }));
     else if (f === 'CHANGELOG.md') w(f, '# Changelog\n\n## [1.0.0] - 2026-10-09\n- squelette\n');

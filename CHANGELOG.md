@@ -11,7 +11,7 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
-## [0.114.0] - 2026-10-18
+## [0.115.0] - 2026-10-19
 
 ### Added
 
@@ -76,9 +76,14 @@ server/dashboard and the Android companion app. Entries are prefixed
   Permanent requirement test: `_test_dev_pipeline_lanes.mjs` (two pipeline
   runs of the dev instance at once, in lanes 0 and 1; an ordinary project's
   runs stay serial with rule `pipeline-pilot`).
-- (server) Release renumbered: P9 was 0.111.0 in the dev branch; production
-  meanwhile released 0.111.0 to 0.113.1, merged into the dev branch before
-  this release.
+- (server) Merge with production 0.114.0 (orphaned runs): with lanes, the
+  search for the paused run a « continuer » answers (`lanes.mjs
+  pausedPipelineRuns`, option `reclaim`) and `--pipeline-resume` first turn
+  an orphaned main-checkout run into a pause, as `latestPausedRun` does
+  (`_test_orphaned_run.mjs` was red after the merge).
+- (server) Release renumbered: P9 was 0.111.0, then 0.114.0, in the dev branch;
+  production meanwhile released 0.111.0 to 0.114.3, all merged into the dev
+  branch before this release (0.114.0 of production = orphaned runs).
 
 ### Notes
 
@@ -90,7 +95,120 @@ server/dashboard and the Android companion app. Entries are prefixed
   state on the dashboard = items P7/P11).
 - Rollback without restart: `"pipelineLanes": false` on orchestrateur-dev
   (its pipelines back to lane 0), or `"maxParallel": 1` (project or
-  `defaults`); code: production `git reset --hard prod-before-v0.114.0`.
+  `defaults`); code: production `git reset --hard prod-before-v0.115.0`.
+
+## [0.114.3] - 2026-10-19
+
+### Fixed
+
+- (server) Data pipeline, Présenter step: two exit checks contradicted each
+  other and blocked a run. A presentation written only in `presentation.md`
+  was refused for « aucune modification — écris « PRESENTATION_SEULE » dans
+  l'artefact », then that exact marker was refused for missing the required
+  « ## Résultats » / « ## Limites » sections. The presentation is the step's
+  work: the step now carries `artefactIsWork` (no « nothing to do » marker),
+  is judged on its artefact and its sections, and is never refused for
+  leaving the project untouched (prompt line `ARTEFACT_EST_LE_TRAVAIL=oui`).
+  Generic guard: when a step has both a « nothing to do » marker and required
+  sections, the prompt and the refusal hint (`nothingHint`) now name the
+  sections too, so a hint can never ask for what the next check refuses.
+  Checked across the catalogue: Présenter was the only step combining both.
+  Applies to a run already paused on that step when it is resumed
+  (catalogue and engine are read by each dispatch); no server restart needed.
+  Regression suite: `_test_presenter_artefact.mjs`.
+
+## [0.114.2] - 2026-10-19
+
+### Fixed
+
+- (server) The message joined to the resume of a paused pipeline run now
+  reaches the resumed step. `--pipeline-resume <run>` (or a « continuer … »
+  reply) only applied the decision: the text carried with it — the user's
+  answer relayed by the chef, e.g. an authorization to adapt requirement
+  tests — was dropped, so the resumed Livrer step asked for the same
+  authorization again on each new attempt and the run paused once more. The
+  engine now keeps that text verbatim in `run.json` (`resumeMessages`), traces
+  it (`system/pipeline_resume_message`) and quotes every such message in the
+  prompt of the resumed step, its new attempts and the following steps. A
+  bare decision (« continuer », « accepter », « tout supprimer ») adds
+  nothing. Active at once (dispatch/engine), no server restart needed.
+  Regression suite: `_test_resume_message.mjs`.
+
+## [0.114.1] - 2026-10-18
+
+### Fixed
+
+- (server) Pipeline « Livrer » step accepts a version already bumped earlier
+  in the same run. With per-item delivery, the version check compared against
+  the last delivered item, so a plan whose items bumped the version and wrote
+  the CHANGELOG entry (run `p-20261018T091024-0e199e`) was refused
+  « version non incrémentée », then « aucun commit créé » when the model
+  rightly refused a second bump — a dead-end pause. Rule
+  (`bumpedInRun`, `scripts/pipeline-engine.mjs`): when every version file
+  already reads a different version at the last delivered item than at the
+  start of the run (or its previous release), Livrer is checked from that
+  point: version changed, CHANGELOG entry `## [<version>]`, requirement line,
+  clean tree, green suite. A release commit holding only docs is accepted;
+  no commit at all is accepted when all of that is already committed. The
+  Livrer prompt says the version is already bumped and must not be bumped
+  again. Unchanged: a run where nothing bumped the version is still refused
+  (« version non incrémentée » / « aucun commit créé »), and a bump without
+  its CHANGELOG entry too. Test: `scripts/_test_release_prebump.mjs`
+  (reproduces the incident; fails on 0.114.0).
+- (server) Regression check `attach-mkv-500`: the « > 500 MB declared » case
+  now waits for the server's 413 (sent on the header alone) before streaming
+  the body, instead of racing the connection close (intermittent
+  `write ECONNRESET`). Same assertions (413, clear message).
+
+## [0.114.0] - 2026-10-18
+
+### Added
+
+- (server) Orphaned pipeline runs become resumable. A run still `running`
+  whose recorded process is dead (turn killed by `kill-stalled.mjs`, engine
+  crash) is now recognised as orphaned (`reclaimOrphanedRun` /
+  `reclaimOrphanedRuns`, `scripts/pipeline-engine.mjs`): it is paused with
+  `pausedLimit: "orphaned"`, an `orphaned {pid, at, index, step, why}` record
+  and a clear question (« continuer » resumes at the step where it stopped,
+  « abandonner » closes it), traced by `system/pipeline_orphaned` in the
+  musician's log (no result: no queue drain, no chef wake-up). Applied by
+  `--pipeline-resume` (it was refused: « seule une exécution en pause se
+  reprend »), by « continuer » (`latestPausedRun` of `dispatch.mjs`) and by the
+  sweep at the start of a new run on the project, which closed such runs as
+  `interrupted` with no way to resume them. Test: `_test_orphaned_run.mjs`.
+
+### Fixed
+
+- (server) Frozen full-Development run (2026-10-18): an item set aside while
+  its review's doc correction was failing left that correction pending
+  (`fixGroup`, `reviewItems`). The NEXT item's 4b took it as its own,
+  re-reviewed the set-aside group in the middle of the item, which cleared
+  `state.item`, and « @check » crashed (`Cannot read properties of null
+  (reading 'n')`), leaving the run `running` with a dead process. The pending
+  correction now goes aside with its item (`aside[].fixes`) and comes back with
+  it when « continuer » puts it back.
+
+## [0.113.2] - 2026-10-18
+
+### Fixed
+
+- (server) A pipeline run paused on `aside_conflict` (a set-aside item whose
+  patch no longer applies on the work delivered since) could never be
+  unblocked. « continuer » left the stale item set aside, so the run paused
+  on `items_blocked`, whose « continuer » re-applied the same patch and fell
+  back into `aside_conflict`, forever. « continuer » after `aside_conflict`
+  now sets the conflicting item apart (`discardedAside`, event
+  `system/pipeline_aside_discarded`; its patch stays on disk, never
+  re-applied, listed in the result, the pauses and the closing message) and
+  goes on with the other set-aside items, kept in the queue at the conflict.
+  A run paused by an older engine (no conflict marker, queue emptied) is
+  handled the same way.
+- (server) « simplifier », « abandonner », « changer le model » and « tester
+  le model » were treated as « continuer » when the answer came with
+  `--pipeline-resume` (how the chef's Routage launches every answer to a
+  paused run): « simplifier » resumed the run instead of closing it. The
+  pause menu choice now wins whatever flag carried it (`pauseAnswer` in
+  `dispatch.mjs`). Test: section 7 of `_test_item_delivery.mjs`.
 
 ## [0.113.1] - 2026-10-18
 
