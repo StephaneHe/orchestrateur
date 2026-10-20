@@ -40,6 +40,18 @@
     {
       "glob": "scripts/local-secret.mjs",
       "reason": "secret local partagé par le serveur, le dispatch et le moteur"
+    },
+    {
+      "glob": "scripts/regression-live.mjs",
+      "reason": "suivi en direct des non-régressions, lu par le serveur et écrit par l’outillage"
+    },
+    {
+      "glob": "tests/real-config.mjs",
+      "reason": "lecture de la configuration réelle sans dépendre de ses interrupteurs, partagée par les suites de plusieurs périmètres"
+    },
+    {
+      "glob": "tests/regress-live-fixture.mjs",
+      "reason": "faux lancement de non-régression des étages HTTP et navigateur"
     }
   ],
   "noTests": [
@@ -110,47 +122,62 @@
         "_test_user_requirements.mjs",
         "_test_readme_images.mjs",
         "_test_todo_untracked.mjs",
-        "_test_dev_split.mjs"
+        "_test_dev_split.mjs",
+        "_test_regression_live.mjs",
+        "_test_config_state_independence.mjs"
       ],
       "uses": [
         {
           "perimeter": "dispatch",
           "suites": [
             "_test_fixture_speed.mjs",
-            "_test_stale_run.mjs"
+            "_test_stale_run.mjs",
+            "_test_config_state_independence.mjs",
+            "_test_regression_live.mjs"
           ]
         },
         {
           "perimeter": "noyau",
           "suites": [
             "_test_fixture_speed.mjs",
-            "_test_stale_run.mjs"
+            "_test_stale_run.mjs",
+            "_test_regression_live.mjs"
           ]
         },
         {
           "perimeter": "panneaux",
           "suites": [
-            "_test_stale_run.mjs"
+            "_test_stale_run.mjs",
+            "_test_regression_live.mjs"
           ]
         },
         {
           "perimeter": "pipelines",
           "suites": [
             "_test_fixture_speed.mjs",
-            "_test_stale_run.mjs"
+            "_test_stale_run.mjs",
+            "_test_regression_live.mjs"
           ]
         },
         {
           "perimeter": "routage",
           "suites": [
             "_test_fixture_speed.mjs",
-            "_test_stale_run.mjs"
+            "_test_stale_run.mjs",
+            "_test_regression_live.mjs"
           ]
         },
         {
           "perimeter": "serveur",
           "suites": [
-            "_test_ref_snapshot.mjs"
+            "_test_ref_snapshot.mjs",
+            "_test_regression_live.mjs"
+          ]
+        },
+        {
+          "perimeter": "client",
+          "suites": [
+            "_test_regression_live.mjs"
           ]
         }
       ],

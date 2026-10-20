@@ -11,6 +11,65 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.119.0] - 2026-10-20
+
+### Added
+
+- (server) **Every regression run is visible in the dashboard while it runs**
+  (« Je ne vois pas que le test de non regression est en cours sur
+  orchestrateur-dev. C'est un probleme. »), whoever started it: a musician, a
+  script of the chef (`phase0-bond.ps1`), prod-jump, the console.
+  - `scripts/regression-live.mjs`: `regression.mjs` publishes its progress in
+    the checkout it tests, `.regress/live/<id>.json` (stage, suites done /
+    total, checks done / expected, KO names, launcher from the turn
+    environment or `ORCH_REGRESS_LAUNCHER`, expected report), rewritten at
+    each result and every 15 s; the final status (`ok`, `ko`, `stale`,
+    `error`) and counts go to `.regress/history.ndjson`, the live file is
+    removed. A run killed without its exit handler (dead pid, or silent for
+    5 min) reads « interrompue », and the next run of the checkout files it in
+    the history (`sweepDead`). `ORCH_REGRESS_LIVE=0` turns it off; the
+    suite runner sets it for the suites, so a regression a suite starts on
+    its fixtures stays out of the dashboard.
+  - Server (read only, 2 s cache): `GET /api/regressions`,
+    `/api/regressions/:project`, `/api/regressions/:project/report/:id` (only
+    a `.json` under the project's `.regress/`, 410 when a newer run with the
+    same name has replaced the report); each project's folder and lane
+    folders are read. `/api/pupitre` rows carry `regression` (in progress, or
+    finished less than 10 min ago); `/api/project/:name/journal` carries
+    `regressions`.
+  - Client (`public/regress-live.js`, `regress-live.css`): band
+    `#regress-band` (project, stage, progress bar, KO, launcher, report
+    link, final result kept 10 min), chip « 🧪 NR 34/120 · 1 KO » on the
+    project card, entry in the activity journal, polled every 5 s.
+  - Restart needed for the server routes; `regression.mjs` publishes at once.
+  - Tests: `_test_regression_live.mjs` (real `regression.mjs` in a copy of
+    the checkout, killed run), HTTP and browser `regression-live`.
+
+### Fixed
+
+- **A switchable state of the installation never makes a suite fail**
+  (« s'il est necessaire que l'on soit en pipeline pour le test, il faut etre
+  capable de passer en pipleline seul, puis le remettre comme il etait apres
+  le test. Un seul status n'est pas une source de bug. »). After the jump to
+  v0.118.0 the production regression went red on
+  `_test_dev_instance_pipelines.mjs` because the user had taken
+  orchestrateur-dev out of the pipelines on 2026-10-19 (it passed on dev only
+  because the dev's `config.json` declares no dev instance).
+  - `_test_dev_instance_pipelines.mjs` §3 now puts an isolated copy of the
+    real state in service with the real `pipeline-enforce.mjs`, puts it back
+    as it was, and checks the real files byte-identical; in or out of the
+    pipelines are both valid.
+  - `_test_dev_pipeline_lanes.mjs` §4 checks the lane policy on the real
+    project list with the user switches removed (`pipelineLanes`,
+    `maxParallel`: documented rollbacks).
+  - `tests/real-config.mjs` (`realRoot`, `neutralConfig`, `isolatedCopy`,
+    `stateHashes`; `ORCH_REAL_ROOT_FOR_TESTS`, `ORCH_REAL_CONFIG_ONLY`).
+  - Test: `_test_config_state_independence.mjs` (both suites in four states:
+    out of the pipelines, in service, no model-routing.json, switches off;
+    state byte-identical before/after; static guard against a suite reading
+    model-routing.json, language-settings.json or permission-rules.json of
+    the real root).
+
 ## [0.118.0] - 2026-10-20
 
 ### Added

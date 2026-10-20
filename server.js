@@ -64,6 +64,8 @@ import { detectOverride } from './src/message_router.mjs';
 // (scripts/fleet-status.mjs) uses, so the live desk view (/api/pupitre) can
 // never diverge from `node scripts/fleet-status.mjs`.
 import { scanProject as scanFleetMember, isPhantomResult, isQuestionResolved, isAcknowledged, isConductorStop, stopInfo, createJournal } from './scripts/fleet-status-core.mjs';
+import { readRuns as readRegressionRuns, progressText as regressionProgressText, reportPath as regressionReportPath } from './scripts/regression-live.mjs';
+import { laneDir as regressionLaneDir, HARD_CAP as LANES_HARD_CAP } from './scripts/lanes.mjs';
 import { queueHoldPolicy, holdReportDue, holdReport } from './scripts/queue-hold.mjs';
 // Registre /downloads relu à chaud depuis downloads.json (0.23.0).
 import { createDownloadsRegistry, VERSION_NAME_RE } from './scripts/downloads-registry.mjs';
@@ -3372,6 +3374,8 @@ app.get('/api/pupitre', (req, res) => {
       // Configured provider/model as a fallback when the log has none yet.
       configModel: p.model ?? config.defaults?.model ?? null,
       configProvider: p.provider ?? config.defaults?.provider ?? 'claude',
+      // 0.119.0 — non-régression en cours (ou finie il y a moins de 10 min).
+      regression: regressionBadge(p.name),
     };
   });
   // 0.22.0 — objet `pool` ADDITIF : file de direction + slots. Aucun poll
@@ -3757,10 +3761,89 @@ app.get('/api/project/:name/journal', async (req, res) => {
     const run = (journalLocks.get(name) || Promise.resolve()).catch(() => {}).then(() => projectJournal(name, want));
     journalLocks.set(name, run);
     const j = await run;
-    res.json({ project: name, ...j });
+    res.json({ project: name, ...j, regressions: (() => { try { const v = regressionsOf(name); return [...v.running, ...v.recent]; } catch { return []; } })() });
   } catch (e) {
     res.status(500).json({ error: `journal illisible : ${e.message}` });
   }
+});
+
+// ---------- Non-régressions visibles pendant qu'elles tournent (0.119.0) ------
+//
+// Demande : « Je ne vois pas que le test de non regression est en cours sur
+// orchestrateur-dev. C'est un probleme. » scripts/regression.mjs publie son
+// avancement dans <dossier testé>/.regress/live/ et son bilan dans
+// .regress/history.ndjson ; on lit ces fichiers pour chaque projet (son dossier
+// et ses couloirs). Lecture seule, cache de 2 s.
+const REGRESSION_RECENT_MS = 10 * 60_000;
+const regressionCache = new Map();
+function regressionDirsOf(p) {
+  const dirs = [];
+  if (p?.path) dirs.push({ dir: p.path, lane: 0 });
+  for (let k = 1; k <= LANES_HARD_CAP; k++) {
+    try { const d = regressionLaneDir(__dirname, p, k); if (fs.existsSync(path.join(d, '.regress'))) dirs.push({ dir: d, lane: k }); } catch { /* no lane */ }
+  }
+  return dirs.filter(x => fs.existsSync(path.join(x.dir, '.regress')));
+}
+function regressionView(name, r, lane) {
+  return {
+    id: r.id, status: r.status, stage: r.stage || null, label: r.label || null, mode: r.mode || null, lane,
+    startedAt: r.startedAt || null, updatedAt: r.updatedAt || null, endedAt: r.endedAt || null, durationS: r.durationS ?? null,
+    suites: r.suites || null, checks: r.checks || null, counts: r.counts || null, ko: (r.ko || []).slice(0, 8), why: r.why || null,
+    launcher: r.launcher || null, progress: regressionProgressText(r),
+    report: r.report ? `/api/regressions/${encodeURIComponent(name)}/report/${encodeURIComponent(r.id)}` : null, reportFile: r.report || null,
+  };
+}
+function regressionsOf(name, { raw = false } = {}) {
+  const c = regressionCache.get(name);
+  if (!raw && c && Date.now() - c.at < 2000) return c.v;
+  const p = config.projects.find(x => x.name === name);
+  const running = [], recent = [], rawRuns = [];
+  for (const { dir, lane } of regressionDirsOf(p)) {
+    const r = readRegressionRuns(dir, { keep: 5 });
+    for (const x of r.running) { running.push(regressionView(name, x, lane)); rawRuns.push({ dir, run: x }); }
+    for (const x of r.recent) { recent.push(regressionView(name, x, lane)); rawRuns.push({ dir, run: x }); }
+  }
+  const t = (x) => Date.parse(x.endedAt || x.updatedAt || x.startedAt || 0) || 0;
+  recent.sort((a, b) => t(b) - t(a));
+  const v = { running, recent: recent.slice(0, 5) };
+  regressionCache.set(name, { at: Date.now(), v });
+  return raw ? { ...v, rawRuns } : v;
+}
+/** For a card: the run in progress, else one finished in the last 10 min. */
+function regressionBadge(name) {
+  try {
+    const v = regressionsOf(name);
+    if (v.running.length) return v.running[0];
+    const last = v.recent[0];
+    return last && Date.now() - Date.parse(last.endedAt || 0) < REGRESSION_RECENT_MS ? last : null;
+  } catch { return null; }
+}
+app.get('/api/regressions', (req, res) => {
+  const projects = [];
+  for (const p of config.projects) {
+    const v = regressionsOf(p.name);
+    if (v.running.length || v.recent.length) projects.push({ project: p.name, ...v });
+  }
+  res.json({ now: Date.now(), running: projects.reduce((n, x) => n + x.running.length, 0), projects });
+});
+app.get('/api/regressions/:project', (req, res) => {
+  const name = String(req.params.project || '');
+  if (!config.projects.find(p => p.name === name)) return res.status(404).json({ error: `unknown project "${name}"` });
+  res.json({ project: name, ...regressionsOf(name) });
+});
+app.get('/api/regressions/:project/report/:id', (req, res) => {
+  const name = String(req.params.project || ''), id = String(req.params.id || '');
+  if (!config.projects.find(p => p.name === name)) return res.status(404).json({ error: `unknown project "${name}"` });
+  if (!/^r-[\w-]{1,80}$/.test(id)) return res.status(400).json({ error: 'identifiant de lancement invalide' });
+  const hit = regressionsOf(name, { raw: true }).rawRuns.find(x => x.run.id === id);
+  if (!hit) return res.status(404).json({ error: `lancement ${id} inconnu pour ${name}` });
+  const file = regressionReportPath(hit.dir, hit.run.report);
+  if (!file) return res.status(404).json({ error: 'rapport hors de .regress/ : non servi', reportFile: hit.run.report || null });
+  if (!fs.existsSync(file)) return res.status(404).json({ error: hit.run.status === 'running' ? 'rapport écrit à la fin du lancement' : 'rapport absent', reportFile: hit.run.report });
+  const text = fs.readFileSync(file, 'utf8');
+  // The same report name is reused by the next run with the same label.
+  if (hit.run.reportAt) { let at = null; try { at = JSON.parse(text).at; } catch { /* unreadable */ } if (at !== hit.run.reportAt) return res.status(410).json({ error: 'rapport remplacé depuis par un lancement plus récent du même nom', reportFile: hit.run.report }); }
+  res.type('application/json').send(text);
 });
 
 // Register an Android device's SSH public key for SFTP access.

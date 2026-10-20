@@ -15,9 +15,12 @@
 //   2. real dispatch.mjs: a dev instance (`devOf`, lanes on) in service has
 //      its turns run by the pipeline engine — a Discussion and a light
 //      Development (test command really run), never an ordinary turn;
-//   3. this machine: every dev instance declared in config.json (`devOf`) is
-//      in enforcement.projects, and its .orchestrateur/pipeline.json declares
-//      the targeted regression without browser and testTimeoutMin 30.
+//   3. this machine: every dev instance declared in config.json (`devOf`) CAN
+//      be put in service — on an isolated copy of the real state, by the real
+//      pipeline-enforce.mjs, then put back as it was (0.119.0: being in or out
+//      of the pipelines is the user's switch, never a failure; the real files
+//      are checked byte-identical) — and its .orchestrateur/pipeline.json
+//      declares the targeted regression without browser and testTimeoutMin 30.
 //
 //   node scripts/_test_dev_instance_pipelines.mjs
 // ============================================================================
@@ -29,6 +32,7 @@ import http from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { testTimeoutMs, TEST_TIMEOUT_MAX_MIN, readEnforcement, isEnforced } from './pipeline-engine.mjs';
+import { realRoot, realOnly, readRealConfig, stateHashes, isolatedCopy } from '../tests/real-config.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FAKE = path.join(ROOT, 'tests', 'fake_claude', 'fake_claude.mjs');
@@ -37,6 +41,49 @@ let pass = 0, fail = 0;
 const ok = (c, l, d) => { c ? pass++ : fail++; console.log(`  ${c ? '✓' : '✗'} ${l}${!c && d ? `\n      ${String(d).slice(0, 900)}` : ''}`); };
 const section = (n) => console.log(`\n── ${n}`);
 
+// ---------------------------------------------------------------------------
+// 0.119.0: whether the dev instance is in the pipelines is the user's switch
+// (`pipeline-enforce.mjs off orchestrateur-dev`, 2026-10-19), never a failure.
+// The section puts an ISOLATED COPY of the real state in service with the real
+// pipeline-enforce.mjs, takes it back to its initial state, and checks that
+// the real files were never written.
+function realSection() {
+  section('3. Ce poste : chaque instance de dev déclarée peut être mise en service (copie isolée, état réel jamais touché)');
+  const REAL = realRoot();
+  const config = readRealConfig(REAL);
+  const devs = (config?.projects || []).filter(p => p && p.devOf);
+  if (!devs.length) {
+    ok(true, 'aucune instance de dev déclarée dans config.json (clone ou bac à sable) : rien à vérifier ici');
+  } else {
+    const realBefore = stateHashes(REAL);
+    for (const d of devs) {
+      const C = isolatedCopy(REAL);
+      try {
+        const enforce = (...a) => spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'pipeline-enforce.mjs'), ...a],
+          { env: { ...process.env, DISPATCH_ROOT_FOR_TESTS: C }, encoding: 'utf8', windowsHide: true });
+        const initial = readEnforcement(C);
+        const wasOn = isEnforced(initial, d.name);
+        console.log(`  · état réel : ${d.name} ${wasOn ? 'en service' : 'hors des pipelines'} (les deux sont valides)`);
+        const on = wasOn ? { status: 0 } : enforce('on', d.name);
+        ok(on.status === 0 && isEnforced(readEnforcement(C), d.name), `${d.name} : mise en service par pipeline-enforce.mjs sur la copie isolée`, `${on.stdout || ''}${on.stderr || ''}`);
+        const back = wasOn ? { status: 0 } : enforce('off', d.name);
+        const after = readEnforcement(C);
+        ok(back.status === 0 && isEnforced(after, d.name) === wasOn && JSON.stringify(after.projects) === JSON.stringify(initial.projects)
+          && JSON.stringify(after.pipelines) === JSON.stringify(initial.pipelines) && after.chef === initial.chef && after.terminal === initial.terminal,
+        `${d.name} : remis comme il était (${wasOn ? 'en service' : 'hors des pipelines'}), le reste de enforcement inchangé`, JSON.stringify({ initial, after }));
+      } finally { try { fs.rmSync(C, { recursive: true, force: true }); } catch {} }
+      let pj = null;
+      try { pj = JSON.parse(fs.readFileSync(path.join(d.path, '.orchestrateur', 'pipeline.json'), 'utf8')); } catch (e) { pj = { error: e.message }; }
+      ok(pj?.testCommand === DEV_TEST_COMMAND, `${d.name} : testCommand « ${DEV_TEST_COMMAND} »`, JSON.stringify(pj));
+      ok(pj?.testTimeoutMin === 30 && testTimeoutMs(pj) === 30 * 60_000, `${d.name} : testTimeoutMin 30 (délai réel ${testTimeoutMs(pj || {}) / 60_000} min)`);
+      ok(pj?.lanes && Array.isArray(pj.lanes.copy) && pj.lanes.copy.includes('config.json') && (pj.lanes.link || []).includes('node_modules'),
+        `${d.name} : couloirs prêts pour la non-régression (config.json copié, node_modules lié)`);
+    }
+    ok(JSON.stringify(stateHashes(REAL)) === JSON.stringify(realBefore), 'configuration réelle (config.json, model-routing.json…) identique, octet pour octet, après le test');
+  }
+}
+
+if (!realOnly()) {
 // ---------------------------------------------------------------------------
 section('1. Délai de la commande de test : testTimeoutMin du projet');
 {
@@ -114,27 +161,8 @@ section('2. Vrai dispatch : les tours d’une instance de dev en service passent
   try { fs.rmSync(T, { recursive: true, force: true }); } catch {}
 }
 
-// ---------------------------------------------------------------------------
-section('3. Ce poste : chaque instance de dev déclarée est en service');
-{
-  let config = null;
-  try { config = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8')); } catch { /* clone without config */ }
-  const devs = (config?.projects || []).filter(p => p && p.devOf);
-  if (!devs.length) {
-    ok(true, 'aucune instance de dev déclarée dans config.json (clone ou bac à sable) : rien à vérifier ici');
-  } else {
-    const enf = readEnforcement(ROOT);
-    for (const d of devs) {
-      ok(isEnforced(enf, d.name), `${d.name} : dans enforcement.projects (model-routing.json)`);
-      let pj = null;
-      try { pj = JSON.parse(fs.readFileSync(path.join(d.path, '.orchestrateur', 'pipeline.json'), 'utf8')); } catch (e) { pj = { error: e.message }; }
-      ok(pj?.testCommand === DEV_TEST_COMMAND, `${d.name} : testCommand « ${DEV_TEST_COMMAND} »`, JSON.stringify(pj));
-      ok(pj?.testTimeoutMin === 30 && testTimeoutMs(pj) === 30 * 60_000, `${d.name} : testTimeoutMin 30 (délai réel ${testTimeoutMs(pj || {}) / 60_000} min)`);
-      ok(pj?.lanes && Array.isArray(pj.lanes.copy) && pj.lanes.copy.includes('config.json') && (pj.lanes.link || []).includes('node_modules'),
-        `${d.name} : couloirs prêts pour la non-régression (config.json copié, node_modules lié)`);
-    }
-  }
 }
+realSection();
 
 console.log(`\n${fail === 0 ? '✓' : '✗'} ${pass} réussis, ${fail} échoués`);
 process.exitCode = fail ? 1 : 0;

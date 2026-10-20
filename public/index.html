@@ -22,6 +22,7 @@
 <link rel="stylesheet" href="./models.css?v=0.46.0">
 <!-- v0.45.0 — demandes d'autorisation interactives -->
 <link rel="stylesheet" href="./permissions.css?v=0.45.0">
+<link rel="stylesheet" href="./regress-live.css?v=0.119.0">
 <!-- v0.75.0 — panneau latéral à bascule (TODO ; désactivable : ui.sidePanel=false ou ?todo=0) -->
 <link rel="stylesheet" href="./side-panel.css?v=0.100.0">
 <link rel="stylesheet" href="./id-links.css?v=0.107.0">
@@ -90,6 +91,9 @@
 
   <!-- 0.45.0 — demandes d'autorisation en attente (cartes + overlay de détails) -->
   <div id="perm-band" class="perm-band" hidden aria-live="polite"></div>
+
+  <!-- 0.119.0 — non-régressions en cours (et finies il y a moins de 10 min) -->
+  <div id="regress-band" class="regress-band" hidden aria-live="polite" aria-label="Non-régressions"></div>
 
   <!-- Attention band — one folded line, details on demand -------------- -->
   <div id="attention" class="attention" hidden></div>
@@ -408,7 +412,8 @@
 <script src="./turn-core.js?v=0.105.0"></script>
 <script src="./tts.js?v=0.105.0"></script>
 <script src="./langue.js?v=0.51.0"></script>
-<script src="./activite.js?v=0.67.0"></script>
+<script src="./regress-live.js?v=0.119.0"></script>
+<script src="./activite.js?v=0.119.0"></script>
 <script src="./salle.js?v=0.45.0"></script>
 <script src="./projets.js?v=0.31.0"></script>
 <script src="./models.js?v=0.66.0"></script>

@@ -716,6 +716,40 @@ des modifications devront etre lances avant une mise en prod. »
   donne les listes `uses` exactes à recopier.
 - Recette : `_test_regression_perimeters.mjs`.
 
+## Non-régression visible ; aucun état réglable ne fait échouer une suite (0.119.0)
+
+Demandes utilisateur (2026-10-20) : « Je ne vois pas que le test de non
+regression est en cours sur orchestrateur-dev. C'est un probleme. » et « s'il
+est necessaire que l'on soit en pipeline pour le test, il faut etre capable de
+passer en pipleline seul, puis le remettre comme il etait apres le test. Un
+seul status n'est pas une source de bug. »
+
+- **Visible pendant qu'elle tourne** (`scripts/regression-live.mjs`) : tout
+  `regression.mjs` écrit `.regress/live/<id>.json` dans le dépôt testé (étage,
+  suites faites / total, vérifications, KO, lanceur, rapport attendu ; toutes
+  les 15 s et à chaque résultat), puis son bilan dans `.regress/history.ndjson`.
+  Processus mort sans bilan ou muet 5 min = « interrompue ». Le lanceur vient
+  du tour (`ORCH_TURN_PROJECT`, `ORCH_TURN_STEP`) ou de
+  `ORCH_REGRESS_LAUNCHER` (à poser dans un script du chef).
+  `ORCH_REGRESS_LIVE=0` le coupe ; `suite-runner.mjs` le pose pour les suites
+  (leurs non-régressions de fixtures restent hors du tableau de bord).
+- Serveur, **lecture seule** : `GET /api/regressions`, `/api/regressions/:p`,
+  `/api/regressions/:p/report/:id` (un `.json` sous `.regress/` seulement ; 410
+  si un lancement plus récent du même nom l'a remplacé) ; dossier et couloirs
+  de chaque projet ; `regression` dans `/api/pupitre`, `regressions` dans le
+  journal. Client `public/regress-live.js` : bande `#regress-band`, pastille
+  « 🧪 NR n/N » du cadre, entrée du journal. Redémarrage nécessaire.
+- **État réglable ≠ échec** : une suite qui regarde l'installation réelle passe
+  par `tests/real-config.mjs` ; elle met une **copie isolée** dans l'état dont
+  elle a besoin (vrai `pipeline-enforce.mjs` sous `DISPATCH_ROOT_FOR_TESTS`),
+  la remet comme elle était, et vérifie la vraie configuration identique octet
+  pour octet. Les interrupteurs (`pipelineLanes`, `maxParallel`) sont retirés
+  avant de juger une politique (`neutralConfig`). Jamais `readEnforcement(ROOT)`
+  ni lecture directe de model-routing.json, language-settings.json ou
+  permission-rules.json de la vraie racine dans une suite (garde statique).
+- Recettes : `_test_regression_live.mjs`, `_test_config_state_independence.mjs`,
+  HTTP et navigateur `regression-live`.
+
 ## Un test périmé s'arrête aussitôt (0.94.0)
 
 Demande utilisateur (2026-10-14) : « si un test est detecte comme inutile, on

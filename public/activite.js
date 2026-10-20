@@ -292,6 +292,14 @@
       </article>`;
   }
 
+  // 0.119.0 — les non-régressions du projet prennent place parmi les tours, par date.
+  function mergedEntries(data) {
+    const at = (v) => (typeof v === "number" ? v : Date.parse(v || "")) || 0;
+    const items = (data.turns || []).map(t => ({ turn: t, at: at(t.start || t.end) }));
+    if (global.RegressLive) for (const r of data.regressions || []) items.push({ regression: r, at: at(r.startedAt) });
+    return items.sort((a, b) => b.at - a.at);
+  }
+
   function paint() {
     const pane = document.querySelector("#dive .dive-turns");
     if (!pane) return;
@@ -302,9 +310,9 @@
     let body;
     if (st.error && !st.data) body = `<div class="dj-note">journal illisible : ${esc(st.error)}</div>`;
     else if (!st.data) body = `<div class="dj-note">chargement du journal…</div>`;
-    else if (!st.data.turns.length) body = `<div class="dj-note">Aucun tour dans le log de ce musicien.</div>`;
+    else if (!st.data.turns.length && !(st.data.regressions || []).length) body = `<div class="dj-note">Aucun tour dans le log de ce musicien.</div>`;
     else {
-      body = st.data.turns.map((t, i) => turnHtml(t, i)).join("") +
+      body = mergedEntries(st.data).map((x, i) => x.regression ? global.RegressLive.journalHtml(x.regression) : turnHtml(x.turn, i)).join("") +
         (st.data.truncated ? `<div class="dj-note">tours plus anciens : non chargés (seule la fin du log est lue)</div>` : "");
     }
     const html = links + body;

@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { serverEnv } from './_regression_sandbox.mjs';
+import { serverEnv, REPO } from './_regression_sandbox.mjs';
 
 /** Tour réel (copie de dispatch.mjs de l'instance + faux claude) qui demande
  *  une autorisation et attend la décision prise dans le navigateur (0.45.0). */
@@ -1205,6 +1205,46 @@ export async function browserChecks(sb, t) {
         if (qid) await fetch(`${sb.url}/api/queue/alpha/${encodeURIComponent(qid)}`, { method: 'DELETE', headers: H }).catch(() => {});
         keep.kill();
         for (let i = 0; i < 20 && fs.existsSync(pidFile); i++) { try { fs.unlinkSync(pidFile); } catch { await sleep(150); } }
+        await page.click('#dive .dive-back').catch(() => {});
+      }
+    });
+    // User request (2026-10-20): « Je ne vois pas que le test de non regression
+    // est en cours sur orchestrateur-dev. C'est un probleme. »
+    await check(B, 'regression-live', 'Non-régression en cours visible : bande (projet, progression, KO, lanceur), pastille 🧪 sur le cadre, entrée du journal d’activité ; à la fin, résultat et lien vers le rapport', async () => {
+      if (!fs.existsSync(path.join(sb.root, 'public', 'regress-live.js'))) NA('suivi absent de cet état du code');
+      const F = await import(pathToFileURL(path.join(REPO, 'tests', 'regress-live-fixture.mjs')).href);
+      const beta = path.join(sb.root, 'projects', 'beta');
+      try {
+        const run = F.writeRunning(beta);
+        await page.evaluate(() => window.RegressLive.poll());
+        const row = '#regress-band .rg-row[data-project="beta"][data-regress="running"]';
+        assert(await until(async () => (await page.locator(row).count()) === 1, 12_000), 'bande absente');
+        const txt = await page.textContent(row);
+        assert(/suites 3\/10/.test(txt) && /1 KO/.test(txt) && /script du chef \(recette\)/.test(txt) && /rapport à la fin/.test(txt), `bande : ${txt}`);
+        await page.evaluate(() => window.App.pollPupitre());
+        if (!(await page.locator('#rail-body .rail-card').count()) && await page.locator('#rail-body [data-fold="cards"]').count()) await page.click('#rail-body [data-fold="cards"]');
+        const chip = '#rail-body .rail-card[data-name="beta"] .rc-chip-regress[data-regress="running"]';
+        assert(await until(async () => (await page.locator(chip).count()) > 0, 10_000), 'pastille absente du cadre');
+        assert(/NR 3\/10 · 1 KO/.test(await page.locator(chip).first().textContent()), 'texte de la pastille');
+        await setHash(page, '#/m/beta');
+        assert(await until(async () => (await page.locator(`#dive article.jt-regress[data-regress-id="${run.id}"]`).count()) === 1, 12_000), 'entrée absente du journal d’activité');
+        await shot(page, 'regression-live');
+        // The run ends red: the band keeps the result with the report link.
+        F.clearRuns(beta);
+        const fin = F.writeFinished(beta);
+        await page.evaluate(() => new Promise(r => setTimeout(r, 2200)));
+        await page.evaluate(() => window.RegressLive.poll());
+        const done = `#regress-band .rg-row[data-project="beta"][data-regress="ko"]`;
+        assert(await until(async () => (await page.locator(done).count()) === 1, 12_000), 'résultat final absent de la bande');
+        const href = await page.getAttribute(`${done} a.rg-report`, 'href');
+        assert(href === `/api/regressions/beta/report/${fin.id}`, `lien du rapport : ${href}`);
+        const rep = await page.evaluate(async (u) => (await fetch(u)).json(), href);
+        assert(rep.at === fin.reportAt, 'le lien ne mène pas au rapport');
+        assert(await until(async () => (await page.locator(`#dive article.jt-regress[data-regress-id="${fin.id}"][data-regress="ko"]`).count()) === 1, 12_000), 'résultat absent du journal');
+        return `bande, pastille, journal, puis ✕ et ${href}`;
+      } finally {
+        F.clearRuns(beta);
+        await page.evaluate(() => window.RegressLive?.poll()).catch(() => {});
         await page.click('#dive .dive-back').catch(() => {});
       }
     });

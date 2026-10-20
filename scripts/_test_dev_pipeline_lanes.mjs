@@ -20,7 +20,8 @@
 //      (worktree lane 1 and lane 0): both finish, overlap, both integrated;
 //   3. an ordinary project's two pipeline runs stay serial in lane 0, the
 //      wait justified by rule `pipeline-pilot` (system/lane_exclusive);
-//   4. the real config.json (when present): same resolution for the fleet.
+//   4. the real config.json (when present): same resolution for the fleet,
+//      with the user switches removed (0.119.0, never a failure).
 //
 //   node scripts/_test_dev_pipeline_lanes.mjs
 // ============================================================================
@@ -32,6 +33,7 @@ import http from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { FAST_TEST_COMMAND } from '../tests/fixture-speed.mjs';
+import { realOnly, readRealConfig, neutralConfig } from '../tests/real-config.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FAKE = path.join(ROOT, 'tests', 'fake_claude', 'fake_claude.mjs');
@@ -39,6 +41,7 @@ const L = await import(pathToFileURL(path.join(ROOT, 'scripts', 'lanes.mjs')).hr
 let pass = 0, fail = 0;
 const ok = (c, l, d) => { c ? pass++ : fail++; console.log(`  ${c ? '✓' : '✗'} ${l}${!c && d ? `\n      ${String(d).slice(0, 1500)}` : ''}`); };
 const section = (n) => console.log(`\n── ${n}`);
+if (realOnly()) { realSection(); console.log(`\n${pass} ok, ${fail} échec(s)`); process.exit(fail ? 1 : 0); }
 
 const T = fs.mkdtempSync(path.join(os.tmpdir(), 'orch-devpipelanes-'));
 const LOGS = path.join(T, 'logs');
@@ -140,10 +143,14 @@ section('3. Projet ordinaire : ses exécutions de pipeline restent en série dan
   ok(!fs.existsSync(path.join(T, 'lanes', 'X')), 'aucun worktree créé pour X');
 }
 
-section('4. Vrai config.json : orchestrateur-dev seul a ses pipelines en couloir');
-{
-  let real = null;
-  try { real = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8')); } catch {}
+
+// 0.119.0: the policy is checked on the real project list with every user
+// switch removed (neutralConfig): `"pipelineLanes": false` on the dev or
+// `defaults.maxParallel: 1` are documented rollbacks, never a failure.
+function realSection() {
+  section('4. Vrai config.json, interrupteurs retirés : orchestrateur-dev seul a ses pipelines en couloir');
+  const raw = readRealConfig();
+  const real = raw ? neutralConfig(raw) : null;
   const devs = (real?.projects || []).filter(p => p?.devOf);
   if (!devs.length) console.log('  · pas de config.json avec une instance de dev ici (copie de test) : section sans objet');
   else {
@@ -157,6 +164,7 @@ section('4. Vrai config.json : orchestrateur-dev seul a ses pipelines en couloir
   }
 }
 
+realSection();
 srv.close();
 try { for (const [dir, n] of [[DEV, 'orchestrateur-dev'], [X, 'X']]) for (const k of [1, 2, 3]) { const w = path.join(T, 'lanes', n, String(k)); if (fs.existsSync(w)) g(dir, 'worktree', 'remove', '--force', w); } } catch {}
 try { fs.rmSync(T, { recursive: true, force: true }); } catch {}

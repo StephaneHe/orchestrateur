@@ -1,0 +1,19 @@
+/* 0.119.0 — non-régressions en cours : bande, pastille du cadre, journal */
+.regress-band { display: flex; flex-direction: column; gap: 4px; padding: 6px 12px; border-bottom: 1px solid var(--line, #444); background: var(--bg-2, rgba(255, 255, 255, 0.03)); font-size: 0.8125rem; }
+.regress-band[hidden] { display: none; }
+.rg-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-height: 28px; }
+.rg-project { font-weight: 600; }
+.rg-title { opacity: 0.9; }
+.rg-progress, .rg-by { opacity: 0.75; font-family: "JetBrains Mono", monospace; font-size: 0.75rem; }
+.rg-bar { position: relative; display: inline-block; width: 120px; height: 6px; border: 1px solid currentColor; opacity: 0.8; }
+.rg-bar > span { position: absolute; inset: 0 auto 0 0; background: currentColor; }
+.rg-report { text-decoration: underline; }
+.rg-report.is-pending, .jt-chip.is-pending { opacity: 0.6; text-decoration: none; }
+.rg-ko { color: var(--err, #e5534b); }
+.rg-row[data-regress="ko"], .rg-row[data-regress="error"] { color: var(--err, #e5534b); }
+.rg-row[data-regress="ok"] { color: var(--ok, #57ab5a); }
+.rc-chip-regress[data-regress="running"] { animation: rg-pulse 2s ease-in-out infinite; }
+.rc-chip-regress[data-regress="ko"], .rc-chip-regress[data-regress="error"] { color: var(--err, #e5534b); }
+@keyframes rg-pulse { 50% { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) { .rc-chip-regress[data-regress="running"] { animation: none; } }
+@media (max-width: 720px) { .rg-row { min-height: 44px; } .rg-report { padding: 10px 4px; } }

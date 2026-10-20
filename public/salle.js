@@ -573,6 +573,8 @@
     const q = r?.queueHeld
       ? `<span class="rc-chip rc-chip-held" data-queue-held title="File retenue : le tour est terminé mais son processus ${esc(r.queueHeld.pid)} vit encore — la suite attend sa fin">⏸ ${r.queueHeld.queueLength} retenue${r.queueHeld.queueLength > 1 ? "s" : ""}</span>`
       : r?.queueDepth > 0 ? `<span class="rc-chip" title="tâches en file derrière son tour">⏳ ${r.queueDepth}</span>` : "";
+    // 0.119.0 — non-régression en cours (ou finie il y a moins de 10 min).
+    const nr = r?.regression && global.RegressLive ? global.RegressLive.chipHtml(r.regression) : "";
     let line = "";
     if (m.state === "error" && m.stopped) line = m.stopped.reason || "arrêté par la supervision du chef";
     else if (m.state === "input") line = r?.needsInput || m.lastLine || "";
@@ -581,7 +583,7 @@
     line = String(line).replace(/\s+/g, " ").slice(0, 90);
     return `<button class="rail-row rail-card" type="button" data-state="${esc(m.state)}" data-kind="${esc(d.kind)}" data-name="${esc(m.name)}" data-last="${last || 0}">
         <span class="rc-top"><span class="rr-dot"></span><span class="rr-name">${esc(m.name)}</span><span class="rc-age">${esc(age)}</span></span>
-        <span class="rr-state">${esc(d.glyph)} ${esc(d.word)}${q}</span>
+        <span class="rr-state">${esc(d.glyph)} ${esc(d.word)}${q}${nr}</span>
         <span class="rc-line">${line ? esc(line) : "&nbsp;"}</span>
       </button>`;
   }

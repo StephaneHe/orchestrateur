@@ -22,7 +22,9 @@ export const liveSuites = new Set();
 /** Runs `file` with node in `cwd`; → {code, out} (stdout + stderr interleaved). */
 export function runNode(file, cwd, timeoutMs = 300_000) {
   return new Promise((resolve) => {
-    const c = spawn(process.execPath, [file], { cwd, env: { ...process.env, ANTHROPIC_API_KEY: '' }, windowsHide: true });
+    // ORCH_REGRESS_LIVE=0: a regression a suite starts on its fixtures is not a
+    // run of this checkout and stays out of the dashboard (0.119.0).
+    const c = spawn(process.execPath, [file], { cwd, env: { ...process.env, ANTHROPIC_API_KEY: '', ORCH_REGRESS_LIVE: '0' }, windowsHide: true });
     liveSuites.add(c);
     let out = '';
     c.stdout.on('data', d => { out += d; });

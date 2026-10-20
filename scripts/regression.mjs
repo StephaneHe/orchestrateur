@@ -61,6 +61,7 @@ import { worktreeTree, readKnownKo, checkReport } from './delivery-gate.mjs';
 import { runNode, runSuite } from './suite-runner.mjs';
 import { runPool, SERIAL_SUITES, defaultJobs, liveSuites } from './suite-runner.mjs';
 import { createStaleWatch, changedPaths, staleMessage, killOwnTree } from './stale-run.mjs';
+import { createLiveRun } from './regression-live.mjs';
 
 // Exit code of a run stopped because the tested content changed (0.94.0).
 const STALE_EXIT = 3;
@@ -156,8 +157,11 @@ if (flag('--perimeters')) {
   selection = { kind: 'perimeter', since: plan.base, ...plan };
 }
 const results = [];
+// Visible while it runs (0.119.0): progress in .regress/live/, read by the dashboard.
+let live = null;
 function record(stage, id, name, status, detail = '', extra = null) {
   results.push({ stage, id: `${stage}:${id}`, name, status, detail: String(detail).slice(0, 400), ...(extra || {}) });
+  live?.result(stage, status, name);
   const mark = status === 'OK' ? '  ok ' : status === 'NA' ? '  na ' : '  KO ';
   console.log(`${mark} [${stage}] ${name}${detail ? ' — ' + String(detail).slice(0, 160) : ''}`);
 }
@@ -238,6 +242,7 @@ async function runSuites() {
     } });
   }
   const jobs = Number(opt('--jobs')) >= 1 ? Number(opt('--jobs')) : defaultJobs();
+  live?.stage('suites', { total: tasks.length });
   const t0 = Date.now();
   await runPool(tasks, { jobs, serial: SERIAL_SUITES, onResult: (i, r) => {
     const f = tasks[i].name;
@@ -507,7 +512,40 @@ async function apiChecks(sb) {
       for (let i = 0; i < 20 && fs.existsSync(pidFile); i++) { try { fs.unlinkSync(pidFile); } catch { await new Promise(r => setTimeout(r, 150)); } }
     }
   });
-  await check(S, 'pupitre', '/api/pupitre : santé (stall, processus perdu, PID vivant), file, pool', async () => {
+  // User request (2026-10-20): « Je ne vois pas que le test de non regression
+  // est en cours sur orchestrateur-dev. C'est un probleme. »
+  await check(S, 'regression-live', 'Non-régression visible pendant qu’elle tourne : /api/regressions (en cours, progression, KO, lanceur), pastille du pupitre, entrée du journal d’activité, lien vers le rapport (servi seulement sous .regress/, refusé s’il a été remplacé), lancement mort = « interrompue »', async () => {
+    if (!fs.existsSync(path.join(sb.root, 'scripts', 'regression-live.mjs'))) NA('suivi absent de cet état du code');
+    const F = await import(pathToFileURL(path.join(REPO, 'tests', 'regress-live-fixture.mjs')).href);
+    const beta = path.join(sb.root, 'projects', 'beta'), gamma = path.join(sb.root, 'projects', 'gamma');
+    try {
+      const run = F.writeRunning(beta);
+      const fin = F.writeFinished(gamma);
+      const dead = F.writeRunning(gamma, { id: 'r-20261020T070000-3', pid: 999998 });
+      await sleep(2200);   // server cache: 2 s
+      const all = await json('/api/regressions');
+      const b = all.projects.find(p => p.project === 'beta'), g = all.projects.find(p => p.project === 'gamma');
+      assert(all.running === 1 && b?.running[0]?.id === run.id && b.running[0].progress === 'suites 3/10 · 1 KO' && b.running[0].launcher.by === 'script du chef (recette)', `en cours : ${JSON.stringify(b)}`);
+      assert(g && !g.running.length && g.recent.some(r => r.id === fin.id && r.status === 'ko') && g.recent.some(r => r.id === dead.id && r.status === 'interrupted'), `historique / interrompue : ${JSON.stringify(g)}`);
+      const row = (await json('/api/pupitre')).fleet.find(r => r.name === 'beta');
+      assert(row?.regression?.status === 'running' && row.regression.suites.total === 10, `pupitre : ${JSON.stringify(row?.regression)}`);
+      const j = await json('/api/project/beta/journal?n=5');
+      assert((j.regressions || []).some(r => r.id === run.id), 'journal sans la non-régression');
+      const rep = (await json('/api/regressions/gamma')).recent.find(r => r.id === fin.id).report;
+      const rr = await get(rep);
+      assert(rr.status === 200 && (await rr.json()).at === fin.reportAt, `rapport : HTTP ${rr.status}`);
+      assert((await get(`/api/regressions/beta/report/${run.id}`)).status === 404, 'rapport d’un lancement en cours servi avant la fin');
+      assert((await get('/api/regressions/gamma/report/r-inconnu')).status === 404 && (await get('/api/regressions/gamma/report/..%2Fx')).status === 400, 'identifiant inconnu / invalide');
+      const evil = F.writeFinished(gamma, { id: 'r-20261020T060000-4', report: false });
+      fs.appendFileSync(path.join(gamma, '.regress', 'history.ndjson'), JSON.stringify({ ...evil, id: 'r-20261020T050000-5', report: '../../config.json' }) + '\n');
+      fs.writeFileSync(path.join(gamma, fin.report), JSON.stringify({ at: '2026-10-20T09:59:00.000Z' }));
+      await sleep(2200);
+      assert((await get('/api/regressions/gamma/report/r-20261020T050000-5')).status === 404, 'rapport hors de .regress/ servi');
+      assert((await get(rep)).status === 410, 'rapport remplacé par un lancement plus récent : servi comme s’il était le bon');
+      return `beta en cours (${b.running[0].progress}), gamma : rouge + interrompue, rapport servi puis 410`;
+    } finally { F.clearRuns(beta); F.clearRuns(gamma); }
+  });
+  await check(S, 'pupitre', '/api/pupitre : santé (stall, processus perdu, PIDvivant), file, pool', async () => {
     const p = await json('/api/pupitre');
     const by = Object.fromEntries(p.fleet.map(r => [r.name, r]));
     assert(p.fleet.length === 14, `${p.fleet.length} lignes`);
@@ -1963,10 +2001,13 @@ async function restartCheck(sb) {
 let sbPromise = null;
 let staleWatch = null;
 const t0 = Date.now();
+const reportOut = () => opt('--out') || path.join(REGRESS_DIR, `report-${safeLabel}.json`);
+const requestedMode = () => (selection && !selection.full ? (selection.kind === 'perimeter' ? 'perimeter' : 'targeted')
+  : (flag('--no-suites') || flag('--no-browser')) ? 'partial' : 'full');
 function writeReport(tree, extra = {}) {
   const c = { OK: 0, KO: 0, NA: 0 };
   for (const r of results) c[r.status]++;
-  const out = opt('--out') || path.join(REGRESS_DIR, `report-${safeLabel}.json`);
+  const out = reportOut();
   const narrowed = selection && !selection.full;
   const commit = (spawnSync('git', ['-C', REPO, 'rev-parse', source.ref || 'HEAD'], { encoding: 'utf8' }).stdout || '').trim() || null;
   // "full" = every stage on every suite: the only kind a production jump accepts.
@@ -1988,7 +2029,8 @@ async function abortStale(info) {
   console.log(`\n${staleMessage(diff)}`);
   for (const c of liveSuites) killOwnTree(c.pid);
   try { const sb = await sbPromise; if (sb && !flag('--keep')) await sb.stop(); } catch { /* not started */ }
-  const { out } = writeReport(info.start, { stale: { ...info, changed: diff.paths, more: diff.more } });
+  const { out, c, report: rep } = writeReport(info.start, { stale: { ...info, changed: diff.paths, more: diff.more } });
+  live?.finish({ status: 'stale', counts: c, reportAt: rep.at, durationS: Math.round((Date.now() - t0) / 1000) });
   console.log(`=== PÉRIMÉE : arrêtée après ${Math.round((Date.now() - t0) / 1000)} s — rapport (refusé à la livraison) : ${out}`);
   console.log('=== LIVRAISON : REFUSÉE — contenu modifié pendant l’exécution, relancer sur le contenu final');
   process.exit(STALE_EXIT);
@@ -1997,6 +2039,14 @@ async function abortStale(info) {
 async function main() {
   fs.mkdirSync(REGRESS_DIR, { recursive: true });
   console.log(`\n=== Non-régression — état testé : ${label} ===\n`);
+  if (process.env.ORCH_REGRESS_LIVE !== '0') {
+    try {
+      live = createLiveRun({ root: REPO, label, mode: requestedMode(), argv: process.argv.slice(2) });
+      live.setReport(path.relative(REPO, path.resolve(reportOut())).split(path.sep).join('/'));
+      // Any other way out (crash, early exit) still leaves a final status.
+      process.on('exit', (code) => { if (!live.finished) live.finish({ status: code === 0 ? 'ok' : 'error', durationS: Math.round((Date.now() - t0) / 1000) }); });
+    } catch (e) { console.log(`   (suivi en direct indisponible : ${e.message})`); }
+  }
   if (source.worktree && !flag('--no-stale-stop')) {
     staleWatch = createStaleWatch({ read: () => worktreeTree(REPO), onStale: (info) => { abortStale(info); } });
     if (staleWatch.start) console.log(`   contenu testé : arbre ${staleWatch.start.slice(0, 10)} — arrêt immédiat s’il change en cours de route`);
@@ -2007,7 +2057,7 @@ async function main() {
   const runHttp = !narrowed || selection.http;
   const runBrowser = !flag('--no-browser') && (!narrowed || selection.browser);
   if (!runHttp) console.log('\n── 2. Instance de test : non touchée par cette modification (ciblée)');
-  else console.log('\n── 2. Instance de test (autre port, fixtures, faux claude)');
+  else { console.log('\n── 2. Instance de test (autre port, fixtures, faux claude)'); live?.stage('http'); }
   let sb = null;
   if (runHttp) try {
     sbPromise = startSandbox(source, safeLabel, { port: opt('--port') || null });
@@ -2022,6 +2072,7 @@ async function main() {
       await apiChecks(sb);
       if (runBrowser) {
         console.log('\n── 3. Navigateur (Edge / Playwright)');
+        live?.stage('navigateur');
         const { browserChecks } = await import('./_regression_browser.mjs');
         await browserChecks(sb, { check, record, NA, assert, sleep, until, shots: opt('--shots') });
       }
@@ -2043,6 +2094,7 @@ async function main() {
   const tree = staleWatch?.start || (source.worktree ? worktreeTree(REPO)
     : source.ref ? (spawnSync('git', ['-C', REPO, 'rev-parse', `${source.ref}^{tree}`], { encoding: 'utf8' }).stdout || '').trim() || null : null);
   const { report, out, c, mode } = writeReport(tree);
+  live?.finish({ status: c.KO ? 'ko' : 'ok', counts: c, reportAt: report.at, durationS: Math.round((Date.now() - t0) / 1000) });
   console.log(`\n=== ${mode === 'full' ? 'COMPLÈTE' : mode === 'targeted' ? 'CIBLÉE' : mode === 'perimeter' ? 'PAR PÉRIMÈTRE' : 'PARTIELLE'} : ${c.OK} OK · ${c.KO} KO · ${c.NA} NA — ${Math.round((Date.now() - t0) / 1000)} s — rapport : ${out}`);
   const gate = checkReport(report, { knownKo: readKnownKo(REPO) });
   for (const k of gate.accepted) console.log(`KO accepté (docs/known-ko.json) : ${k.id} — ${k.reason}`);
