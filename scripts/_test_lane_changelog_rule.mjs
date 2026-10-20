@@ -276,6 +276,29 @@ section('11. lanes.dir : couloirs hors de la racine de l’orchestrateur');
   }
 }
 
+// ---------------------------------------------------------------------------
+// Pipelines phase 0 b, decision 9 (« tout comme recommandé », 2026-10-20,
+// explicit agreement for this ⚠ test): in a lane, Livrer by the PROGRAM writes
+// the changelog.d fragment from the model's text — never the version nor the
+// CHANGELOG — and the integrator then assigns the version, as in section 1.
+section('12. Livrer par le programme dans un couloir : un fragment valide, la version reste à l’intégrateur');
+{
+  const { deliverRelease } = await import('./code-delivery.mjs');
+  const P = makeRepo('L', { files: { 'docs/USER_REQUIREMENTS.md': '| date | demande | test | version |\n|---|---|---|---|\n' } });
+  const t = await start(P, 1, 'Tâche L');
+  write(t.dir, 'l.txt', 'L\n');
+  const fragment = `changelog.d/${t.task}.md`;
+  const d = deliverRelease(t.dir, { versionFiles: ['package.json'], changelog: 'CHANGELOG.md', requirements: 'docs/USER_REQUIREMENTS.md' },
+    { bump: 'minor', changelog: '### Added\n\n- feature L', requirement: '| 2026-10-20 | « L » | t | {version} |' }, { lane: { fragment }, run: 'p-l' });
+  const f = lanes.readFragments(t.dir).find(x => x.file === fragment);
+  ok(d.ok && f && f.bump === 'minor' && !f.bumpDefaulted && /feature L/.test(f.body), `fragment écrit par le programme, hausse déclarée (${JSON.stringify(f)})`, d.why);
+  ok(JSON.parse(read(path.join(t.dir, 'package.json'))).version === '1.0.0' && read(path.join(t.dir, 'CHANGELOG.md')) === CL0, 'ni la version ni le CHANGELOG du couloir ne sont touchés');
+  ok(/\| à l’intégration \|/.test(read(path.join(t.dir, 'docs', 'USER_REQUIREMENTS.md'))) && !g(t.dir, 'status', '--porcelain').stdout.trim(), 'ligne d’exigence ajoutée (version « à l’intégration »), tout commité');
+  const r = finish(P, t);
+  ok(r.outcome === 'integrated' && r.version === '1.1.0' && new RegExp(`## \\[1\\.1\\.0\\] - ${today}\\n\\n### Added\\n\\n- feature L`).test(read(path.join(P.path, 'CHANGELOG.md'))),
+    `intégration : version 1.1.0 attribuée par l’intégrateur, entrée tirée du fragment (${r.outcome} ${r.version})`, r.why);
+}
+
 try { fs.rmSync(T, { recursive: true, force: true }); } catch {}
 console.log(`\n${fail ? '✗' : '✓'} ${pass} réussis, ${fail} échoués`);
 process.exit(fail ? 1 : 0);

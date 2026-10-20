@@ -394,6 +394,17 @@ function pipelineStep(text) {
   const bad = once(process.env.FAKE_PIPE_BAD, step);
   const w = (rel, s) => { const abs = path.isAbsolute(rel) ? rel : path.join(cwd, rel); fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, s); };
   const g = (...a) => spawnSync('git', ['-c', 'user.name=fake', '-c', 'user.email=fake@localhost', ...a], { cwd, encoding: 'utf8' });
+  // Livrer done by the program (phase 0 b): the model writes only the text.
+  // FAKE_PIPE_BAD=livrer → no CHANGELOG section; FAKE_PIPE_TEXT_TOUCH=1 → also
+  // edits README.md (forbidden); FAKE_PIPE_BUMP=minor|major (default patch).
+  if (/^LIVRAISON=texte/m.test(text)) {
+    const bump = /^bump: patch\|minor\|major/m.test(text) ? `---\nbump: ${process.env.FAKE_PIPE_BUMP || 'patch'}\n---\n\n` : '';
+    const changelog = bad ? '' : '## CHANGELOG\n\n### Added\n\n- double() : multiplie par deux\n\n';
+    const req = /^## Exigence/m.test(text) ? '## Exigence\n\n| 2026-10-20 | « double » | test/pipe.test.mjs | {version} |\n\n' : '';
+    if (process.env.FAKE_PIPE_TEXT_TOUCH === '1') fs.appendFileSync(path.join(cwd, 'README.md'), 'touché par le model\n');
+    w(artefact, `${bump}${changelog}${req}## Livré\n\nLa fonction double().\n`);
+    return;
+  }
   // Catalog steps (phase 6) carry MODIFIER=… lines: same id as a dev step does not mean same contract.
   if (/^MODIFIER=/m.test(text)) return catalogStep(text, step, artefact, bad, w, once);
   switch (step) {

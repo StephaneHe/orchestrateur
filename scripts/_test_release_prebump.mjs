@@ -135,6 +135,38 @@ const l4 = r.run ? livrerSteps(r.run) : [];
 ok(r.code === 2 && l4.length >= 2 && l4.every(s => s.status === 'refused' && /pas d’entrée « ## \[1\.14\.1\] »/.test(s.why || '')), `refusé : pas d’entrée CHANGELOG pour 1.14.1 (${l4.map(s => s.why).join(' | ')})`, r.out.slice(-800));
 reset();
 
+// ---------------------------------------------------------------------------
+// Pipelines phase 0 b, decision 9 (« tout comme recommandé », 2026-10-20,
+// explicit agreement for this ⚠ test): with `codeDeliver`, the PROGRAM writes
+// the release. Sections 1-4 above stay as they are (switch off = the model's
+// delivery); here the same guarantees, with the program doing the writing.
+section('5. Livrer par le programme (décision 9) : jamais un second incrément, entrée et exigence exigées');
+{
+  const mr = JSON.parse(fs.readFileSync(path.join(T, 'model-routing.json'), 'utf8'));
+  mr.enforcement.tuning = { codeDeliver: ['P'] };
+  fs.writeFileSync(path.join(T, 'model-routing.json'), JSON.stringify(mr));
+}
+r = await go([REQ, '--mode', 'complet'], { FAKE_PIPE_ITEMS: '2', FAKE_PIPE_ITEM_BUMP: '2' });
+const s5 = r.run ? runState(r.run) : {};
+const l5 = r.run ? livrerSteps(r.run) : [];
+ok(r.code === 0 && s5.status === 'done' && l5.length === 1 && l5[0].status === 'ok', `version incrémentée par un item : Livrer du programme accepté du premier coup (${l5.map(s => `${s.status} ${s.why || ''}`).join(' | ')})`, r.out.slice(-1200));
+ok(version() === '1.14.1', `aucun second incrément : 1.14.0 → ${version()}`);
+ok(g('show', '--name-only', '--format=', 'HEAD').stdout.trim() === 'docs/USER_REQUIREMENTS.md' && /\| 1\.14\.1 \|/.test(fs.readFileSync(path.join(P, 'docs', 'USER_REQUIREMENTS.md'), 'utf8')), 'commit de livraison : la seule ligne d’exigence (entrée CHANGELOG de l’item gardée telle quelle)');
+reset();
+r = await go([REQ, '--mode', 'complet'], { FAKE_PIPE_ITEMS: '2', FAKE_PIPE_ITEM_BUMP: '2:req' });
+const l5b = r.run ? livrerSteps(r.run) : [];
+ok(r.code === 0 && l5b.length === 1 && l5b[0].status === 'ok' && subjects().length === 2 && !g('status', '--porcelain').stdout.trim(), `version, entrée et exigence déjà commitées : aucun commit de plus (${subjects().join(' | ')})`, r.out.slice(-800));
+reset();
+r = await go([REQ, '--mode', 'complet'], { FAKE_PIPE_ITEMS: '2', FAKE_PIPE_ITEM_BUMP: '2:nolog' });
+const l5c = r.run ? livrerSteps(r.run) : [];
+ok(r.code === 0 && l5c.length === 1 && l5c[0].status === 'ok' && /## \[1\.14\.1\] - /.test(fs.readFileSync(path.join(P, 'CHANGELOG.md'), 'utf8')) && version() === '1.14.1',
+  `incrément sans entrée CHANGELOG : le programme écrit l’entrée « ## [1.14.1] » exigée par le même critère (${l5c.map(s => `${s.status} ${s.why || ''}`).join(' | ')})`, r.out.slice(-800));
+reset();
+r = await go([REQ, '--mode', 'complet'], { FAKE_PIPE_ITEMS: '2' });
+const l5d = r.run ? livrerSteps(r.run) : [];
+ok(r.code === 0 && l5d.length === 1 && l5d[0].status === 'ok' && version() === '1.14.1', `aucun incrément dans l’exécution : le programme incrémente une fois (${version()})`, r.out.slice(-800));
+reset();
+
 srv.close();
 try { fs.rmSync(T, { recursive: true, force: true }); } catch {}
 console.log(`\n${fail === 0 ? '✓' : '✗'} ${pass} réussis, ${fail} échoués`);

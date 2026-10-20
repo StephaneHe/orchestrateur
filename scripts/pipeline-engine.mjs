@@ -56,6 +56,7 @@ import { foldTo, commitWork, itemCommitMessage, setAsideWork, reapplyWork, head 
 import { readFragments } from './lanes.mjs';
 import { cleanTuning, runTuning } from './pipeline-tuning.mjs';
 import { judgeCitedPaths, observedInTurn } from './cited-paths.mjs';
+import { releasePlan, parseDeliveryText, deliverRelease, deliverCommit } from './code-delivery.mjs';
 
 /** Changelog fragment a lane task delivers (P9; same slug as the integrator's, scripts/lanes.mjs). */
 export function laneFragmentPath(task) { return `changelog.d/${String(task).replace(/[^\w.-]/g, '_')}.md`; }
@@ -660,6 +661,7 @@ function stepPrompt(ctx, step, extra) {
       break;
     }
     case 'livrer': {
+      if (ctx.deliveryMode === 'release') { deliveryTextPrompt(L, ctx, art, T); break; }
       L.push('Ton rôle : LIVRER et DOCUMENTER (règles de la flotte), dans cet ordre :');
       if (ctx.coveredItems?.length) L.push(`Comportement(s) DÉJÀ assuré(s) par le code existant, sans nouveau code de production (le test ajouté sert de documentation) : ${ctx.coveredItems.map(coveredLabel).join(' ; ')}. Mentionne-le dans l'entrée CHANGELOG et dans ${art('livraison.md')}.`);
       if (ctx.acceptedDefects?.length) L.push(`Défauts ACCEPTÉS explicitement par l'utilisateur, livrés en connaissance de cause : ${ctx.acceptedDefects.map(d => `${d.item != null ? `[item ${d.item}] ` : ''}${d.description}`).join(' ; ')}. Mentionne-les dans l'entrée CHANGELOG (problèmes connus) et dans ${art('livraison.md')}.`);
@@ -699,6 +701,88 @@ function stepPrompt(ctx, step, extra) {
   return L.join('\n');
 }
 
+/**
+ * Livrer done by the program (phase 0 b, decision 9): the model writes only
+ * the text of the delivery; version, CHANGELOG, requirement line and commit
+ * are the code's (code-delivery.mjs), then the same Livrer criterion runs.
+ */
+function deliveryTextPrompt(L, ctx, art, T) {
+  const { cfg } = ctx;
+  const cl = cfg.changelog || 'CHANGELOG.md';
+  L.push('LIVRAISON=texte');
+  L.push('MODIFIER=non');
+  const does = ctx.lane ? `le fragment ${ctx.lane.fragment}`
+    : ctx.prebump ? `l'entrée « ## [${ctx.prebump.to}] » de ${cl} (la version est DÉJÀ incrémentée par un item de cette exécution : ${ctx.prebump.from} → ${ctx.prebump.to})`
+      : `la version (${(cfg.versionFiles || []).join(', ') || 'aucun fichier de version'}) et l'entrée de ${cl}`;
+  L.push(`Ton rôle : rédiger le TEXTE de la livraison, et seulement lui. Le programme de l'orchestrateur écrit lui-même ${does}${cfg.requirements ? `, la ligne de ${cfg.requirements}` : ''} et le commit, puis vérifie ${cfg.testCommand ? `${T} vert` : 'le résultat'}${cfg.buildCommand ? ` et le build` : ''}.`);
+  if (ctx.coveredItems?.length) L.push(`Comportement(s) DÉJÀ assuré(s) par le code existant (le test ajouté sert de documentation) : ${ctx.coveredItems.map(coveredLabel).join(' ; ')}. Mentionne-le dans l'entrée.`);
+  if (ctx.acceptedDefects?.length) L.push(`Défauts ACCEPTÉS explicitement par l'utilisateur : ${ctx.acceptedDefects.map(d => `${d.item != null ? `[item ${d.item}] ` : ''}${d.description}`).join(' ; ')}. Mentionne-les dans l'entrée (problèmes connus).`);
+  if (ctx.release) {
+    const it = (d) => (d.group === 0 ? 'travail d’avant la montée en complet' : `item ${d.group} « ${d.text} »`);
+    L.push(`Items DÉJÀ livrés, chacun dans son commit : ${ctx.release.delivered.map(d => `${it(d)} (${d.commit.slice(0, 7)})`).join(' ; ')}. L'entrée décrit ces items.`);
+    if (ctx.release.aside.length) L.push(`Items MIS DE CÔTÉ, non livrés (seulement « restant à faire ») : ${ctx.release.aside.map(a => it(a)).join(' ; ')}.`);
+  }
+  L.push(`Écris ${art('livraison.md')}, exactement sous cette forme :`);
+  if (!ctx.prebump || ctx.lane) L.push('---', 'bump: patch|minor|major', '---   (patch : correction ; minor : fonctionnalité ; major : changement incompatible)');
+  L.push('## CHANGELOG', 'les sections Keep a Changelog de cette livraison (### Added, ### Fixed, ### Changed…), SANS la ligne « ## [X.Y.Z] - date » : le programme l’écrit');
+  if (cfg.requirements) L.push('## Exigence', `la ligne à ajouter à ${cfg.requirements}, au format de ce fichier (lis ses dernières lignes) : date, demande verbatim, tests associés ; écris {version} à la place du numéro de version`);
+  L.push('## Livré', 'ce qui a été livré, en quelques lignes');
+  L.push('Ne modifie AUCUN fichier du projet et ne lance ni git add ni git commit : le programme le fait, et refuse l’étape si un fichier a changé.');
+}
+
+/**
+ * Applies the model's delivery text (phase 0 b). → {ok:true, …} | {ok:false,
+ * why, changed, textProblem?}. The model must not have touched the project.
+ */
+function releaseFromText(ctx, step, before, after) {
+  const { cwd, cfg } = ctx;
+  const touched = changedFiles(before, after).filter(f => !isLocalOnly(f));
+  if (touched.length) return { ok: false, textProblem: true, changed: touched, why: `étape de texte : le model ne modifie aucun fichier du projet, le programme fait la livraison (modifiés : ${touched.slice(0, 8).join(', ')})` };
+  if (git(cwd, ['rev-parse', 'HEAD']).out !== ctx.headAtStep) return { ok: false, textProblem: true, changed: [], why: 'étape de texte : le model ne commite pas, le programme fait le commit' };
+  const text = parseDeliveryText(readArtefact(ctx, step.artefact), { needBump: !ctx.prebump || !!ctx.lane, needRequirement: !!cfg.requirements });
+  if (text.error) return { ok: false, textProblem: true, changed: [], why: `${step.artefact} : ${text.error}` };
+  const d = deliverRelease(cwd, cfg, text, { prebump: ctx.lane ? null : ctx.prebump, versionBase: ctx.versionBase, lane: ctx.lane, run: ctx.run });
+  return d.ok ? d : { ...d, changed: [] };
+}
+
+/**
+ * Mettre en forme by the program (lever 3), from relecture.json: no
+ * correction, or the text lives in the artefact (both allowed by the « nothing
+ * to do » rule of 0.65.0), or every correction is an exact replacement
+ * {fichier, avant, apres} found once in its file. Otherwise null: the model.
+ */
+function formatPlan(ctx, step) {
+  const c = step.checks || {};
+  const j = parseJsonArtefact(readArtefact(ctx, c.applies?.artefact || 'relecture.json') || '');
+  if (!j || !Array.isArray(j.corrections)) return null;
+  const list = j.corrections.filter(Boolean);
+  const inArtefact = c.applies?.unlessMarker && new RegExp(`\\b${c.applies.unlessMarker}\\b`).test(readArtefact(ctx, c.applies.markerIn) || '');
+  if (!list.length || inArtefact) return { nothing: true, why: !list.length ? 'la relecture ne liste aucune correction' : 'le texte est dans l’artefact (texte final dans relecture.json)', count: list.length };
+  const edits = [];
+  for (const x of list) {
+    if (!x || typeof x !== 'object' || typeof x.fichier !== 'string' || typeof x.avant !== 'string' || typeof x.apres !== 'string' || !x.avant) return null;
+    const rel = x.fichier.replace(/\\/g, '/').replace(/^\.\//, '');
+    if (path.isAbsolute(rel) || rel.split('/').includes('..') || (c.onlyGlobs && !isTestFile(rel, c.onlyGlobs))) return null;
+    let s; try { s = fs.readFileSync(path.join(ctx.cwd, rel), 'utf8'); } catch { return null; }
+    if (s.split(x.avant).length !== 2) return null;
+    edits.push({ fichier: rel, avant: x.avant, apres: x.apres });
+  }
+  return { edits };
+}
+function applyFormatPlan(ctx, step, plan) {
+  const art = path.join(ctx.artDir, step.artefact);
+  if (plan.nothing) {
+    fs.writeFileSync(art, `# Mise en forme\n\n${step.checks?.nothing || 'RIEN_A_METTRE_EN_FORME'} — ${plan.why} : rien à appliquer aux documents du projet (fait par le programme, aucun model).\n`);
+    return { ok: true };
+  }
+  for (const e of plan.edits) {
+    const f = path.join(ctx.cwd, e.fichier);
+    fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace(e.avant, () => e.apres));
+  }
+  fs.writeFileSync(art, `# Mise en forme\n\nCorrections de la relecture appliquées par le programme (remplacements exacts, aucun model) :\n\n${plan.edits.map(e => `- \`${e.fichier}\` : « ${e.avant.slice(0, 120)} » → « ${e.apres.slice(0, 120)} »`).join('\n')}\n`);
+  return { ok: true };
+}
+
 /** The « nothing to do » instruction, with every section the artefact must still
  *  carry: the marker alone would otherwise be refused by the sections check. */
 export function nothingHint(c, exact = false) {
@@ -711,6 +795,11 @@ export function nothingHint(c, exact = false) {
 function catalogStepPrompt(L, ctx, step, art, T) {
   const c = step.checks || {};
   L.push(`Ton rôle : ${step.role}`);
+  // Lever 3: exact corrections are applied by the program, without a model turn.
+  if (ctx.tuning?.codeFormat && step.id === 'relire' && c.json?.corrections) {
+    L.push('CORRECTIONS_EXACTES=oui');
+    L.push('Une correction d’un document du projet s’écrit, si possible, en remplacement exact : {"fichier": "chemin/relatif.md", "avant": "texte exact, présent une seule fois dans le fichier", "apres": "texte corrigé"} — le programme l’applique lui-même. Une correction qui demande du jugement (reformuler, restructurer) reste une phrase : elle sera faite par un model.');
+  }
   if (step.prerun === 'scans') L.push(`Sortie des scanners lancés par l'orchestrateur : ${art('scans-sortie.txt')} (lis-la).`);
   if (step.independent?.length) L.push(`Indépendance : ${step.independent.join(', ')} n'est pas disponible pendant cette étape (retiré par l'orchestrateur) — fais ton propre examen.`);
   const machine = [];
@@ -2588,11 +2677,51 @@ export async function runPipeline(o) {
     return finish({ code: 2, paused: true, limit: 'doutes', question, result: body, notice });
   };
 
+  // ── Phase 0 b/3: steps the PROGRAM does instead of a model turn ──────────
+  // Same record, same criterion as a model's attempt; a refusal of the
+  // program's own work is deterministic (`noRetry`): no identical retry.
+  const programStep = (step, attempt, key, info, work) => {
+    const t0 = Date.now();
+    const before = snapshot(cwd);
+    writeEvent({ type: 'system', subtype: 'pipeline_step_start', pipeline: { run, step: step.id, key, slot: info.slot, attempt }, byCode: true,
+      text: `étape ${step.title} — faite par le programme${attempt > 1 ? ` — essai ${attempt}` : ''}` });
+    let c;
+    try { c = work(before); } catch (e) { c = { ok: false, why: `erreur du programme : ${e.message}` }; }
+    const after = snapshot(cwd);
+    if (c.ok && !c.checked) c = checkCriteria(ctx, step, before, after);
+    const rec = { id: step.id, key, title: step.title, slot: info.slot, model: null, source: 'code', attempt, durationMs: Date.now() - t0, costUsd: null, exit: 0,
+      status: c.ok ? 'ok' : 'refused', why: c.ok ? null : c.why, changed: c.changed?.slice(0, 50) };
+    if (c.test) rec.test = { ok: c.test.ok, code: c.test.code, ms: c.test.ms };
+    return { rec, crit: { ...c, noRetry: !c.ok }, info, before, after };
+  };
+  const writeArtefactNote = (step, text) => { try { fs.appendFileSync(path.join(artDir, step.artefact), text); } catch { /* artefact folder gone */ } };
+
   // ── Une étape : un tour, sur le model de sa case, jeton signé ────────────
   const runStep = async (step, attempt, extra) => {
     const info = resolveCase(readAssignments(root), step.chain);
     const n = String(state.steps.length + 1).padStart(2, '0');
     const key = `${n}-${step.id}`;
+    // A delivery without version (Rédaction, media): one commit, by the program.
+    if (ctx.deliveryMode === 'commit') {
+      return programStep(step, attempt, key, info, () => {
+        const d = deliverCommit(cwd, { title: String(state.request || '').split('\n').find(l => l.trim()) || step.title, run });
+        if (!d.ok) return { ok: false, why: d.why };
+        fs.writeFileSync(path.join(artDir, step.artefact), `# Livraison\n\nCommit ${d.commit.slice(0, 12)} fait par le programme de l’orchestrateur (aucun model) : les fichiers modifiés par l’exécution, sans version ni CHANGELOG.\n`);
+        return { ok: true };
+      });
+    }
+    // Mettre en forme by the program (lever 3): no correction, text kept in
+    // the artefact, or exact replacements only; anything else = the model.
+    if (step.id === 'mettre-en-forme' && ctx.tuning?.codeFormat) {
+      const plan = formatPlan(ctx, step);
+      if (plan) {
+        const r = programStep(step, attempt, key, info, () => applyFormatPlan(ctx, step, plan));
+        if (r.rec.status === 'ok') return r;
+        restoreFiles(cwd, r.before, r.after, null);
+        writeEvent({ type: 'system', subtype: 'pipeline_format_fallback', pipeline: { run, step: step.id, key }, why: r.rec.why,
+          text: `mise en forme par le programme impossible (${String(r.rec.why).split('\n')[0].slice(0, 200)}) : l’étape est confiée au model` });
+      }
+    }
     // Calibrated context (0.99.0): a TDD step's session is its item's, the
     // review's is its group's, Livrer has its own — not the whole run's history.
     const sessionGroup = stepSessionGroup({ step, model: info.model, item: ctx.item, reviewGroup: state.reviewGroup ?? ctx.reviewScope?.group ?? null });
@@ -2686,6 +2815,22 @@ export async function runPipeline(o) {
     }
     ctx.stepLogFile = path.join(runDir, `${key}.jsonl`);
     ctx.citedReported = null;
+    // Livrer by the program (phase 0 b, decision 9): the model wrote the text
+    // only; the code writes the release, then the SAME criterion is checked.
+    if (ctx.deliveryMode === 'release') {
+      const d = releaseFromText(ctx, step, before, after);
+      const after2 = snapshot(cwd);
+      const c = d.ok ? checkCriteria(ctx, step, before, after2) : d;
+      rec.status = c.ok ? 'ok' : 'refused';
+      rec.why = c.ok ? null : c.why;
+      rec.changed = c.changed?.slice(0, 50);
+      rec.byCode = 'version, CHANGELOG, exigence et commit écrits par le programme';
+      if (c.test) rec.test = { ok: c.test.ok, code: c.test.code, ms: c.test.ms };
+      if (c.ok) writeArtefactNote(step, `\n\n## Livraison faite par le programme\n\n${c.version ? `- version ${c.version}\n` : ''}- commit ${String(c.commit || '').slice(0, 12)}${c.noCommit ? ' (aucun commit nécessaire : déjà livré)' : ''}\n`);
+      // A text problem is the model's to fix (new try); a refusal of the
+      // program's release (red suite, build…) would repeat identically.
+      return { rec, crit: { ...c, noRetry: !c.ok && !d.textProblem }, info, before, after: after2, log };
+    }
     const c = checkCriteria(ctx, step, before, after);
     // Lever 1: accepted cited paths that are not files of the project are said, never silent.
     if (ctx.citedReported?.length) rec.citedReported = ctx.citedReported.slice(0, 20);
@@ -3090,6 +3235,16 @@ export async function runPipeline(o) {
       }
       try { fs.unlinkSync(path.join(artDir, 'revue.json')); } catch {}
     }
+    // Livrer by the program (phase 0 b): decided per step, said when the
+    // project keeps the model delivery (a version format the code cannot write).
+    ctx.deliveryMode = null;
+    if (delivering && ctx.tuning?.codeDeliver && isGit) {
+      if (step.crit === 'livrer' || (step.id === 'livrer' && !step.kind && !step.checks)) {
+        const p = releasePlan(cwd, cfg, { deliveryFixes: ctx.deliveryFixes, lane: ctx.lane });
+        if (p.ok) ctx.deliveryMode = 'release';
+        else writeEvent({ type: 'system', subtype: 'pipeline_code_deliver_skipped', pipeline: { run, step: id }, why: p.why, text: `livraison confiée au model, comme avant : ${p.why}` });
+      } else if (step.kind === 'deliver' && !step.crit) ctx.deliveryMode = 'commit';
+    }
     let maxAttempts = step.id === 'vert' ? limits.greenAttempts : limits.criteriaAttempts;
     // An honest "already covered" claim refused on form (missing proof, test not
     // rewritten after a refused try) is not a failure: it does not consume the
@@ -3143,6 +3298,7 @@ export async function runPipeline(o) {
       // Un essai refusé n'est pas gardé : retour à l'état d'avant l'essai.
       if (!step.judge && r.before && r.after) restoreFiles(cwd, r.before, r.after, delivering ? foldBase : null);
       if (step.judge && r.before && r.after) restoreFiles(cwd, r.before, r.after, null);
+      if (r.crit?.noRetry && delivering) git(cwd, ['reset', '-q']);
       retryWhy = r.rec.why;
       // A step criterion not met (red suite, protected test touched…) is a
       // detected problem: reported now, even if the next try fixes it.
@@ -3153,7 +3309,8 @@ export async function runPipeline(o) {
         writeEvent({ type: 'system', subtype: 'pipeline_retry_not_counted', pipeline: { run, step: step.id, key: r.rec.key, attempt },
           text: `essai ${attempt} de « ${step.title} » non compté : « déjà couvert » déclaré, à compléter (${plainWhy(r.rec.why)})` });
       }
-      if (attempt >= maxAttempts) {
+      // The program's own work refused (phase 0 b/3): a new try would repeat it identically.
+      if (attempt >= maxAttempts || r.crit?.noRetry) {
         const limit = step.id === 'vert' ? 'green' : 'criteria';
         // An item's own step (4a/4b/4c, its Review) stops only that item.
         const g = ctx.reviewScope ? ctx.reviewScope.group : ctx.item && ['rouge', 'vert', 'refactor'].includes(step.id) ? groupOf(ctx.item) : step.id === 'vert' && state.fixGroup != null ? state.fixGroup : null;

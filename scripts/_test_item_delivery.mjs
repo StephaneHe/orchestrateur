@@ -259,6 +259,27 @@ ok(r.code === 0 && s7s.status === 'abandoned' && s7s.abandonedBy === 'simplifier
 ok(/aside-item-/.test(r.evs.find(e => e.type === 'result')?.result || ''), 'la clôture liste les correctifs des items mis de côté');
 reset();
 
+// ---------------------------------------------------------------------------
+// Pipelines phase 0 b, decision 9 (« tout comme recommandé », 2026-10-20,
+// explicit agreement for this ⚠ test): with `codeDeliver`, each item is still
+// committed by the engine after its own Review; the single release that
+// groups them is written by the PROGRAM (the model writes only its text).
+section('8. Livrer par le programme (décision 9) : items livrés un par un, puis UNE version écrite par le programme');
+reset();
+{
+  const mr = JSON.parse(fs.readFileSync(path.join(T, 'model-routing.json'), 'utf8'));
+  mr.enforcement.tuning = { codeDeliver: ['P'] };
+  fs.writeFileSync(path.join(T, 'model-routing.json'), JSON.stringify(mr));
+}
+r = await go(['Ajoute la multiplication par deux et trois', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '2' });
+const s8 = subjects();
+ok(r.code === 0 && s8.length === 3 && /^feat\(item 1\)/.test(s8[0]) && /^feat\(item 2\)/.test(s8[1]) && /^chore\(release\): v1\.0\.1/.test(s8[2]), `commits : un par item, puis la version du programme (${s8.join(' | ')})`, r.out.slice(-1200));
+ok(filesOf('HEAD') === 'CHANGELOG.md,docs/USER_REQUIREMENTS.md,package.json' && version() === '1.0.1', `commit de version : version, CHANGELOG et exigence seulement (${filesOf('HEAD')})`);
+const st8 = runState(r.run);
+ok(st8.releases?.length === 1 && st8.releases[0].version === '1.0.1' && st8.delivered.length === 2 && !g('status', '--porcelain').stdout.trim(), 'run.json : 2 livraisons, 1 version ; arbre propre');
+ok(st8.steps.filter(s => s.id === 'livrer').every(s => s.status === 'ok' && s.byCode), 'Livrer : accepté, fait par le programme');
+reset();
+
 srv.close();
 try { fs.rmSync(T, { recursive: true, force: true }); } catch {}
 console.log(`\n${fail === 0 ? '✓' : '✗'} ${pass} réussis, ${fail} échoués`);
