@@ -212,7 +212,7 @@ section('6. Ce qui attend l’utilisateur, lu dans les logs');
 // ---------------------------------------------------------------------------
 section('7. De bout en bout : vrai lanceur du model (faux claude), vrai git');
 const fakeEnv = (extra = {}) => ({ ...process.env, CLAUDE_BIN: FAKE, FAKE_CLAUDE_ECHO_MODEL: '1', FAKE_CLAUDE_LATENCY_MS: '5', FAKE_CLAUDE_TOOL_USES: '0', ...extra });
-function engine(name, { activityAgoMin = 20, waitAgoMin = 6, enabled = true, env = fakeEnv(), repo = 'git', runModel = null, kind = 'question', activatedAgoMin = 60 } = {}) {
+function engine(name, { activityAgoMin = 20, waitAgoMin = 6, enabled = true, env = fakeEnv(), repo = 'git', runModel = null, kind = 'question', activatedAgoMin = 60, waitOf = null } = {}) {
   const root = freshRoot(name);
   const logsDir = path.join(root, 'logs');
   // The rule was switched on before the wait was born (0.123.0: older waits are backlog).
@@ -221,7 +221,7 @@ function engine(name, { activityAgoMin = 20, waitAgoMin = 6, enabled = true, env
   const proj = repo === 'git' ? gitRepo(path.join(root, 'proj')) : path.join(root, 'nogit');
   fs.mkdirSync(proj, { recursive: true });
   if (repo === 'git') fs.writeFileSync(path.join(proj, 'a.txt'), 'v1 + travail non commité\n');
-  const wait = kind === 'permission'
+  const wait = waitOf ? waitOf(Date.now() - waitAgoMin * MIN) : kind === 'permission'
     ? { key: 'perm:p-aaaaaaaaaaaa', kind, project: 'P', lane: 0, since: Date.now() - waitAgoMin * MIN, deadline: Date.now() + 10 * MIN, question: 'Autoriser Bash : curl -X POST https://paiement.example/charge', context: { id: 'p-aaaaaaaaaaaa', tool: 'Bash', preview: 'curl -X POST https://paiement.example/charge' } }
     : { key: `log:P:0:${name}`, kind, project: 'P', lane: 0, since: Date.now() - waitAgoMin * MIN, question: 'Je fais A ou B ? Je recommande A.', context: { lastText: 'NEEDS_USER_INPUT: Je fais A ou B ? Je recommande A.' } };
   const calls = { apply: [], report: [] };
@@ -536,6 +536,89 @@ section('9. Incident du 2026-10-20 : lecture, arriéré, lacune non présentée,
     A.presence.lastInteraction = now; A.presence.lastSent = now - 10_000;
     ok(A.presenceDue(now, doc('visible', true)) === false, 'un battement par minute au plus');
   }
+}
+
+// ---------------------------------------------------------------------------
+// User decision (2026-10-20, verbatim): « Réponse en votre absence face à une
+// limite de pipeline.: applique la recommandation » (KG synthesis, decision 6).
+// The limit stays a pause (decision 14 of the pipelines, _test_pipeline_gates
+// untouched); in the user's absence Opus may answer it: once per run, git
+// return point first, answer marked « 🤖 auto », never « abandonner », options
+// derived from the diagnosed cause.
+section('10. Limite de pipeline en votre absence : une fois par exécution, point de retour, « 🤖 auto », jamais abandonner');
+{
+  const RUN = 'p-20261020T120000-abc123';
+  const diag = (recommend = 'découper') => ({ cause: 'La liste compte 19 tests (maximum 15).', kind: 'too_big',
+    options: [{ key: 'découper', does: 'je livre ce qui est fait ; le reste devient des demandes nommées.' },
+      { key: 'prolonger', does: 'j’accepte les 19 tests dans cette exécution seulement.' },
+      { key: 'changer le model', does: 'choisissez un autre model puis « continuer ».' },
+      { key: 'simplifier', does: 'je clos l’exécution.' }, { key: 'livrer sans eux', does: 'j’arrête ici.' },
+      { key: 'abandonner', does: 'je clos l’exécution sans rien livrer.' }],
+    recommend: { key: recommend, why: 'parce que.' } });
+  const limitWait = (since, { limit = 'items', run = RUN, d = diag(), key = `log:P:0:${since}` } = {}) => ({ key, kind: 'pause', project: 'P', lane: 0, since,
+    question: 'Limite atteinte : que faire ?', context: { lastText: 'NEEDS_USER_INPUT: Limite atteinte.', run, pipeline: 'dev', pausedLimit: limit, diagnosis: d } });
+  const { guardrails } = AA.loadGuardrails(ROOT);
+
+  // 10a — what counts as a limit, which options remain.
+  ok(AA.isLimitPause(limitWait(1)) && !AA.isLimitPause(limitWait(1, { limit: 'doutes' })) && !AA.isLimitPause({ kind: 'question', context: { pausedLimit: 'items' } }), 'pause de limite reconnue (items, review, duration…), pas une autre pause');
+  ok(['items', 'review', 'duration', 'item_tests', 'items_blocked'].every(l => AA.LIMIT_PAUSES.includes(l)), 'les limites de budget du moteur sont couvertes (items, tours de revue, durée, tests par item, items mis de côté)');
+  ok(AA.limitOptions(diag()).map(o => o.key).join() === 'découper,prolonger', 'options dérivées de la cause, sans abandonner / simplifier / livrer sans eux / changer le model', AA.limitOptions(diag()));
+
+  // 10b — never « abandonner » (nor any option that closes the run).
+  const W = limitWait(1);
+  for (const bad of ['abandonner, la limite est atteinte', 'simplifier', 'livrer sans eux', 'changer le model', 'continuer'])
+    ok(AA.normalizeAnswer(W, { answer: bad }).ok === false, `réponse « ${bad} » refusée sur une limite`);
+  const good = AA.normalizeAnswer(W, { answer: 'découper — la liste dépasse de 4 tests.', safeAnswer: 'abandonner' });
+  ok(good.ok && good.safeAnswer === '', 'réponse « découper » acceptée ; une option sûre « abandonner » est retirée', good);
+  ok(AA.normalizeAnswer(limitWait(1, { d: { ...diag(), options: diag().options.filter(o => ['abandonner', 'simplifier'].includes(o.key)) } }), { answer: 'abandonner' }).ok === false, 'limite dont le menu ne propose que la clôture : aucune réponse acceptée');
+
+  // 10c — the prompt shows only the allowed options and says why.
+  const p = AA.answerPrompt(W, { guardrails, idleMin: 15, waitMin: 5 });
+  ok(/PIPELINE LIMIT/.test(p) && /ONCE for this run/.test(p) && /NEVER choose an option that closes the run/.test(p), 'la consigne d’Opus annonce la limite, la réponse unique, l’interdiction de clore');
+  ok(p.includes('« découper »') && p.includes('« prolonger »') && !p.includes('- « abandonner »') && !p.includes('- « changer le model »'), 'seules les options autorisées sont proposées à Opus');
+  ok(/not allowed here/.test(AA.answerPrompt(limitWait(1, { d: diag('abandonner') }), { guardrails, idleMin: 15, waitMin: 5 })), 'recommandation « abandonner » de l’orchestrateur : non suivie, Opus choisit parmi les options autorisées');
+
+  // 10d — once per run.
+  const S = { ...AA.DEFAULT_SETTINGS, projects: [] };
+  const now = Date.parse('2026-10-20T12:00:00Z');
+  const idle = AA.idleInfo({ activity: { at: now - 30 * MIN }, now, settings: S });
+  const due = (waits, ledger = []) => AA.dueWaits({ waits, now, idle, settings: S, ledger }).map(w => w.key);
+  const second = limitWait(now - 6 * MIN, { limit: 'review', key: 'second' });
+  const answered = [{ key: 'first', run: RUN, limitPause: true, status: 'applied', project: 'P', idleSince: 0 }];
+  ok(due([second]).join() === 'second', 'première limite d’une exécution : due');
+  ok(due([second], answered).length === 0, 'seconde limite de la même exécution : elle attend l’utilisateur');
+  const cls = AA.classifyWaits({ waits: [second], settings: S, idle, ledger: answered });
+  ok(cls.backlog[0]?.backlog === 'limite-deja-repondue' && /une fois/.test(cls.backlog[0].backlogText), 'listée dans l’arriéré avec sa raison', cls.backlog[0]);
+  for (const st of ['failed', 'submitted', 'abandoned']) ok(due([second], [{ ...answered[0], status: st }]).join() === 'second', `une tentative « ${st} » (rien répondu) ne compte pas`);
+  ok(due([limitWait(now - 6 * MIN, { run: 'p-20261020T130000-def456', key: 'other' })], answered).join() === 'other', 'une autre exécution garde sa réponse');
+  ok(due([{ ...limitWait(now - 6 * MIN, { limit: 'doutes', key: 'doubt' }) }], answered).join() === 'doubt', 'une pause qui n’est pas une limite n’est pas concernée');
+  const onlyClose = limitWait(now - 6 * MIN, { key: 'close', d: { ...diag(), options: diag().options.filter(o => o.key === 'abandonner') } });
+  ok(AA.classifyWaits({ waits: [onlyClose], settings: S, idle }).backlog[0]?.backlog === 'limite-sans-choix', 'limite sans option autorisée : elle attend l’utilisateur');
+
+  // 10e — end to end: return point, « 🤖 auto », once.
+  {
+    const t = engine('limit', { waitOf: (since) => limitWait(since), env: fakeEnv({ FAKE_CLAUDE_AUTO_ANSWER: JSON.stringify({ answer: 'découper — 19 tests pour 15 : une exécution plus courte reste vérifiable.', engages: [], concerns: [], safeAnswer: '', reason: 'recommandation suivie' }) }) });
+    const rec = (await t.e.sweep()).answered;
+    const text = t.calls.apply[0]?.final.text || '';
+    ok(rec?.status === 'applied' && rec.limitPause && rec.pausedLimit === 'items' && rec.run === RUN, 'limite répondue à la place de l’utilisateur absent', rec);
+    ok(text.startsWith('découper') && text.includes(AA.LIMIT_MARK) && rec.answer === text, `réponse envoyée : le mot du menu, marquée « ${AA.LIMIT_MARK} »`, text);
+    ok(rec.recovery?.git?.tag === `auto-answer/${rec.id}` && git(t.proj, 'tag', '-l', rec.recovery.git.tag) === rec.recovery.git.tag, 'point de retour (tag git) créé avant d’appliquer', rec.recovery);
+    ok(AA.decisionWhat(rec).startsWith('limite de pipeline') && /une seule réponse automatique par exécution/.test(AA.decisionText(rec)) && AA.decisionText(rec).startsWith(AA.MARK), 'carte : « limite de pipeline », la borne est dite', AA.decisionText(rec));
+    ok(AA.limitAnswered(limitWait(Date.now(), { limit: 'review' }), AA.readLedger(t.logsDir)), 'le registre retient qu’une limite de cette exécution a reçu sa réponse');
+  }
+  {
+    const t = engine('limit-abandon', { waitOf: (since) => limitWait(since), env: fakeEnv({ FAKE_CLAUDE_AUTO_ANSWER: JSON.stringify({ answer: 'abandonner', engages: [], safeAnswer: 'abandonner' }) }) });
+    const rec = (await t.e.sweep()).answered;
+    ok(rec?.status === 'failed' && t.calls.apply.length === 0, 'Opus répond « abandonner » : rien n’est envoyé', rec);
+  }
+  {
+    const t = engine('limit-nogit', { repo: 'none', waitOf: (since) => limitWait(since), env: fakeEnv({ FAKE_CLAUDE_AUTO_ANSWER: JSON.stringify({ answer: 'prolonger', engages: [] }) }) });
+    const rec = (await t.e.sweep()).answered;
+    ok(rec?.status === 'submitted' && t.calls.apply.length === 0 && /point de retour obligatoire/.test(rec.why) && t.calls.report.length === 1, 'sans point de retour possible : rien n’est répondu, la limite est soumise à l’utilisateur', rec);
+  }
+  // 10f — decision 14 stays: the module never resumes a run by itself.
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'auto-answer.mjs'), 'utf8');
+  ok(!/pipeline-engine\.mjs/.test(src) && !/runPipeline|answerPausedRun/.test(src), 'la réponse automatique ne reprend jamais une exécution elle-même : elle répond à la question posée (décision 14 tenue)');
 }
 
 fs.rmSync(TMP, { recursive: true, force: true });

@@ -11,6 +11,36 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.126.0] - 2026-10-20
+
+User decision (2026-10-20, verbatim): « Réponse en votre absence face à une
+limite de pipeline.: applique la recommandation » (KG synthesis, decision 6).
+Decision 14 of the pipelines (« continuer » automatique : non) still holds: the
+engine never crosses a limit by itself, it pauses and asks. In the user's
+absence, Opus 5.5 may now answer that question, within four bounds.
+
+### Added
+- (server) Automatic answer on a pipeline budget limit pause (`items`,
+  `review`, `duration`, `item_tests`, `items_blocked`; `LIMIT_PAUSES` of
+  `scripts/auto-answer.mjs`). Exhausted attempts (`green`, `criteria`) stay
+  under the smart-pause rule of 0.122.0 (its requirement test keeps
+  « abandonner » as their non-engaging option): extending the bounds to them
+  is left to the user.
+  - **once per run**: a second limit of the same run waits for the user
+    (backlog `limite-deja-repondue`); a failed, submitted or abandoned attempt
+    does not count;
+  - **git return point mandatory**: without a tag, nothing is answered and the
+    limit is submitted to the user;
+  - the answer sent to the run ends with « 🤖 auto » (`LIMIT_MARK`), and the
+    card says « limite de pipeline » with the bound;
+  - **never an option that closes the run** (« abandonner », « simplifier »,
+    « livrer sans eux ») nor « changer le model »: only the options of the
+    smart menu derived from the diagnosed cause (`limitOptions`); a menu with
+    nothing else is backlog `limite-sans-choix`; an orchestrator
+    recommendation outside them is not followed.
+- Requirement test: section 10 of `_test_auto_answer.mjs`.
+  `_test_pipeline_gates.mjs` is unchanged (the limit is still a pause).
+
 ## [0.125.0] - 2026-10-20
 
 User rule, recalled on 2026-10-20 (verbatim): « Aucune non regression ne doit

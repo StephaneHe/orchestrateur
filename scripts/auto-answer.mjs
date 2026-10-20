@@ -39,7 +39,7 @@ import crypto from 'node:crypto';
 import { spawn, execFileSync } from 'node:child_process';
 import { writeFileAtomic } from './atomic-file.mjs';
 import { tailLines, deriveState, isPhantomResult } from './fleet-status-core.mjs';
-import { matchOptionKey } from './pause-diagnosis.mjs';
+import { matchOptionKey, OPTION_KEYS } from './pause-diagnosis.mjs';
 
 export const AUTO_MODEL = 'claude-opus-5-5';
 export const MODEL_LABEL = 'Opus 5.5';
@@ -49,6 +49,35 @@ export const SETTINGS_FILE = 'auto-answer-settings.json';
 export const GUARDRAILS_FILE = path.join('data', 'auto-answer-guardrails.json');
 export const LEDGER_MAX = 500;
 export const BY = 'réponse automatique';
+
+// Pipeline limit pauses (KG synthesis, decision 6; user, 2026-10-20: « Réponse
+// en votre absence face à une limite de pipeline.: applique la
+// recommandation »). Decision 14 of the pipelines still holds: the engine never
+// crosses a limit by itself, it pauses and asks. In the user's absence Opus may
+// answer that question, within four bounds: once per run, a git return point
+// first, an answer marked « 🤖 auto », never an option that closes the run.
+// Budget limits only. Exhausted attempts (`green`, `criteria`) are error
+// pauses under the smart-pause rule (0.122.0), whose requirement test keeps
+// « abandonner » as their non-engaging option: extending these bounds to them
+// needs the user's decision.
+export const LIMIT_PAUSES = Object.freeze(['items', 'review', 'duration', 'item_tests', 'items_blocked']);
+export const LIMIT_MARK = '🤖 auto';
+// Never picked on a limit: `abandon` closes the run (abandonner, simplifier,
+// livrer sans eux); `model` only works after the user changes the Models page.
+export const LIMIT_FORBIDDEN_EFFECTS = Object.freeze(['abandon', 'model']);
+export const isLimitPause = (w) => w?.kind === 'pause' && LIMIT_PAUSES.includes(w.context?.pausedLimit);
+/** The options of a limit pause the automatic answer may choose (derived from the diagnosed cause). */
+export function limitOptions(diagnosis) {
+  return (diagnosis?.options || []).filter(o => OPTION_KEYS[o.key] && !LIMIT_FORBIDDEN_EFFECTS.includes(OPTION_KEYS[o.key]));
+}
+/** The menu words a pause answer must start with ([] = free answer). */
+function pauseMenu(wait) {
+  if (wait.kind !== 'pause') return [];
+  return (isLimitPause(wait) ? limitOptions(wait.context?.diagnosis) : wait.context?.diagnosis?.options || []).map(o => o.key);
+}
+const LIMIT_COUNTED = ['running', 'applied', 'safe'];
+/** Has this run's limit already been answered automatically once? */
+export const limitAnswered = (wait, ledger = []) => ledger.some(d => d.limitPause && d.run && d.run === wait.context?.run && LIMIT_COUNTED.includes(d.status));
 
 // The five guardrails decided by the user. The versioned file may add cases or
 // guardrails; it can never remove one of these (loadGuardrails re-adds it).
@@ -274,6 +303,8 @@ export const BACKLOG_TEXT = {
   'avant-activation': 'née avant l’activation de la règle : jamais traitée automatiquement',
   'avant-retour': 'née avant votre dernier retour : vous l’avez eue sous les yeux, elle vous revient',
   'non-presentee': 'lacune jamais présentée (page Models) : jamais traitée automatiquement',
+  'limite-deja-repondue': 'limite de pipeline : la réponse automatique a déjà répondu une fois pour cette exécution, la suivante vous attend',
+  'limite-sans-choix': 'limite de pipeline sans option autorisée (seulement abandonner ou changer le model) : elle vous attend',
 };
 
 /**
@@ -284,7 +315,7 @@ export const BACKLOG_TEXT = {
  * backlog, listed for the user and never answered automatically.
  * presented: { [waitKey]: epoch ms }.
  */
-export function classifyWaits({ waits, settings, idle, presented = {} }) {
+export function classifyWaits({ waits, settings, idle, presented = {}, ledger = [] }) {
   const activatedAt = Date.parse(settings.activatedAt || '') || 0;
   const eligible = [], backlog = [];
   for (const w of waits) {
@@ -292,6 +323,8 @@ export function classifyWaits({ waits, settings, idle, presented = {} }) {
     if (w.since < activatedAt) reason = 'avant-activation';
     else if (Number.isFinite(idle?.presentSince) && w.since < idle.presentSince) reason = 'avant-retour';
     else if (w.kind === 'gap' && !presented[w.key]) reason = 'non-presentee';
+    else if (isLimitPause(w) && limitAnswered(w, ledger)) reason = 'limite-deja-repondue';
+    else if (isLimitPause(w) && !limitOptions(w.context?.diagnosis).length) reason = 'limite-sans-choix';
     if (reason) backlog.push({ ...w, backlog: reason, backlogText: BACKLOG_TEXT[reason] });
     else eligible.push(w.kind === 'gap' ? { ...w, presentedAt: presented[w.key] } : w);
   }
@@ -301,7 +334,7 @@ export function classifyWaits({ waits, settings, idle, presented = {} }) {
 /** Waits to answer now, oldest first, within the caps of this absence. */
 export function dueWaits({ waits, now = Date.now(), idle, settings, ledger = [], presented = {} }) {
   if (!settings.enabled || !idle.idle) return [];
-  waits = classifyWaits({ waits, settings, idle, presented }).eligible;
+  waits = classifyWaits({ waits, settings, idle, presented, ledger }).eligible;
   // An abandoned attempt (user came back) may be retried at the next absence; a failed one is not.
   const done = new Set(ledger.filter(d => d.status !== 'abandoned').map(d => d.key));
   const thisAbsence = ledger.filter(d => d.idleSince === idle.lastAt && d.status !== 'abandoned');
@@ -445,7 +478,16 @@ export function answerPrompt(wait, { guardrails, sources = [], idleMin, waitMin 
     if (c.exchanges?.length) ctx.push('Recent exchanges of this process (oldest first):', ...c.exchanges.map(e => `--- ${e.who} ---\n${e.text}`));
     if (c.lastText) ctx.push('--- full last message (it holds the question and, often, a recommendation) ---', c.lastText);
     if (c.run) ctx.push(`Paused run: ${c.run} (pipeline ${c.pipeline}, pause « ${c.pausedLimit || '?'} »).`);
-    if (c.diagnosis) {
+    if (c.diagnosis && isLimitPause(wait)) {
+      const allowed = limitOptions(c.diagnosis);
+      const rec = allowed.find(o => o.key === c.diagnosis.recommend?.key);
+      ctx.push(`PIPELINE LIMIT (« ${c.pausedLimit} »): the engine never crosses a limit by itself, it asks. You may answer it ONCE for this run, in the user's absence. NEVER choose an option that closes the run (abandonner, simplifier, livrer sans eux) nor « changer le model » (it needs the user's own action): they are not offered below.`,
+        `DIAGNOSED CAUSE (established by the orchestrator): ${c.diagnosis.cause}`,
+        'OPTIONS — your "answer" (and "safeAnswer") MUST start with exactly one of these menu words, nothing else is accepted:',
+        ...allowed.map(o => `- « ${o.key} » : ${o.does}`),
+        rec ? `RECOMMENDED: « ${rec.key} » — ${c.diagnosis.recommend.why}`
+          : `The orchestrator recommended « ${c.diagnosis.recommend?.key || '?'} », which is not allowed here: choose the listed option that acts best on the cause.`);
+    } else if (c.diagnosis) {
       ctx.push(`DIAGNOSED CAUSE (established by the orchestrator): ${c.diagnosis.cause}`,
         'OPTIONS — your "answer" (and "safeAnswer") MUST start with exactly one of these menu words, nothing else is accepted:',
         ...c.diagnosis.options.map(o => `- « ${o.key} » : ${o.does}`),
@@ -513,8 +555,10 @@ const ids = (v) => (Array.isArray(v) ? v.filter(x => typeof x === 'string').map(
 export function normalizeAnswer(wait, j) {
   if (!j || typeof j !== 'object') return { ok: false, why: 'réponse du model illisible (JSON attendu)' };
   const answer = typeof j.answer === 'string' ? j.answer.trim() : '';
-  // A paused run with a smart menu (0.122.0): only one of ITS options is a valid answer.
-  const menu = wait.kind === 'pause' ? (wait.context?.diagnosis?.options || []).map(o => o.key) : [];
+  // A paused run with a smart menu (0.122.0): only one of ITS options is a valid
+  // answer; on a limit, never one that closes the run or needs a model change.
+  const menu = pauseMenu(wait);
+  if (isLimitPause(wait) && !menu.length) return { ok: false, why: 'limite de pipeline sans option autorisée : elle attend l’utilisateur' };
   if (menu.length && !matchOptionKey(answer, menu)) return { ok: false, why: `réponse hors des choix proposés par la pause (${menu.map(k => `« ${k} »`).join(', ')})` };
   if (menu.length && typeof j.safeAnswer === 'string' && !matchOptionKey(j.safeAnswer, menu)) j = { ...j, safeAnswer: '' };
   let decision = null;
@@ -819,7 +863,7 @@ const dur = (min) => (min >= 2 * 1440 ? `${Math.round(min / 1440)} jours` : min 
 
 /** What was decided, in words (« lacune proposée — lacune rejetée »…). */
 export function decisionWhat(rec) {
-  const k = KIND_TEXT[rec.kind] || rec.kind;
+  const k = rec.limitPause ? `limite de pipeline (« ${rec.pausedLimit} »)` : KIND_TEXT[rec.kind] || rec.kind;
   if (rec.status === 'submitted') return `${k} : soumise à votre décision (garde-fou), rien n’a été répondu`;
   if (rec.status === 'failed' || rec.status === 'abandoned' || rec.status === 'running') return `${k} : ${statusText(rec.status)}`;
   const a = rec.decision && ACTION_TEXT[rec.kind]?.[rec.decision];
@@ -857,6 +901,7 @@ export function decisionText(rec) {
   const lines = [head, `Élément : ${decisionTarget(rec).label}`, `Demande : ${String(rec.question || '').replace(/\s+/g, ' ').slice(0, 300)}`];
   if (rec.answer) lines.push(`Réponse : ${rec.decision ? `[${rec.decision}] ` : ''}${String(rec.answer).slice(0, 1200)}`);
   if (rec.reason) lines.push(`Raison : ${rec.reason}`);
+  if (rec.limitPause) lines.push('Limite de pipeline : une seule réponse automatique par exécution, point de retour obligatoire, jamais « abandonner » ; la limite suivante de cette exécution vous attendra.');
   lines.push(`Pourquoi vous étiez considéré inactif : ${inactivityText(rec)}`);
   if (rec.guardrails?.hits?.length) lines.push(`Garde-fous : ${rec.guardrails.hits.join(', ')}`);
   if (rec.recovery) lines.push(rec.recovery.text);
@@ -907,6 +952,7 @@ export function createAutoAnswer(deps) {
       ...(wait.presentedAt ? { presentedAt: new Date(wait.presentedAt).toISOString() } : {}),
       question: String(wait.question || '').slice(0, 4000), model: AUTO_MODEL, status: 'running',
       ...(wait.context?.run ? { run: wait.context.run } : {}), ...(wait.context?.gapKey ? { gapKey: wait.context.gapKey } : {}),
+      ...(isLimitPause(wait) ? { limitPause: true, pausedLimit: wait.context.pausedLimit } : {}),
       ...(wait.context?.id && wait.kind === 'permission' ? { permissionId: wait.context.id } : {}),
     };
     upsertDecision(deps.logsDir, rec);
@@ -922,7 +968,7 @@ export function createAutoAnswer(deps) {
     const vj = v.ok ? parseJsonReply(v.text) : null;
     const verdict = vj && Array.isArray(vj.answerEngages) ? { ok: true, answerEngages: vj.answerEngages, safeEngages: vj.safeEngages || [], why: vj.why || '' }
       : { ok: false, why: v.ok ? 'réponse de vérification illisible' : v.why };
-    const final = enforceGuardrails(wait, ans, verdict, guardrails);
+    let final = enforceGuardrails(wait, ans, verdict, guardrails);
     Object.assign(rec, {
       reason: ans.reason, sources: ans.sources, proposed: { answer: ans.answer, decision: ans.decision },
       guardrails: { hits: final.hits, concerns: final.concerns, verifier: verdict.ok ? { answerEngages: ids(verdict.answerEngages), safeEngages: ids(verdict.safeEngages), why: verdict.why } : { failed: verdict.why } },
@@ -946,6 +992,18 @@ export function createAutoAnswer(deps) {
       return rec;
     }
     rec.recovery = makeRecoveryPoint({ id: rec.id, logsDir: deps.logsDir, repo: deps.repoOf?.(wait) || null, files: deps.filesOf?.(wait) || [] });
+    if (rec.limitPause) {
+      // A limit is answered only with a git return point (« point de retour obligatoire »).
+      if (!rec.recovery.git) {
+        rec.status = 'submitted';
+        rec.why = `limite de pipeline : point de retour obligatoire impossible (${rec.recovery.text}) — rien n’a été répondu`;
+        upsertDecision(deps.logsDir, rec);
+        try { deps.report?.(rec); } catch (e) { log(`[auto-answer] carte : ${e.message}`); }
+        return rec;
+      }
+      final = { ...final, text: `${final.text} — ${LIMIT_MARK} (réponse automatique en votre absence, une seule fois pour cette exécution)` };
+      rec.answer = final.text;
+    }
     rec.status = final.mode === 'safe' ? 'safe' : 'applied';
     upsertDecision(deps.logsDir, rec);
     let r;
@@ -1001,7 +1059,7 @@ export function createAutoAnswer(deps) {
     let waits = [];
     try { waits = await deps.listWaits(); } catch { /* backlog unknown */ }
     const { idle } = state();
-    const { backlog } = classifyWaits({ waits, settings: v.settings, idle, presented: readPresented(deps.logsDir) });
+    const { backlog } = classifyWaits({ waits, settings: v.settings, idle, presented: readPresented(deps.logsDir), ledger: readLedger(deps.logsDir) });
     v.backlog = backlog.sort((a, b) => a.since - b.since).slice(0, 200).map(w => ({ key: w.key, kind: w.kind, project: w.project, lane: w.lane || 0,
       since: new Date(w.since).toISOString(), question: String(w.question || '').slice(0, 300), reason: w.backlog, reasonText: w.backlogText,
       ...(w.context?.gapKey ? { gapKey: w.context.gapKey } : {}), ...(w.context?.run ? { run: w.context.run } : {}) }));

@@ -3048,6 +3048,18 @@ confirmés : « Ces gardes fous sont tres importants, garde les ».
     (affichage seul).
   - Recettes : `_test_auto_answer.mjs` §9, HTTP `auto-answer-presence`,
     navigateur `notif-dock` et `auto-answer-dismiss`.
+- **Limite de pipeline** (0.126.0, décision « applique la recommandation »,
+  synthèse KG décision 6) : la limite reste une pause (décision 14 des
+  Pipelines tenue, le moteur ne la franchit jamais seul). En absence, Opus peut
+  y répondre (`LIMIT_PAUSES` = limites de budget `items`, `review`,
+  `duration`, `item_tests`, `items_blocked` ; `green` / `criteria` restent à la
+  règle des choix intelligents, extension à décider par l'utilisateur) :
+  **une fois par exécution**
+  (`limitAnswered` sur le registre ; ensuite arriéré `limite-deja-repondue`),
+  **tag git obligatoire** (sinon `submitted`), réponse suffixée « 🤖 auto »
+  (`LIMIT_MARK`), seulement les options du menu de la cause **sans** effet
+  `abandon` ni `model` (`limitOptions` ; menu vide ⇒ `limite-sans-choix`).
+  Recette : `_test_auto_answer.mjs` §10.
 
 ## Pauses : la cause d'abord, des choix qui agissent dessus (0.122.0)
 
