@@ -315,7 +315,8 @@ classifier ≈ 7 s par tâche, en parallèle ; code < 1 s.
 Toute livraison suit la règle prod/dev : développement et non-régression dans
 `orchestrateur-dev` (bac à sable sur le port 7778 pour l'instance vivante), tag
 `vX.Y.Z`, puis **bond décidé par l'utilisateur** vers `I:\orchestrateur`
-(`prod-jump.mjs`, non-régression par périmètre). La bascule est un réglage relu à
+(`prod-jump.mjs`, non-régression par périmètre sur orchestrateur-dev, jamais dans la prod :
+règle de l'utilisateur du 2026-10-20, `regression.mjs` refuse en prod depuis 0.125.0). La bascule est un réglage relu à
 chaud : `enforcement.chefMode: "off" | "routage" | "v3"` (`pipeline-enforce.mjs
 chef-mode …`). `"off"` est l'état actuel de la prod.
 

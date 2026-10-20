@@ -117,7 +117,10 @@ En production, le retour arrière est exécuté par le chef :
 
     git -C I:\orchestrateur revert --no-edit pre-status-view-v0.28.0..v0.29.0   # vérifié : arbre identique au tag
     node I:\orchestrateur\scripts\restart-orchestrateur.mjs
-    node I:\orchestrateur\scripts\regression.mjs
+
+puis la non-régression dans `I:\Dev\orchestrateur-dev` sur l'état rétabli,
+jamais dans la prod (règle de l'utilisateur du 2026-10-20 ; `regression.mjs`
+refuse en prod depuis 0.125.0).
 
 ## Captures (instance de test, Edge headless)
 

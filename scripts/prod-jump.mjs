@@ -24,8 +24,9 @@
 //   node scripts/prod-jump.mjs --tag vX.Y.Z --prod I:\orchestrateur [--from origin|<path>] [--apply]
 // Refusals (exit 1): no full green report on the tag, tag unknown, production
 // not clean, a production turn running, no fast-forward possible.
-// After --apply: run the full regression in production, then the chef
-// restarts the server with the user's agreement (never this script).
+// After --apply: the chef restarts the server when the fleet is idle, with the
+// user's agreement (never this script), then the non-regression runs on
+// orchestrateur-dev. Never in production (0.125.0, user rule).
 // ============================================================================
 
 import fs from 'node:fs';
@@ -68,7 +69,7 @@ export function preflight({ dev = DEV, prod, tag, from = 'origin', turnLock = nu
     const knownKo = readKnownKo(dev);
     const found = findProdReport(dev, tree, { plan, knownKo });
     const v = found ? checkProdReport(found.r, { tree, knownKo, plan })
-      : { ok: false, reasons: [`aucune non-régression COMPLÈTE ni PAR PÉRIMÈTRE sur ${tag} : lancer node scripts/regression.mjs --ref ${tag} --perimeters --prod ${prod}`], accepted: [] };
+      : { ok: false, reasons: [`aucune non-régression COMPLÈTE ni PAR PÉRIMÈTRE sur ${tag} : lancer, dans orchestrateur-dev (jamais en prod), node scripts/regression.mjs --ref ${tag} --perimeters --prod ${prod}`], accepted: [] };
     report = { file: found?.f || null, accepted: v.accepted, mode: found?.r.mode || null, plan };
     problems.push(...v.reasons);
   }
@@ -91,15 +92,24 @@ export function preflight({ dev = DEV, prod, tag, from = 'origin', turnLock = nu
       keep = keptOnDisk({ dev, prodHead: head, commit });
     }
   }
-  const plan = [
+  const plan = jumpPlan({ prod, tag, from, keep });
+  return { ok: !problems.length, problems, plan, report, tree, commit, keep };
+}
+
+// 0.125.0, user rule (2026-10-20): « Aucune non regression ne doit se lancer
+// sur orchestrateur. C'etait une regle. Uniquement sur orchestrateur-dev ».
+// The jump never prescribes nor runs a non-regression in production.
+export const AFTER_APPLY = 'Reste : redémarrage par le chef quand la flotte est au repos, puis non-régression sur orchestrateur-dev.';
+
+/** The printed plan: git steps in production, then the restart; no test there. */
+export function jumpPlan({ prod, tag, from = 'origin', keep = [] }) {
+  return [
     `git -C ${prod} tag -a prod-before-${tag} -m "production before the jump to ${tag}"`,
     `git -C ${prod} fetch ${from} tag ${tag}`,
     `git -C ${prod} merge --ff-only ${tag}`,
     ...keep.map(f => `remettre ${f} sur le disque (n'est plus suivi par git depuis ${tag}) : contenu de prod-before-${tag}:${f}`),
-    `node ${path.join(prod, 'scripts', 'regression.mjs')} --perimeters --since prod-before-${tag}   # par périmètre, dans la prod (--full : la complète)`,
-    'redémarrage du serveur par le chef, avec l’accord de l’utilisateur',
+    'redémarrage par le chef quand la flotte est au repos, puis non-régression sur orchestrateur-dev (jamais en prod)',
   ];
-  return { ok: !problems.length, problems, plan, report, tree, commit, keep };
 }
 
 /** Steps 1-3 of the plan (tag, fetch, fast-forward), then the kept files; never restarts anything. */
@@ -143,7 +153,7 @@ async function main() {
   const r = applyJump({ prod: path.resolve(prod), tag, from, keep: p.keep });
   if (!r.ok) { console.error(`[prod-jump] échec à l'étape ${r.step} : ${r.err}`); process.exit(1); }
   for (const f of r.restored) console.log(`[prod-jump] ${f} remis sur le disque (non suivi par git, contenu de prod-before-${tag})`);
-  console.log(`[prod-jump] prod avancée sur ${tag} (retour : git reset --hard prod-before-${tag}). Reste : non-régression par périmètre dans la prod, puis redémarrage par le chef.`);
+  console.log(`[prod-jump] prod avancée sur ${tag} (retour : git reset --hard prod-before-${tag}). ${AFTER_APPLY}`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

@@ -230,8 +230,11 @@ Le chef suit les mêmes règles et porte le badge CHEF.
   git -C I:\orchestrateur revert --no-edit pre-status-view-v0.28.0..v0.29.0   # tous les commits 0.29.0 — ou :
   git -C I:\orchestrateur checkout pre-status-view-v0.28.0 -- server.js public scripts/fleet-status-core.mjs package.json
   node I:\orchestrateur\scripts\restart-orchestrateur.mjs
-  node I:\orchestrateur\scripts\regression.mjs              # la batterie doit repasser au vert
   ```
+
+  Puis la batterie, dans `I:\Dev\orchestrateur-dev` sur l'état rétabli, doit
+  repasser au vert ; jamais dans la prod (règle de l'utilisateur du
+  2026-10-20 ; `regression.mjs` refuse en prod depuis 0.125.0).
 
   Les deux voies ont été rejouées sur l'instance de test. Le code du tag
   donne 48 OK · 1 KO préexistant. Un `git revert` du commit 0.29.0 (`7b80962`)

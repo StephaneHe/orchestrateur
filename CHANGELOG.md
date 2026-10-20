@@ -11,6 +11,40 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.125.0] - 2026-10-20
+
+User rule, recalled on 2026-10-20 (verbatim): « Aucune non regression ne doit
+se lancer sur orchestrateur. C'etait une regle. Uniquement sur
+orchestrateur-dev ». The jump procedure still prescribed a run inside the
+production checkout, and the chef followed it for v0.119.0 and v0.120.0.
+
+### Security
+- (server) `scripts/regression.mjs` refuses to run (exit 65, clear message,
+  before writing anything, every mode) when its own checkout or `--dir` is a
+  production instance. New `scripts/prod-guard.mjs`: `I:\orchestrateur` in
+  any spelling, an `.orchestrateur-instance.json` with `"role": "prod"`, a
+  `config.json` whose project living in that root has a dev (`devOf`), and
+  the add-only `ORCH_PROD_ROOTS` (tests). No waiver.
+
+### Changed
+- (server) `scripts/prod-jump.mjs` neither prescribes nor launches any
+  non-regression in production: the plan (`jumpPlan`) ends with « redémarrage
+  par le chef quand la flotte est au repos, puis non-régression sur
+  orchestrateur-dev », the same message after `--apply` (`AFTER_APPLY`). The
+  refusal without a green report says to run it in orchestrateur-dev (also in
+  `delivery-gate.mjs prod-check`).
+- Docs: `CLAUDE.md` (jump, rollbacks, new rule), `docs/DEV-PROD.md`,
+  `docs/ROUTAGE-SYNTHESE.md`, `docs/PIPELINES-SYNTHESE.md`,
+  `docs/dashboard-status/{SYNTHESE,NON-REGRESSION}.md`: no non-regression in
+  production anywhere.
+- `_test_regression_perimeters.mjs`: the jump plan must no longer contain the
+  production run (changed on the user's request). `_test_stale_run.mjs`
+  copies `prod-guard.mjs` with the other modules of `regression.mjs`.
+
+### Added
+- `scripts/_test_no_prod_regression.mjs` (perimeter `outillage`), line in
+  `docs/USER_REQUIREMENTS.md`.
+
 ## [0.124.0] - 2026-10-20
 
 Knowledge graph, phase 0 b (`docs/KG-SYNTHESE.md`, user decisions of

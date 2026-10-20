@@ -75,7 +75,7 @@ const REPO = path.join(T, 'repo');
 const git = (...a) => spawnSync('git', ['-C', REPO, ...a], { encoding: 'utf8', windowsHide: true });
 fs.mkdirSync(path.join(REPO, 'scripts'), { recursive: true });
 fs.mkdirSync(path.join(REPO, 'docs'), { recursive: true });
-for (const f of ['regression.mjs', '_regression_sandbox.mjs', 'regression-targets.mjs', 'delivery-gate.mjs', 'suite-runner.mjs', 'stale-run.mjs', 'regression-live.mjs', 'atomic-file.mjs'])
+for (const f of ['regression.mjs', '_regression_sandbox.mjs', 'regression-targets.mjs', 'delivery-gate.mjs', 'suite-runner.mjs', 'stale-run.mjs', 'regression-live.mjs', 'atomic-file.mjs', 'prod-guard.mjs'])
   fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(REPO, 'scripts', f));
 const PIDFILE = path.join(T, 'suite.pid');
 fs.writeFileSync(path.join(REPO, 'scripts', '_test_slow.mjs'),

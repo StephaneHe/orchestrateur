@@ -184,8 +184,9 @@ pj = preflight({ dev: R, prod: PROD, tag: 'v1.1.0', from: R });
 ok(!pj.ok && /pas depuis la version en prod/.test(pj.problems.join(' ')), 'prod-jump avec un rapport par périmètre fait depuis une autre base : REFUSÉ', pj.problems.join(' | '));
 putReport(rep);
 pj = preflight({ dev: R, prod: PROD, tag: 'v1.1.0', from: R });
-ok(pj.ok && pj.report.mode === 'perimeter' && pj.plan.some(s => /--perimeters --since prod-before-v1\.1\.0/.test(s)),
-  'prod-jump avec le rapport par périmètre vert depuis la prod : mise en prod possible, régression par périmètre dans la prod au plan', pj.problems.join(' | '));
+// 0.125.0, user rule: no non-regression in production, so none in the plan.
+ok(pj.ok && pj.report.mode === 'perimeter' && !pj.plan.some(s => /regression\.mjs/.test(s)) && pj.plan.some(s => /non-régression sur orchestrateur-dev/.test(s)),
+  'prod-jump avec le rapport par périmètre vert depuis la prod : mise en prod possible, aucune non-régression dans la prod au plan', pj.problems.join(' | ') + '\n' + pj.plan.join('\n'));
 fs.rmSync(PROD, { recursive: true, force: true });
 
 // ---------------------------------------------------------------------------

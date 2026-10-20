@@ -272,9 +272,21 @@ ce sera utile ». Procédure complète : `docs/DEV-PROD.md`.
     --port 7778`. `--port` refuse 7777 et un port occupé.
 - **Bond** (décidé par l'utilisateur, jamais par le musicien dev) : tag
   `vX.Y.Z` vérifié dans la dev, puis, dans la prod sans tour en cours,
-  `git tag -a prod-before-vX.Y.Z`, `git merge --ff-only vX.Y.Z`, régression,
-  redémarrage par le chef. **Retour arrière** : `git reset --hard
-  prod-before-vX.Y.Z`, redémarrage, régression.
+  `git tag -a prod-before-vX.Y.Z`, `git merge --ff-only vX.Y.Z`, puis
+  redémarrage par le chef quand la flotte est au repos, puis non-régression
+  sur orchestrateur-dev. **Retour arrière** : `git reset --hard
+  prod-before-vX.Y.Z`, redémarrage, non-régression sur orchestrateur-dev.
+- **Jamais de non-régression dans la prod** (0.125.0). Règle utilisateur,
+  rappelée le 2026-10-20 : « Aucune non regression ne doit se lancer sur
+  orchestrateur. C'etait une regle. Uniquement sur orchestrateur-dev ».
+  `prod-jump.mjs` n'en prescrit ni n'en lance aucune (après `--apply` :
+  « redémarrage par le chef quand la flotte est au repos, puis non-régression
+  sur orchestrateur-dev »). `regression.mjs` **refuse** (code 65, avant toute
+  écriture) quand sa racine ou `--dir` est une prod (`scripts/prod-guard.mjs` :
+  `I:\orchestrateur`, instance `"role": "prod"`, `config.json` qui déclare sa
+  dev par `devOf`, `ORCH_PROD_ROOTS` en ajout seulement pour les tests).
+  Aucune dérogation. `--prod I:\orchestrateur` (lancé dans la dev) ne fait que
+  lire le commit de la prod. Recette : `_test_no_prod_regression.mjs`.
 - **`TODO_LIST.md` n'est pas versionné** (0.74.2, « Une TODO list ne devrait
   pas etre dans git ») : `.gitignore`, fichier gardé sur le disque. Au bond,
   `prod-jump --apply` le remet sur le disque de la prod depuis
@@ -1102,7 +1114,9 @@ CHANGELOG.
       git -C I:\orchestrateur revert --no-edit pre-status-view-v0.28.0..v0.29.0   # tous les commits de la release, figés par tags
       # ou : git -C I:\orchestrateur checkout pre-status-view-v0.28.0 -- server.js public scripts/fleet-status-core.mjs package.json
       node I:\orchestrateur\scripts\restart-orchestrateur.mjs
-      node I:\orchestrateur\scripts\regression.mjs
+
+  puis la non-régression dans `I:\Dev\orchestrateur-dev`, jamais dans la prod
+  (section « Jamais de non-régression dans la prod »).
 
 - `ssh-server.js`, `src/*.mjs` et `templates/` sont désormais versionnés
   (constaté le 2026-10-10 en clonant la dev) : un checkout propre a tout le

@@ -46,10 +46,14 @@
 //                                                    (par défaut, 0.94.0 : arrêt immédiat, rapport `stale`, code 3)
 //   node scripts/regression.mjs --compare avant.json apres.json [--md sortie.md]
 //
+// Jamais dans la prod (0.125.0, règle de l'utilisateur) : refus, code 65, si ce
+// dépôt ou --dir est une instance de production (scripts/prod-guard.mjs).
+//
 // Statuts : OK · KO · NA (fonction absente de l'état testé, ex. la vue Projets
 // sur un tag antérieur). Seul KO fait échouer.
 // ============================================================================
 
+import { refuseInProd, OWN_ROOT } from './prod-guard.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
@@ -62,6 +66,10 @@ import { runNode, runSuite } from './suite-runner.mjs';
 import { runPool, SERIAL_SUITES, defaultJobs, liveSuites } from './suite-runner.mjs';
 import { createStaleWatch, changedPaths, staleMessage, killOwnTree } from './stale-run.mjs';
 import { createLiveRun } from './regression-live.mjs';
+
+// 0.125.0, user rule: never a non-regression in production (this checkout or
+// --dir), whatever the mode. First statement: nothing is written before it.
+refuseInProd({ root: OWN_ROOT });
 
 // Exit code of a run stopped because the tested content changed (0.94.0).
 const STALE_EXIT = 3;

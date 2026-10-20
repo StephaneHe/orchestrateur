@@ -97,8 +97,15 @@ when.
    git tag -a prod-before-vX.Y.Z -m "production before the jump to vX.Y.Z"
    git fetch origin --tags
    git merge --ff-only vX.Y.Z      # never a merge commit, never a force
-   node scripts/regression.mjs --perimeters --since prod-before-vX.Y.Z   # on the jumped production checkout
    ```
+   **No non-regression ever runs in production** (0.125.0, user rule of
+   2026-10-20: « Aucune non regression ne doit se lancer sur orchestrateur.
+   C'etait une regle. Uniquement sur orchestrateur-dev »). The run that
+   counts is the one made in the dev on the tag (step 1). `regression.mjs`
+   refuses (exit 65) to run in a production checkout or with `--dir` on one
+   (`scripts/prod-guard.mjs`: `I:\orchestrateur`, an instance marked
+   `"role": "prod"`, a checkout whose `config.json` declares its dev with
+   `devOf`); there is no waiver.
    A file that production tracks but the version stops tracking and ignores
    (`TODO_LIST.md` since 0.74.2) is deleted by the fast-forward: `--apply`
    puts it back from `prod-before-vX.Y.Z` (the plan lists it). By hand:
@@ -106,8 +113,9 @@ when.
    A production commit missing from the dev blocks the jump: fetch it
    (`git fetch prod`) and merge it into `dev` before tagging.
 3. Restart the server so that it serves the same version as the scripts. The
-   chef does it with `node scripts/restart-orchestrateur.mjs`, and only if the
-   user agrees.
+   chef does it with `node scripts/restart-orchestrateur.mjs` when the fleet
+   is idle, and only if the user agrees. Then, if needed, a non-regression on
+   `orchestrateur-dev` — never in production.
 4. Push `master` and the tags with the user's authorisation. `master` then
    equals `vX.Y.Z` (fast-forward), so `dev` and `master` share their history.
 
@@ -122,8 +130,9 @@ orchestrator turn running:
 ```
 git reset --hard prod-before-vX.Y.Z    # or: git checkout v<previous>
 node scripts/restart-orchestrateur.mjs # chef, with the user's agreement
-node scripts/regression.mjs
 ```
+then, in `I:\Dev\orchestrateur-dev` (never in production):
+`node scripts/regression.mjs --ref <restored tag>`.
 Every production version is a pushed tag, so any of them can be restored the
 same way.
 
@@ -138,8 +147,8 @@ also brings the dev tags reachable from it), then
 ```
 git -C I:\orchestrateur reset --hard pre-prod-0.95.0   # back to 0.85.1 (60392e1)
 node I:\orchestrateur\scripts\restart-orchestrateur.mjs # chef, user's agreement
-node I:\orchestrateur\scripts\regression.mjs
 ```
+then the non-regression in the dev on the restored state, never in production.
 Checked before relying on it, on a throwaway clone of production (never on the
 live checkout, whose server reads `public/` and the scripts from disk):
 `9d3b678` 0.95.0 → `reset --hard pre-prod-0.95.0` → `60392e1` 0.85.1, clean

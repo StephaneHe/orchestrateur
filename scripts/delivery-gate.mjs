@@ -215,7 +215,7 @@ async function cli() {
     const knownKo = readKnownKo(repo);
     const found = file ? { f: file, r: JSON.parse(fs.readFileSync(file, 'utf8')) } : findProdReport(repo, tree, { plan, knownKo });
     const v = found ? checkProdReport(found.r, { tree, knownKo, plan })
-      : { ok: false, reasons: [`aucune non-régression COMPLÈTE ni PAR PÉRIMÈTRE sur ${ref} (arbre ${tree.slice(0, 10)}) : lancer node scripts/regression.mjs --ref ${ref} --perimeters --prod <dépôt de prod>`], accepted: [] };
+      : { ok: false, reasons: [`aucune non-régression COMPLÈTE ni PAR PÉRIMÈTRE sur ${ref} (arbre ${tree.slice(0, 10)}) : lancer node scripts/regression.mjs --ref ${ref} --perimeters --prod <dépôt de prod> dans orchestrateur-dev (jamais en prod)`], accepted: [] };
     printVerdict(v, found ? `${path.basename(found.f)}, mise en prod de ${ref}` : `mise en prod de ${ref}`);
     process.exit(v.ok ? 0 : 1);
   }

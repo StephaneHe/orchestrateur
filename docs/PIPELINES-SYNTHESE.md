@@ -379,7 +379,8 @@ rouge/vert/refactor **[O]** : voir §2.3 et décisions 13 à 15.
 
 - **Prod/dev** : développement et non-régression dans `orchestrateur-dev` (bac à sable
   sur le port 7778, faux claude, fixtures) ; tag `vX.Y.Z` ; **bond décidé par
-  l'utilisateur** (`prod-jump.mjs`, non-régression par périmètre). Tag de retour
+  l'utilisateur** (`prod-jump.mjs`, non-régression par périmètre sur orchestrateur-dev, jamais dans la prod :
+  règle de l'utilisateur du 2026-10-20, `regression.mjs` refuse en prod depuis 0.125.0). Tag de retour
   `pre-pipelines-<phase>-vX.Y.Z` avant chaque phase. Observation réelle **en prod
   seulement**, après le bond (orchestrateur-dev n'a ni chef vivant ni projet en service).
 - **Bascule à chaud** **[O, F]** : `model-routing.json` → `pipelinesV2 {citedPathsLog,

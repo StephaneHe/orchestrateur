@@ -101,6 +101,7 @@
         "scripts/suite-runner.mjs",
         "scripts/delivery-gate.mjs",
         "scripts/prod-jump.mjs",
+        "scripts/prod-guard.mjs",
         "scripts/stale-run.mjs",
         "scripts/_regression_sandbox.mjs",
         "scripts/_regression_browser.mjs",
@@ -124,7 +125,8 @@
         "_test_todo_untracked.mjs",
         "_test_dev_split.mjs",
         "_test_regression_live.mjs",
-        "_test_config_state_independence.mjs"
+        "_test_config_state_independence.mjs",
+        "_test_no_prod_regression.mjs"
       ],
       "uses": [
         {
