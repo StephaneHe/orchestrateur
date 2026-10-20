@@ -23,6 +23,7 @@ import { spawn } from 'node:child_process';
 import { oneShotClaude, chatCompletion } from './language.mjs';
 import { explicitChoice, normalizeText } from './pipeline-observe.mjs';
 import { PIPELINES, applyCustom } from './model-pipelines.mjs';
+import { effectiveCustom } from './inert-custom.mjs';
 
 export const CLASSIFIER_SLOT = 'routage.classifier';
 export const CLASSIFY_FILE = 'pipeline-classify.ndjson';
@@ -33,7 +34,8 @@ const CHOICES = PIPELINES.filter(p => p.id !== 'routage');
 /** Pipelines offered to the model: the Models page structure, accepted gaps included (their description, never keywords). */
 export function classifierChoices(root) {
   let custom = null;
-  try { custom = JSON.parse(fs.readFileSync(path.join(root, 'model-routing.json'), 'utf8')).custom || null; } catch { /* no file */ }
+  // Decision 7 (switch inertCleanup): non-executable pipelines and keyword attachments are not offered.
+  try { custom = effectiveCustom(JSON.parse(fs.readFileSync(path.join(root, 'model-routing.json'), 'utf8'))) || null; } catch { /* no file */ }
   try { return applyCustom(custom).filter(p => p.id !== 'routage'); } catch { return CHOICES; }
 }
 

@@ -685,7 +685,9 @@
         "scripts/cited-paths.mjs",
         "scripts/pipeline-tuning.mjs",
         "scripts/code-delivery.mjs",
-        "scripts/suite-cache.mjs"
+        "scripts/suite-cache.mjs",
+        "scripts/inert-custom.mjs",
+        "scripts/pipeline-cleanup.mjs"
       ],
       "suites": [
         "_test_pipeline_catalog.mjs",
@@ -716,7 +718,8 @@
         "_test_infra_retry.mjs",
         "_test_cited_paths_log.mjs",
         "_test_code_deliver.mjs",
-        "_test_suite_cache.mjs"
+        "_test_suite_cache.mjs",
+        "_test_inert_cleanup.mjs"
       ],
       "uses": [
         {
@@ -734,6 +737,7 @@
             "_test_code_deliver.mjs",
             "_test_defect_blocks.mjs",
             "_test_dev_instance_pipelines.mjs",
+            "_test_inert_cleanup.mjs",
             "_test_infra_retry.mjs",
             "_test_item_delivery.mjs",
             "_test_item_review.mjs",
@@ -843,6 +847,7 @@
             "_test_code_deliver.mjs",
             "_test_defect_blocks.mjs",
             "_test_dev_instance_pipelines.mjs",
+            "_test_inert_cleanup.mjs",
             "_test_infra_retry.mjs",
             "_test_item_delivery.mjs",
             "_test_item_review.mjs",

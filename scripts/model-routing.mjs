@@ -26,6 +26,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { PIPELINES, LEGACY_MAP, LOCAL_TOOLS, CAPS, slotsOf, applyCustom } from './model-pipelines.mjs';
+import { effectiveCustom } from './inert-custom.mjs';
 
 export { PIPELINES, LEGACY_MAP, LOCAL_TOOLS, CAPS };
 
@@ -210,7 +211,8 @@ export function createModelRouting({ root, cacheFile, fetch: fetchImpl = globalT
 
   /** Pipelines et cases effectifs : le code + les ajouts acceptés (custom). */
   function effective(data = readRouting()) {
-    const pipelines = applyCustom(data.custom);
+    // Decision 7 (switch inertCleanup): inert additions are hidden from the page too.
+    const pipelines = applyCustom(effectiveCustom(data));
     return { pipelines, slots: slotsOf(pipelines) };
   }
 
