@@ -2498,7 +2498,7 @@ app.use((req, res, next) => {
     const a = AutoAnswer.activityOf({ method: req.method, path: req.path, userAgent: req.get('user-agent'), body: req.body });
     if (!a) return;
     const project = typeof req.body?.project === 'string' ? req.body.project.slice(0, 64) : null;
-    try { AutoAnswer.recordActivity(LOGS_DIR, { kind: a.kind, source: clientOf(req), project }); }
+    try { AutoAnswer.recordActivity(LOGS_DIR, { kind: a.kind, source: clientOf(req), project }, Date.now(), { idleMs: AutoAnswer.readSettings(__dirname).idleMin * 60_000 }); }
     catch (e) { debugLog(`[auto-answer] activité non enregistrée : ${e.message}`); }
   });
   next();
@@ -3233,6 +3233,9 @@ const autoAnswer = AutoAnswer.createAutoAnswer({
     ];
   },
   stillOpen: autoStillOpen,
+  // Is the request a decision was about still waiting? (obsolete notifications, 0.123.0)
+  targetOpen: (rec) => autoStillOpen({ key: rec.key, kind: rec.kind, project: rec.project, lane: rec.lane || 0,
+    context: { id: rec.permissionId, gapKey: rec.gapKey } }),
   busy: autoAnswerBusy,
   repoOf: (wait) => (wait.kind === 'gap' ? null : autoWorkDir(wait)),
   filesOf: (wait) => (wait.kind === 'gap' ? [modelRouting.routingFile] : wait.context?.runFile ? [wait.context.runFile] : []),
@@ -3273,7 +3276,24 @@ const autoAnswer = AutoAnswer.createAutoAnswer({
 const AUTO_SWEEP_MS = Number(process.env.ORCH_AUTO_ANSWER_SWEEP_MS) || 30_000;
 setInterval(() => { autoAnswer.sweep().catch(e => console.warn(`[auto-answer] balayage : ${e.message}`)); }, AUTO_SWEEP_MS).unref();
 
-app.get('/api/auto-answer', (req, res) => res.json(autoAnswer.view(Math.min(200, Number(req.query.n) || 50))));
+app.get('/api/auto-answer', async (req, res) => {
+  try { res.json(await autoAnswer.overview(Math.min(200, Number(req.query.n) || 50))); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+// « Écarter » (0.123.0): hidden from the summary, kept in the ledger (history).
+app.post('/api/auto-answer/dismiss', sameOriginOnly, express.json({ limit: '16kb' }), (req, res) => {
+  const b = req.body || {};
+  const ids = Array.isArray(b.ids) ? b.ids.filter(x => typeof x === 'string').slice(0, 500) : null;
+  if (!ids && b.handled !== true) return res.status(400).json({ ok: false, error: 'ids ou handled: true attendu' });
+  const r = autoAnswer.dismiss({ ids, handled: b.handled === true, confirm: b.confirm === true, by: clientOf(req) });
+  if (!r.ok) return res.status(409).json({ ok: false, error: 'décision encore en attente : confirmation requise', needsConfirm: r.needsConfirm, dismissed: r.dismissed });
+  res.json({ ok: true, dismissed: r.dismissed });
+});
+// What the dashboard showed the user (proposed gaps): only those may ever be answered automatically.
+app.post('/api/auto-answer/presented', sameOriginOnly, express.json({ limit: '64kb' }), (req, res) => {
+  const keys = Array.isArray(req.body?.keys) ? req.body.keys.filter(k => typeof k === 'string').slice(0, 500) : [];
+  res.json({ ok: true, recorded: autoAnswer.presented(keys) });
+});
 app.post('/api/auto-answer/settings', sameOriginOnly, express.json({ limit: '2kb' }), (req, res) => {
   const b = req.body || {};
   const r = AutoAnswer.writeSettings(__dirname, { enabled: b.enabled, idleMin: b.idleMin, waitMin: b.waitMin, ...(AUTO_TESTING && b.projects !== undefined ? { projects: b.projects } : {}) },

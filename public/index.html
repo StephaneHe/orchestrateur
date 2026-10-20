@@ -23,7 +23,8 @@
 <!-- v0.45.0 — demandes d'autorisation interactives -->
 <link rel="stylesheet" href="./permissions.css?v=0.45.0">
 <link rel="stylesheet" href="./regress-live.css?v=0.119.0">
-<link rel="stylesheet" href="./auto-answer.css?v=0.121.0">
+<link rel="stylesheet" href="./auto-answer.css?v=0.123.0">
+<link rel="stylesheet" href="./notif-dock.css?v=0.123.0">
 <!-- v0.75.0 — panneau latéral à bascule (TODO ; désactivable : ui.sidePanel=false ou ?todo=0) -->
 <link rel="stylesheet" href="./side-panel.css?v=0.100.0">
 <link rel="stylesheet" href="./id-links.css?v=0.107.0">
@@ -92,11 +93,19 @@
   <!-- ONE system banner at a time (worst wins), full width ------------- -->
   <div id="sysbanner" class="sysbanner" hidden></div>
 
-  <!-- 0.45.0 — demandes d'autorisation en attente (cartes + overlay de détails) -->
-  <div id="perm-band" class="perm-band" hidden aria-live="polite"></div>
-
-  <!-- 0.121.0 — décisions prises à votre place pendant votre absence (résumé au retour) -->
-  <div id="auto-band" class="auto-band" hidden aria-live="polite" aria-label="Réponses automatiques"></div>
+  <!-- 0.123.0 — zone compacte des demandes : hauteur bornée, repliable, jamais par-dessus la page -->
+  <section id="notif-dock" class="notif-dock" hidden aria-label="Demandes et notifications">
+    <div class="nd-head">
+      <button type="button" class="nd-toggle" aria-expanded="true" aria-controls="nd-body">🔔 <span class="nd-count"></span></button>
+      <button type="button" class="nd-collapse-all" title="Replier la zone et les détails ouverts">Tout réduire</button>
+    </div>
+    <div id="nd-body" class="nd-body">
+      <!-- 0.45.0 — demandes d'autorisation en attente (cartes + overlay de détails) -->
+      <div id="perm-band" class="perm-band" hidden aria-live="polite" data-nd-count="0"></div>
+      <!-- 0.121.0 — décisions prises à votre place pendant votre absence (résumé au retour) -->
+      <div id="auto-band" class="auto-band" hidden aria-live="polite" aria-label="Réponses automatiques" data-nd-count="0"></div>
+    </div>
+  </section>
   <div id="auto-overlay" class="auto-overlay" hidden role="dialog" aria-modal="true" aria-label="Réponse automatique">
     <div class="aa-ov-card"><h2>🤖 Réponse automatique (Opus 5.5) <button type="button" class="aa-close" aria-label="Fermer">✕</button></h2>
       <div class="aa-ov-body"></div></div>
@@ -412,7 +421,7 @@
 
 <script src="./permission-denial.js?v=0.45.0"></script>
 <script src="./permission-core.js?v=0.45.0"></script>
-<script src="./permissions.js?v=0.45.0"></script>
+<script src="./permissions.js?v=0.123.0"></script>
 <script src="./pupitre-row.js?v=0.29.1"></script>
 <script src="./pupitre-detail.js?v=0.29.1"></script>
 <!-- salle.js est chargé AVANT app.js : ses fonctions sont donc définies quand
@@ -423,11 +432,12 @@
 <script src="./tts.js?v=0.105.0"></script>
 <script src="./langue.js?v=0.51.0"></script>
 <script src="./regress-live.js?v=0.119.0"></script>
-<script src="./auto-answer.js?v=0.121.0"></script>
+<script src="./auto-answer.js?v=0.123.0"></script>
+<script src="./notif-dock.js?v=0.123.0"></script>
 <script src="./activite.js?v=0.119.0"></script>
 <script src="./salle.js?v=0.45.0"></script>
 <script src="./projets.js?v=0.31.0"></script>
-<script src="./models.js?v=0.66.0"></script>
+<script src="./models.js?v=0.123.0"></script>
 <script src="./side-panel.js?v=0.75.0"></script>
 <script src="./todo-panel.js?v=0.75.0"></script>
 <script src="./git-panel.js?v=0.76.0"></script>

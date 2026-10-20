@@ -11,6 +11,77 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.123.0] - 2026-10-20
+
+Incident of the automatic answer (0.121.0 in production). User report
+(verbatim): « Tu viens d'afficher une petite fenetre pour me prevenir que opus
+5.5 avait pris une decision a ma place alors que je suis actif, et que je ne
+vois aucune question en attente ». Ten-day-old proposed gaps, invisible outside
+the Models page, were rejected while the user was reading the dashboard (no
+counted gesture for 15 min). Then: « elles prennent toute la page, et ne
+donnent pas la possibilite de voir quoique ce soit d'autre » and « La partie
+"Garde-fous — obligatoires, toujours actifs" est trop importante. […] Il faut
+pouvoir aussi discard des notifications qui ne sont plus utiles une fois
+acceptee ou annulee ou obsoletes ».
+
+### Fixed
+
+- (server) **A user who reads is not inactive.** The dashboard sends a presence
+  heartbeat (`POST /api/user-activity {kind: "présence"}`, one a minute at most)
+  while the tab is visible, focused and used in the last 10 minutes (pointer,
+  scroll, keys, opening a panel or a card). `logs/user-activity.json` keeps the
+  start of the current presence period (`presentSince`, a new one after
+  `idleMin` without any sign) and the last real gesture.
+- (server) **Backlog is never answered automatically** (`classifyWaits`). Only
+  waits born after the rule's activation (`activatedAt` in
+  `auto-answer-settings.json`: dated when the rule is switched on, or at the
+  first sweep for a rule enabled by default), after the user's last return,
+  and — for a proposed gap — actually presented to the user
+  (`POST /api/auto-answer/presented`, sent by the Models page when it shows the
+  gaps; the 5-minute delay counts from the presentation). The others are listed
+  in `GET /api/auto-answer` (`backlog`, with the reason) and in the menu
+  (« 📥 Arriéré »).
+- (server) **Each notification says what, on which element and why.**
+  `decisionWhat` (« lacune proposée — lacune rejetée », « demande
+  d’autorisation — autorisée une fois »…), `decisionTarget` (link: gaps of the
+  Models page, run, project) and `inactivityText` (last sign of the user, its
+  kind and source, minutes without activity against the threshold, age of the
+  wait), kept in each decision (`inactivity`).
+- (server) **Undo of a gap decision.** The return point of a gap (copy of
+  `model-routing.json`) was announced with a misleading « git reset --hard … »:
+  it now says « bouton « Annuler » ». Undo only removes the automatic answer's
+  own decision (a rejection removes only its decision; a decision taken since
+  by the user is never touched: 409).
+
+### Added
+
+- (server) **« Écarter »** (`POST /api/auto-answer/dismiss {ids | handled:
+  true, confirm?}`): a handled (applied, non-engaging option, failed,
+  abandoned, undone) or obsolete decision leaves the view and stays in the
+  ledger (`history`, « Historique » in the menu); nothing is erased. Obsolete =
+  its request was closed or answered meanwhile, detected automatically
+  (`decisionPhase`, `targetOpen`). A decision still waiting for the user needs a
+  confirmation (409 `needsConfirm` without it). « Écarter tout ce qui est
+  traité ou obsolète ».
+- (server) **Compact notification dock** (`public/notif-dock.js` +
+  `notif-dock.css`, `#notif-dock`): the permission cards and the automatic
+  answers are grouped under « 🔔 N demandes en attente », bounded height with
+  internal scrolling (32 vh / 18 rem, 35 vh on mobile), never fixed over the
+  page, no focus trap; collapsible, « Tout réduire », collapsed state
+  remembered (`localStorage notif.collapsed`). Each automatic answer is one
+  line (Détail, Annuler, Reporter 1 h, Écarter); each permission card gains
+  « Reporter » (15 min) and « Écarter » (with confirmation: the request stays
+  pending until its own deadline).
+- (android) Presence heartbeat while the app is in the foreground and used
+  (`Api.userActivity`, `MainActivity`): one beat a minute at most, touched in
+  the last 10 minutes. versionName 0.13.0, versionCode 23.
+
+### Changed
+
+- (server) The automatic answer menu shows the guardrails on one folded line
+  « 🔒 5 garde-fous actifs » (detail on unfold). Display only: they stay
+  mandatory, always active and not editable.
+
 ## [0.122.0] - 2026-10-20
 
 User report (verbatim): « Une chose qui me gene c'est de porposer des choix

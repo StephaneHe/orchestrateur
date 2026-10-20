@@ -9,7 +9,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.view.WindowCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
@@ -37,6 +42,7 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         val app = application as OrchestreApp
+        startPresenceLoop()
 
         setContent {
             OrchestreTheme {
@@ -86,7 +92,46 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    // Presence heartbeat (0.13.0 / server 0.123.0): a user reading the app is not
+    // inactive. One beat a minute at most, while in the foreground and touched
+    // in the last 10 minutes.
+    private var lastInteraction = 0L
+    private var lastBeat = 0L
+
+    private fun beat(kind: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastBeat < HEARTBEAT_MS) return
+        lastBeat = now
+        val app = application as OrchestreApp
+        lifecycleScope.launch { app.api.userActivity(kind) }
+    }
+
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        lastInteraction = System.currentTimeMillis()
+        beat("présence")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        lastInteraction = System.currentTimeMillis()
+        beat("retour")
+    }
+
+    private fun startPresenceLoop() {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                while (true) {
+                    delay(15_000)
+                    if (System.currentTimeMillis() - lastInteraction < PRESENCE_WINDOW_MS) beat("lecture")
+                }
+            }
+        }
+    }
+
     companion object {
+        const val HEARTBEAT_MS = 60_000L
+        const val PRESENCE_WINDOW_MS = 10 * 60_000L
         const val ROUTE_JOURNAL = "journal"
         const val ROUTE_DETAIL = "musicien/{name}"
         const val ROUTE_SETTINGS = "reglages"

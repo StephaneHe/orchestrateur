@@ -1,0 +1,17 @@
+/* 0.123.0 — zone compacte des demandes : jamais par-dessus la page.
+   Hauteur bornée, défilement interne ; polices en rem (réglage A− / A+). */
+.notif-dock { flex: 0 0 auto; margin: 0.25rem 0.75rem 0; border: 1px solid var(--line, #444); border-radius: 0.5rem; background: var(--bg-2, rgba(255, 255, 255, 0.03)); position: relative; z-index: 1; }
+.notif-dock[hidden], .nd-body[hidden] { display: none !important; }
+.nd-head { display: flex; align-items: center; gap: 0.5rem; padding: 0.125rem 0.375rem; }
+.nd-toggle { flex: 1 1 auto; text-align: left; background: none; border: 0; color: inherit; font: inherit; font-size: 0.8125rem; font-weight: 600; cursor: pointer; padding: 0.25rem; min-height: 28px; }
+.nd-toggle::after { content: " ▾"; opacity: 0.7; }
+.nd-toggle[aria-expanded="false"]::after { content: " ▸"; }
+.nd-collapse-all { font-size: 0.75rem; min-height: 28px; }
+.nd-body { max-height: min(32vh, 18rem); overflow-y: auto; overscroll-behavior: contain; padding: 0 0.375rem 0.375rem; display: flex; flex-direction: column; gap: 0.375rem; }
+/* The bands live inside the dock: no own margin, no own height. */
+.nd-body > .perm-band, .nd-body > .auto-band { margin: 0; }
+@media (max-width: 720px) {
+  .notif-dock { margin: 0.25rem 0.375rem 0; }
+  .nd-body { max-height: 35vh; }
+  .nd-toggle, .nd-collapse-all { min-height: 44px; }
+}

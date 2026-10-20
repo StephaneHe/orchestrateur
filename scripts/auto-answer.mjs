@@ -23,6 +23,14 @@
 // - Recovery point before applying: git tag (with `git stash create` for
 //   uncommitted work) and file backups; none possible ⇒ noted, work goes on.
 // - Ledger: logs/auto-answers.json — shown to the user on return, with undo.
+// 0.123.0 (incident of 2026-10-20: ten-day-old gaps rejected while the user
+// was reading the dashboard):
+// - presence counts: the dashboard / app send a heartbeat while visible,
+//   focused and used; `presentSince` starts each presence period;
+// - only waits born after the rule's activation AND after the user's last
+//   return, and gaps actually presented, are ever answered; the rest is backlog;
+// - each notification says what, on which element, and why the user was
+//   considered inactive; decisions can be dismissed (kept as history).
 // ============================================================================
 
 import fs from 'node:fs';
@@ -81,9 +89,24 @@ export function readSettings(root) {
     maxTotal: num(j.maxTotal, 0, 1000, D.maxTotal),
     permissionLeadSec: num(j.permissionLeadSec, 0, 3600, D.permissionLeadSec),
     projects: Array.isArray(j.projects) ? j.projects.filter(p => typeof p === 'string').slice(0, 200) : [],
+    // When the rule was switched on: waits born before it are backlog, never answered (0.123.0).
+    activatedAt: typeof j.activatedAt === 'string' && Number.isFinite(Date.parse(j.activatedAt)) ? j.activatedAt : null,
     updatedAt: typeof j.updatedAt === 'string' ? j.updatedAt : null,
     updatedBy: typeof j.updatedBy === 'string' ? j.updatedBy : null,
   };
+}
+
+/**
+ * The rule's activation date, written once when it is missing (a rule enabled
+ * by default before 0.123.0 had none): every wait born before it is backlog.
+ */
+export function ensureActivation(root, now = Date.now()) {
+  const cur = readSettings(root);
+  if (!cur.enabled || cur.activatedAt) return cur;
+  let j = {};
+  try { j = JSON.parse(fs.readFileSync(path.join(root, SETTINGS_FILE), 'utf8')) || {}; } catch { /* none yet */ }
+  writeFileAtomic(path.join(root, SETTINGS_FILE), JSON.stringify({ ...j, activatedAt: new Date(now).toISOString() }, null, 2) + '\n');
+  return readSettings(root);
 }
 
 /** Dashboard writes: the switch and the two delays. Below one minute only for test instances. */
@@ -92,6 +115,7 @@ export function writeSettings(root, patch, { by = 'utilisateur', testing = false
   const next = { ...cur };
   if (patch.enabled !== undefined) {
     if (typeof patch.enabled !== 'boolean') return { ok: false, status: 400, error: 'enabled : true ou false' };
+    if (patch.enabled && !cur.enabled) next.activatedAt = new Date().toISOString();
     next.enabled = patch.enabled;
   }
   const lo = testing ? 0.01 : 1;
@@ -170,17 +194,37 @@ export function activityOf({ method, path: p, userAgent, body }) {
 
 const activityFile = (logsDir) => path.join(logsDir, 'user-activity.json');
 
+// Presence kinds sent by the dashboard / the app while the user is there
+// (reading counts: tab visible and focused, recent pointer, scroll or keys).
+export const PRESENCE_KINDS = Object.freeze(['présence', 'lecture', 'saisie', 'panneau', 'retour']);
+
 export function readActivity(logsDir) {
   try {
     const j = JSON.parse(fs.readFileSync(activityFile(logsDir), 'utf8'));
     const at = Date.parse(j.at);
-    return Number.isFinite(at) ? { at, kind: j.kind || null, source: j.source || null, project: j.project || null } : null;
+    if (!Number.isFinite(at)) return null;
+    const ps = Date.parse(j.presentSince || '');
+    const g = Date.parse(j.lastGestureAt || '');
+    return { at, kind: j.kind || null, source: j.source || null, project: j.project || null,
+      presentSince: Number.isFinite(ps) && ps <= at ? ps : at,
+      lastGestureAt: Number.isFinite(g) ? g : null, lastGestureKind: j.lastGestureKind || null };
   } catch { return null; }
 }
 
-export function recordActivity(logsDir, { kind = 'activité', source = null, project = null } = {}, now = Date.now()) {
+/**
+ * One sign of the user (gesture or presence). `presentSince` is the start of
+ * the current presence period: it starts again after `idleMs` without any sign
+ * (the user's return). Waits born before it are backlog (0.123.0).
+ */
+export function recordActivity(logsDir, { kind = 'activité', source = null, project = null } = {}, now = Date.now(), { idleMs = DEFAULT_SETTINGS.idleMin * 60_000 } = {}) {
   fs.mkdirSync(logsDir, { recursive: true });
-  const rec = { at: new Date(now).toISOString(), kind, source, project };
+  const prev = readActivity(logsDir);
+  const continued = prev && now >= prev.at && now - prev.at < idleMs;
+  const presence = PRESENCE_KINDS.includes(kind);
+  const rec = { at: new Date(now).toISOString(), kind, source, project,
+    presentSince: new Date(continued ? prev.presentSince : now).toISOString(),
+    lastGestureAt: presence ? (prev?.lastGestureAt ? new Date(prev.lastGestureAt).toISOString() : null) : new Date(now).toISOString(),
+    lastGestureKind: presence ? (prev?.lastGestureKind || null) : kind };
   writeFileAtomic(activityFile(logsDir), JSON.stringify(rec) + '\n');
   return rec;
 }
@@ -189,7 +233,30 @@ export function recordActivity(logsDir, { kind = 'activité', source = null, pro
 export function idleInfo({ activity, bootAt = 0, now = Date.now(), settings }) {
   const lastAt = Math.max(activity?.at || 0, bootAt || 0);
   const idleMs = Math.max(0, now - lastAt);
-  return { lastAt, idleMs, idle: idleMs >= settings.idleMin * 60_000 };
+  // The presence period that holds lastAt (the boot when the activity is older).
+  const presentSince = activity && activity.at >= (bootAt || 0) ? (activity.presentSince ?? activity.at) : lastAt;
+  return { lastAt, idleMs, idle: idleMs >= settings.idleMin * 60_000, presentSince };
+}
+
+// What the dashboard actually showed the user (proposed gaps): key → first time.
+const presentedFile = (logsDir) => path.join(logsDir, 'auto-answer-presented.json');
+export function readPresented(logsDir) {
+  try {
+    const j = JSON.parse(fs.readFileSync(presentedFile(logsDir), 'utf8'));
+    const out = {};
+    for (const [k, v] of Object.entries(j.keys || {})) { const t = Date.parse(v); if (Number.isFinite(t)) out[k] = t; }
+    return out;
+  } catch { return {}; }
+}
+export function recordPresented(logsDir, keys, now = Date.now()) {
+  const cur = readPresented(logsDir);
+  let n = 0;
+  for (const k of Array.isArray(keys) ? keys : []) if (typeof k === 'string' && /^gap:.{1,200}$/.test(k) && !cur[k]) { cur[k] = now; n++; }
+  if (!n) return 0;
+  fs.mkdirSync(logsDir, { recursive: true });
+  const all = Object.entries(cur).sort((a, b) => b[1] - a[1]).slice(0, 2000);
+  writeFileAtomic(presentedFile(logsDir), JSON.stringify({ version: 1, keys: Object.fromEntries(all.map(([k, t]) => [k, new Date(t).toISOString()])) }, null, 2) + '\n');
+  return n;
 }
 
 // ---------------------------------------------------------------------------
@@ -197,14 +264,44 @@ export function idleInfo({ activity, bootAt = 0, now = Date.now(), settings }) {
 // ---------------------------------------------------------------------------
 /** When a wait becomes due (permission requests expire on their own: answer before). */
 export function dueAt(wait, settings) {
-  const base = wait.since + settings.waitMin * 60_000;
+  // A gap only starts waiting for the user once it was shown to them.
+  const base = Math.max(wait.since, wait.presentedAt || 0) + settings.waitMin * 60_000;
   if (wait.kind === 'permission' && Number.isFinite(wait.deadline)) return Math.min(base, wait.deadline - settings.permissionLeadSec * 1000);
   return base;
 }
 
+export const BACKLOG_TEXT = {
+  'avant-activation': 'née avant l’activation de la règle : jamais traitée automatiquement',
+  'avant-retour': 'née avant votre dernier retour : vous l’avez eue sous les yeux, elle vous revient',
+  'non-presentee': 'lacune jamais présentée (page Models) : jamais traitée automatiquement',
+};
+
+/**
+ * Which waits the rule may ever answer (0.123.0, incident of 2026-10-20:
+ * ten-day-old gaps, invisible outside the Models page, rejected in the user's
+ * place): born after the rule's activation, after the user's last return, and
+ * — for a proposed gap — actually presented to the user. The others are
+ * backlog, listed for the user and never answered automatically.
+ * presented: { [waitKey]: epoch ms }.
+ */
+export function classifyWaits({ waits, settings, idle, presented = {} }) {
+  const activatedAt = Date.parse(settings.activatedAt || '') || 0;
+  const eligible = [], backlog = [];
+  for (const w of waits) {
+    let reason = null;
+    if (w.since < activatedAt) reason = 'avant-activation';
+    else if (Number.isFinite(idle?.presentSince) && w.since < idle.presentSince) reason = 'avant-retour';
+    else if (w.kind === 'gap' && !presented[w.key]) reason = 'non-presentee';
+    if (reason) backlog.push({ ...w, backlog: reason, backlogText: BACKLOG_TEXT[reason] });
+    else eligible.push(w.kind === 'gap' ? { ...w, presentedAt: presented[w.key] } : w);
+  }
+  return { eligible, backlog };
+}
+
 /** Waits to answer now, oldest first, within the caps of this absence. */
-export function dueWaits({ waits, now = Date.now(), idle, settings, ledger = [] }) {
+export function dueWaits({ waits, now = Date.now(), idle, settings, ledger = [], presented = {} }) {
   if (!settings.enabled || !idle.idle) return [];
+  waits = classifyWaits({ waits, settings, idle, presented }).eligible;
   // An abandoned attempt (user came back) may be retried at the next absence; a failed one is not.
   const done = new Set(ledger.filter(d => d.status !== 'abandoned').map(d => d.key));
   const thisAbsence = ledger.filter(d => d.idleSince === idle.lastAt && d.status !== 'abandoned');
@@ -215,7 +312,6 @@ export function dueWaits({ waits, now = Date.now(), idle, settings, ledger = [] 
   for (const w of [...waits].sort((a, b) => a.since - b.since)) {
     if (done.has(w.key)) continue;
     if (settings.projects.length && !settings.projects.includes(w.project)) continue;
-    // A wait older than the last gesture was seen by the user: still due (unanswered).
     if (now < dueAt(w, settings)) continue;
     if (total >= settings.maxTotal) break;
     if ((perProject.get(w.project) || 0) >= settings.maxPerProject) continue;
@@ -583,20 +679,30 @@ export function recoveryText(r) {
   const parts = [];
   if (r.git) parts.push(`tag git ${r.git.tag} dans ${r.git.repo}${r.git.stash ? ' (modifications non commitées comprises, hors fichiers non suivis)' : ''}`);
   for (const f of r.files) parts.push(`copie de ${path.basename(f.file)} (${f.backup})`);
-  return `Point de retour : ${parts.join(' ; ')}. Retour arrière : bouton « Annuler » du résumé, ou git reset --hard ${r.git ? r.git.head.slice(0, 12) : '…'}${r.git?.stash ? ` puis git stash apply ${r.git.tag}` : ''}.`;
+  // Without git, the copies are the return point: no misleading « git reset … ».
+  const manual = r.git ? `, ou git reset --hard ${r.git.head.slice(0, 12)}${r.git.stash ? ` puis git stash apply ${r.git.tag}` : ''}` : '';
+  return `Point de retour : ${parts.join(' ; ')}. Retour arrière : bouton « Annuler » du résumé${manual}.`;
 }
 
-/** Removes a gap decision and the additions it applied (entries absent from the backup). */
+/**
+ * Removes a gap decision and the additions it applied (entries absent from the
+ * backup). Only the automatic answer's own decision: one the user made since is
+ * never touched. A rejection added nothing: only its decision goes.
+ */
 export function undoGapDecision(routingFile, backupFile, gapKey) {
   const cur = JSON.parse(fs.readFileSync(routingFile, 'utf8'));
   const old = JSON.parse(fs.readFileSync(backupFile, 'utf8'));
-  if (cur.gapDecisions) delete cur.gapDecisions[gapKey];
-  for (const k of ['pipelines', 'steps', 'variants', 'attach']) {
+  const d = cur.gapDecisions?.[gapKey];
+  if (!d) return { ok: false, status: 409, error: 'la décision sur cette lacune n’existe plus (déjà retirée)' };
+  if (d.by !== BY) return { ok: false, status: 409, error: `décision sur la lacune reprise depuis par « ${d.by || '?'} » : rien n’est annulé` };
+  delete cur.gapDecisions[gapKey];
+  if (d.decision !== 'rejected') for (const k of ['pipelines', 'steps', 'variants', 'attach']) {
     const before = new Set((old.custom?.[k] || []).map(x => JSON.stringify(x)));
     if (Array.isArray(cur.custom?.[k])) cur.custom[k] = cur.custom[k].filter(x => before.has(JSON.stringify(x)));
   }
   cur.updatedAt = new Date().toISOString();
   writeFileAtomic(routingFile, JSON.stringify(cur, null, 2) + '\n');
+  return { ok: true };
 }
 
 /**
@@ -610,6 +716,15 @@ export function undoRecovery(rec, { busy = () => false, routingFile = null } = {
   if (rec.undone) return { ok: false, status: 409, error: 'décision déjà annulée' };
   if (busy(rec.project, rec.lane)) return { ok: false, status: 409, error: `${rec.project} a un tour en cours : annuler après la fin du tour` };
   const done = [];
+  // A gap decision is checked first: refused ⇒ nothing at all is restored.
+  if (rec.kind === 'gap' && routingFile) {
+    const f = r.files.find(x => path.resolve(x.file) === path.resolve(routingFile));
+    if (f) {
+      const g = undoGapDecision(routingFile, f.backup, rec.gapKey);
+      if (!g.ok) return g;
+      done.push('décision sur la lacune retirée : elle est de nouveau proposée');
+    }
+  }
   if (r.git && !isGitRepo(r.git.repo)) return { ok: false, status: 409, error: `${r.git.repo} n’est plus la racine d’un dépôt git : annulation refusée` };
   if (r.git) {
     const safety = gitSnapshot(r.git.repo, undoTag(rec.id), `State before undoing auto-answer ${rec.id}`);
@@ -618,13 +733,9 @@ export function undoRecovery(rec, { busy = () => false, routingFile = null } = {
     done.push(`dépôt remis au point de retour (état d'avant l'annulation gardé dans le tag ${safety.tag})`);
   }
   for (const f of r.files) {
-    if (rec.kind === 'gap' && routingFile && path.resolve(f.file) === path.resolve(routingFile)) {
-      undoGapDecision(routingFile, f.backup, rec.gapKey);
-      done.push('décision sur la lacune retirée');
-    } else {
-      fs.copyFileSync(f.backup, f.file);
-      done.push(`${path.basename(f.file)} restauré`);
-    }
+    if (rec.kind === 'gap' && routingFile && path.resolve(f.file) === path.resolve(routingFile)) continue;
+    fs.copyFileSync(f.backup, f.file);
+    done.push(`${path.basename(f.file)} restauré`);
   }
   return { ok: true, done };
 }
@@ -656,7 +767,83 @@ export function markSeen(logsDir, idsToMark = null, now = Date.now()) {
   writeLedger(logsDir, all);
   return n;
 }
+/**
+ * Where a decision stands for the user (0.123.0):
+ *   pending  — still needs the user (running, or submitted and still open);
+ *   handled  — applied, non-engaging option, failed, abandoned, undone;
+ *   obsolete — its request was closed or answered meanwhile (marked automatically).
+ * targetOpen(rec): true | false | null (unknown).
+ */
+export function decisionPhase(rec, targetOpen = () => null) {
+  if (rec.status === 'running') return { phase: 'pending', obsolete: null };
+  const asks = rec.status === 'submitted' || rec.status === 'failed' || rec.status === 'abandoned';
+  const open = asks ? targetOpen(rec) : null;
+  if (open === false) return { phase: 'obsolete', obsolete: 'demande close ou déjà répondue entre-temps' };
+  if (rec.status === 'submitted') return { phase: 'pending', obsolete: null };
+  return { phase: 'handled', obsolete: null };
+}
+
+/**
+ * « Écarter » hides decisions from the summary; they stay in the ledger
+ * (history), nothing is erased. A pending one needs `confirm`.
+ * Returns { ok, dismissed: [ids], needsConfirm: [ids] }.
+ */
+export function dismissDecisions(logsDir, { ids = null, handled = false, confirm = false, by = 'utilisateur', targetOpen = () => null } = {}, now = Date.now()) {
+  const all = readLedger(logsDir);
+  const dismissed = [], needsConfirm = [];
+  for (const d of all) {
+    if (d.dismissedAt) continue;
+    const ph = decisionPhase(d, targetOpen).phase;
+    if (handled) { if (ph === 'pending') continue; }
+    else if (!ids || !ids.includes(d.id)) continue;
+    if (ph === 'pending' && !confirm) { needsConfirm.push(d.id); continue; }
+    d.dismissedAt = new Date(now).toISOString();
+    d.dismissedBy = String(by).slice(0, 40);
+    d.dismissedPhase = ph;
+    if (!d.seenAt) d.seenAt = d.dismissedAt;
+    dismissed.push(d.id);
+  }
+  if (dismissed.length) writeLedger(logsDir, all);
+  return { ok: !needsConfirm.length, dismissed, needsConfirm };
+}
+
 export const newId = (now = Date.now()) => `aa-${new Date(now).toISOString().replace(/[-:]/g, '').slice(0, 15)}-${crypto.randomBytes(3).toString('hex')}`;
+
+const KIND_TEXT = { question: 'question', pause: 'pause de pipeline', permission: 'demande d’autorisation', gap: 'lacune proposée' };
+const ACTION_TEXT = {
+  gap: { accept: 'lacune acceptée (proposition appliquée)', reject: 'lacune rejetée' },
+  permission: { allow: 'autorisée une fois', deny: 'refusée' },
+};
+const hm = (iso) => { const t = Date.parse(iso || ''); if (!t) return '?'; const d = new Date(t); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+const dur = (min) => (min >= 2 * 1440 ? `${Math.round(min / 1440)} jours` : min >= 120 ? `${Math.round(min / 60)} h` : `${Math.round(min)} min`);
+
+/** What was decided, in words (« lacune proposée — lacune rejetée »…). */
+export function decisionWhat(rec) {
+  const k = KIND_TEXT[rec.kind] || rec.kind;
+  if (rec.status === 'submitted') return `${k} : soumise à votre décision (garde-fou), rien n’a été répondu`;
+  if (rec.status === 'failed' || rec.status === 'abandoned' || rec.status === 'running') return `${k} : ${statusText(rec.status)}`;
+  const a = rec.decision && ACTION_TEXT[rec.kind]?.[rec.decision];
+  return `${k} — ${a || 'répondu à votre place'}${rec.status === 'safe' ? ' (option non engageante, garde-fou)' : ''}`;
+}
+
+/** The element the decision is about, for a link: { type, id, label, project }. */
+export function decisionTarget(rec) {
+  if (rec.kind === 'gap') return { type: 'gap', id: rec.gapKey || null, label: `lacune « ${rec.gapKey || '?'} »`, project: rec.project || null };
+  if (rec.kind === 'permission') return { type: 'permission', id: rec.permissionId || null, label: `autorisation demandée par ${rec.project || '?'}`, project: rec.project || null };
+  if (rec.run) return { type: 'run', id: rec.run, label: `exécution ${rec.run} de ${rec.project || '?'}`, project: rec.project || null };
+  return { type: 'project', id: rec.project || null, label: `question de ${rec.isChef ? 'chef' : rec.project || '?'}${rec.lane ? ` (couloir ${rec.lane})` : ''}`, project: rec.project || null };
+}
+
+/** Why the user was considered inactive, in words. */
+export function inactivityText(rec) {
+  const i = rec.inactivity;
+  const waited = `demande en attente depuis ${dur(rec.waitedMin ?? 0)}`;
+  if (!i) return `aucune activité enregistrée depuis ${rec.idleMin ?? '?'} min (seuil de la règle) ; ${waited}`;
+  const last = i.lastAt
+    ? `dernier signe de vous à ${hm(i.lastAt)}${i.lastKind ? ` (${i.lastKind}${i.lastSource ? `, ${i.lastSource}` : ''})` : ''}`
+    : 'aucun signe de vous depuis le démarrage du serveur';
+  return `${last}, soit ${i.idleMin} min sans activité ≥ seuil de ${i.thresholdMin} min ; ${waited}`;
+}
 
 const STATUS_TEXT = {
   applied: 'répondu à votre place', safe: 'option non engageante choisie (garde-fou)', submitted: 'soumis à votre décision (garde-fou)',
@@ -666,10 +853,11 @@ export const statusText = (s) => STATUS_TEXT[s] || s;
 
 /** Card text (fil, journal, log of the process). */
 export function decisionText(rec) {
-  const head = `${MARK} — ${statusText(rec.status)}`;
-  const lines = [head, `Demande : ${String(rec.question || '').replace(/\s+/g, ' ').slice(0, 300)}`];
+  const head = `${MARK} — ${decisionWhat(rec)}`;
+  const lines = [head, `Élément : ${decisionTarget(rec).label}`, `Demande : ${String(rec.question || '').replace(/\s+/g, ' ').slice(0, 300)}`];
   if (rec.answer) lines.push(`Réponse : ${rec.decision ? `[${rec.decision}] ` : ''}${String(rec.answer).slice(0, 1200)}`);
   if (rec.reason) lines.push(`Raison : ${rec.reason}`);
+  lines.push(`Pourquoi vous étiez considéré inactif : ${inactivityText(rec)}`);
   if (rec.guardrails?.hits?.length) lines.push(`Garde-fous : ${rec.guardrails.hits.join(', ')}`);
   if (rec.recovery) lines.push(rec.recovery.text);
   return lines.join('\n');
@@ -698,17 +886,25 @@ export function createAutoAnswer(deps) {
   let running = null;
 
   function state() {
-    const settings = readSettings(deps.root);
-    const idle = idleInfo({ activity: readActivity(deps.logsDir), bootAt: deps.bootAt || 0, now: now(), settings });
-    return { settings, idle };
+    const settings = ensureActivation(deps.root, now());
+    const activity = readActivity(deps.logsDir);
+    const idle = idleInfo({ activity, bootAt: deps.bootAt || 0, now: now(), settings });
+    return { settings, idle, activity };
   }
+  const targetOpen = (rec) => { try { return deps.targetOpen ? deps.targetOpen(rec) : null; } catch { return null; } };
 
-  async function processWait(wait, settings, idle) {
+  async function processWait(wait, settings, idle, activity = readActivity(deps.logsDir)) {
     const { guardrails } = loadGuardrails(deps.root);
     const rec = {
       id: newId(now()), key: wait.key, kind: wait.kind, project: wait.project, lane: wait.lane || 0, isChef: !!wait.isChef,
       since: new Date(wait.since).toISOString(), at: new Date(now()).toISOString(), idleSince: idle.lastAt,
       idleMin: Math.round(idle.idleMs / 60_000), waitedMin: Math.round((now() - wait.since) / 60_000),
+      // Why the user was considered inactive (shown in the notification, 0.123.0).
+      inactivity: { lastAt: idle.lastAt ? new Date(idle.lastAt).toISOString() : null,
+        lastKind: activity && activity.at === idle.lastAt ? activity.kind : idle.lastAt ? 'démarrage du serveur' : null,
+        lastSource: activity && activity.at === idle.lastAt ? activity.source : null,
+        idleMin: Math.round(idle.idleMs / 60_000), thresholdMin: settings.idleMin },
+      ...(wait.presentedAt ? { presentedAt: new Date(wait.presentedAt).toISOString() } : {}),
       question: String(wait.question || '').slice(0, 4000), model: AUTO_MODEL, status: 'running',
       ...(wait.context?.run ? { run: wait.context.run } : {}), ...(wait.context?.gapKey ? { gapKey: wait.context.gapKey } : {}),
       ...(wait.context?.id && wait.kind === 'permission' ? { permissionId: wait.context.id } : {}),
@@ -764,31 +960,55 @@ export function createAutoAnswer(deps) {
   /** One pass: at most one wait answered (the next sweep takes the next one). */
   async function sweep() {
     if (running) return { skipped: 'en cours' };
-    const { settings, idle } = state();
+    const { settings, idle, activity } = state();
     if (!settings.enabled) return { skipped: 'règle coupée' };
     if (!idle.idle) return { skipped: 'utilisateur actif' };
     running = (async () => {
       const waits = await deps.listWaits();
-      const due = dueWaits({ waits, now: now(), idle, settings, ledger: readLedger(deps.logsDir) });
+      const due = dueWaits({ waits, now: now(), idle, settings, ledger: readLedger(deps.logsDir), presented: readPresented(deps.logsDir) });
       if (!due.length) return { answered: null };
-      return { answered: await processWait(due[0], settings, idle) };
+      return { answered: await processWait(due[0], settings, idle, activity) };
     })();
     try { return await running; } finally { running = null; }
   }
 
+  const decorate = (d) => {
+    const ph = decisionPhase(d, targetOpen);
+    return { ...d, statusText: statusText(d.status), what: decisionWhat(d), target: decisionTarget(d), why_inactive: inactivityText(d),
+      text: decisionText(d), phase: ph.phase, obsolete: ph.obsolete, dismissed: !!d.dismissedAt,
+      undoable: !!d.recovery?.possible && !d.undone && (d.status === 'applied' || d.status === 'safe') };
+  };
+
   function view(n = 50) {
-    const { settings, idle } = state();
+    const { settings, idle, activity } = state();
     const decisions = readLedger(deps.logsDir);
     const g = loadGuardrails(deps.root);
+    const shown = decisions.filter(d => !d.dismissedAt);
     return {
       ok: true, model: AUTO_MODEL, mark: MARK, rule: RULE_VERBATIM, settings,
       guardrails: g.guardrails, guardrailsDecision: g.decision, guardrailsProblems: g.problems, guardrailsAlwaysOn: true,
-      activity: { lastAt: idle.lastAt ? new Date(idle.lastAt).toISOString() : null, idleMs: idle.idleMs, idle: idle.idle, last: readActivity(deps.logsDir) },
-      unseen: decisions.filter(d => !d.seenAt && d.status !== 'running').length,
-      decisions: decisions.slice(-n).reverse().map(d => ({ ...d, statusText: statusText(d.status), text: decisionText(d),
-        undoable: !!d.recovery?.possible && !d.undone && (d.status === 'applied' || d.status === 'safe') })),
+      activity: { lastAt: idle.lastAt ? new Date(idle.lastAt).toISOString() : null, idleMs: idle.idleMs, idle: idle.idle, last: activity,
+        presentSince: Number.isFinite(idle.presentSince) ? new Date(idle.presentSince).toISOString() : null },
+      unseen: shown.filter(d => !d.seenAt && d.status !== 'running').length,
+      decisions: shown.slice(-n).reverse().map(decorate),
+      history: decisions.filter(d => d.dismissedAt).slice(-n).reverse().map(decorate),
     };
   }
+
+  /** view() plus the backlog: what waits now and will never be answered automatically. */
+  async function overview(n = 50) {
+    const v = view(n);
+    let waits = [];
+    try { waits = await deps.listWaits(); } catch { /* backlog unknown */ }
+    const { idle } = state();
+    const { backlog } = classifyWaits({ waits, settings: v.settings, idle, presented: readPresented(deps.logsDir) });
+    v.backlog = backlog.sort((a, b) => a.since - b.since).slice(0, 200).map(w => ({ key: w.key, kind: w.kind, project: w.project, lane: w.lane || 0,
+      since: new Date(w.since).toISOString(), question: String(w.question || '').slice(0, 300), reason: w.backlog, reasonText: w.backlogText,
+      ...(w.context?.gapKey ? { gapKey: w.context.gapKey } : {}), ...(w.context?.run ? { run: w.context.run } : {}) }));
+    return v;
+  }
+
+  function dismiss(opts) { return dismissDecisions(deps.logsDir, { ...opts, targetOpen }, now()); }
 
   function undo(id) {
     const rec = readLedger(deps.logsDir).find(d => d.id === id);
@@ -804,5 +1024,6 @@ export function createAutoAnswer(deps) {
     return { ok: true, decision: rec, done: r.done };
   }
 
-  return { sweep, view, undo, state, seen: (list) => markSeen(deps.logsDir, list, now()), processWait };
+  return { sweep, view, overview, undo, dismiss, state, seen: (list) => markSeen(deps.logsDir, list, now()),
+    presented: (keys) => recordPresented(deps.logsDir, keys, now()), processWait };
 }

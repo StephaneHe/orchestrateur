@@ -100,18 +100,38 @@
         <button class="pc-btn is-allow" type="button" data-perm-once="${esc(p.id)}">Autoriser une fois</button>
         <button class="pc-btn is-always" type="button" data-perm-always="${esc(p.id)}" title="Choisir la portée de la règle permanente">Toujours…</button>
         <button class="pc-btn is-deny" type="button" data-perm-deny="${esc(p.id)}" title="Refuser, avec un motif optionnel pour le model">Refuser…</button>
+        <button class="pc-btn is-later" type="button" data-perm-snooze="${esc(p.id)}" title="Masquer 15 min ici ; la demande reste en attente">Reporter</button>
+        <button class="pc-btn is-hide" type="button" data-perm-hide="${esc(p.id)}" title="Masquer cette demande ici (elle reste en attente jusqu’à son échéance)">Écarter</button>
       </div>
     </div>`;
+  }
+  // 0.123.0 — « Reporter » (15 min) / « Écarter » (jusqu'à l'échéance) : masquées
+  // ici seulement, la demande reste en attente (localStorage perm.hidden).
+  const HIDE_KEY = "perm.hidden";
+  function hiddenMap() { try { const j = JSON.parse(g.localStorage?.getItem(HIDE_KEY) || "{}"); return j && typeof j === "object" ? j : {}; } catch { return {}; } }
+  function hideFor(id, until) {
+    const m = hiddenMap(); const now = Date.now();
+    for (const k of Object.keys(m)) if (m[k] < now) delete m[k];
+    m[id] = until;
+    try { g.localStorage?.setItem(HIDE_KEY, JSON.stringify(m)); } catch { /* */ }
+    render();
   }
   function render() {
     const el = document.getElementById("perm-band");
     if (!el) return;
-    if (!st.pending.length) { el.hidden = true; el.innerHTML = ""; el._html = ""; return; }
-    const html = `<div class="pb-head">🔐 ${st.pending.length === 1 ? "1 autorisation attend" : `${st.pending.length} autorisations attendent`} votre décision</div>` +
-      st.pending.map(cardHtml).join("");
+    const m = hiddenMap(); const now = Date.now();
+    const shown = st.pending.filter(p => !(m[p.id] > now));
+    const hidden = st.pending.length - shown.length;
+    el.dataset.ndCount = String(shown.length);
+    if (!shown.length) {
+      el.innerHTML = hidden ? `<div class="pb-head pb-hidden">🔐 ${hidden} autorisation${hidden > 1 ? "s" : ""} masquée${hidden > 1 ? "s" : ""} <button class="pc-btn" type="button" data-perm-unhide>Réafficher</button></div>` : "";
+      el.hidden = !hidden; el._key = `hidden:${hidden}`; return;
+    }
+    const html = `<div class="pb-head">🔐 ${shown.length === 1 ? "1 autorisation attend" : `${shown.length} autorisations attendent`} votre décision${hidden ? ` · ${hidden} masquée${hidden > 1 ? "s" : ""} <button class="pc-btn" type="button" data-perm-unhide>Réafficher</button>` : ""}</div>` +
+      shown.map(cardHtml).join("");
     // Le compte à rebours est mis à jour à part : on ne réécrit le bandeau que si
     // la liste change (sinon un clic en cours se perdrait).
-    const key = st.pending.map(p => p.id).join(",");
+    const key = shown.map(p => p.id).join(",") + `|${hidden}`;
     if (el._key !== key) { el.innerHTML = html; el._key = key; }
     el.hidden = false;
   }
@@ -396,6 +416,16 @@
       band._wired = true;
       band.addEventListener("click", async (e) => {
         askNotificationPermission();
+        const sz = e.target.closest("[data-perm-snooze]");
+        if (sz) { hideFor(sz.dataset.permSnooze, Date.now() + 15 * 60_000); return; }
+        const hd = e.target.closest("[data-perm-hide]");
+        if (hd) {
+          const p = st.pending.find(x => x.id === hd.dataset.permHide);
+          if (!g.confirm("Cette demande attend encore votre décision.\nL’écarter la masque ici seulement : elle reste en attente et sera refusée à son échéance si personne ne répond. Écarter ?")) return;
+          hideFor(hd.dataset.permHide, p ? Date.parse(p.deadline) || p.deadline || Date.now() + 3600_000 : Date.now() + 3600_000);
+          return;
+        }
+        if (e.target.closest("[data-perm-unhide]")) { try { g.localStorage?.removeItem(HIDE_KEY); } catch { /* */ } render(); return; }
         const open = e.target.closest("[data-perm-open]");
         if (open) { openDetails(open.dataset.permOpen); return; }
         const always = e.target.closest("[data-perm-always]");

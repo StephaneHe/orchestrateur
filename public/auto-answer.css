@@ -30,4 +30,18 @@
 .aa-delays { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin: 8px 0; }
 .aa-delays input { width: 5em; }
 .aa-guards { margin: 0; padding-left: 18px; }
-@media (max-width: 720px) { .aa-undo, .aa-seen, #aa-save, .aa-close { min-height: 44px; } }
+/* 0.123.0 — une ligne compacte par décision, détail dépliable */
+.aa-what { font-weight: 600; }
+.aa-on { overflow-wrap: anywhere; }
+.aa-acts { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: auto; }
+.aa-acts button { min-height: 28px; font-size: 0.75rem; }
+.aa-more[hidden] { display: none; }
+.aa-why { font-size: 0.8125rem; }
+.aa-phase { font-size: 0.6875rem; padding: 0 6px; border-radius: 8px; border: 1px solid var(--line, #444); opacity: 0.85; }
+.aa-phase[data-phase="pending"] { border-color: var(--warn, #c69026); color: var(--warn, #c69026); }
+.aa-phase[data-phase="obsolete"] { text-decoration: line-through; opacity: 0.6; }
+.aa-item[data-phase="obsolete"] { opacity: 0.75; }
+.aa-guards-d > summary, .aa-backlog > summary, .aa-history > summary { cursor: pointer; font-size: 0.8125rem; margin: 10px 0 4px; }
+.aa-guards-d > summary { opacity: 0.8; }
+.aa-tools { margin: 4px 0 6px; }
+@media (max-width: 720px) { .aa-undo, .aa-seen, #aa-save, .aa-close, .aa-acts button, .aa-recap { min-height: 44px; } }

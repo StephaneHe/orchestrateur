@@ -3007,6 +3007,33 @@ confirmés : « Ces gardes fous sont tres importants, garde les ».
   `FAKE_CLAUDE_AUTO_ANSWER` / `FAKE_CLAUDE_AUTO_VERIFY`).
 - Recettes : `_test_auto_answer.mjs`, HTTP et navigateur `auto-answer`.
   L'app Android n'affiche pas encore l'interrupteur ni le résumé.
+- **Incident du 2026-10-20 (0.123.0)** : des lacunes de 10 jours, invisibles
+  hors de la page Models, rejetées pendant que l'utilisateur lisait.
+  - **Présence** : le dashboard (`public/auto-answer.js`) et l'app (0.13.0)
+    envoient `POST /api/user-activity {kind: "présence"}` (1/min au plus) tant
+    que l'onglet est visible, focalisé et utilisé depuis moins de 10 min.
+    `user-activity.json` garde `presentSince` (début de la période de
+    présence) et le dernier vrai geste.
+  - **Arriéré** (`classifyWaits`) : seule une attente née après
+    `activatedAt` (réglages ; datée à l'activation ou au premier balayage) ET
+    après le dernier retour (`presentSince`), et pour une lacune seulement si
+    elle a été présentée (`POST /api/auto-answer/presented`, envoyé par la page
+    Models ; délai compté depuis la présentation), est traitée. Le reste :
+    `backlog` de `GET /api/auto-answer`, « 📥 Arriéré » du menu.
+  - **Notification** : quoi (`decisionWhat`), sur quel élément (lien,
+    `decisionTarget`), pourquoi inactif (`inactivityText`).
+  - **Écarter** : `POST /api/auto-answer/dismiss {ids | handled: true,
+    confirm?}` ; traitée ou obsolète (`decisionPhase`, `targetOpen`) ⇒ hors de
+    la vue, gardée (`history`) ; en attente ⇒ 409 sans `confirm`.
+  - **Zone compacte** `#notif-dock` (`public/notif-dock.js`) : bandeaux des
+    autorisations et des réponses automatiques, hauteur bornée, défilement
+    interne, jamais par-dessus la page, repli mémorisé (`notif.collapsed`),
+    « Tout réduire ». **Tout nouveau bandeau de demandes va dans `.nd-body`
+    et publie `data-nd-count`.**
+  - Garde-fous du menu : une ligne repliée « 🔒 5 garde-fous actifs »
+    (affichage seul).
+  - Recettes : `_test_auto_answer.mjs` §9, HTTP `auto-answer-presence`,
+    navigateur `notif-dock` et `auto-answer-dismiss`.
 
 ## Pauses : la cause d'abord, des choix qui agissent dessus (0.122.0)
 

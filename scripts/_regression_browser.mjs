@@ -1267,6 +1267,121 @@ export async function browserChecks(sb, t) {
         await page.evaluate(() => window.AutoAnswer?.load()).catch(() => {});
       }
     });
+    // User report (2026-10-20): « j'ai vu les notifications de demande que je ne
+    // voyais pas avant. Par contre le probleme, c'est qu'elles prennent toute la
+    // page, et ne donnent pas la possibilite de voir quoique ce soit d'autre »
+    await check(B, 'notif-dock', 'Zone compacte des demandes : avec 30 demandes en attente, la zone reste sous sa hauteur maximale (défilement interne), le reste du dashboard reste visible et cliquable, « N demandes en attente » repliable, « Tout réduire », repli mémorisé après rechargement ; pareil sur mobile', async () => {
+      if (!fs.existsSync(path.join(sb.root, 'public', 'notif-dock.js'))) NA('zone compacte absente de cet état du code (avant 0.123.0)');
+      const AA = await import(pathToFileURL(path.join(sb.root, 'scripts', 'auto-answer.mjs')).href);
+      const logs = path.join(sb.root, 'logs');
+      const mine = [];
+      for (let i = 0; i < 30; i++) {
+        const id = AA.newId();
+        mine.push(id);
+        AA.upsertDecision(logs, { id, key: `log:lambda:0:dock-${i}`, kind: i % 3 ? 'question' : 'gap', gapKey: `recette-${i}`, project: 'lambda', lane: 0, at: new Date().toISOString(),
+          question: `Demande de recette n° ${i} : ${'texte long '.repeat(20)}`, status: 'applied', decision: i % 3 ? null : 'reject', model: AA.AUTO_MODEL,
+          answer: `Réponse ${i}`, reason: 'recommandation suivie', waitedMin: 30, inactivity: { lastAt: new Date().toISOString(), lastKind: 'message', idleMin: 16, thresholdMin: 15 }, guardrails: { hits: [] } });
+      }
+      const measure = (p) => p.evaluate(() => {
+        const d = document.getElementById('notif-dock').getBoundingClientRect();
+        const cv = document.getElementById('conductor-view').getBoundingClientRect();
+        const body = document.querySelector('#notif-dock .nd-body');
+        const x = cv.left + cv.width / 2, y = Math.min(cv.bottom - 20, cv.top + cv.height / 2);
+        const hit = document.elementFromPoint(x, y);
+        return { dockH: d.height, vh: innerHeight, cvH: cv.height, cvTop: cv.top, scroll: body ? body.scrollHeight > body.clientHeight : false,
+          hitInside: !!hit && !!hit.closest('#conductor-view'), items: document.querySelectorAll('#auto-band .aa-item').length,
+          head: document.querySelector('#notif-dock .nd-count')?.textContent || '' };
+      });
+      // A frozen page (endless MutationObserver loop, first 0.123.0 draft) must fail, not hang the run.
+      const alive = (p, ms = 10_000) => Promise.race([p.evaluate(() => 1), sleep(ms).then(() => { throw new Error('page figée (le script de la page ne rend plus la main)'); })]);
+      try {
+        await page.evaluate(() => { localStorage.removeItem('notif.collapsed'); window.AutoAnswer.load(); });
+        await sleep(1500);
+        await alive(page);
+        assert(await until(async () => (await measure(page)).items >= 30, 10_000), 'les 30 décisions ne sont pas dans la zone');
+        await alive(page);
+        let m = await measure(page);
+        assert(m.dockH <= 0.45 * m.vh && m.scroll, `zone trop haute ou sans défilement interne : ${JSON.stringify(m)}`);
+        assert(m.cvH >= 0.3 * m.vh && m.hitInside, `le reste du dashboard n’est plus visible ou cliquable : ${JSON.stringify(m)}`);
+        assert(/\d+ demandes? en attente/.test(m.head), `tête de la zone : ${m.head}`);
+        assert(!(await page.evaluate(() => [...document.querySelectorAll('.notif-dock, .auto-band, .perm-band')].some(e => getComputedStyle(e).position === 'fixed'))), 'zone en position fixe (par-dessus la page)');
+        await shot(page, 'notif-dock-30');
+        // Collapse by the head line, remembered across a reload.
+        await page.click('#notif-dock .nd-toggle');
+        assert(await until(async () => !(await visible(page, '#notif-dock .nd-body')), 3000), 'repli sans effet');
+        // Remembered: a fresh load (second tab of the same browser) opens collapsed.
+        // Never reload the shared page: later walks rely on its in-memory state.
+        const p2 = await page.context().newPage();
+        try {
+          await p2.goto(`${sb.url}/?token=${sb.token}`); await p2.locator('.brand').waitFor();
+          assert(await until(async () => await visible(p2, '#notif-dock .nd-toggle'), 10_000), 'zone absente au rechargement');
+          await sleep(800);
+          assert(!(await visible(p2, '#notif-dock .nd-body')) && (await p2.getAttribute('#notif-dock .nd-toggle', 'aria-expanded')) === 'false', 'repli non mémorisé au rechargement');
+        } finally { await p2.close(); }
+        await page.click('#notif-dock .nd-toggle');
+        assert(await until(async () => await visible(page, '#notif-dock .nd-body'), 3000), 'dépli sans effet');
+        await page.locator('#auto-band [data-aa-detail]').first().click();
+        assert(await until(async () => await visible(page, '#auto-band .aa-more:not([hidden])'), 3000), '« Détail » n’ouvre pas l’élément');
+        await page.click('#notif-dock .nd-collapse-all');
+        assert(await until(async () => !(await visible(page, '#notif-dock .nd-body')), 3000), '« Tout réduire » sans effet');
+        // Mobile: same bounds.
+        const mctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'fr-FR' });
+        try {
+          const mp = await mctx.newPage();
+          await mp.goto(`${sb.url}/?token=${sb.token}`); await mp.locator('.brand').waitFor();
+          assert(await until(async () => (await measure(mp)).items >= 30, 10_000), 'mobile : décisions absentes');
+          const mm = await measure(mp);
+          assert(mm.dockH <= 0.5 * mm.vh && mm.scroll && mm.cvH >= 0.25 * mm.vh, `mobile : zone trop haute ou page masquée : ${JSON.stringify(mm)}`);
+          await shot(mp, 'notif-dock-mobile');
+        } finally { await mctx.close(); }
+        return `30 décisions : zone ${Math.round(m.dockH)} px sur ${m.vh} (défilement interne), fil ${Math.round(m.cvH)} px cliquable ; repli mémorisé ; Tout réduire ; mobile borné`;
+      } finally {
+        await fetch(`${sb.url}/api/auto-answer/dismiss`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: mine, confirm: true }) }).catch(() => {});
+        await page.evaluate(() => { localStorage.removeItem('notif.collapsed'); window.AutoAnswer?.load(); window.NotifDock?.sync(); }).catch(() => {});
+      }
+    });
+    // User request (2026-10-20): « La partie "Garde-fous — obligatoires, toujours
+    // actifs" est trop importante. Trouve un moyen de la faire plus discrete. Il
+    // faut pouvoir aussi discard des notifications qui ne sont plus utiles une
+    // fois acceptee ou annulee ou obsoletes »
+    await check(B, 'auto-answer-dismiss', 'Menu des réponses automatiques : garde-fous repliés sur une ligne « 🔒 5 garde-fous actifs » (toujours là, non modifiables) ; « Écarter » retire une décision traitée et la garde dans l’historique ; une décision obsolète est marquée ; « Écarter tout ce qui est traité ou obsolète » ; la notification dit quoi, sur quel élément (lien) et pourquoi inactif', async () => {
+      if (!fs.existsSync(path.join(sb.root, 'public', 'notif-dock.js'))) NA('écarter absent de cet état du code (avant 0.123.0)');
+      const AA = await import(pathToFileURL(path.join(sb.root, 'scripts', 'auto-answer.mjs')).href);
+      const logs = path.join(sb.root, 'logs');
+      const base = { project: 'lambda', lane: 0, at: new Date().toISOString(), model: AA.AUTO_MODEL, guardrails: { hits: [] }, waitedMin: 14032,
+        inactivity: { lastAt: new Date().toISOString(), lastKind: 'message', lastSource: 'dashboard', idleMin: 15, thresholdMin: 15 } };
+      const handled = AA.newId(), obsolete = AA.newId();
+      AA.upsertDecision(logs, { ...base, id: handled, key: 'gap:recette-dismiss', kind: 'gap', gapKey: 'recette-dismiss', status: 'applied', decision: 'reject', answer: 'Rattachement par mots-clés refusé', question: 'Lacune proposée : recette' });
+      AA.upsertDecision(logs, { ...base, id: obsolete, key: 'perm:p-000000000000', kind: 'permission', permissionId: 'p-000000000000', status: 'submitted', question: 'Autoriser Bash : echo' });
+      try {
+        await page.evaluate(() => window.AutoAnswer.load());
+        const item = (id) => `#auto-band .aa-item[data-aa-id="${id}"]`;
+        assert(await until(async () => await visible(page, item(handled)), 8000), 'décision absente de la zone');
+        const line = await page.textContent(item(handled));
+        assert(/lacune rejetée/.test(line) && /lacune « recette-dismiss »/.test(line) && /Pourquoi à votre place/.test(line) && /seuil de 15 min/.test(line) && /10 jours/.test(line), `notification incomplète : ${line.slice(0, 500)}`);
+        assert(await page.locator(`${item(handled)} a[data-aa-goto="gaps"]`).count() === 1, 'pas de lien vers l’élément (lacune)');
+        assert((await page.getAttribute(item(obsolete), 'data-phase')) === 'obsolete', 'décision obsolète non marquée');
+        await page.click(`${item(handled)} [data-aa-dismiss]`);
+        assert(await until(async () => !(await visible(page, item(handled))), 8000), '« Écarter » ne retire pas la décision');
+        let v = await api('/api/auto-answer');
+        assert(!v.decisions.some(d => d.id === handled) && v.history.some(d => d.id === handled), 'écartée mais pas dans l’historique');
+        await page.click('#btn-auto');
+        assert(await until(async () => await visible(page, '#auto-overlay'), 5000), 'overlay absent');
+        const g = await page.evaluate(() => { const d = document.querySelector('#auto-overlay details.aa-guards-d'); return d ? { open: d.open, summary: d.querySelector('summary').textContent, n: d.querySelectorAll('.aa-guards > li').length, h: d.getBoundingClientRect().height } : null; });
+        assert(g && !g.open && /🔒 \d+ garde-fous actifs/.test(g.summary) && g.n >= 5 && g.h < 60, `garde-fous non repliés : ${JSON.stringify(g)}`);
+        assert(!(await page.locator('#auto-overlay h3', { hasText: 'Garde-fous' }).count()), 'grande section « Garde-fous » encore présente');
+        assert((await api('/api/auto-answer')).guardrails.filter(x => x.mandatory).length === 5, 'garde-fous plus actifs');
+        assert(/Historique : \d+ décision/.test(await page.textContent('#auto-overlay')), 'historique des écartées absent');
+        await page.click('#aa-dismiss-handled');
+        assert(await until(async () => !(await api('/api/auto-answer')).decisions.some(d => d.id === obsolete), 8000), '« Écarter tout ce qui est traité ou obsolète » laisse l’obsolète');
+        await shot(page, 'auto-answer-dismiss');
+        return `garde-fous : « ${g.summary.trim()} » (${g.n}, repliés) ; ${handled} écartée → historique ; ${obsolete} obsolète → écartée en lot`;
+      } finally {
+        await fetch(`${sb.url}/api/auto-answer/dismiss`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [handled, obsolete], confirm: true }) }).catch(() => {});
+        await page.keyboard.press('Escape').catch(() => {});
+        await page.evaluate(() => window.AutoAnswer?.load()).catch(() => {});
+      }
+    });
     // User request (2026-10-20): « Je ne vois pas que le test de non regression
     // est en cours sur orchestrateur-dev. C'est un probleme. »
     await check(B, 'regression-live', 'Non-régression en cours visible : bande (projet, progression, KO, lanceur), pastille 🧪 sur le cadre, entrée du journal d’activité ; à la fin, résultat et lien vers le rapport', async () => {

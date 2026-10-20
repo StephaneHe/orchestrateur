@@ -242,6 +242,20 @@ class Api(private val store: ServerStore) {
         }
     }
 
+    /**
+     * Presence heartbeat (server 0.123.0): the user is in the app and using it,
+     * so the automatic answer must not take them for inactive. Fire-and-forget.
+     */
+    suspend fun userActivity(kind: String) = withContext(Dispatchers.IO) {
+        val body = Json.encodeToString(buildJsonObject { put("kind", kind) })
+            .toRequestBody("application/json".toMediaType())
+        runCatching {
+            http.newCall(
+                req("/api/user-activity").post(body).header("Content-Type", "application/json").build()
+            ).execute().use { /* fire-and-forget */ }
+        }
+    }
+
     /** URL for the aggregate SSE stream (no token — gate disabled server-side). */
     fun fleetSseUrl(): String = "${baseUrl()}/api/sse/fleet"
 

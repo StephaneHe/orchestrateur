@@ -589,6 +589,12 @@
     const box = root()?.querySelector(".mr-gaps");
     if (box) box.innerHTML = '<h2 class="mr-h2">Lacunes proposées</h2>' + gapsHtml();
     syncGapBadges();
+    // 0.123.0 — the automatic answer only ever touches a gap the user was shown.
+    const shown = st.showGaps && box && !box.hidden ? (st.gaps?.open || []).map(g => `gap:${g.key}`) : [];
+    if (shown.length) {
+      fetch("/api/auto-answer/presented", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keys: shown }) }).catch(() => {});
+    }
   }
 
   async function decideGap(key, action, choice) {

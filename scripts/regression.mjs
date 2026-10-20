@@ -2009,6 +2009,9 @@ async function apiChecks(sb) {
       assert((await json('/api/auto-answer')).activity.lastAt === before, 'un appel de script compté comme activité de l’utilisateur');
       // User active (a gesture every second) ⇒ nothing, even with the switch on.
       assert((await settings({ enabled: true, idleMin: 0.05, waitMin: 0.01, projects: ['kappa'] })).ok, 'activation refusée');
+      // The user is there when the request is born (0.123.0: a wait born before
+      // the user's return is backlog, never answered automatically).
+      await fetch(`${sb.url}/api/user-activity`, { method: 'POST', headers: BROWSER, body: JSON.stringify({ kind: 'clic' }) });
       const a = await ask('actif');
       for (let i = 0; i < 4; i++) { await fetch(`${sb.url}/api/user-activity`, { method: 'POST', headers: BROWSER, body: JSON.stringify({ kind: 'clic' }) }); await sleep(1000); }
       assert((await status(a)).status === 'pending', 'utilisateur actif : la demande a reçu une réponse automatique');
@@ -2035,6 +2038,71 @@ async function apiChecks(sb) {
       return `kappa : actif ⇒ en attente ; inactif ⇒ ${rec.id} autorisé une fois par claude-opus-5-5 (marqué dans le log, le fil, le résumé), aucun point de retour (noté) ; coupé ⇒ en attente`;
     } finally {
       await settings({ enabled: false, idleMin: 15, waitMin: 5, projects: [] });
+    }
+  });
+  // Incident of 2026-10-20 (v0.121.0): « opus 5.5 avait pris une decision a ma
+  // place alors que je suis actif, et que je ne vois aucune question en attente »
+  // + « Il faut pouvoir aussi discard des notifications qui ne sont plus utiles ».
+  await check(S, 'auto-answer-presence', 'Réponse automatique : un utilisateur qui lit (battement de présence du dashboard) n’est pas inactif ; une attente antérieure à l’activation est un arriéré jamais traité et listé ; la notification dit quoi, sur quel élément et pourquoi inactif ; « Écarter » retire une décision traitée et la garde dans l’historique ; une décision encore en attente exige une confirmation', async () => {
+    if (!fs.existsSync(path.join(sb.root, 'scripts', 'auto-answer.mjs'))) NA('réponse automatique absente de cet état du code');
+    const src = fs.readFileSync(path.join(sb.root, 'scripts', 'auto-answer.mjs'), 'utf8');
+    if (!/classifyWaits/.test(src)) NA('arriéré et présence absents de cet état du code (avant 0.123.0)');
+    const BROWSER = { ...H, 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0 (regression)' };
+    const settings = (b) => post('/api/auto-answer/settings', b);
+    const beat = (kind = 'présence') => fetch(`${sb.url}/api/user-activity`, { method: 'POST', headers: BROWSER, body: JSON.stringify({ kind }) });
+    const ask = async (tag) => {
+      const r = await post('/api/permission/request', { project: 'kappa', tool: 'Bash', input: { command: `echo presence-${tag}` }, toolUseId: `toolu_presence_${tag}`, timeoutMs: 30 * 60_000 });
+      const j = await r.json();
+      assert(r.ok && j.status === 'pending', `demande ${tag} : ${r.status} ${JSON.stringify(j)}`);
+      return j.id;
+    };
+    const status = async (id) => (await json(`/api/permission/${id}`));
+    const ids = [];
+    try {
+      // 1. Backlog: born while the rule is off, then the rule is switched on.
+      assert((await settings({ enabled: false })).ok, 'coupure refusée');
+      const old = await ask('arriere'); ids.push(old);
+      await sleep(300);
+      assert((await settings({ enabled: true, idleMin: 0.05, waitMin: 0.01, projects: ['kappa'] })).ok, 'activation refusée');
+      let v = await json('/api/auto-answer');
+      assert(v.settings.activatedAt, `activation non datée : ${JSON.stringify(v.settings)}`);
+      // 2. A reader: heartbeats only (no gesture) while a new request waits.
+      await beat();
+      const read = await ask('lecture'); ids.push(read);
+      for (let i = 0; i < 6; i++) { await beat(); await sleep(1000); }
+      assert((await status(read)).status === 'pending', 'utilisateur qui lit (battements) : réponse automatique quand même');
+      v = await json('/api/auto-answer');
+      assert(v.activity.last?.kind === 'présence' && !v.activity.idle, `battement non compté : ${JSON.stringify(v.activity)}`);
+      // 3. The reader leaves: the new request is answered, the backlog never.
+      const done = await until(async () => { const s = await status(read); return s.status === 'decided' ? s : null; }, 25_000, 500);
+      assert(done && done.decision?.by === 'réponse automatique', `décision : ${JSON.stringify(done)}`);
+      await sleep(3000);
+      assert((await status(old)).status === 'pending', 'arriéré (né avant l’activation) traité automatiquement');
+      v = await json('/api/auto-answer');
+      const bl = (v.backlog || []).find(w => w.key === `perm:${old}`);
+      assert(bl && bl.reason === 'avant-activation', `arriéré non listé : ${JSON.stringify(v.backlog)}`);
+      const rec = v.decisions.find(d => d.permissionId === read);
+      assert(rec && /autorisée une fois|refusée/.test(rec.what) && rec.target?.type === 'permission' && /Pourquoi vous étiez considéré inactif : dernier signe de vous à \d\d:\d\d \(présence/.test(rec.text) && /seuil de/.test(rec.why_inactive), `notification incomplète : ${JSON.stringify({ what: rec?.what, target: rec?.target, text: rec?.text })}`);
+      // 4. Dismiss: handled ⇒ hidden, kept in the history.
+      let r = await post('/api/auto-answer/dismiss', { ids: [rec.id] });
+      assert(r.ok, `écarter : ${r.status}`);
+      v = await json('/api/auto-answer');
+      assert(!v.decisions.some(d => d.id === rec.id) && v.history.some(d => d.id === rec.id), 'écartée mais toujours affichée, ou absente de l’historique');
+      // A pending decision (submitted, request still open) needs a confirmation.
+      const AA = await import(pathToFileURL(path.join(sb.root, 'scripts', 'auto-answer.mjs')).href);
+      const pid = AA.newId();
+      AA.upsertDecision(path.join(sb.root, 'logs'), { id: pid, key: `perm:${old}`, kind: 'permission', permissionId: old, project: 'kappa', status: 'submitted', at: new Date().toISOString(), question: 'q' });
+      r = await post('/api/auto-answer/dismiss', { ids: [pid] });
+      const j = await r.json();
+      assert(r.status === 409 && j.needsConfirm?.includes(pid), `en attente écartée sans confirmation : ${r.status} ${JSON.stringify(j)}`);
+      assert((await post('/api/auto-answer/dismiss', { ids: [pid], confirm: true })).ok, 'confirmation refusée');
+      // 5. Presented gaps are recorded (only gaps).
+      const pr = await (await post('/api/auto-answer/presented', { keys: ['gap:recette-presence', 'log:x'] })).json();
+      assert(pr.ok && pr.recorded === 1, `présentation : ${JSON.stringify(pr)}`);
+      return `lecteur ⇒ en attente, parti ⇒ ${rec.id} décidé ; arriéré ${old} jamais traité (listé) ; écartée ⇒ historique ; en attente ⇒ 409 sans confirmation`;
+    } finally {
+      await settings({ enabled: false, idleMin: 15, waitMin: 5, projects: [] });
+      for (const id of ids) await post(`/api/permission/${id}/decide`, { decision: 'deny', by: 'recette' }).catch(() => {});
     }
   });
 }

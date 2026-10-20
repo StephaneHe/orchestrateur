@@ -212,10 +212,11 @@ section('6. Ce qui attend l’utilisateur, lu dans les logs');
 // ---------------------------------------------------------------------------
 section('7. De bout en bout : vrai lanceur du model (faux claude), vrai git');
 const fakeEnv = (extra = {}) => ({ ...process.env, CLAUDE_BIN: FAKE, FAKE_CLAUDE_ECHO_MODEL: '1', FAKE_CLAUDE_LATENCY_MS: '5', FAKE_CLAUDE_TOOL_USES: '0', ...extra });
-function engine(name, { activityAgoMin = 20, waitAgoMin = 6, enabled = true, env = fakeEnv(), repo = 'git', runModel = null, kind = 'question' } = {}) {
+function engine(name, { activityAgoMin = 20, waitAgoMin = 6, enabled = true, env = fakeEnv(), repo = 'git', runModel = null, kind = 'question', activatedAgoMin = 60 } = {}) {
   const root = freshRoot(name);
   const logsDir = path.join(root, 'logs');
-  if (!enabled) AA.writeSettings(root, { enabled: false });
+  // The rule was switched on before the wait was born (0.123.0: older waits are backlog).
+  fs.writeFileSync(path.join(root, AA.SETTINGS_FILE), JSON.stringify({ enabled, activatedAt: new Date(Date.now() - activatedAgoMin * MIN).toISOString() }));
   AA.recordActivity(logsDir, { kind: 'message' }, Date.now() - activityAgoMin * MIN);
   const proj = repo === 'git' ? gitRepo(path.join(root, 'proj')) : path.join(root, 'nogit');
   fs.mkdirSync(proj, { recursive: true });
@@ -339,7 +340,7 @@ for (const id of G) {
   const routing = path.join(TMP, 'model-routing.json');
   fs.writeFileSync(routing, JSON.stringify({ version: 2, custom: { attach: [{ pipeline: 'dev', when: 'a' }] }, gapDecisions: {} }));
   const rg = AA.makeRecoveryPoint({ id: 'aa-g', logsDir, files: [routing] });
-  fs.writeFileSync(routing, JSON.stringify({ version: 2, custom: { attach: [{ pipeline: 'dev', when: 'a' }, { pipeline: 'dev', when: 'ajout' }] }, gapDecisions: { k: { decision: 'accepted' }, other: { decision: 'rejected' } } }));
+  fs.writeFileSync(routing, JSON.stringify({ version: 2, custom: { attach: [{ pipeline: 'dev', when: 'a' }, { pipeline: 'dev', when: 'ajout' }] }, gapDecisions: { k: { decision: 'accepted', by: AA.BY }, other: { decision: 'rejected' } } }));
   AA.undoRecovery({ id: 'aa-g', project: null, kind: 'gap', gapKey: 'k', recovery: rg }, { routingFile: routing });
   const after = JSON.parse(fs.readFileSync(routing, 'utf8'));
   ok(!after.gapDecisions.k && after.gapDecisions.other && after.custom.attach.length === 1, 'lacune : seule sa décision et ce qu’elle a ajouté sont retirés', after);
@@ -361,6 +362,180 @@ section('8. Branchement : serveur, interface');
   ok(!/guardrails[^\n]*(POST|PUT|method)/.test(client), 'le client n’offre aucun moyen de modifier les garde-fous');
   const tc = fs.readFileSync(path.join(ROOT, 'public', 'turn-core.js'), 'utf8');
   ok(/auto_answer/.test(tc), 'le journal d’activité lit la marque de réponse automatique');
+}
+
+// ---------------------------------------------------------------------------
+// Incident of 2026-10-20 (v0.121.0 in production), user's words:
+// « Tu viens d'afficher une petite fenetre pour me prevenir que opus 5.5 avait
+// pris une decision a ma place alors que je suis actif, et que je ne vois aucune
+// question en attente » — ten-day-old proposed gaps, invisible outside the
+// Models page, were rejected while the user was reading the dashboard.
+// « La partie "Garde-fous — obligatoires, toujours actifs" est trop importante.
+// Trouve un moyen de la faire plus discrete. Il faut pouvoir aussi discard des
+// notifications qui ne sont plus utiles une fois acceptee ou annulee ou obsoletes »
+section('9. Incident du 2026-10-20 : lecture, arriéré, lacune non présentée, notification, écarter');
+{
+  const B = 'Mozilla/5.0 (Windows NT 10.0) Edg/130';
+  ok(AA.activityOf({ method: 'POST', path: '/api/user-activity', userAgent: B, body: { kind: 'présence' } })?.kind === 'présence', 'battement de présence du dashboard : compté comme activité');
+  ok(AA.activityOf({ method: 'POST', path: '/api/user-activity', userAgent: 'node', body: { kind: 'présence' } }) === null, 'battement venu d’un script : ignoré');
+
+  // 9a — a user who reads (heartbeat) is not inactive.
+  {
+    const t = engine('reading', { activityAgoMin: 20, waitAgoMin: 6 });
+    AA.recordActivity(t.logsDir, { kind: 'présence', source: 'dashboard' }, Date.now() - 1 * MIN);
+    const r = await t.e.sweep();
+    ok(r.skipped === 'utilisateur actif' && t.calls.apply.length === 0 && AA.readLedger(t.logsDir).length === 0, 'utilisateur qui lit (battement il y a 1 min, aucun geste depuis 20 min) : aucune réponse', r);
+    const a = AA.readActivity(t.logsDir);
+    ok(a.kind === 'présence' && a.lastGestureKind === 'message', 'la présence ne remplace pas le dernier geste (gardé pour l’explication)', a);
+  }
+  // 9b — presence periods: a return starts a new one.
+  {
+    const logs = path.join(TMP, 'presence-logs');
+    const t0 = Date.parse('2026-10-20T08:00:00Z');
+    AA.recordActivity(logs, { kind: 'message' }, t0);
+    AA.recordActivity(logs, { kind: 'présence' }, t0 + 5 * MIN);
+    ok(AA.readActivity(logs).presentSince === t0, 'battements rapprochés : même période de présence');
+    AA.recordActivity(logs, { kind: 'présence' }, t0 + 60 * MIN);
+    ok(AA.readActivity(logs).presentSince === t0 + 60 * MIN, 'retour après plus de 15 min sans signe : nouvelle période de présence');
+  }
+  // 9c — backlog: born before the activation of the rule ⇒ never answered.
+  {
+    const t = engine('backlog-activation', { activityAgoMin: 30, waitAgoMin: 10 * 24 * 60, activatedAgoMin: 60 });
+    const r = await t.e.sweep();
+    ok(r.answered === null && t.calls.apply.length === 0, 'attente de 10 jours, antérieure à l’activation : jamais traitée', r);
+    const v = await t.e.overview();
+    ok(v.backlog.length === 1 && v.backlog[0].reason === 'avant-activation' && /activation/.test(v.backlog[0].reasonText), 'elle est listée pour l’utilisateur (arriéré, avec la raison)', v.backlog);
+  }
+  {
+    // A rule enabled by default before 0.123.0 has no activation date: it is set now.
+    const root = freshRoot('no-activation');
+    ok(AA.readSettings(root).activatedAt === null && AA.ensureActivation(root).activatedAt !== null, 'règle active sans date d’activation : datée au premier balayage');
+    const st = AA.writeSettings(root, { enabled: false });
+    const t1 = Date.now();
+    const on = AA.writeSettings(root, { enabled: true });
+    ok(st.ok && on.ok && Date.parse(on.settings.activatedAt) >= t1 - 1000, 'rallumer la règle la redate (l’arriéré de la coupure n’est jamais traité)', on.settings);
+  }
+  // 9d — backlog: born before the user's last return ⇒ never answered.
+  {
+    const t = engine('backlog-return', { activityAgoMin: 180, waitAgoMin: 120, activatedAgoMin: 600 });
+    AA.recordActivity(t.logsDir, { kind: 'message' }, Date.now() - 30 * MIN);   // back 30 min ago, idle since
+    const r = await t.e.sweep();
+    const v = await t.e.overview();
+    ok(r.answered === null && t.calls.apply.length === 0 && v.backlog[0]?.reason === 'avant-retour', 'attente née avant le retour de l’utilisateur : jamais traitée, listée', { r, b: v.backlog });
+  }
+  // 9e — proposed gaps: only once presented to the user.
+  {
+    const S = { ...AA.DEFAULT_SETTINGS, activatedAt: new Date(Date.now() - 60 * MIN).toISOString() };
+    const now = Date.now();
+    const idle = AA.idleInfo({ activity: { at: now - 40 * MIN }, now, settings: S });
+    const gap = { key: 'gap:k1', kind: 'gap', project: 'P', since: now - 30 * MIN, question: 'Lacune', context: { gapKey: 'k1' } };
+    ok(AA.dueWaits({ waits: [gap], now, idle, settings: S }).length === 0, 'lacune jamais présentée : exclue');
+    ok(AA.classifyWaits({ waits: [gap], settings: S, idle }).backlog[0]?.backlog === 'non-presentee', 'elle est listée comme non présentée');
+    ok(AA.dueWaits({ waits: [gap], now, idle, settings: S, presented: { 'gap:k1': now - 2 * MIN } }).length === 0, 'présentée il y a 2 min : le délai de 5 min court depuis la présentation');
+    ok(AA.dueWaits({ waits: [gap], now, idle, settings: S, presented: { 'gap:k1': now - 6 * MIN } }).length === 1, 'présentée il y a 6 min, sans réponse : due');
+    const logs = path.join(TMP, 'presented-logs');
+    ok(AA.recordPresented(logs, ['gap:k1', 'log:x', 'gap:k1']) === 1 && AA.readPresented(logs)['gap:k1'] > 0 && !AA.readPresented(logs)['log:x'], 'présentation enregistrée (lacunes seulement, une fois)');
+    // The production incident replayed: idle 15 min, gap 10 days old, rule enabled by default.
+    const old = { ...gap, since: now - 14_032 * MIN };
+    const prodS = { ...AA.DEFAULT_SETTINGS, activatedAt: new Date(now).toISOString() };
+    ok(AA.dueWaits({ waits: [old], now: now + 20 * MIN, idle: AA.idleInfo({ activity: { at: now - 15 * MIN }, now: now + 20 * MIN, settings: prodS }), settings: prodS, presented: {} }).length === 0, 'incident rejoué (lacune de 10 jours, jamais présentée) : aucune décision');
+  }
+  // 9f — the notification says what, on which element, and why inactive.
+  {
+    const t = engine('notice', { activityAgoMin: 20 });
+    const rec = (await t.e.sweep()).answered;
+    const txt = AA.decisionText(rec);
+    ok(rec?.inactivity?.thresholdMin === 15 && rec.inactivity.idleMin >= 19 && rec.inactivity.lastKind === 'message', 'la décision garde pourquoi l’utilisateur était inactif', rec?.inactivity);
+    ok(/question — répondu à votre place/.test(txt) && /Élément : question de P/.test(txt) && /Pourquoi vous étiez considéré inactif : dernier signe de vous à \d\d:\d\d \(message\), soit \d+ min sans activité ≥ seuil de 15 min ; demande en attente depuis 6 min/.test(txt), 'notification : quoi, sur quel élément, pourquoi inactif', txt);
+    const d = (await t.e.overview()).decisions[0];
+    ok(d.target?.type === 'project' && d.target.project === 'P' && d.what && d.why_inactive, 'la vue donne la cible (lien) et la raison', d);
+    const gapRec = { kind: 'gap', status: 'applied', decision: 'reject', gapKey: 'routage:44', waitedMin: 14032, inactivity: { lastAt: new Date().toISOString(), lastKind: 'message', lastSource: 'dashboard', idleMin: 15, thresholdMin: 15 } };
+    ok(/lacune proposée — lacune rejetée/.test(AA.decisionText(gapRec)) && /lacune « routage:44 »/.test(AA.decisionText(gapRec)) && /10 jours/.test(AA.decisionText(gapRec)) && AA.decisionTarget(gapRec).type === 'gap', 'lacune : « lacune rejetée », sa clé, l’attente en jours', AA.decisionText(gapRec));
+  }
+  // 9g — undo of a rejected gap: return point noted, undo works, user decisions untouched.
+  {
+    const logs = path.join(TMP, 'gap-undo');
+    const routing = path.join(TMP, 'model-routing-gap.json');
+    fs.writeFileSync(routing, JSON.stringify({ version: 2, custom: { attach: [] }, gapDecisions: { other: { decision: 'rejected', by: 'dashboard' } } }));
+    const rp = AA.makeRecoveryPoint({ id: 'aa-gap1', logsDir: logs, files: [routing] });
+    ok(rp.possible && !/git reset/.test(rp.text) && /bouton « Annuler »/.test(rp.text), 'point de retour noté pour une lacune (copie), sans « git reset » trompeur', rp.text);
+    const cur = JSON.parse(fs.readFileSync(routing, 'utf8'));
+    cur.gapDecisions.k = { decision: 'rejected', by: AA.BY };
+    cur.custom.attach.push({ pipeline: 'dev', when: 'ajout ultérieur de l’utilisateur' });
+    fs.writeFileSync(routing, JSON.stringify(cur));
+    const u = AA.undoRecovery({ id: 'aa-gap1', kind: 'gap', gapKey: 'k', recovery: rp }, { routingFile: routing });
+    const after = JSON.parse(fs.readFileSync(routing, 'utf8'));
+    ok(u.ok && !after.gapDecisions.k && after.gapDecisions.other && after.custom.attach.length === 1, 'Annuler un rejet : la lacune est de nouveau proposée, le reste (décisions et ajouts postérieurs) intact', { u, after });
+    after.gapDecisions.k = { decision: 'accepted', by: 'dashboard' };
+    fs.writeFileSync(routing, JSON.stringify(after));
+    const u2 = AA.undoRecovery({ id: 'aa-gap1', kind: 'gap', gapKey: 'k', recovery: rp }, { routingFile: routing });
+    ok(u2.ok === false && u2.status === 409 && JSON.parse(fs.readFileSync(routing, 'utf8')).gapDecisions.k.by === 'dashboard', 'décision reprise depuis par l’utilisateur : l’annulation la laisse intacte (409)', u2);
+  }
+  // 9h — dismiss: handled ⇒ removed from the view, kept in the history; obsolete detected; pending needs confirmation.
+  {
+    const logs = path.join(TMP, 'dismiss-logs');
+    const mk = (id, status, extra = {}) => AA.upsertDecision(logs, { id, key: `k-${id}`, kind: 'question', project: 'P', status, at: new Date().toISOString(), question: 'Q', ...extra });
+    mk('aa-1', 'applied'); mk('aa-2', 'submitted'); mk('aa-3', 'submitted'); mk('aa-4', 'failed');
+    const open = (r) => (r.id === 'aa-3' ? false : true);
+    ok(AA.decisionPhase(AA.readLedger(logs)[2], open).phase === 'obsolete' && AA.decisionPhase(AA.readLedger(logs)[1], open).phase === 'pending', 'obsolète détectée (demande close entre-temps) ; soumise encore ouverte = en attente');
+    let r = AA.dismissDecisions(logs, { ids: ['aa-1'], targetOpen: open });
+    ok(r.ok && r.dismissed.join() === 'aa-1' && AA.readLedger(logs).find(d => d.id === 'aa-1').dismissedAt, '« Écarter » une décision traitée : retirée de la vue', r);
+    ok(AA.readLedger(logs).length === 4, 'rien n’est effacé du registre (historique)');
+    r = AA.dismissDecisions(logs, { ids: ['aa-2'], targetOpen: open });
+    ok(!r.ok && r.needsConfirm.join() === 'aa-2' && !AA.readLedger(logs).find(d => d.id === 'aa-2').dismissedAt, 'une décision encore en attente ne s’écarte pas sans confirmation', r);
+    r = AA.dismissDecisions(logs, { handled: true, targetOpen: open });
+    ok(r.ok && r.dismissed.sort().join() === 'aa-3,aa-4', '« Écarter tout ce qui est traité ou obsolète » : la soumise ouverte reste', r);
+    r = AA.dismissDecisions(logs, { ids: ['aa-2'], confirm: true, targetOpen: open });
+    ok(r.ok && r.dismissed.join() === 'aa-2', 'avec confirmation : écartée');
+    const t = engine('dismiss-view');
+    const rec = (await t.e.sweep()).answered;
+    ok(t.e.dismiss({ ids: [rec.id] }).ok, 'écarter depuis le moteur');
+    const v = t.e.view();
+    ok(!v.decisions.some(d => d.id === rec.id) && v.history.some(d => d.id === rec.id && d.dismissed) && v.unseen === 0, 'la vue ne la montre plus, l’historique la garde', { d: v.decisions.length, h: v.history.length });
+  }
+  // 9i — guardrails: compact in the menu, still the five, still enforced.
+  {
+    const client = fs.readFileSync(path.join(ROOT, 'public', 'auto-answer.js'), 'utf8');
+    ok(/<details class="aa-guards-d"><summary[^>]*>🔒 \$\{list\.length\} garde-fous actifs<\/summary>/.test(client) && !/aa-guards-d"[^>]*open/.test(client), 'menu : garde-fous repliés par défaut sur une ligne « 🔒 N garde-fous actifs »');
+    ok(!/<h3>Garde-fous/.test(client), 'plus de grande section « Garde-fous » dans le menu');
+    const { guardrails } = AA.loadGuardrails(ROOT);
+    ok(G.every(id => guardrails.some(g => g.id === id && g.mandatory)), 'les cinq garde-fous restent chargés et obligatoires');
+    const f = AA.enforceGuardrails({ kind: 'question' }, { ok: true, answer: 'Paye.', decision: null, engages: ['argent'], concerns: [], safeAnswer: '', reason: '', sources: [] }, { ok: true, answerEngages: [], safeEngages: [] }, guardrails);
+    ok(f.mode === 'submit', 'et restent appliqués (affichage seul changé)');
+  }
+  // 9j — wiring.
+  {
+    const srv = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+    for (const r of ["app.post('/api/auto-answer/dismiss'", "app.post('/api/auto-answer/presented'"]) ok(srv.includes(r), `route ${r.replace(/^app\./, '')}`);
+    ok(/targetOpen:/.test(srv) && /autoAnswer\.overview\(/.test(srv), 'obsolescence et arriéré servis par /api/auto-answer');
+    const client = fs.readFileSync(path.join(ROOT, 'public', 'auto-answer.js'), 'utf8');
+    ok(/\/api\/user-activity/.test(client) && /visibilityState/.test(client) && /hasFocus/.test(client), 'le dashboard envoie un battement de présence (onglet visible, focalisé, utilisé)');
+    const models = fs.readFileSync(path.join(ROOT, 'public', 'models.js'), 'utf8');
+    ok(/\/api\/auto-answer\/presented/.test(models), 'la page Models déclare les lacunes réellement présentées');
+    const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+    ok(/id="notif-dock"[\s\S]*id="perm-band"[\s\S]*id="auto-band"[\s\S]*<\/section>/.test(html) && html.includes('notif-dock.js') && html.includes('notif-dock.css'), 'demandes regroupées dans la zone compacte #notif-dock');
+    const css = fs.readFileSync(path.join(ROOT, 'public', 'notif-dock.css'), 'utf8');
+    ok(/\.nd-body\s*\{[^}]*max-height:[^}]*overflow-y:\s*auto/.test(css) && !/position:\s*fixed/.test(css), 'zone de hauteur bornée, défilement interne, jamais par-dessus la page');
+  }
+  // 9k — the client's presence logic (visible, focused, recently used).
+  {
+    const vm = await import('node:vm');
+    const ctx = { console, setTimeout, clearTimeout, setInterval: () => 0, Date, JSON, globalThis: null };
+    ctx.globalThis = ctx;
+    vm.createContext(ctx);
+    vm.runInContext(fs.readFileSync(path.join(ROOT, 'public', 'auto-answer.js'), 'utf8'), ctx);
+    const A = ctx.AutoAnswer;
+    const doc = (vis, focus) => ({ visibilityState: vis, hasFocus: () => focus });
+    const now = Date.now();
+    A.presence.lastInteraction = now - 2 * MIN; A.presence.lastSent = now - 2 * MIN;
+    ok(A.presenceDue(now, doc('visible', true)) === true, 'onglet visible, focalisé, utilisé il y a 2 min : battement');
+    ok(A.presenceDue(now, doc('hidden', true)) === false, 'onglet caché : aucun battement');
+    ok(A.presenceDue(now, doc('visible', false)) === false, 'onglet sans le focus : aucun battement');
+    A.presence.lastInteraction = now - 11 * MIN;
+    ok(A.presenceDue(now, doc('visible', true)) === false, 'rien touché depuis plus de 10 min : plus de battement (absence)');
+    A.presence.lastInteraction = now; A.presence.lastSent = now - 10_000;
+    ok(A.presenceDue(now, doc('visible', true)) === false, 'un battement par minute au plus');
+  }
 }
 
 fs.rmSync(TMP, { recursive: true, force: true });
