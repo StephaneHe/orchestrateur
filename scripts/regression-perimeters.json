@@ -681,7 +681,9 @@
         "scripts/model-routing.mjs",
         "scripts/model-reco.mjs",
         "data/**",
-        "scripts/infra-retry.mjs"
+        "scripts/infra-retry.mjs",
+        "scripts/cited-paths.mjs",
+        "scripts/pipeline-tuning.mjs"
       ],
       "suites": [
         "_test_pipeline_catalog.mjs",
@@ -709,7 +711,8 @@
         "_test_reunion_pipeline.mjs",
         "_test_reunion_redaction_route.mjs",
         "_test_dev_instance_pipelines.mjs",
-        "_test_infra_retry.mjs"
+        "_test_infra_retry.mjs",
+        "_test_cited_paths_log.mjs"
       ],
       "uses": [
         {
@@ -723,18 +726,17 @@
         {
           "perimeter": "dispatch",
           "suites": [
+            "_test_cited_paths_log.mjs",
             "_test_defect_blocks.mjs",
             "_test_dev_instance_pipelines.mjs",
+            "_test_infra_retry.mjs",
             "_test_item_delivery.mjs",
-            "_test_release_prebump.mjs",
-            "_test_orphaned_run.mjs",
-            "_test_resume_message.mjs",
-            "_test_presenter_artefact.mjs",
             "_test_item_review.mjs",
             "_test_item_tests.mjs",
             "_test_model_reco.mjs",
             "_test_model_routing.mjs",
             "_test_no_lexical_routing.mjs",
+            "_test_orphaned_run.mjs",
             "_test_pipeline_catalog.mjs",
             "_test_pipeline_covered.mjs",
             "_test_pipeline_engine.mjs",
@@ -744,28 +746,29 @@
             "_test_pipeline_media.mjs",
             "_test_pipeline_observe.mjs",
             "_test_pipeline_onboard.mjs",
+            "_test_presenter_artefact.mjs",
+            "_test_release_prebump.mjs",
+            "_test_resume_message.mjs",
             "_test_reunion_pipeline.mjs",
             "_test_reunion_redaction_route.mjs",
             "_test_step_key_3digits.mjs",
-            "_test_tests_per_item.mjs",
-            "_test_infra_retry.mjs"
+            "_test_tests_per_item.mjs"
           ]
         },
         {
           "perimeter": "noyau",
           "suites": [
+            "_test_cited_paths_log.mjs",
             "_test_defect_blocks.mjs",
             "_test_dev_instance_pipelines.mjs",
+            "_test_infra_retry.mjs",
             "_test_item_delivery.mjs",
-            "_test_release_prebump.mjs",
-            "_test_orphaned_run.mjs",
-            "_test_resume_message.mjs",
-            "_test_presenter_artefact.mjs",
             "_test_item_review.mjs",
             "_test_item_tests.mjs",
             "_test_model_reco.mjs",
             "_test_model_routing.mjs",
             "_test_no_lexical_routing.mjs",
+            "_test_orphaned_run.mjs",
             "_test_pipeline_catalog.mjs",
             "_test_pipeline_covered.mjs",
             "_test_pipeline_engine.mjs",
@@ -775,11 +778,13 @@
             "_test_pipeline_media.mjs",
             "_test_pipeline_observe.mjs",
             "_test_pipeline_onboard.mjs",
+            "_test_presenter_artefact.mjs",
+            "_test_release_prebump.mjs",
+            "_test_resume_message.mjs",
             "_test_reunion_pipeline.mjs",
             "_test_reunion_redaction_route.mjs",
             "_test_step_key_3digits.mjs",
-            "_test_tests_per_item.mjs",
-            "_test_infra_retry.mjs"
+            "_test_tests_per_item.mjs"
           ]
         },
         {
@@ -793,18 +798,17 @@
         {
           "perimeter": "panneaux",
           "suites": [
+            "_test_cited_paths_log.mjs",
             "_test_defect_blocks.mjs",
             "_test_dev_instance_pipelines.mjs",
+            "_test_infra_retry.mjs",
             "_test_item_delivery.mjs",
-            "_test_release_prebump.mjs",
-            "_test_orphaned_run.mjs",
-            "_test_resume_message.mjs",
-            "_test_presenter_artefact.mjs",
             "_test_item_review.mjs",
             "_test_item_tests.mjs",
             "_test_model_reco.mjs",
             "_test_model_routing.mjs",
             "_test_no_lexical_routing.mjs",
+            "_test_orphaned_run.mjs",
             "_test_pipeline_catalog.mjs",
             "_test_pipeline_covered.mjs",
             "_test_pipeline_engine.mjs",
@@ -813,28 +817,29 @@
             "_test_pipeline_gates.mjs",
             "_test_pipeline_media.mjs",
             "_test_pipeline_observe.mjs",
+            "_test_presenter_artefact.mjs",
+            "_test_release_prebump.mjs",
+            "_test_resume_message.mjs",
             "_test_reunion_pipeline.mjs",
             "_test_reunion_redaction_route.mjs",
             "_test_step_key_3digits.mjs",
-            "_test_tests_per_item.mjs",
-            "_test_infra_retry.mjs"
+            "_test_tests_per_item.mjs"
           ]
         },
         {
           "perimeter": "routage",
           "suites": [
+            "_test_cited_paths_log.mjs",
             "_test_defect_blocks.mjs",
             "_test_dev_instance_pipelines.mjs",
+            "_test_infra_retry.mjs",
             "_test_item_delivery.mjs",
-            "_test_release_prebump.mjs",
-            "_test_orphaned_run.mjs",
-            "_test_resume_message.mjs",
-            "_test_presenter_artefact.mjs",
             "_test_item_review.mjs",
             "_test_item_tests.mjs",
             "_test_model_reco.mjs",
             "_test_model_routing.mjs",
             "_test_no_lexical_routing.mjs",
+            "_test_orphaned_run.mjs",
             "_test_pipeline_catalog.mjs",
             "_test_pipeline_covered.mjs",
             "_test_pipeline_engine.mjs",
@@ -844,11 +849,13 @@
             "_test_pipeline_media.mjs",
             "_test_pipeline_observe.mjs",
             "_test_pipeline_onboard.mjs",
+            "_test_presenter_artefact.mjs",
+            "_test_release_prebump.mjs",
+            "_test_resume_message.mjs",
             "_test_reunion_pipeline.mjs",
             "_test_reunion_redaction_route.mjs",
             "_test_step_key_3digits.mjs",
-            "_test_tests_per_item.mjs",
-            "_test_infra_retry.mjs"
+            "_test_tests_per_item.mjs"
           ]
         },
         {

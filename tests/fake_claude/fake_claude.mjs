@@ -17,6 +17,8 @@
 //   FAKE_CLAUDE_TURN_BUDGET_MS  total per turn upper bound (default 200)
 //   FAKE_CLAUDE_FAIL_RATE      0..1 chance to emit error instead of result
 //   FAKE_CLAUDE_TOOL_USES      number of synthetic tool_use rounds (default 1)
+//   FAKE_CLAUDE_READ_PATH      file_path of the synthetic Read (default fake.txt)
+//   FAKE_CLAUDE_TOOL_OUTPUT    text appended to each synthetic tool result
 // ============================================================================
 
 // Réglages du mode double model (0.44.0), tous optionnels et inactifs par défaut :
@@ -260,7 +262,7 @@ async function run() {
       type: 'assistant',
       message: {
         content: [
-          { type: 'tool_use', id: toolUseId, name: 'Read', input: { file_path: 'fake.txt' } },
+          { type: 'tool_use', id: toolUseId, name: 'Read', input: { file_path: process.env.FAKE_CLAUDE_READ_PATH || 'fake.txt' } },
         ],
       },
     });
@@ -269,7 +271,8 @@ async function run() {
       type: 'user',
       message: {
         content: [
-          { type: 'tool_result', tool_use_id: toolUseId, content: `fake content for "${userText.slice(0, 40)}"` },
+          { type: 'tool_result', tool_use_id: toolUseId, content: `fake content for "${userText.slice(0, 40)}"${process.env.FAKE_CLAUDE_TOOL_OUTPUT ? `
+${process.env.FAKE_CLAUDE_TOOL_OUTPUT}` : ''}` },
         ],
       },
     });
@@ -394,7 +397,8 @@ function pipelineStep(text) {
   // Catalog steps (phase 6) carry MODIFIER=… lines: same id as a dev step does not mean same contract.
   if (/^MODIFIER=/m.test(text)) return catalogStep(text, step, artefact, bad, w, once);
   switch (step) {
-    case 'comprendre': w(artefact, `# Compréhension\n\nLa question porte sur le projet. Fichiers utiles : \`package.json\`${bad ? ', `inexistant/fichier.js`' : ''}.\n`); break;
+    // FAKE_PIPE_CITE=<a,b> : the understanding also cites these paths (lever 1, cited paths).
+    case 'comprendre': w(artefact, `# Compréhension\n\nLa question porte sur le projet. Fichiers utiles : \`package.json\`${bad ? ', `inexistant/fichier.js`' : ''}${String(process.env.FAKE_PIPE_CITE || '').split(',').filter(Boolean).map(c => `, \`${c}\``).join('')}.\n`); break;
     case 'rechercher': w(artefact, '# Recherche\n\n- package.json : script de test « node --test ».\n'); if (bad) w('pollution.txt', 'modifié par la recherche\n'); break;
     // FAKE_PIPE_LANG=en : la réponse est écrite en anglais (portier de langue du moteur).
     case 'repondre': w(artefact, process.env.FAKE_PIPE_LANG === 'en'

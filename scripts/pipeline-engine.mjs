@@ -54,6 +54,8 @@ import { countTests, addedTests, itemTestsVerdict } from './item-tests.mjs';
 import { groupOf, groupCases, groupReady, insertAttachedCases, worktreeTree, treeDiff } from './item-review.mjs';
 import { foldTo, commitWork, itemCommitMessage, setAsideWork, reapplyWork, head as headOf } from './item-delivery.mjs';
 import { readFragments } from './lanes.mjs';
+import { cleanTuning, runTuning } from './pipeline-tuning.mjs';
+import { judgeCitedPaths, observedInTurn } from './cited-paths.mjs';
 
 /** Changelog fragment a lane task delivers (P9; same slug as the integrator's, scripts/lanes.mjs). */
 export function laneFragmentPath(task) { return `changelog.d/${String(task).replace(/[^\w.-]/g, '_')}.md`; }
@@ -139,7 +141,7 @@ export function isEnforced(enf, project) {
 }
 
 /** Écriture atomique de la mise en service (CLI pipeline-enforce.mjs, route serveur). */
-export function writeEnforcement(root, { projects, pipelines, terminal, chef, generalSince, by }) {
+export function writeEnforcement(root, { projects, pipelines, terminal, chef, generalSince, tuning, by }) {
   const file = path.join(root, 'model-routing.json');
   let j = {};
   try { j = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* neuf */ }
@@ -152,8 +154,10 @@ export function writeEnforcement(root, { projects, pipelines, terminal, chef, ge
   const term = typeof terminal === 'boolean' ? terminal : before?.terminal === true;
   const chf = typeof chef === 'boolean' ? chef : before?.chef === true;
   const gen = generalSince || before?.generalSince || null;
-  j.enforcement = { projects: [...new Set(projects)], pipelines: pipelines.filter(p => ENGINE_PIPELINES.includes(p)), ...(term ? { terminal: true } : {}), ...(chf ? { chef: true } : {}), ...(gen ? { generalSince: gen } : {}), since: at, by };
-  const fmt = (e) => `${(e.projects || []).join(',') || '—'} / ${(e.pipelines || []).join(',')}${e.terminal ? ' / terminal' : ''}${e.chef ? ' / chef' : ''}`;
+  // Phase 0 switches (pipeline-tuning.mjs): kept as they are unless given.
+  const tun = cleanTuning(tuning === undefined ? before?.tuning : tuning);
+  j.enforcement = { projects: [...new Set(projects)], pipelines: pipelines.filter(p => ENGINE_PIPELINES.includes(p)), ...(term ? { terminal: true } : {}), ...(chf ? { chef: true } : {}), ...(gen ? { generalSince: gen } : {}), ...(Object.keys(tun).length ? { tuning: tun } : {}), since: at, by };
+  const fmt = (e) => `${(e.projects || []).join(',') || '—'} / ${(e.pipelines || []).join(',')}${e.terminal ? ' / terminal' : ''}${e.chef ? ' / chef' : ''}${e.tuning ? ` / réglages ${Object.entries(e.tuning).map(([k, v]) => `${k}=${v === true ? 'tous' : v.join('+')}`).join(',')}` : ''}`;
   j.history.push({ at, task: 'enforcement', from: before ? fmt(before) : null, to: fmt(j.enforcement), by });
   if (j.history.length > 500) j.history = j.history.slice(-500);
   j.updatedAt = at;
@@ -451,14 +455,14 @@ export function bumpedInRun(cwd, cfg, from, to) {
 }
 
 /** Chemins cités entre accents graves qui n'existent pas. */
-export function missingCitedPaths(text, cwd) {
+export function missingCitedPaths(text, cwd, { exists = null } = {}) {
+  const has = exists || ((p) => fs.existsSync(path.isAbsolute(p) ? p : path.join(cwd, p)));
   const out = [];
   for (const m of String(text).matchAll(/`([^`\n]{2,200})`/g)) {
     const p = m[1].trim().replace(/:\d+(-\d+)?$/, '');
     const looksPath = /^[\w.\-@]+([\\/][\w.\-@ ]+)+$/.test(p) || /^[\w.\-]+\.(m?js|cjs|ts|tsx|jsx|json|md|kt|kts|py|java|css|html|ya?ml|toml|txt|ps1|sh|gradle)$/i.test(p) || /^[A-Za-z]:[\\/]/.test(p);
     if (!looksPath || /^https?:/i.test(p) || /[*?]/.test(p)) continue;
-    const abs = path.isAbsolute(p) ? p : path.join(cwd, p);
-    if (fs.existsSync(abs)) continue;
+    if (has(p)) continue;
     // A file cited to say it is ABSENT (« ni `pyproject.toml` ni `setup.py` »,
     // « pas de `docs/X.md` ») is a correct observation, not an invented path
     // (seen on the first real runs of phase 7). Judged on its own line.
@@ -469,6 +473,24 @@ export function missingCitedPaths(text, cwd) {
     out.push(p);
   }
   return [...new Set(out)];
+}
+
+/** File names the orchestrator itself writes (run artefacts, logs), lower case:
+ *  cited by a turn that read them, never a file of the project (lever 1). */
+export function orchArtefactNames() {
+  const names = new Set(['demande.md', 'contexte.md', 'conversation.md', 'diff.patch', 'run.json', 'dispatch.json', 'handoff.json',
+    'routage-pending.json', 'routage-released.ndjson', 'pipeline-observe.ndjson', 'pipeline-classify.ndjson', 'model-routing.json',
+    'backoff-control.json', 'scans-sortie.txt', 'item-review.idx', 'tests.md', 'plan.md', 'comprehension.md', 'revue.json']);
+  for (const s of Object.values(devCatalog())) if (s.artefact) names.add(s.artefact.toLowerCase());
+  for (const p of CATALOG_PIPELINES) { try { for (const s of catalogSteps(p)) if (s.artefact) names.add(s.artefact.toLowerCase()); } catch { /* mode-only pipeline */ } }
+  return names;
+}
+
+/** Paths an artefact cites that are refused, with the switch of lever 1. */
+function citedPathsCheck(ctx, art) {
+  if (!ctx.tuning?.citedPathsLog) return { missing: missingCitedPaths(art, ctx.cwd), reported: [] };
+  const v = judgeCitedPaths(art, ctx.cwd, { observed: observedInTurn(ctx.stepLogFile || ''), orchNames: orchArtefactNames() });
+  return v;
 }
 
 // ---------------------------------------------------------------------------
@@ -1660,8 +1682,9 @@ function checkCatalogCriteria(ctx, step, before, after) {
     return fail(`${step.artefact} : au moins ${c.minSources} source(s) distincte(s) avec URL attendue(s) (${countSources(art)} trouvée(s))`);
   }
   if (c.citedPaths) {
-    const missing = missingCitedPaths(art, cwd);
+    const { missing, reported } = citedPathsCheck(ctx, art);
     if (missing.length) return fail(`chemins cités inexistants : ${missing.slice(0, 6).join(', ')}`);
+    if (reported.length) ctx.citedReported = reported;
   }
   let json = null;
   if (c.json) {
@@ -1787,8 +1810,9 @@ function checkCriteria(ctx, step, before, after) {
       need(!changed.length, `étape en lecture seule, mais des fichiers du projet ont changé : ${changed.slice(0, 8).join(', ')}`);
     if (why) return { ok: false, why, changed };
     if (step.id === 'comprendre') {
-      const missing = missingCitedPaths(art, cwd);
+      const { missing, reported } = citedPathsCheck(ctx, art);
       if (missing.length) return { ok: false, why: `chemins cités inexistants : ${missing.slice(0, 6).join(', ')}`, changed };
+      if (reported.length) ctx.citedReported = reported;
     }
     if (step.id === 'concevoir' && (art.match(/^##\s+\S/gm) || []).length < 2) {
       return { ok: false, why: 'plan.md : il faut au moins les sections « ## Approche » et « ## Étapes »', changed };
@@ -2259,6 +2283,13 @@ export async function runPipeline(o) {
     resumeMessages: state.resumeMessages || [],
     // P9: in a lane, Livrer writes a changelog.d fragment; the integrator assigns the version.
     lane: state.lane?.k >= 1 ? { ...state.lane, dir: cwd, main: project.path, fragment: laneFragmentPath(state.lane.task) } : null };
+  // Phase 0 switches, frozen in run.json when the run starts (pipeline-tuning.mjs).
+  ctx.tuning = runTuning(state, root, projectName, { resumed: !!o.resumeRun });
+  saveState();
+  if (!o.resumeRun && Object.values(ctx.tuning).some(Boolean)) {
+    writeEvent({ type: 'system', subtype: 'pipeline_tuning', pipeline: { run }, tuning: ctx.tuning,
+      text: `réglages de cette exécution (figés au départ) : ${Object.entries(ctx.tuning).filter(([, v]) => v).map(([k]) => k).join(', ')}` });
+  }
   // Durée ACTIVE : le temps passé en pause à attendre l'utilisateur ne compte
   // pas dans la limite de 90 min (une reprise repart du temps déjà consommé).
   const sessionStart = Date.now();
@@ -2653,7 +2684,11 @@ export async function runPipeline(o) {
       rec.status = 'failed'; rec.why = !log.result ? `aucun résultat (code ${code})` : String(log.result.result || log.result.subtype || 'échec').slice(0, 1500);
       return { rec, info, before, after };
     }
+    ctx.stepLogFile = path.join(runDir, `${key}.jsonl`);
+    ctx.citedReported = null;
     const c = checkCriteria(ctx, step, before, after);
+    // Lever 1: accepted cited paths that are not files of the project are said, never silent.
+    if (ctx.citedReported?.length) rec.citedReported = ctx.citedReported.slice(0, 20);
     rec.status = c.ok ? 'ok' : 'refused';
     rec.why = c.ok ? null : c.why;
     rec.changed = c.changed?.slice(0, 50);
@@ -2668,8 +2703,8 @@ export async function runPipeline(o) {
     const s = r.rec;
     writeEvent({ type: 'system', subtype: 'pipeline_step_done', pipeline: { run, step: s.id, key: s.key, slot: s.slot, attempt: s.attempt, ...(s.item ? { item: s.item } : {}) },
       model: s.model, served: s.served, provider: s.provider, modelSource: s.source, status: s.status, why: s.why ? String(s.why).slice(0, 2000) : undefined,
-      durationMs: s.durationMs, costUsd: s.costUsd, changed: s.changed, test: s.test, ...(s.covered ? { covered: true } : {}), log: `logs/runs/${run}/${s.key}.jsonl`,
-      text: `étape ${s.title} : ${s.status === 'ok' ? '✓ critère vérifié' : s.status === 'refused' ? `✕ refusée — ${String(s.why).split('\n')[0].slice(0, 200)}` : s.status === 'model_unavailable' ? '⏸ model indisponible' : `✕ échec — ${String(s.why).split('\n')[0].slice(0, 200)}`}` });
+      durationMs: s.durationMs, costUsd: s.costUsd, changed: s.changed, test: s.test, ...(s.covered ? { covered: true } : {}), ...(s.citedReported ? { citedReported: s.citedReported } : {}), ...(s.cached ? { cached: s.cached } : {}), ...(s.source === 'code' ? { byCode: true } : {}), log: `logs/runs/${run}/${s.key}.jsonl`,
+      text: `étape ${s.title} : ${s.status === 'ok' ? `✓ critère vérifié${s.source === 'code' ? ' (fait par le programme)' : ''}${s.citedReported ? ` — chemins acceptés hors projet : ${s.citedReported.map(r => `${r.path} (${r.why})`).join(', ').slice(0, 300)}` : ''}` : s.status === 'refused' ? `✕ refusée — ${String(s.why).split('\n')[0].slice(0, 200)}` : s.status === 'model_unavailable' ? '⏸ model indisponible' : `✕ échec — ${String(s.why).split('\n')[0].slice(0, 200)}`}` });
   };
 
   // User rule (2026-10-10) « tout problème détecté doit bloquer une livraison

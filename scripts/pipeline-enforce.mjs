@@ -11,7 +11,10 @@
 //   node scripts/pipeline-enforce.mjs on  --chef      tour du chef = pipeline Routage (0.54.0)
 //   node scripts/pipeline-enforce.mjs off --chef
 //   node scripts/pipeline-enforce.mjs pipelines all   pipelines en service (0.53.0 ; ou une liste a,b,c)
-//   node scripts/pipeline-enforce.mjs off --all       retour arrière complet
+//   node scripts/pipeline-enforce.mjs off --all       retour arrière complet (réglages compris)
+//   node scripts/pipeline-enforce.mjs tuning          interrupteurs de la phase 0 des pipelines
+//   node scripts/pipeline-enforce.mjs tuning <levier|all> on|off [<projet>]
+//                                                     sans projet : tous les projets ; avec : ce projet
 //
 // Écrit model-routing.json → enforcement (temp + rename, historique), relu à
 // chaque dispatch : aucun redémarrage. Les cases (models) ne sont pas touchées.
@@ -25,6 +28,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readEnforcement, writeEnforcement, ENGINE_PIPELINES } from './pipeline-engine.mjs';
+import { readTuning, applyTuningChange, describeTuning } from './pipeline-tuning.mjs';
 
 const ROOT = process.env.DISPATCH_ROOT_FOR_TESTS ? path.resolve(process.env.DISPATCH_ROOT_FOR_TESTS) : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const [cmd, target] = process.argv.slice(2);
@@ -39,6 +43,22 @@ if (cmd === 'pipelines') {
   if (!want.length || bad.length) { console.error(`pipelines inconnus : ${bad.join(', ') || '(aucun)'} — connus : ${ENGINE_PIPELINES.join(', ')}`); process.exit(64); }
   if (!want.includes('discussion')) { console.error('« discussion » reste toujours en service (règle « inclassable = Discussion »)'); process.exit(64); }
   show(writeEnforcement(ROOT, { projects: cur.projects, terminal: cur.terminal, chef: cur.chef, pipelines: want, by: `pipeline-enforce pipelines ${want.join(',')}` }));
+  process.exit(0);
+}
+// tuning (pipelines phase 0): one switch per lever, re-read at each dispatch;
+// a run keeps the settings it read when it started (run.json.tuning).
+if (cmd === 'tuning') {
+  const [, lever, onOff, project] = process.argv.slice(2);
+  if (!lever) { console.log(describeTuning(readTuning(ROOT))); process.exit(0); }
+  if (!['on', 'off'].includes(onOff)) { console.error('usage: node scripts/pipeline-enforce.mjs tuning [<levier|all> on|off [<projet>]]'); process.exit(64); }
+  if (project) {
+    const config = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
+    if (!config.projects.some(p => p.name === project)) { console.error(`projet inconnu : ${project}`); process.exit(64); }
+  }
+  let tuning;
+  try { tuning = applyTuningChange(readTuning(ROOT), { on: onOff === 'on', lever, project }); } catch (e) { console.error(e.message); process.exit(64); }
+  writeEnforcement(ROOT, { projects: cur.projects, terminal: cur.terminal, chef: cur.chef, pipelines: cur.pipelines.length ? cur.pipelines : ENGINE_PIPELINES, tuning, by: `pipeline-enforce tuning ${lever} ${onOff}${project ? ` ${project}` : ''}` });
+  console.log(describeTuning(readTuning(ROOT)));
   process.exit(0);
 }
 if (!['on', 'off'].includes(cmd) || !target) {
@@ -56,4 +76,5 @@ else {
   if (cmd === 'on' && !config.projects.some(p => p.name === target)) { console.error(`projet inconnu : ${target}`); process.exit(64); }
   projects = cmd === 'on' ? [...projects, target] : projects.filter(p => p !== target);
 }
-show(writeEnforcement(ROOT, { projects, terminal, chef, pipelines: cur.pipelines.length ? cur.pipelines : ENGINE_PIPELINES, by: `pipeline-enforce ${cmd} ${target}` }));
+const tuning = cmd === 'off' && target === '--all' ? {} : undefined;
+show(writeEnforcement(ROOT, { projects, terminal, chef, pipelines: cur.pipelines.length ? cur.pipelines : ENGINE_PIPELINES, tuning, by: `pipeline-enforce ${cmd} ${target}` }));
