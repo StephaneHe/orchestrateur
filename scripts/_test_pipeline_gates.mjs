@@ -269,9 +269,10 @@ section('12. Retour utilisateur : message de pause compréhensible, et chaque ch
 r = await go(['Ajoute beaucoup de choses', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '4', ORCH_PIPE_ITEMS: '3' });
 const res12 = r.evs.find(e => e.type === 'result')?.result || '';
 const needs = (/^NEEDS_USER_INPUT:\s*(.*)$/m.exec(res12) || [])[1] || '';
-ok(r.code === 2 && ["Ce qui s'est passé", 'Où en est le travail', '« **continuer** »', '« **simplifier** »', '« **changer le model** »', '« **abandonner** »', 'Je recommande'].every(s => res12.includes(s)), 'le message dit : ce qui s’est passé, où en est le travail, chaque choix et sa conséquence, une recommandation');
+// Adapted 0.122.0: the user asked for choices derived from the cause (« Il faudrait un choix plus intelligent »), no generic menu.
+ok(r.code === 2 && ['**Cause**', "Ce qui s'est passé", 'Où en est le travail', '« **découper** »', '« **prolonger** »', '« **abandonner** »', 'Je recommande'].every(s => res12.includes(s)) && !res12.includes('« **continuer** »') && !res12.includes('« **changer le model** »'), 'le message dit : la cause, ce qui s’est passé, où en est le travail, chaque choix et sa conséquence, une recommandation');
 ok(/0 test\(s\) faits sur 4 prévus, 4 restant\(s\)/.test(res12), `avancement chiffré : « ${(/Où en est le travail\*\* : (.*)/.exec(res12) || [])[1]} »`);
-ok(/continuer.*simplifier.*changer le model.*abandonner.*je recommande « (continuer|simplifier|changer le model|abandonner) »/.test(needs), `la question elle-même liste les réponses et la recommandation : « ${needs.slice(0, 160)} »`);
+ok(/découper.*prolonger.*abandonner.*je recommande « (découper|prolonger|abandonner) »/.test(needs), `la question elle-même liste les réponses et la recommandation : « ${needs.slice(0, 160)} »`);
 ok(!/\b4[abc]\b|@loop|--pipeline-resume|critère de sortie|\bitem/i.test(res12), 'aucun vocabulaire interne (4a/4b/4c, boucle, commande, critère, item)');
 ok(/abandonner/.test(needs.slice(0, 160)) && /je recommande « [^»]+ »/.test(needs.slice(0, 160)), 'l’aperçu du dashboard (160 caractères) garde les réponses et la recommandation');
 ok(r.notes.some(n => n.project === 'chef' && /Ce qui s'est passé/.test(n.text) && /Je recommande/.test(n.text)), 'le chef reçoit toute l’explication, pas seulement la question');

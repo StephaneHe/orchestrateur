@@ -31,6 +31,7 @@ import crypto from 'node:crypto';
 import { spawn, execFileSync } from 'node:child_process';
 import { writeFileAtomic } from './atomic-file.mjs';
 import { tailLines, deriveState, isPhantomResult } from './fleet-status-core.mjs';
+import { matchOptionKey } from './pause-diagnosis.mjs';
 
 export const AUTO_MODEL = 'claude-opus-5-5';
 export const MODEL_LABEL = 'Opus 5.5';
@@ -293,7 +294,9 @@ export function collectLogWaits({ logsDir, projects, conductor = 'chef', busy = 
         context: {
           lastText: String(st.lastAssistantText || '').slice(-12_000),
           exchanges: recentExchanges(lines),
-          ...(paused ? { run: paused.run, pipeline: paused.state.pipeline, pausedLimit: paused.state.pausedLimit || null, runFile: paused.file } : {}),
+          ...(paused ? { run: paused.run, pipeline: paused.state.pipeline, pausedLimit: paused.state.pausedLimit || null, runFile: paused.file,
+            // Smart pause (0.122.0): the diagnosed cause and the menu derived from it.
+            ...(paused.state.diagnosis?.options?.length ? { diagnosis: { cause: paused.state.diagnosis.cause, kind: paused.state.diagnosis.kind, options: paused.state.diagnosis.options.map(o => ({ key: o.key, does: o.does })), recommend: paused.state.diagnosis.recommend } } : {}) } : {}),
         },
       });
     }
@@ -334,7 +337,7 @@ function guardrailBlock(guardrails) {
 
 const KIND_HELP = {
   question: 'A process asked the user a question (NEEDS_USER_INPUT). Your "answer" is sent to it as the user\'s reply.',
-  pause: 'A pipeline run is paused and offers a menu. Start "answer" with the exact menu word you choose (for example « continuer », « accepter », « abandonner », « simplifier », « tout supprimer »), then one sentence explaining why.',
+  pause: 'A pipeline run is paused and offers a menu derived from the diagnosed cause. Start "answer" with the exact menu word you choose among the OPTIONS listed in the context (the RECOMMENDED one unless a decision of the user says otherwise; never a word outside the menu), then one sentence explaining why.',
   permission: 'A process asks for permission to run a tool. Set "decision" to "allow" (this time only, never a permanent rule) or "deny"; "answer" is the short message given with the decision.',
   gap: 'The orchestrator proposed a gap (a task no pipeline covers) with a proposal. Set "decision" to "accept" (apply the proposal) or "reject"; "answer" explains why.',
 };
@@ -346,6 +349,12 @@ export function answerPrompt(wait, { guardrails, sources = [], idleMin, waitMin 
     if (c.exchanges?.length) ctx.push('Recent exchanges of this process (oldest first):', ...c.exchanges.map(e => `--- ${e.who} ---\n${e.text}`));
     if (c.lastText) ctx.push('--- full last message (it holds the question and, often, a recommendation) ---', c.lastText);
     if (c.run) ctx.push(`Paused run: ${c.run} (pipeline ${c.pipeline}, pause « ${c.pausedLimit || '?'} »).`);
+    if (c.diagnosis) {
+      ctx.push(`DIAGNOSED CAUSE (established by the orchestrator): ${c.diagnosis.cause}`,
+        'OPTIONS — your "answer" (and "safeAnswer") MUST start with exactly one of these menu words, nothing else is accepted:',
+        ...c.diagnosis.options.map(o => `- « ${o.key} » : ${o.does}`),
+        `RECOMMENDED: « ${c.diagnosis.recommend.key} » — ${c.diagnosis.recommend.why}`);
+    }
   } else if (wait.kind === 'permission') {
     ctx.push(`Tool: ${c.tool}`, `Command / input: ${c.preview}`, `Risk (computed): ${c.risk || '?'}`, `Why asked: ${c.why || '?'}`);
     if (c.explanation) ctx.push(`Explanation (computed from the command):\n${c.explanation}`);
@@ -408,6 +417,10 @@ const ids = (v) => (Array.isArray(v) ? v.filter(x => typeof x === 'string').map(
 export function normalizeAnswer(wait, j) {
   if (!j || typeof j !== 'object') return { ok: false, why: 'réponse du model illisible (JSON attendu)' };
   const answer = typeof j.answer === 'string' ? j.answer.trim() : '';
+  // A paused run with a smart menu (0.122.0): only one of ITS options is a valid answer.
+  const menu = wait.kind === 'pause' ? (wait.context?.diagnosis?.options || []).map(o => o.key) : [];
+  if (menu.length && !matchOptionKey(answer, menu)) return { ok: false, why: `réponse hors des choix proposés par la pause (${menu.map(k => `« ${k} »`).join(', ')})` };
+  if (menu.length && typeof j.safeAnswer === 'string' && !matchOptionKey(j.safeAnswer, menu)) j = { ...j, safeAnswer: '' };
   let decision = null;
   if (wait.kind === 'permission') decision = j.decision === 'allow' ? 'allow' : j.decision === 'deny' ? 'deny' : null;
   if (wait.kind === 'gap') decision = j.decision === 'accept' ? 'accept' : j.decision === 'reject' ? 'reject' : null;

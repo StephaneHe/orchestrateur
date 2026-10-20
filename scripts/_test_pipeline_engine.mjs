@@ -172,7 +172,8 @@ const st = deriveState(logOf('P').map(e => JSON.stringify(e)));
 ok(st.state === 'input', 'signal 2 : question dans le dashboard (état input)');
 // 0.50.1 : la question est en langage clair (plus de commande) — elle liste les
 // quatre réponses possibles et la recommandation.
-ok(/NEEDS_USER_INPUT: .*« continuer ».*« simplifier ».*« changer le model ».*« abandonner ».*je recommande/.test(evs.find(e => e.type === 'result')?.result || ''), 'la question propose de continuer, changer de model ou abandonner');
+// Adapted 0.122.0: the user asked for choices derived from the cause (« Il faudrait un choix plus intelligent »), no generic menu.
+ok(/NEEDS_USER_INPUT: .*« respecter le périmètre ».*« abandonner ».*je recommande « respecter le périmètre »/.test(evs.find(e => e.type === 'result')?.result || '') && !/NEEDS_USER_INPUT: .*(« continuer »|« changer le model »)/.test(evs.find(e => e.type === 'result')?.result || ''), 'la question propose le choix qui agit sur la cause (tests touchés), une recommandation et « abandonner » — ni « continuer » ni « changer le model »');
 ok(runState(run).status === 'paused', 'run.json : paused');
 ok(!fs.existsSync(path.join(P, 'src', 'pipe.mjs')) || g(P, 'diff', '--quiet', '--', 'test').status === 0, 'essais refusés annulés (tests intacts)');
 // Reprise : « continuer » relance l'exécution en pause, à son étape.

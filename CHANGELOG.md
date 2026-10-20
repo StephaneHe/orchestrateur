@@ -11,6 +11,66 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.122.0] - 2026-10-20
+
+User report (verbatim): « Une chose qui me gene c'est de porposer des choix
+stupides. Si quelque chose a provoquer une erreur, proposer de continuer ou de
+changer de modele ne resoudra pas l'erreur. Il faudrait un choix plus
+intelligent ».
+
+### Added
+
+- (server) **Every pipeline pause states its cause** (`scripts/pause-diagnosis.mjs`,
+  `diagnosePause`). Established by the code first, in this order: refused
+  criterion and its reason, test output, diff, provider error, limit reached,
+  missing file. Causes recognised: test that already passes, no test written,
+  broken test, failing assertion, no change, cited paths (each path judged:
+  orchestrator name, event type, abbreviated path found elsewhere, absent),
+  missing artefact or sections, scope violation, bad format, missing commit,
+  list too big, review defects, missing dependency, busy port, full disk,
+  expired OAuth, network, provider outage, usage limit, unknown model,
+  provider refusal, launch failures, orchestrator refusal, red base,
+  interruption, repeated error. Only when the code finds nothing, ONE short
+  choice by the model of the case `routage.classifier` (`diagnoseWithModel`,
+  `ORCH_PAUSE_MODEL_DIAG=0` turns it off). Stated in one French sentence
+  (« **Cause** : … »), traced `system/pipeline_diagnosis`, kept in
+  `run.json.diagnosis`.
+- (server) **Choices derived from the cause** (`smartMenu`), each saying what
+  it will do, one recommended with its reason: « corriger le test »,
+  « écrire le test », « corriger le code », « changer d’approche » (the
+  approach is named), « corriger les références » (exact paths given),
+  « ajuster le critère » (this run only, traced
+  `system/pipeline_criterion_relaxed`, said in the result), « découper » (the
+  first tests stay, the rest become named separate requests, `reste.md`,
+  listed in the result), « prolonger », « corriger les défauts »,
+  « réduire les tests », « compléter le compte rendu », « respecter le
+  périmètre », « corriger le format », « refaire le commit », « réparer »
+  (runs `npm ci` / `npm install` / `pip install <package>` in the project, traced
+  `system/pipeline_repair`), « réparé », « reconnecté », « relancer après
+  correction », « garder les doutes », « reprendre les items », « livrer sans
+  eux », « écarter l’item ». Rules enforced by the code (`checkMenu`,
+  `fixMenu`): « continuer » only for a transient cause (outage, limit,
+  network, interruption); « changer le model » only with a proof (unknown
+  model, failed model test, provider refusal); « abandonner »
+  always. « tester le model » records its result as that proof; a usage
+  limit is not a proof (it comes back by itself).
+- (server) `dispatch.mjs` recognises the new menu words (explicit answers,
+  never keyword routing), musicians and chef's Routage alike, and hands the
+  option to the engine (`pauseOption`), which applies its effect before
+  resuming (`system/pipeline_pause_option`). « continuer » keeps working.
+- (server) The automatic answer (0.121.0) receives the diagnosed cause, the
+  options and the recommendation, and may only answer with one of these
+  options (anything else is refused, the point goes back to the user).
+- `scripts/pause-replay.mjs`: read-only replay of the real past pauses of a
+  logs folder — menu offered then, cause and menu now.
+
+### Changed
+
+- (server) Pause messages: « Cause » first, then what happened, progress,
+  choices and recommendation; the question line lists the choices of THIS
+  pause. The doubts pause (meeting) offers « garder les doutes » instead of
+  « continuer »; an expired OAuth hold offers « reconnecté ».
+
 ## [0.121.0] - 2026-10-20
 
 User rule (verbatim): « si aucune activite de ma part depuis plus de 15

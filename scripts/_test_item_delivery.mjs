@@ -229,7 +229,8 @@ ok(c7.blocked === 'items_blocked' && c7.stale && c7.first.code === 2 && st7.paus
   `cas reproduit : pause « aside_conflict » sur l’item ${c7.stale?.group} (marqué en conflit), après « continuer » sur « items_blocked »`, c7.first.out.slice(-800));
 ok(c7.others.length > 0 && JSON.stringify(st7.restoreQueue) === JSON.stringify(c7.others), `les autres items mis de côté restent en file (${JSON.stringify(st7.restoreQueue)})`);
 const q7 = c7.first.evs.find(e => e.type === 'result')?.result || '';
-ok(/j’écarte cet item/.test(q7) && /recommande « continuer »/i.test(q7), 'le message dit que « continuer » écarte l’item en conflit (recommandé : d’autres items restent)', q7.slice(0, 1200));
+// Adapted 0.122.0: the user asked for choices derived from the cause (« Il faudrait un choix plus intelligent »), no generic menu.
+ok(/j’écarte cet item/.test(q7) && /recommande « écarter l’item »/i.test(q7), 'le message dit que « écarter l’item » écarte l’item en conflit (recommandé : d’autres items restent ; « continuer » fait de même)', q7.slice(0, 1200));
 r = await go(['continuer'], { FAKE_PIPE_ITEMS: '3', ORCH_PIPE_REVIEW_ROUNDS: '1' });
 const s7b = runState(c7.run);
 ok(!r.evs.some(e => e.subtype === 'pipeline_limit' && e.limit === 'aside_conflict') && r.evs.some(e => e.subtype === 'pipeline_aside_discarded' && e.pipeline.item === c7.stale.group),

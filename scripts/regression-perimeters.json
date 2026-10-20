@@ -696,7 +696,10 @@
         "scripts/code-delivery.mjs",
         "scripts/suite-cache.mjs",
         "scripts/inert-custom.mjs",
-        "scripts/pipeline-cleanup.mjs"
+        "scripts/pipeline-cleanup.mjs",
+        "scripts/pause-diagnosis.mjs",
+        "scripts/pause-replay.mjs",
+        "tests/pause-cases.json"
       ],
       "suites": [
         "_test_pipeline_catalog.mjs",
@@ -728,7 +731,8 @@
         "_test_cited_paths_log.mjs",
         "_test_code_deliver.mjs",
         "_test_suite_cache.mjs",
-        "_test_inert_cleanup.mjs"
+        "_test_inert_cleanup.mjs",
+        "_test_smart_pause.mjs"
       ],
       "uses": [
         {
@@ -771,7 +775,8 @@
             "_test_reunion_redaction_route.mjs",
             "_test_step_key_3digits.mjs",
             "_test_suite_cache.mjs",
-            "_test_tests_per_item.mjs"
+            "_test_tests_per_item.mjs",
+            "_test_smart_pause.mjs"
           ]
         },
         {
@@ -805,7 +810,8 @@
             "_test_reunion_redaction_route.mjs",
             "_test_step_key_3digits.mjs",
             "_test_suite_cache.mjs",
-            "_test_tests_per_item.mjs"
+            "_test_tests_per_item.mjs",
+            "_test_smart_pause.mjs"
           ]
         },
         {
@@ -846,7 +852,8 @@
             "_test_reunion_redaction_route.mjs",
             "_test_step_key_3digits.mjs",
             "_test_suite_cache.mjs",
-            "_test_tests_per_item.mjs"
+            "_test_tests_per_item.mjs",
+            "_test_smart_pause.mjs"
           ]
         },
         {
@@ -881,7 +888,8 @@
             "_test_reunion_redaction_route.mjs",
             "_test_step_key_3digits.mjs",
             "_test_suite_cache.mjs",
-            "_test_tests_per_item.mjs"
+            "_test_tests_per_item.mjs",
+            "_test_smart_pause.mjs"
           ]
         },
         {
@@ -893,7 +901,8 @@
             "_test_no_lexical_routing.mjs",
             "_test_pipeline_entries.mjs",
             "_test_pipeline_observe.mjs",
-            "_test_pipeline_onboard.mjs"
+            "_test_pipeline_onboard.mjs",
+            "_test_smart_pause.mjs"
           ]
         }
       ],

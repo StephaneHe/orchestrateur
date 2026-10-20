@@ -268,8 +268,9 @@ const lim = r.evs.find(e => e.type === 'notification' && e.subtype === 'pipeline
 const res5 = r.evs.filter(e => e.type === 'result').pop()?.result || '';
 ok(r.code === 2 && lim?.limit === 'launch' && runState(r.run).status === 'paused' && ofType(r.evs, 'pipeline_backoff').length === 2,
   `après 2 paliers et 6 erreurs : pause « launch » (${ofType(r.evs, 'pipeline_step_done').filter(d => d.status === 'launch_failed').length} erreurs)`);
-ok(/« continuer »/.test(res5) && /« tester le model »/.test(res5) && /« changer le model »/.test(res5) && /case « dev\.rouge »/.test(res5) && /NEEDS_USER_INPUT:.*tester le model/.test(res5),
-  'message de pause : continuer, tester le model (recommandé), changer le model (case dev.rouge), abandonner');
+// Adapted 0.122.0: « changer le model » only with a proof the model is at fault (user request « Il faudrait un choix plus intelligent »).
+ok(/« continuer »/.test(res5) && /« tester le model »/.test(res5) && !/« changer le model »/.test(res5) && /case « dev\.rouge »/.test(res5) && /NEEDS_USER_INPUT:.*je recommande « tester le model »/.test(res5),
+  'message de pause : continuer, tester le model (recommandé : il apporte la preuve), abandonner — « changer le model » seulement après un test en échec', res5.slice(0, 1600));
 const pausedRun = r.run;
 r = await go(['tester le model']);
 const t5 = r.evs.find(e => e.subtype === 'pipeline_model_test');

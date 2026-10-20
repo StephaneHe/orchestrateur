@@ -3008,6 +3008,44 @@ confirmés : « Ces gardes fous sont tres importants, garde les ».
 - Recettes : `_test_auto_answer.mjs`, HTTP et navigateur `auto-answer`.
   L'app Android n'affiche pas encore l'interrupteur ni le résumé.
 
+## Pauses : la cause d'abord, des choix qui agissent dessus (0.122.0)
+
+Demande utilisateur (2026-10-20) : « Une chose qui me gene c'est de porposer des
+choix stupides. Si quelque chose a provoquer une erreur, proposer de continuer
+ou de changer de modele ne resoudra pas l'erreur. Il faudrait un choix plus
+intelligent ».
+
+- Module `scripts/pause-diagnosis.mjs`. **Toute pause du moteur passe par
+  `pauseWith`** (`pipeline-engine.mjs`) : `diagnosePause` (le code, dans
+  l'ordre : critère refusé et motif, sortie des tests, diff, erreur du
+  fournisseur, limite, fichier manquant), puis, seulement si la cause reste
+  `unknown`, `diagnoseWithModel` (un choix court, model de la case
+  `routage.classifier` via `chooseOption`). Lire des messages de machine
+  (critères, tests, fournisseurs) n'est pas du routage par mots-clés.
+- `smartMenu` dérive les choix de la cause ; `fixMenu` / `checkMenu`
+  garantissent les règles : cause énoncée, « continuer » seulement si
+  passagère (`TRANSIENT_KINDS`), « changer le model » seulement avec preuve
+  (`d.proof` : model inconnu, test du model en échec, refus — une limite
+  d'utilisation n'en est pas une),
+  « abandonner » toujours, une recommandée et justifiée, chaque option dit ce
+  qu'elle fera. `run.json.diagnosis`, `system/pipeline_diagnosis`.
+- **Mots du menu** : `OPTION_KEYS` (registre unique ; `resume` | `abandon` |
+  `test` | `model` | `accept` | `deleteDoubts`), reconnus par `dispatch.mjs`
+  (`matchOptionKey`, réponse explicite) et passés au moteur (`pauseOption`) qui
+  applique l'effet de l'option avant la reprise : `message` (consigne précise
+  dans `resumeMessages`, `from: 'diagnostic'`), `relax` (`state.relaxed` :
+  `citedPaths`, `itemTests`), `split` (`reste.md`, `state.splitOff`),
+  `repair` (`npm`/`pip` seulement), `extend`. **Ajouter une cause** :
+  `CAUSE_KINDS`, détecteur dans `diagnosePause`, cas dans `smartMenu`, mot dans
+  `OPTION_KEYS`, cas dans `_test_smart_pause.mjs`.
+- Réponse automatique : cause, choix et recommandation dans le prompt ;
+  `normalizeAnswer` refuse une réponse hors du menu.
+- Rejeu des vraies pauses (lecture seule) : `node scripts/pause-replay.mjs
+  --logs <dossier> [--md <fichier>]` (sortie hors dépôt : noms de projets).
+- Recette : `_test_smart_pause.mjs` (vrais cas `tests/pause-cases.json`,
+  vrai dispatch). Redémarrage inutile (moteur et dispatch), sauf pour le
+  balayage de la réponse automatique du serveur.
+
 ## Attachments
 
 Images uploaded via the dashboard (paste / drag-drop / file picker) land in

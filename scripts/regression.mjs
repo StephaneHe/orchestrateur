@@ -1458,7 +1458,8 @@ async function apiChecks(sb) {
     const res = evs.find(e => e.type === 'result')?.result || '';
     assert(r.code === 2 && ["Ce qui s'est passé", 'Où en est le travail', 'Je recommande', '« **abandonner** »'].every(s => res.includes(s)) && !/--pipeline-resume|\b4[abc]\b/.test(res), `pause peu claire : ${res.slice(0, 300)}`);
     const row = await until(async () => (await json('/api/pupitre')).fleet.find(x => x.name === 'omega' && x.state === 'input') || null, 8000);
-    assert(row && /continuer.*abandonner/.test(row.needsInput || ''), `question du dashboard : ${row?.needsInput}`);
+    // 0.122.0 (« Il faudrait un choix plus intelligent »): the choices of THIS cause (list too big), stated cause, no generic « continuer ».
+    assert(row && /découper.*abandonner/.test(row.needsInput || '') && !/« continuer »|« changer le model »/.test(row.needsInput || '') && res.includes('**Cause** :'), `question du dashboard : ${row?.needsInput}`);
     r = await pipeDispatch(['omega', 'abandonner']);
     const st = await until(async () => (await json('/api/pupitre')).fleet.find(x => x.name === 'omega' && x.state !== 'input') || null, 8000);
     assert(r.code === 0 && st, '« abandonner » : la question devrait disparaître');

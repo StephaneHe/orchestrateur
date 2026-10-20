@@ -413,6 +413,8 @@ if (CHEF_SPEAKING && new RegExp(`^${CONDUCTOR}-\\d+$`).test(projectName)) {
 // so the hand-off looks like a chef speaking. Only a token signed for THIS ref
 // lets it through (0.100.1, two hand-offs lost in prod on 2026-10-14).
 const pipeEngine = await import('./pipeline-engine.mjs');
+// Smart pause menu words (0.122.0): explicit answers, never a keyword classification.
+const pauseMenu = await import('./pause-diagnosis.mjs');
 const HANDOFF_GRANT = chefHandoffArg != null ? pipeEngine.verifyHandoff(ROOT, chefHandoffArg, HANDOFF_TOKEN) : null;
 // Délégation chef → chef : c'est P0-B. Refuser explicitement vaut mieux que
 // spawner un second `--resume` sur la session du chef (suicide de tour).
@@ -1460,7 +1462,10 @@ if (CHEF_ROUTED && !CHEF_DISCUSSION) {
   // Only a bare menu answer (optionally with the run id) is a pause answer:
   // « Arrête le tour de Q », « Abandonne la tâche de P » are requests to route.
   const bare = reply.replace(/\bp-\d{8}T\d{6}-[a-z0-9]{4,8}\b/g, '').replace(/[\s.!…:,;«»"]+/g, ' ').trim();
-  const isMenu = /^(continue|continuer|reprends|reprendre|on continue|accepter?|abandonner|abandonne|annuler|simplifier|changer (?:de |le )?mod[eè]le?|tester (?:le )?mod[eè]le?)$/i.test(bare);
+  const menuKey = pauseMenu.matchOptionKey(bare);
+  const isMenu = /^(continue|continuer|reprends|reprendre|on continue|accepter?|abandonner|abandonne|annuler|simplifier|changer (?:de |le )?mod[eè]le?|tester (?:le )?mod[eè]le?)$/i.test(bare)
+    || (!!menuKey && menuKey.length >= bare.length - 1);
+  const chefOption = isMenu && menuKey && pauseMenu.OPTION_KEYS[menuKey] === 'resume' && menuKey !== 'continuer' ? menuKey : null;
   const resume = isMenu && /^(continue|continuer|reprends|reprendre|on continue)$/i.test(bare);
   const accept = isMenu && /^accept/i.test(bare);
   const other = isMenu ? pauseAnswer(bare) : null;
@@ -1473,7 +1478,7 @@ if (CHEF_ROUTED && !CHEF_DISCUSSION) {
       if (other) process.exit(await pipeEngine.answerPausedRun({ logsDir: LOGS, project, projectName, run: target, answer: other, promptForLog: prompt, sourceProject, callbackProject, testLabel }));
       process.exit(await pipeEngine.runPipeline({
         root: ROOT, logsDir: LOGS, project, projectName, prompt, promptForLog: prompt, pipeline: 'routage', mode: st.mode, resumeRun: target,
-        acceptDefects: accept, classification: null, callbackProject: null, sourceProject, obsId, testLabel,
+        acceptDefects: accept, pauseOption: chefOption, classification: null, callbackProject: null, sourceProject, obsId, testLabel,
         ticket: CHEF_TICKET || null, slot: CHEF_SLOT, dispatchScript: fileURLToPath(import.meta.url),
       }));
     }
@@ -1497,13 +1502,16 @@ if (CHEF_ROUTED || CHEF_DISCUSSION) {
   }));
 }
 if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResumeArg || AUTO_PIPELINE)) {
-  let pipe = pipelineArg, resumeRun = pipelineResumeArg, classification = null, mode = pipelineModeArg, acceptDefects = false, deleteDoubts = false;
+  let pipe = pipelineArg, resumeRun = pipelineResumeArg, classification = null, mode = pipelineModeArg, acceptDefects = false, deleteDoubts = false, pauseOption = null;
   // 0.113.2: the Routage launches every answer to a paused run with
   // --pipeline-resume — « simplifier » included (user report 2026-10-18: it
   // resumed the run instead of closing it). A reply that IS one of the pause's
   // other choices is that choice, whatever flag carried it.
   if (resumeRun && !pipe) {
-    const answer = pauseAnswer(prompt.replace(/^\s*\[CHEF_ANSWER\]\s*/i, '').trim());
+    const said = prompt.replace(/^\s*\[CHEF_ANSWER\]\s*/i, '').trim();
+    const answer = pauseAnswer(said);
+    const k = pauseMenu.matchOptionKey(said);
+    if (k && pauseMenu.OPTION_KEYS[k] === 'resume' && k !== 'continuer') pauseOption = k;
     if (answer) {
       process.exit(await pipeEngine.answerPausedRun({ logsDir: LOGS, project, projectName, run: resumeRun, answer, promptForLog: prompt, sourceProject, callbackProject, testLabel }));
     }
@@ -1517,6 +1525,10 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
     // 0.65.0: « accepter » — the user explicitly accepts the remaining review
     // defects; the run resumes and delivers, the defects are recorded.
     if (paused && /^accept/i.test(reply)) { resumeRun = paused; acceptDefects = true; }
+    // 0.122.0: a choice of the smart pause menu that resumes the run (« corriger le test »,
+    // « découper », « ajuster le critère »…): the engine applies its effect first.
+    const menuKey = paused ? pauseMenu.matchOptionKey(reply) : null;
+    if (menuKey && pauseMenu.OPTION_KEYS[menuKey] === 'resume') { resumeRun = paused; if (menuKey !== 'continuer') pauseOption = menuKey; }
     // 0.110.0: « tout supprimer » — the meeting run also deletes the files in doubt (engine: only after a « doutes » pause).
     if (paused && /^tout\s+supprimer\b/i.test(reply)) {
       let pausedFor = null;
@@ -1642,7 +1654,7 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
         ? `\n\n[Note de l'orchestrateur : cette demande relève du pipeline « ${classification.notInService} », pas encore en service sur ce projet. ` +
           'Elle est traitée en Discussion : ne modifie rien ; si elle demande une action, termine ta réponse en disant à l’utilisateur de la relancer avec /dev.]'
         : ''),
-      promptForLog: prompt, pipeline: pipe, resumeRun, classification, mode, kind, acceptDefects, deleteDoubts,
+      promptForLog: prompt, pipeline: pipe, resumeRun, classification, mode, kind, acceptDefects, deleteDoubts, pauseOption,
       ...(pipeNotes.length ? { modeNote: pipeNotes.join(' ; ') } : {}),
       callbackProject, sourceProject, obsId, testLabel,
       dispatchScript: fileURLToPath(import.meta.url),
@@ -1676,7 +1688,7 @@ function pausedReplyKind(text) {
   if (/^simplifi/i.test(reply)) return 'simplifier';
   if (/^changer?\s+(de\s+|le\s+)?mod[eè]le?/i.test(reply)) return 'changer le model';
   if (/^tester?(\s+(le|du|un)\s+mod[eè]le?)?\b/i.test(reply)) return 'tester le model';
-  return null;
+  return pauseMenu.matchOptionKey(reply);
 }
 
 /** Posts a message to the chef through the server (never blocks the turn more than 4 s). */
@@ -1699,7 +1711,8 @@ function pauseAnswer(reply) {
   return /^(abandonner|abandonne|abandon|annuler|annule|arr[eê]te)\b/i.test(reply) ? 'abandonner'
     : /^simplifi/i.test(reply) ? 'simplifier'
     : /^changer?\s+(de\s+|le\s+)?mod[eè]le?/i.test(reply) ? 'changer le model'
-    : /^tester?(\s+(le|du|un)\s+mod[eè]le?)?\b/i.test(reply) ? 'tester le model' : null;
+    : /^tester?(\s+(le|du|un)\s+mod[eè]le?)?\b/i.test(reply) ? 'tester le model'
+    : pauseMenu.matchOptionKey(reply) === 'livrer sans eux' ? 'livrer sans eux' : null;
 }
 
 /** The chef's paused Routage run an answer targets: the one cited with it, else the latest Routage run if paused (or orphaned). */

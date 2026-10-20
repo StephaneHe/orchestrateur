@@ -91,7 +91,8 @@ section('2. Vrai dispatch : refus avant tout appel au model → cause nommée, p
     'message de pause : la cause est nommée en clair, avec la raison, et le model est mis hors de cause');
   ok(!/n.a rien produit/i.test(res) && !/tester le model/i.test(res) && !/changer le model/i.test(res) && !/« simplifier »/.test(res),
     'message de pause : ni « le model n’a rien produit », ni « tester le model », ni « changer le model »');
-  ok(/« continuer » \(après correction de l’orchestrateur\) ou « abandonner »/.test(question) && !/tester|changer le model/i.test(question), `ligne de question : ${question.slice(0, 150)}…`);
+  // Adapted 0.122.0: the user asked for choices derived from the cause (« Il faudrait un choix plus intelligent »), no generic menu.
+  ok(/« relancer après correction » ou « abandonner » \(je recommande « relancer après correction »\)/.test(question) && !/tester|changer le model|« continuer »/i.test(question), `ligne de question : ${question.slice(0, 150)}…`);
   ok(!fs.existsSync(LAUNCHLOG) || !fs.readFileSync(LAUNCHLOG, 'utf8').trim(), 'le model n’a jamais été lancé (aucun appel du faux claude pour l’étape)');
   srv.close();
   try { fs.rmSync(T, { recursive: true, force: true }); } catch {}
