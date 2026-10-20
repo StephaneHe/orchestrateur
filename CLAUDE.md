@@ -2954,6 +2954,60 @@ Il faut donc attendre ma reponse pendant au moins 5 minutes avant de passer. »
   `_test_permission_prompt.mjs` §9, HTTP `permission-prompt`, navigateur
   `permission-explain`.
 
+## Réponse automatique quand l'utilisateur est inactif (0.121.0)
+
+Règle utilisateur (2026-10-20) : « si aucune activite de ma part depuis plus de
+15 minutes, et qu'un process attend quelque chose de moi, et que je ne reponds
+pas dans les 5 minutes, opus 5.5 est charge et autorise a repondre a ma place.
+Un point de retours est cree si possible. Sinon il faut avancer ». Garde-fous
+confirmés : « Ces gardes fous sont tres importants, garde les ».
+
+- Module `scripts/auto-answer.mjs` ; balayage du serveur toutes les 30 s
+  (`ORCH_AUTO_ANSWER_SWEEP_MS`), une attente à la fois.
+- **Activité** (`logs/user-activity.json`) : un POST de `ACTIVITY_ROUTES`
+  (message du composer ou de l'app, décision d'autorisation, de pause, de
+  question, de lacune, geste sur la file, `/api/user-activity`) venu d'un
+  navigateur ou de l'app (`activityOf`), jamais d'un script ni d'une décision
+  automatique. Inconnue = depuis le démarrage du serveur.
+- **Attentes** : questions `NEEDS_USER_INPUT` (musiciens, couloirs, chef),
+  pauses de pipeline, demandes d'autorisation (répondues à échéance − 90 s,
+  « une fois », jamais « toujours »), lacunes proposées. Pas pendant un tour.
+- **Réponse** : `claude-opus-5-5` explicite, model servi vérifié, aucun repli,
+  outils Read/Grep/Glob ; il suit d'abord la recommandation donnée et les
+  décisions prises (CLAUDE.md, registres, synthèses, TODO, mémoire). Puis un
+  tour de vérification indépendant contre les garde-fous ; c'est
+  `enforceGuardrails` (code) qui décide. Plafonds : 3 par projet, 20 par
+  absence. Utilisateur revenu pendant le tour ⇒ rien n'est appliqué.
+- **Garde-fous obligatoires** (`data/auto-answer-guardrails.json` + code,
+  `MANDATORY_GUARDRAILS`) : argent ; secret ; envoi ou signature au nom de
+  l'utilisateur ; suppression sans retour ; publication d'un dépôt privé.
+  Toujours actifs, indépendants de l'interrupteur, **aucune route ni bouton ne
+  les modifie** ; les changer demande une nouvelle décision explicite de
+  l'utilisateur. Touchés ⇒ l'option non engageante (autorisation ⇒ refus),
+  sinon rien n'est envoyé et le point est soumis à l'utilisateur (carte dans le
+  fil du chef).
+- **Point de retour** avant d'appliquer : tag `auto-answer/<id>` (avec le
+  travail non commité, `git stash create`), copie de `run.json` ou de
+  `model-routing.json` ; sinon noté, et on avance. « Annuler » : état courant
+  gardé dans `auto-answer-undo/<id>`, puis retour au point.
+- **Traces** : `logs/auto-answers.json` ; `notification/auto_answer` dans le
+  log du processus (journal, ligne du musicien), carte `musician_done` /
+  `musician_question` dans le fil du chef, marque « 🤖 réponse automatique
+  (Opus 5.5, utilisateur inactif) ».
+- **Interface** : pill `#btn-auto` (interrupteur global), overlay
+  `#auto-overlay` (délais, garde-fous en lecture seule, décisions), bandeau
+  `#auto-band` au retour (« Annuler », « ✓ Vu »).
+- Réglages à chaud : `auto-answer-settings.json` (racine, non versionné ;
+  `enabled`, `idleMin`, `waitMin`, `maxPerProject`, `maxTotal`,
+  `permissionLeadSec`, `projects`). Routes `GET /api/auto-answer`, `POST
+  /api/auto-answer/settings|seen|:id/undo`, `POST /api/user-activity`.
+  Redémarrage nécessaire (routes, balayage, crochet d'activité).
+- Instance de test : règle coupée par défaut, délais courts permis
+  (`ORCH_AUTO_ANSWER_TESTING`), faux Opus (`ORCH_AUTO_ANSWER_CHILD_ENV`,
+  `FAKE_CLAUDE_AUTO_ANSWER` / `FAKE_CLAUDE_AUTO_VERIFY`).
+- Recettes : `_test_auto_answer.mjs`, HTTP et navigateur `auto-answer`.
+  L'app Android n'affiche pas encore l'interrupteur ni le résumé.
+
 ## Attachments
 
 Images uploaded via the dashboard (paste / drag-drop / file picker) land in

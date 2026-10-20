@@ -814,7 +814,9 @@ export async function browserChecks(sb, t) {
           await m.goto(`${sb.url}/?token=${sb.token}`); await m.locator('.brand').waitFor();
           await m.evaluate(() => SidePanel.open('todo'));
           await m.locator('#side-panel .todo-item .ti-grip').first().waitFor({ timeout: 8000 });
-          const g = await m.locator('#side-panel .todo-item .ti-grip').first().boundingBox();
+          // The list may be re-rendered between waitFor and the measure (the old node is then
+          // detached: null); measure the grip that is in the page. The 44 px criterion is unchanged.
+          const g = await until(async () => m.locator('#side-panel .todo-item .ti-grip').first().boundingBox(), 5000, 200);
           // boundingBox() returns layout floats (43.99998 seen for a 44 px rule): allow
           // 0.01 px of sub-pixel rounding only, so a real 43 px grip still fails.
           // User agreement 2026-10-18 (« oui »), see docs/USER_REQUIREMENTS.md.
@@ -1206,6 +1208,63 @@ export async function browserChecks(sb, t) {
         keep.kill();
         for (let i = 0; i < 20 && fs.existsSync(pidFile); i++) { try { fs.unlinkSync(pidFile); } catch { await sleep(150); } }
         await page.click('#dive .dive-back').catch(() => {});
+      }
+    });
+    // User rule (2026-10-20): « si aucune activite de ma part depuis plus de 15
+    // minutes, et qu'un process attend quelque chose de moi, et que je ne reponds
+    // pas dans les 5 minutes, opus 5.5 est charge et autorise a repondre a ma
+    // place. Un point de retours est cree si possible. Sinon il faut avancer »
+    // + « Ces gardes fous sont tres importants, garde les ».
+    await check(B, 'auto-answer', 'Réponse automatique : interrupteur visible dans la barre du haut (ON/OFF, à chaud), overlay avec les garde-fous en lecture seule, résumé au retour des décisions prises à votre place avec raison et point de retour, « Annuler » (le dépôt revient au point de retour) et « ✓ Vu »', async () => {
+      if (!fs.existsSync(path.join(sb.root, 'public', 'auto-answer.js'))) NA('réponse automatique absente de cet état du code');
+      const AA = await import(pathToFileURL(path.join(sb.root, 'scripts', 'auto-answer.mjs')).href);
+      const { execFileSync } = await import('node:child_process');
+      const logs = path.join(sb.root, 'logs');
+      const repo = path.join(sb.root, 'auto-answer-repo');
+      const git = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      fs.mkdirSync(repo, { recursive: true });
+      git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 'recette');
+      fs.writeFileSync(path.join(repo, 'a.txt'), 'v1\n'); git('add', '-A'); git('commit', '-qm', 'init');
+      const id = AA.newId();
+      const recovery = AA.makeRecoveryPoint({ id, logsDir: logs, repo });
+      AA.upsertDecision(logs, { id, key: `log:lambda:0:${id}`, kind: 'question', project: 'lambda', lane: 0, at: new Date().toISOString(),
+        question: 'Je fais A ou B ? Je recommande A.', status: 'applied', model: AA.AUTO_MODEL, answer: 'A, comme recommandé.', reason: 'recommandation suivie', recovery, guardrails: { hits: [] } });
+      try {
+        await page.evaluate(() => window.AutoAnswer.load());
+        const pill = async () => ({ on: await page.getAttribute('#btn-auto', 'data-on').catch(() => null), label: (await page.getAttribute('#btn-auto', 'aria-label').catch(() => '')) || '' });
+        assert(await until(async () => (await pill()).on === '0' && /COUPÉE/.test((await pill()).label) && await visible(page, '#btn-auto'), 8000), 'interrupteur absent de la barre du haut');
+        const bar = await page.evaluate(() => { const t = document.querySelector('.topbar').getBoundingClientRect(); const b = document.querySelector('#btn-auto').getBoundingClientRect(); return { h: t.height, top: b.top, bottom: b.bottom, tTop: t.top, tBottom: t.bottom }; });
+        assert(bar.top >= bar.tTop && bar.bottom <= bar.tBottom && bar.h < 90, `barre du haut sur deux lignes : ${JSON.stringify(bar)}`);
+        const item = `#auto-band .aa-item[data-aa-id="${id}"]`;
+        assert(await until(async () => await visible(page, item), 8000), 'résumé au retour absent');
+        const band = await page.textContent('#auto-band');
+        assert(/prises? à votre place/.test(band) && /A, comme recommandé\./.test(band) && /recommandation suivie/.test(band) && /Point de retour/.test(band), `résumé : ${band.slice(0, 400)}`);
+        await shot(page, 'auto-answer-band');
+        fs.writeFileSync(path.join(repo, 'b.txt'), 'après\n'); git('add', '-A'); git('commit', '-qm', 'après la réponse');
+        await page.click(`${item} [data-aa-undo]`);
+        const undone = await until(async () => (await api('/api/auto-answer')).decisions.find(d => d.id === id)?.undone || null, 10_000);
+        assert(undone && git('rev-parse', 'HEAD') === recovery.git.head, `annulation : ${JSON.stringify(undone)}`);
+        assert(await until(async () => /annulée/.test(await page.textContent(item).catch(() => '')), 8000), 'annulation non affichée');
+        await page.click('#auto-band [data-aa-seen]');
+        assert(await until(async () => !(await visible(page, '#auto-band')), 8000), '« ✓ Vu » ne vide pas le résumé');
+        await page.click('#btn-auto');
+        assert(await until(async () => await visible(page, '#auto-overlay'), 5000), 'overlay absent');
+        const guards = await page.locator('#auto-overlay .aa-guards > li').count();
+        assert(guards >= 5 && (await page.locator('#auto-overlay .aa-guards input, #auto-overlay .aa-guards button').count()) === 0, `garde-fous : ${guards}, modifiables ?`);
+        assert(/toujours actifs/.test(await page.textContent('#auto-overlay')), 'garde-fous non présentés comme obligatoires');
+        await page.check('#aa-enabled');
+        assert(await until(async () => (await api('/api/auto-answer')).settings.enabled === true && (await pill()).on === '1' && /ACTIVE/.test((await pill()).label), 8000), 'interrupteur : activation sans effet');
+        await page.uncheck('#aa-enabled');
+        assert(await until(async () => (await api('/api/auto-answer')).settings.enabled === false && (await pill()).on === '0', 8000), 'interrupteur : coupure sans effet');
+        await page.keyboard.press('Escape');
+        assert(await until(async () => !(await visible(page, '#auto-overlay')), 4000), 'Échap ne ferme pas l’overlay');
+        return `pill ON/OFF, résumé de ${id}, annulation (HEAD ${recovery.git.head.slice(0, 7)}), Vu, ${guards} garde-fous en lecture seule`;
+      } finally {
+        await fetch(`${sb.url}/api/auto-answer/settings`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: false }) }).catch(() => {});
+        // Never leave the summary band open for the walks that follow (mobile layouts).
+        await fetch(`${sb.url}/api/auto-answer/seen`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {});
+        await page.keyboard.press('Escape').catch(() => {});
+        await page.evaluate(() => window.AutoAnswer?.load()).catch(() => {});
       }
     });
     // User request (2026-10-20): « Je ne vois pas que le test de non regression

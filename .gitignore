@@ -98,3 +98,7 @@ docs/**/captures/
 TODO_LIST.md
 todo-order.json
 todo-order.json.tmp
+# Automatic answer when the user is inactive (0.121.0): the switch and delays,
+# written by the server only. The guardrails are versioned (data/).
+auto-answer-settings.json
+auto-answer-settings.json.tmp

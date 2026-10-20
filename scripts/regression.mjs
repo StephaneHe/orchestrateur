@@ -1975,6 +1975,67 @@ async function apiChecks(sb) {
       `réveil : compte rendu incomplet : ${String(w?.text).slice(0, 400)}`);
     return `notification ${n.report.length} car., réveil complet`;
   });
+  // Last of the HTTP walks: it creates kappa's log (kappa has none before, checked by 'pupitre').
+  // User rule (2026-10-20): « si aucune activite de ma part depuis plus de 15
+  // minutes, et qu'un process attend quelque chose de moi, et que je ne reponds
+  // pas dans les 5 minutes, opus 5.5 est charge et autorise a repondre a ma
+  // place. Un point de retours est cree si possible. Sinon il faut avancer »
+  // + « Ces gardes fous sont tres importants, garde les ».
+  await check(S, 'auto-answer', 'Réponse automatique (Opus 5.5, utilisateur inactif) : interrupteur visible et à chaud, garde-fous obligatoires sans route qui les modifie, activité = geste du navigateur ou de l’app (jamais un script), utilisateur actif ⇒ rien, inactif + attente ⇒ décision par claude-opus-5-5 marquée partout (log, fil du chef, résumé), point de retour noté, « Vu », interrupteur coupé ⇒ rien', async () => {
+    if (!fs.existsSync(path.join(sb.root, 'scripts', 'auto-answer.mjs'))) NA('réponse automatique absente de cet état du code');
+    const logs = path.join(sb.root, 'logs');
+    const readLog = (n) => { try { return fs.readFileSync(path.join(logs, `${n}.jsonl`), 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return {}; } }); } catch { return []; } };
+    const BROWSER = { ...H, 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0 (regression)' };
+    const settings = (b) => post('/api/auto-answer/settings', b);
+    const ask = async (tag) => {
+      const r = await post('/api/permission/request', { project: 'kappa', tool: 'Bash', input: { command: `echo recette-${tag}` }, toolUseId: `toolu_auto_${tag}`, timeoutMs: 30 * 60_000 });
+      const j = await r.json();
+      assert(r.ok && j.status === 'pending', `demande ${tag} : ${r.status} ${JSON.stringify(j)}`);
+      return j.id;
+    };
+    const status = async (id) => (await json(`/api/permission/${id}`));
+    let v = await json('/api/auto-answer');
+    assert(v.settings.enabled === false && v.guardrailsAlwaysOn === true && v.model === 'claude-opus-5-5', `vue initiale : ${JSON.stringify(v.settings)}`);
+    for (const id of ['argent', 'secret', 'envoi-externe', 'suppression-definitive', 'publication-prive']) assert(v.guardrails.some(g => g.id === id && g.mandatory), `garde-fou ${id} absent`);
+    for (const m of ['POST', 'PUT', 'DELETE']) {
+      const r = await fetch(`${sb.url}/api/auto-answer/guardrails`, { method: m, headers: { ...H, 'Content-Type': 'application/json' }, body: '{}' });
+      assert(r.status === 404, `${m} /api/auto-answer/guardrails → ${r.status} (une route modifie les garde-fous)`);
+    }
+    assert((await settings({ idleMin: 0.001 })).status === 400, 'délai sous le minimum accepté');
+    try {
+      const before = (await json('/api/auto-answer')).activity.lastAt;
+      await post('/api/user-activity', { kind: 'clic' });   // node: a script, not the user
+      assert((await json('/api/auto-answer')).activity.lastAt === before, 'un appel de script compté comme activité de l’utilisateur');
+      // User active (a gesture every second) ⇒ nothing, even with the switch on.
+      assert((await settings({ enabled: true, idleMin: 0.05, waitMin: 0.01, projects: ['kappa'] })).ok, 'activation refusée');
+      const a = await ask('actif');
+      for (let i = 0; i < 4; i++) { await fetch(`${sb.url}/api/user-activity`, { method: 'POST', headers: BROWSER, body: JSON.stringify({ kind: 'clic' }) }); await sleep(1000); }
+      assert((await status(a)).status === 'pending', 'utilisateur actif : la demande a reçu une réponse automatique');
+      v = await json('/api/auto-answer');
+      assert(v.activity.last?.kind === 'clic' && !v.activity.idle, `activité du navigateur non enregistrée : ${JSON.stringify(v.activity)}`);
+      // Inactive ⇒ Opus decides (fake claude, model checked), marked everywhere.
+      const done = await until(async () => { const s = await status(a); return s.status === 'decided' ? s : null; }, 25_000, 500);
+      assert(done && done.decision?.by === 'réponse automatique' && done.decision.decision === 'allow_once', `décision : ${JSON.stringify(done)}`);
+      v = await json('/api/auto-answer');
+      const rec = v.decisions.find(d => d.permissionId === a);
+      assert(rec && rec.status === 'applied' && rec.kind === 'permission' && rec.served === 'claude-opus-5-5' && rec.text.startsWith('🤖 réponse automatique (Opus 5.5, utilisateur inactif)'), `registre : ${JSON.stringify(rec)}`);
+      assert(rec.recovery && /Aucun point de retour possible/.test(rec.recovery.text) && /avance/.test(rec.recovery.text) && rec.undoable === false, `point de retour : ${JSON.stringify(rec.recovery)}`);
+      assert(readLog('kappa').some(e => e.type === 'notification' && e.subtype === 'auto_answer' && e.autoAnswer?.id === rec.id), 'marque absente du log de kappa');
+      assert(readLog('chef').some(e => e.type === 'notification' && e.subtype === 'musician_done' && e.autoAnswer?.id === rec.id && /réponse automatique/.test(e.text)), 'carte absente du fil du chef');
+      assert(v.unseen >= 1, 'résumé au retour vide');
+      assert((await post(`/api/auto-answer/${rec.id}/undo`, {})).status === 409, 'annulation sans point de retour acceptée');
+      assert((await post('/api/auto-answer/seen', {})).ok && (await json('/api/auto-answer')).unseen === 0, '« Vu » sans effet');
+      // Switch off ⇒ nothing.
+      assert((await settings({ enabled: false })).ok, 'coupure refusée');
+      const b = await ask('coupe');
+      await sleep(4000);
+      assert((await status(b)).status === 'pending', 'interrupteur coupé : réponse automatique quand même');
+      await post(`/api/permission/${b}/decide`, { decision: 'deny', by: 'recette' });
+      return `kappa : actif ⇒ en attente ; inactif ⇒ ${rec.id} autorisé une fois par claude-opus-5-5 (marqué dans le log, le fil, le résumé), aucun point de retour (noté) ; coupé ⇒ en attente`;
+    } finally {
+      await settings({ enabled: false, idleMin: 15, waitMin: 5, projects: [] });
+    }
+  });
 }
 
 async function restartCheck(sb) {

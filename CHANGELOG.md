@@ -11,6 +11,83 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.121.0] - 2026-10-20
+
+User rule (verbatim): « si aucune activite de ma part depuis plus de 15
+minutes, et qu'un process attend quelque chose de moi, et que je ne reponds pas
+dans les 5 minutes, opus 5.5 est charge et autorise a repondre a ma place. Un
+point de retours est cree si possible. Sinon il faut avancer », confirmed for
+the guardrails: « Ces gardes fous sont tres importants, garde les ».
+
+### Added
+
+- (server) **Automatic answer when the user is inactive**
+  (`scripts/auto-answer.mjs`). The server records the user's last gesture
+  (`logs/user-activity.json`: a message from the composer or the app, a
+  decision click — permission, pause, question, gap, queue —, from a browser
+  or app user agent only, never a script). Every 30 s it collects what waits
+  for the user: `NEEDS_USER_INPUT` questions (musicians, lanes, chef),
+  pipeline pauses (menus), permission requests, proposed gaps. When the user
+  has been inactive for more than `idleMin` (15) and a wait is older than
+  `waitMin` (5), one `claude-opus-5-5` turn (explicit model, served model
+  checked, no fallback; read-only tools on the project) answers in the user's
+  place, told to follow first the recommendation given and the decisions
+  already made (CLAUDE.md, registers, syntheses, TODO, memory). An
+  independent verification turn then judges the answer against the
+  guardrails; `enforceGuardrails` (code) decides. A permission request is
+  answered before its own expiry (deadline − 90 s) and only « once », never
+  « always ». At most 3 answers per project and 20 in all per absence. The
+  user coming back during the turn ⇒ nothing is applied.
+- (server) **Mandatory guardrails**, always active, independent of the
+  switch, not editable from the dashboard nor by any route
+  (`data/auto-answer-guardrails.json` + the code, which restores any removed
+  one): money or payment; password, code, secret or key; signing or sending
+  in the user's name; deletion with no way back; publishing a private
+  repository. A guardrail named by the answer or by the verification (or a
+  verification that failed) blocks the engaging answer: the non-engaging
+  option is sent (permission ⇒ deny), else nothing is sent and the point is
+  submitted to the user in the chef's thread.
+- (server) **Return point before applying**: annotated tag
+  `auto-answer/<id>` in the repository (`git stash create` keeps uncommitted
+  tracked work), copy of `run.json` (pause) or `model-routing.json` (gap).
+  None possible ⇒ noted, and the answer is applied anyway (« Sinon il faut
+  avancer »). Undo: the current state is tagged `auto-answer-undo/<id>`, then
+  HEAD and the uncommitted work come back; a gap only loses its decision and
+  what it added.
+- (server) Ledger `logs/auto-answers.json`; routes `GET /api/auto-answer`,
+  `POST /api/auto-answer/settings` (switch and delays, hot), `POST
+  /api/auto-answer/seen`, `POST /api/auto-answer/:id/undo`, `POST
+  /api/user-activity`. Settings in `auto-answer-settings.json` (root, not
+  versioned). Restart needed (routes, sweep, activity hook).
+- (server) Marked everywhere « 🤖 réponse automatique (Opus 5.5, utilisateur
+  inactif) », with the reason and the way back: `notification/auto_answer` in
+  the process's log (musician line, activity journal), a card in the chef's
+  thread.
+- (server) Dashboard: pill `#btn-auto` (« 🤖 Auto ON/OFF », the global
+  switch), overlay with the switch, the delays, the guardrails (read only)
+  and every decision; band `#auto-band` on return with the decisions taken
+  in the user's place, « Annuler » when possible, « ✓ Vu ».
+- Tests: `_test_auto_answer.mjs` (120 checks: settings, guardrails — each one
+  blocks an engaging answer —, activity, due waits, waits read from the logs,
+  end to end with the real model runner and real git, a project folder inside
+  another repository never gets its return point in the parent), HTTP
+  `auto-answer`, browser `auto-answer` (the top bar stays on one line: the
+  switch is an icon button, ON/OFF dot and accessible label). The test instance keeps the rule off
+  (`auto-answer-settings.json`), with short delays allowed
+  (`ORCH_AUTO_ANSWER_TESTING`).
+
+### Changed
+
+- Browser walk `todo-item-drag`: the mobile grip is measured on the node that
+  is in the page (the list can be re-rendered between `waitFor` and the
+  measure); the 44 px criterion is unchanged.
+
+### Known limits
+
+- The switch is hidden on phones (like ⋮ and ⚙); the summary band shows.
+- The Android app does not show the switch nor the summary yet.
+- Conductor slots other than the main chef (`chef-2`…) are not scanned.
+
 ## [0.120.0] - 2026-10-20
 
 Pipeline redesign, phase 0 (quick wins), after the user's decisions on

@@ -236,6 +236,10 @@ function writeFixtures(root, keepAlivePid) {
     projects: names.map(n => ({ name: n, path: path.join(projDir, n), ...(n === 'zeta' || n === 'eta' ? { parked: true } : {}) })),
   };
   fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify(config, null, 2) + '\n');
+  // 0.121.0 — automatic answer OFF in the test instance: its fixtures hold open
+  // questions, a long run would answer them. The HTTP walk turns it on for one
+  // project, with short delays (ORCH_AUTO_ANSWER_TESTING).
+  fs.writeFileSync(path.join(root, 'auto-answer-settings.json'), JSON.stringify({ enabled: false }) + '\n');
 
   fs.writeFileSync(path.join(root, 'downloads.json'), JSON.stringify({
     apps: [{ name: 'alpha', label: 'Alpha App', platform: 'phone', description: 'App de recette', version: { file: path.join(projDir, 'alpha', 'app', 'build.gradle.kts') } }],
@@ -322,6 +326,11 @@ export function serverEnv(root, port) {
     // Queue held by a lingering process (0.82.0): seconds instead of minutes.
     ORCH_QUEUE_HOLD_SWEEP_MS: '1000',
     ORCH_QUEUE_HOLD_ALERT_MS: '2000',
+    // Automatic answer (0.121.0): short delays allowed, fast sweep, the fake
+    // claude announces the model asked (claude-opus-5-5, explicit, checked).
+    ORCH_AUTO_ANSWER_TESTING: '1',
+    ORCH_AUTO_ANSWER_SWEEP_MS: '1000',
+    ORCH_AUTO_ANSWER_CHILD_ENV: JSON.stringify({ FAKE_CLAUDE_ECHO_MODEL: '1', FAKE_CLAUDE_LATENCY_MS: '20', FAKE_CLAUDE_TOOL_USES: '0' }),
   });
   return env;
 }

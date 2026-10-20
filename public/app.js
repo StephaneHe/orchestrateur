@@ -200,6 +200,10 @@ class Musician {
       if (this.state === "input") this.setState("idle");
       this.questionResolved = { ts: Date.parse(raw.timestamp) || Date.now(), note: raw.note || "" };
       this.lastLine = String(raw.text || "✓ question marquée répondue").slice(0, 140);
+    } else if (t === "notification" && raw.subtype === "auto_answer") {
+      // 0.121.0 — answered in place of the inactive user (the card line says so).
+      this.autoAnswer = raw.autoAnswer || null;
+      this.lastLine = String(raw.text || "🤖 réponse automatique").split("\n")[0].slice(0, 140);
     } else if (t === "notification" && raw.subtype === "denials_acknowledged") {
       for (const id of raw.toolIds || []) this.ackedDenials.add(String(id));
       this.pendingDenials = this.pendingDenials.filter(d => !this.ackedDenials.has(String(d.toolId)));

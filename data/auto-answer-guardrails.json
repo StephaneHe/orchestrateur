@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "decision": {
+    "date": "2026-10-20",
+    "verbatim": "Ces gardes fous sont tres importants, garde les",
+    "rule": "Always active, independent of the auto-answer switch, not editable from the dashboard. Any change to this file needs a new explicit decision of the user."
+  },
+  "guardrails": [
+    {
+      "id": "argent",
+      "label": "Argent ou paiement",
+      "cases": [
+        "payer, acheter, s'abonner, commander, prendre une offre payante",
+        "ajouter ou utiliser une clé API payante, augmenter un quota ou une limite de dépense",
+        "toute action qui engage une dépense ou un moyen de paiement"
+      ]
+    },
+    {
+      "id": "secret",
+      "label": "Mot de passe, code, secret ou clé",
+      "cases": [
+        "donner, inventer, créer, changer ou révéler un mot de passe, un code (2FA, PIN), un jeton, une clé API ou un secret",
+        "copier un secret d'un endroit à un autre, l'écrire dans un fichier ou un message",
+        "accepter qu'un secret soit lu, affiché ou envoyé"
+      ]
+    },
+    {
+      "id": "envoi-externe",
+      "label": "Signature ou envoi en son nom vers l'extérieur",
+      "cases": [
+        "envoyer un mail, un message, un commentaire, une issue ou une pull request au nom de l'utilisateur",
+        "signer, accepter des conditions, valider un contrat ou un formulaire externe",
+        "publier sur un service tiers, poster sur un réseau social, répondre à un tiers"
+      ]
+    },
+    {
+      "id": "suppression-definitive",
+      "label": "Suppression sans retour possible",
+      "cases": [
+        "supprimer des fichiers, dossiers, branches, tags, bases ou données sans copie ni historique",
+        "réécrire l'historique (push --force, reset sur une branche publiée), vider une corbeille",
+        "toute action dont l'effet ne peut pas être annulé"
+      ]
+    },
+    {
+      "id": "publication-prive",
+      "label": "Publication d'un dépôt privé",
+      "cases": [
+        "rendre public un dépôt, un projet ou un document privé",
+        "pousser un projet privé vers un dépôt ou un service public",
+        "partager un lien public vers un contenu privé"
+      ]
+    }
+  ]
+}

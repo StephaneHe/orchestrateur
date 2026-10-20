@@ -180,8 +180,23 @@ async function run() {
     const nature = /\b(corrige|bug|fix|répare|repare)\b/i.test(req) ? 'bugfix' : /\b(renomme|remplace|rename)\b/i.test(req) ? 'mecanique' : 'comportement';
     return JSON.stringify({ pipeline: imposed || (dev ? 'dev' : 'discussion'), mode: imposedMode || 'leger', nature, raison: 'classement du faux claude' });
   };
-  const fixedReply = isReformulation
-    ? (process.env.FAKE_CLAUDE_TRANSLATION || 'Réponse reformulée en français : la suite de tests passe, le travail est terminé et rien ne reste à faire pour cette demande.')
+  // Auto-answer (0.121.0): FAKE_CLAUDE_AUTO_ANSWER / FAKE_CLAUDE_AUTO_VERIFY = the JSON
+  // answers of the answering turn and of the verification turn; defaults: a plain,
+  // non-engaging answer fitted to the kind, and a clean verification.
+  const autoReply = () => {
+    if (/^\[AUTO_VERIFY\]/.test(userText)) return process.env.FAKE_CLAUDE_AUTO_VERIFY || JSON.stringify({ answerEngages: [], safeEngages: [], why: 'vérification du faux claude' });
+    if (process.env.FAKE_CLAUDE_AUTO_ANSWER) return process.env.FAKE_CLAUDE_AUTO_ANSWER;
+    const kind = (/^KIND: ([a-z]+)/m.exec(userText) || [])[1];
+    return JSON.stringify({
+      answer: kind === 'pause' ? 'continuer — réponse du faux Opus' : 'Réponse du faux Opus : on suit la recommandation donnée.',
+      ...(kind === 'permission' ? { decision: 'allow' } : kind === 'gap' ? { decision: 'reject' } : {}),
+      engages: [], concerns: [], safeAnswer: 'Réponse non engageante du faux Opus.', reason: 'recommandation suivie (faux claude)', sources: [],
+    });
+  };
+  const isAuto = /^\[AUTO_(ANSWER|VERIFY)\]/.test(userText);
+  const fixedReply = isAuto ? autoReply()
+    : isReformulation
+    ?(process.env.FAKE_CLAUDE_TRANSLATION || 'Réponse reformulée en français : la suite de tests passe, le travail est terminé et rien ne reste à faire pour cette demande.')
     : isClassify ? classifyReply()
     : /\[FAKE_LONG_REPORT\]/.test(userText) ? LONG_REPORT
     : (process.env.FAKE_CLAUDE_REPLY || null);

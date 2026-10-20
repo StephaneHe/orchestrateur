@@ -23,6 +23,7 @@
 <!-- v0.45.0 — demandes d'autorisation interactives -->
 <link rel="stylesheet" href="./permissions.css?v=0.45.0">
 <link rel="stylesheet" href="./regress-live.css?v=0.119.0">
+<link rel="stylesheet" href="./auto-answer.css?v=0.121.0">
 <!-- v0.75.0 — panneau latéral à bascule (TODO ; désactivable : ui.sidePanel=false ou ?todo=0) -->
 <link rel="stylesheet" href="./side-panel.css?v=0.100.0">
 <link rel="stylesheet" href="./id-links.css?v=0.107.0">
@@ -70,6 +71,8 @@
         <button type="button" class="ts-btn ts-mid" data-ts="0" aria-label="Taille du texte : 100 %" title="Rétablir 100 % (Ctrl+Alt+0)">100&nbsp;%</button>
         <button type="button" class="ts-btn" data-ts="1" aria-label="Agrandir la taille du texte" title="Agrandir le texte (Ctrl+Alt+=)">A+</button>
       </div>
+      <button id="btn-auto" class="pill-icon pill-auto" type="button" aria-pressed="false" data-on="0" hidden
+              aria-label="Réponse automatique (Opus 5.5) quand vous êtes inactif" title="Réponse automatique quand vous êtes inactif (Opus 5.5)">🤖</button>
       <button id="btn-menu" class="pill-icon" title="Menu" aria-haspopup="true" aria-expanded="false">⋮</button>
       <button id="btn-tweaks" class="pill-icon" title="Paramètres visuels">⚙</button>
     </div>
@@ -91,6 +94,13 @@
 
   <!-- 0.45.0 — demandes d'autorisation en attente (cartes + overlay de détails) -->
   <div id="perm-band" class="perm-band" hidden aria-live="polite"></div>
+
+  <!-- 0.121.0 — décisions prises à votre place pendant votre absence (résumé au retour) -->
+  <div id="auto-band" class="auto-band" hidden aria-live="polite" aria-label="Réponses automatiques"></div>
+  <div id="auto-overlay" class="auto-overlay" hidden role="dialog" aria-modal="true" aria-label="Réponse automatique">
+    <div class="aa-ov-card"><h2>🤖 Réponse automatique (Opus 5.5) <button type="button" class="aa-close" aria-label="Fermer">✕</button></h2>
+      <div class="aa-ov-body"></div></div>
+  </div>
 
   <!-- 0.119.0 — non-régressions en cours (et finies il y a moins de 10 min) -->
   <div id="regress-band" class="regress-band" hidden aria-live="polite" aria-label="Non-régressions"></div>
@@ -413,6 +423,7 @@
 <script src="./tts.js?v=0.105.0"></script>
 <script src="./langue.js?v=0.51.0"></script>
 <script src="./regress-live.js?v=0.119.0"></script>
+<script src="./auto-answer.js?v=0.121.0"></script>
 <script src="./activite.js?v=0.119.0"></script>
 <script src="./salle.js?v=0.45.0"></script>
 <script src="./projets.js?v=0.31.0"></script>

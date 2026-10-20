@@ -208,7 +208,9 @@
         "scripts/server-watchdog.mjs",
         "scripts/sendmail.mjs",
         "scripts/copy-build.mjs",
-        "public/attach-policy.js"
+        "public/attach-policy.js",
+        "scripts/auto-answer.mjs",
+        "data/auto-answer-guardrails.json"
       ],
       "suites": [
         "_test_network_guard.mjs",
@@ -228,13 +230,15 @@
         "_test_pool_chef_dispatch.mjs",
         "_test_queue_api.mjs",
         "_test_queue_sidecar_sweep.mjs",
-        "_test_attach_policy.mjs"
+        "_test_attach_policy.mjs",
+        "_test_auto_answer.mjs"
       ],
       "uses": [
         {
           "perimeter": "client",
           "suites": [
             "_test_attach_policy.mjs",
+            "_test_auto_answer.mjs",
             "_test_permission_prompt.mjs"
           ]
         },
@@ -243,6 +247,7 @@
           "suites": [
             "_test_api_keys.mjs",
             "_test_attach_policy.mjs",
+            "_test_auto_answer.mjs",
             "_test_downloads_hot.mjs",
             "_test_mail_draft_page.mjs",
             "_test_network_guard.mjs",
@@ -264,6 +269,7 @@
           "suites": [
             "_test_api_keys.mjs",
             "_test_attach_policy.mjs",
+            "_test_auto_answer.mjs",
             "_test_downloads_hot.mjs",
             "_test_mail_draft_page.mjs",
             "_test_network_guard.mjs",
@@ -292,6 +298,7 @@
           "suites": [
             "_test_api_keys.mjs",
             "_test_attach_policy.mjs",
+            "_test_auto_answer.mjs",
             "_test_downloads_hot.mjs",
             "_test_mail_draft_page.mjs",
             "_test_network_guard.mjs",
@@ -313,6 +320,7 @@
           "suites": [
             "_test_api_keys.mjs",
             "_test_attach_policy.mjs",
+            "_test_auto_answer.mjs",
             "_test_downloads_hot.mjs",
             "_test_mail_draft_page.mjs",
             "_test_network_guard.mjs",
@@ -334,6 +342,7 @@
           "suites": [
             "_test_api_keys.mjs",
             "_test_attach_policy.mjs",
+            "_test_auto_answer.mjs",
             "_test_downloads_hot.mjs",
             "_test_mail_draft_page.mjs",
             "_test_network_guard.mjs",

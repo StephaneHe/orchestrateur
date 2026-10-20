@@ -92,6 +92,10 @@ import './public/attach-policy.js';   // sets globalThis.AttachPolicy (chat atta
 // Clés NVIDIA / OpenRouter saisies dans la page Models (0.43.0).
 import { createApiKeys } from './scripts/api-keys.mjs';
 import { createPermissionStore, mountPermissionRoutes } from './scripts/permission-store.mjs';
+// 0.121.0 — Opus 5.5 answers in place of an inactive user (mandatory guardrails).
+import * as AutoAnswer from './scripts/auto-answer.mjs';
+import { laneFiles as autoLaneFiles } from './scripts/lanes.mjs';
+import { pidAlive as autoPidAlive } from './scripts/fleet-status-core.mjs';
 // Pipelines, phase 1 (0.41.0) : chaque entrée est classée et journalisée, sans effet.
 import { createObserver, TerminalLineBuffer, ENTRY_KINDS, explicitChoice } from './scripts/pipeline-observe.mjs';
 import { classifyEntry } from './scripts/pipeline-classify.mjs';
@@ -2485,6 +2489,21 @@ app.use((req, res, next) => {
   next();
 });
 
+// 0.121.0 — every user gesture (browser or app, never a script) is the user's
+// last activity: the automatic answer only starts after `idleMin` without one.
+app.use((req, res, next) => {
+  if (req.method !== 'POST') return next();
+  res.on('finish', () => {
+    if (res.statusCode >= 400) return;
+    const a = AutoAnswer.activityOf({ method: req.method, path: req.path, userAgent: req.get('user-agent'), body: req.body });
+    if (!a) return;
+    const project = typeof req.body?.project === 'string' ? req.body.project.slice(0, 64) : null;
+    try { AutoAnswer.recordActivity(LOGS_DIR, { kind: a.kind, source: clientOf(req), project }); }
+    catch (e) { debugLog(`[auto-answer] activité non enregistrée : ${e.message}`); }
+  });
+  next();
+});
+
 // Static viewer assets
 app.use(express.static(path.join(__dirname, 'public'), {
   fallthrough: true,
@@ -3137,6 +3156,145 @@ const permissions = createPermissionStore({
   },
 });
 mountPermissionRoutes(app, express, permissions, { sameOriginOnly, projectInfo: permissionProjectInfo, log: (m) => console.log(m) });
+
+// ---------- Réponse automatique quand l'utilisateur est inactif (0.121.0) -----
+// Règle utilisateur (2026-10-20) : « si aucune activite de ma part depuis plus
+// de 15 minutes, et qu'un process attend quelque chose de moi, et que je ne
+// reponds pas dans les 5 minutes, opus 5.5 est charge et autorise a repondre a
+// ma place. Un point de retours est cree si possible. Sinon il faut avancer »
+// Garde-fous obligatoires (« Ces gardes fous sont tres importants, garde les ») :
+// data/auto-answer-guardrails.json + code, aucune route ne les modifie.
+const AUTO_BOOT_AT = Date.now();
+const AUTO_TESTING = process.env.ORCH_AUTO_ANSWER_TESTING === '1';
+function autoAnswerBusy(name, lane = 0) {
+  if (!lane) return dispatchPidAlive(name) != null;
+  try { return autoPidAlive(Number(fs.readFileSync(autoLaneFiles(LOGS_DIR, name, lane).pid, 'utf8').trim())); } catch { return false; }
+}
+function autoProject(name) { return config.projects.find(p => p.name === name) || null; }
+function autoWorkDir(wait) {
+  const p = autoProject(wait.project);
+  if (!p) return null;
+  return wait.lane ? regressionLaneDir(__dirname, p, wait.lane) : p.path;
+}
+function autoMemoryDir(dir) {
+  return dir ? path.join(os.homedir(), '.claude', 'projects', dir.replace(/[:\\/]/g, '-'), 'memory') : null;
+}
+function autoSources(wait) {
+  const dirs = [autoProject(wait.project)?.path, autoProject(conductorName())?.path, __dirname].filter(Boolean);
+  const out = [];
+  for (const d of [...new Set(dirs)]) {
+    for (const f of ['CLAUDE.md', 'CLAUDE.local.md', 'TODO_LIST.md', path.join('docs', 'USER_REQUIREMENTS.md')]) out.push(path.join(d, f));
+    try { for (const f of fs.readdirSync(path.join(d, 'docs'))) if (/SYNTHESE|DECISION/i.test(f)) out.push(path.join(d, 'docs', f)); } catch { /* no docs */ }
+    out.push(path.join(autoMemoryDir(d), 'MEMORY.md'));
+  }
+  return out.filter(f => { try { return fs.statSync(f).isFile(); } catch { return false; } });
+}
+function autoLogFile(wait) {
+  if (!wait.project) return null;
+  return wait.lane ? autoLaneFiles(LOGS_DIR, wait.project, wait.lane).log : path.join(LOGS_DIR, `${wait.project}.jsonl`);
+}
+function autoAppend(file, ev) {
+  try { fs.appendFileSync(file, JSON.stringify({ ...ev, timestamp: new Date().toISOString() }) + '\n'); }
+  catch (e) { debugLog(`[auto-answer] écriture de ${path.basename(file)} impossible : ${e.message}`); }
+}
+function autoAnswerEvent(wait, rec) {
+  const f = autoLogFile(wait);
+  if (!f) return;
+  autoAppend(f, { type: 'notification', subtype: 'auto_answer', text: AutoAnswer.decisionText(rec),
+    autoAnswer: { id: rec.id, status: rec.status, kind: rec.kind, model: rec.model, answer: rec.answer || null, decision: rec.decision || null,
+      reason: rec.reason || null, hits: rec.guardrails?.hits || [], recovery: rec.recovery?.text || null, undoable: !!rec.recovery?.possible } });
+}
+function autoChefCard(rec, text = AutoAnswer.decisionText(rec)) {
+  const submitted = rec.status === 'submitted';
+  autoAppend(path.join(LOGS_DIR, `${conductorName()}.jsonl`), {
+    type: 'notification', subtype: submitted ? 'musician_question' : 'musician_done',
+    source: rec.project || 'réponse-auto', outcome: submitted ? 'question' : 'done',
+    summary: text.split('\n')[0], text, autoAnswer: { id: rec.id, status: rec.status },
+  });
+}
+function autoStillOpen(wait) {
+  if (wait.kind === 'permission') return permissions.get(wait.context.id)?.status === 'pending';
+  if (wait.kind === 'gap') return !!findOpenGap(wait.context.gapKey);
+  const p = autoProject(wait.project);
+  return !!p && AutoAnswer.collectLogWaits({ logsDir: LOGS_DIR, projects: [p], conductor: conductorName(), busy: autoAnswerBusy }).some(w => w.key === wait.key);
+}
+let autoChildEnv = process.env;
+try { if (process.env.ORCH_AUTO_ANSWER_CHILD_ENV) autoChildEnv = { ...process.env, ...JSON.parse(process.env.ORCH_AUTO_ANSWER_CHILD_ENV) }; }
+catch (e) { console.warn(`[auto-answer] ORCH_AUTO_ANSWER_CHILD_ENV illisible : ${e.message}`); }
+const autoAnswer = AutoAnswer.createAutoAnswer({
+  root: __dirname, logsDir: LOGS_DIR, bootAt: AUTO_BOOT_AT, env: autoChildEnv,
+  log: (m) => console.log(m),
+  listWaits() {
+    const projects = config.projects.map(p => ({ name: p.name, path: p.path }));
+    return [
+      ...AutoAnswer.collectLogWaits({ logsDir: LOGS_DIR, projects, conductor: conductorName(), busy: autoAnswerBusy }),
+      ...AutoAnswer.permissionWaits(permissions.pending(), (id) => { const r = permissions.get(id); return r ? permissions.view(r, true) : null; }),
+      ...AutoAnswer.gapWaits(pipelineObserver.gaps(modelRouting.gapDecisions()).open),
+    ];
+  },
+  stillOpen: autoStillOpen,
+  busy: autoAnswerBusy,
+  repoOf: (wait) => (wait.kind === 'gap' ? null : autoWorkDir(wait)),
+  filesOf: (wait) => (wait.kind === 'gap' ? [modelRouting.routingFile] : wait.context?.runFile ? [wait.context.runFile] : []),
+  routingFile: modelRouting.routingFile,
+  cwdOf: (wait) => autoWorkDir(wait) || __dirname,
+  sources: autoSources,
+  addDirs: (wait) => [autoProject(conductorName())?.path, __dirname, autoMemoryDir(autoProject(wait.project)?.path)].filter(Boolean),
+  async apply(wait, final, rec) {
+    autoAnswerEvent(wait, rec);
+    if (wait.kind === 'permission') {
+      const r = permissions.decide(wait.context.id, { decision: final.decision === 'allow' ? 'allow_once' : 'deny', message: `${AutoAnswer.MARK} — ${final.text || ''}`, by: AutoAnswer.BY });
+      return r.ok ? { ok: true } : { ok: false, why: r.error };
+    }
+    if (wait.kind === 'gap') {
+      const gap = findOpenGap(wait.context.gapKey);
+      if (!gap) return { ok: false, why: 'lacune déjà traitée' };
+      const r = modelRouting.decideGap(gap, final.decision === 'accept' ? 'accept' : 'reject', { by: AutoAnswer.BY, reason: final.text || rec.reason });
+      return r.ok ? { ok: true } : { ok: false, why: r.error };
+    }
+    if (wait.isChef) {
+      poolEnqueue({ class: 'user', text: final.text, obsId: observeEntry({ entry: 'auto-answer:chef', project: wait.project, text: final.text }) || undefined });
+      return { ok: true };
+    }
+    spawnDirectDispatch(wait.project, final.text, [], [], { observeAs: 'auto-answer', ...(wait.lane ? { lane: wait.lane } : {}) });
+    return { ok: true };
+  },
+  report(rec) {
+    if (rec.status === 'submitted') {
+      const wait = { project: rec.project, lane: rec.lane, kind: rec.kind };
+      if (rec.kind !== 'gap') autoAnswerEvent(wait, rec);
+    }
+    autoChefCard(rec);
+  },
+  onUndo(rec) {
+    autoChefCard(rec, `↩ ${AutoAnswer.MARK} annulée par l'utilisateur — ${rec.undone.done.join(' ; ')}\nDemande : ${String(rec.question).replace(/\s+/g, ' ').slice(0, 300)}`);
+  },
+});
+const AUTO_SWEEP_MS = Number(process.env.ORCH_AUTO_ANSWER_SWEEP_MS) || 30_000;
+setInterval(() => { autoAnswer.sweep().catch(e => console.warn(`[auto-answer] balayage : ${e.message}`)); }, AUTO_SWEEP_MS).unref();
+
+app.get('/api/auto-answer', (req, res) => res.json(autoAnswer.view(Math.min(200, Number(req.query.n) || 50))));
+app.post('/api/auto-answer/settings', sameOriginOnly, express.json({ limit: '2kb' }), (req, res) => {
+  const b = req.body || {};
+  const r = AutoAnswer.writeSettings(__dirname, { enabled: b.enabled, idleMin: b.idleMin, waitMin: b.waitMin, ...(AUTO_TESTING && b.projects !== undefined ? { projects: b.projects } : {}) },
+    { by: clientOf(req), testing: AUTO_TESTING });
+  if (!r.ok) return res.status(r.status).json({ ok: false, error: r.error });
+  console.log(`[auto-answer] réglage : ${r.settings.enabled ? 'active' : 'coupée'}, ${r.settings.idleMin} min / ${r.settings.waitMin} min`);
+  res.json({ ok: true, settings: r.settings });
+});
+app.post('/api/auto-answer/seen', sameOriginOnly, express.json({ limit: '16kb' }), (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(x => typeof x === 'string').slice(0, 500) : null;
+  res.json({ ok: true, marked: autoAnswer.seen(ids) });
+});
+app.post('/api/auto-answer/:id/undo', sameOriginOnly, (req, res) => {
+  if (!/^aa-[0-9T]{15}-[a-f0-9]{6}$/.test(req.params.id)) return res.status(404).json({ ok: false, error: 'décision inconnue' });
+  const r = autoAnswer.undo(req.params.id);
+  if (!r.ok) return res.status(r.status).json({ ok: false, error: r.error });
+  console.log(`[auto-answer] ${req.params.id} annulée : ${r.done.join(' ; ')}`);
+  res.json({ ok: true, done: r.done, decision: r.decision });
+});
+// An explicit gesture the server would not see otherwise (the hook above records it).
+app.post('/api/user-activity', sameOriginOnly, express.json({ limit: '1kb' }), (req, res) => res.json({ ok: true }));
 
 app.get('/api/model-routing', (req, res) => {
   const n = Math.min(500, Math.max(1, Number(req.query.history) || 50));

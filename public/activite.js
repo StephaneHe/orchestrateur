@@ -277,6 +277,8 @@
     const after = [];
     if (t.ack) after.push(`✓ marqué vu${t.ack.by && t.ack.by !== "utilisateur" ? " par " + esc(t.ack.by) : ""}${t.ack.ts ? " · " + esc(fmtWhen(t.ack.ts)) : ""}${t.ack.note ? " — " + esc(t.ack.note) : ""}`);
     if (t.resolved) after.push(`✓ question marquée répondue${t.resolved.note ? " — " + esc(t.resolved.note) : ""}`);
+    // 0.121.0 — answered in place of the inactive user.
+    if (t.autoAnswer) after.push(`<span class="jt-auto" data-aa-status="${esc(t.autoAnswer.status || "")}">🤖 réponse automatique (Opus 5.5, utilisateur inactif)${t.autoAnswer.answer ? ` : « ${esc(String(t.autoAnswer.answer).slice(0, 200))} »` : t.autoAnswer.status === "submitted" ? " : soumis à votre décision (garde-fou)" : ""}${t.autoAnswer.reason ? ` — raison : ${esc(t.autoAnswer.reason)}` : ""}${t.autoAnswer.recovery ? ` — ${esc(t.autoAnswer.recovery)}` : ""}</span>`);
     return `<article class="jt${open ? " is-open" : ""}" data-outcome="${esc(t.outcome)}" data-key="${esc(key)}">
         <header class="jt-head">
           <span class="jt-mark">${esc(o.mark)}</span>

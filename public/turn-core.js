@@ -427,6 +427,15 @@
         if (l) l.resolved = { ts: ev.timestamp || null, note: ev.note || "" };
         return;
       }
+      // 0.121.0 — answered in place of the inactive user (Opus 5.5): marked on
+      // the turn that asked; written before the answer's own turn starts.
+      if (t === "notification" && ev.subtype === "auto_answer") {
+        const tr = (cur && cur.outcome === "running") ? cur : last();
+        const a = ev.autoAnswer || {};
+        if (tr) tr.autoAnswer = { id: a.id || null, status: a.status || null, kind: a.kind || null, answer: a.answer || null, decision: a.decision || null,
+          reason: a.reason || null, hits: a.hits || [], recovery: a.recovery || null, text: oneLine(ev.text || "", 300), ts: ev.timestamp || null };
+        return;
+      }
       // Langue de discussion (0.51.0) : écart détecté, reformulé ou non.
       if (t === "system" && ev.subtype === "language_mismatch") {
         const tr = cur || last();
