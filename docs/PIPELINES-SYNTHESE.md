@@ -548,3 +548,72 @@ un test d'exigence existant : accord explicite requis.
     `CLAUDE.md` dit le contraire : le remettre en service, ou corriger la documentation ?
     **Recommandé : corriger la documentation maintenant**, et le remettre en service
     après le bond de la phase 0.
+
+---
+
+## 11. Décisions de l'utilisateur (2026-10-20)
+
+Réponse de l'utilisateur au §10, verbatim : « tout comme recommandé ». Les 18
+décisions sont adoptées **telles que recommandées**. Elles s'imposent aux phases du
+§8 ; **une phase qui s'en écarte doit d'abord obtenir une nouvelle décision de
+l'utilisateur**.
+
+1. **Libre** pour une action sans pipeline adapté ; une simple question reste en
+   Discussion. La ligne « aucun pipeline adapté » de `ROUTAGE-SYNTHESE.md` §3.3 change
+   en conséquence (à la phase 3).
+2. **Feu vert du plan Libre** : plan affiché puis exécuté ; une seule pause, seulement
+   pour une action irréversible non demandée, un fichier hors du projet ou plus de
+   10 fichiers.
+3. **Code dans Libre** : toute modification de code passe par le pipeline
+   Développement, avec ses tests.
+4. **Cas génériques** : deux pipelines neufs (« Opérations », « Fichiers ») et trois
+   modes d'existants (Rédaction « document existant », Discussion « vérification »,
+   Recherche « interne »).
+5. **Actions irréversibles d'« Opérations »** : la demande écrite de l'utilisateur
+   suffit si elle cite l'action, sinon une pause ; un bond de prod n'est jamais
+   appliqué par un musicien.
+6. **Nouveau pipeline proposé** seulement après 3 signalements venus d'au moins
+   2 demandes différentes en 30 jours, élargir puis combiner d'abord ; actif seulement
+   après un essai réussi ; une demande directe de l'utilisateur reste possible.
+7. **Nettoyage** : retrait du pipeline inutilisable `x-7e4cf1` et des 11 rattachements
+   à mots-clés inertes, avec sauvegarde.
+8. **Composition** : les étapes du pipeline appelé s'insèrent dans la même exécution,
+   une frise, une livraison, deux niveaux d'appel au plus, models des étapes appelées
+   inchangés.
+9. **Livraison faite par le programme** (version, CHANGELOG, commit), mêmes
+   vérifications.
+10. **Discussion en un seul appel**, la Recherche restant appelée si le web est
+    nécessaire.
+11. **Étapes « à la carte »** pour Incident, Vidéo, Données et Maintenance (liste
+    fermée, étapes écartées affichées « sautées » avec la raison).
+12. **Items déjà couverts écartés dès la liste de tests**, preuve vérifiée par le
+    programme ; le test rouge reste obligatoire pour tout item nouveau.
+13. **Revue groupée par 3 items : non** (la revue par item « c+d » reste).
+14. **« continuer » automatique : non** (une limite atteinte reste une décision de
+    l'utilisateur).
+15. **Accélérations TDD** : test rouge ciblé sur le fichier modifié, activé projet par
+    projet (suite complète toujours exigée ensuite) : **oui** ; même session pour
+    rouge, vert et refactor : **plus tard, après mesure**.
+16. **Models plus légers** : suggestions sur la page Models seulement, appliquées par
+    l'utilisateur.
+17. **Ordre** : gains rapides tout de suite (en parallèle du Routage), puis génériques,
+    composition, et Libre après la phase 2 du Routage ; mise en prod par bond décidé par
+    l'utilisateur, `pipelineLab` d'abord.
+18. **orchestrateur-dev** : corriger la documentation maintenant ; le remettre en
+    service dans les pipelines après le bond de la phase 0.
+
+### 11.1 Accord explicite pour les tests d'exigence marqués ⚠
+
+« tout comme recommandé » vaut accord **explicite** de l'utilisateur pour adapter, à la
+phase qui livre la décision correspondante, les tests d'exigence suivants :
+
+| Décision | Tests d'exigence concernés |
+|---|---|
+| 6 (seuil des propositions) | `_test_pipeline_gaps.mjs` |
+| 9 (Livrer par le programme) | `_test_item_delivery.mjs`, `_test_release_prebump.mjs`, `_test_lane_changelog_rule.mjs` |
+| 10 (Discussion en un appel) | `_test_pipeline_catalog.mjs`, `_test_pipeline_engine.mjs` |
+
+L'accord porte sur ce que la décision change, rien de plus : chaque assertion adaptée
+garde le même niveau de garantie (mêmes vérifications, faites par le programme), et
+chaque adaptation est tracée dans `docs/USER_REQUIREMENTS.md` avec cette référence.
+Toute autre modification d'un test d'exigence demande un nouvel accord.
