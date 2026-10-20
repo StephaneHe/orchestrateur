@@ -11,6 +11,81 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.120.0] - 2026-10-20
+
+Pipeline redesign, phase 0 (quick wins), after the user's decisions on
+`docs/PIPELINES-SYNTHESE.md` (« tout comme recommandé », 2026-10-20). Every
+lever has its own switch in `model-routing.json` → `enforcement.tuning`,
+re-read at each dispatch (no restart), per project or for all
+(`node scripts/pipeline-enforce.mjs tuning <lever|all> on|off [<project>]`);
+a run keeps the settings it read when it started (`run.json.tuning`). All
+switches are OFF by default: nothing changes until the chef turns them on
+(`pipelineLab` first). `off --all` also clears them.
+
+### Added
+
+- (server) **Cited paths judged on what the turn really read** (switch
+  `citedPathsLog`, `scripts/cited-paths.mjs`). A backquoted path is accepted
+  when it exists, is said to be absent, or was observed by the turn (a Read
+  that succeeded, the output of a tool); an orchestrator artefact or log
+  name, an event type, an elided path or a path outside the project is
+  accepted too. Every such path is reported (`citedReported` in run.json and
+  in the step event). An invented project path, one only named in a command
+  line, a failed read or the artefact the turn wrote itself is still refused.
+  Replayed on the 8 real refusals of the prod logs: 5 still refused under
+  0.119.0 (704 s of model turns), 0 with the switch.
+- (server) **Livrer done by the program** (decision 9, switch `codeDeliver`,
+  `scripts/code-delivery.mjs`). The model writes only the text of the
+  delivery (`bump`, `## CHANGELOG`, `## Exigence`, `## Livré`) and touches no
+  file; the program bumps the version files (`package.json`, gradle
+  `versionName` + `versionCode`, `version =`), inserts the dated entry,
+  appends the requirement line (`{version}` replaced) and commits, then the
+  same Livrer criterion runs. A text problem is retried; a refusal of the
+  program's release (red suite, build) pauses at once, with the failing
+  output, instead of repeating an identical try. In a lane: a `changelog.d`
+  fragment. A version file the program cannot rewrite keeps the model
+  delivery and says so (`pipeline_code_deliver_skipped`). A delivery without
+  version (Rédaction, Images, Vidéo, Audio) is one commit by the program, no
+  model turn. Real blocked run replayed (8 refused Livrer turns, tests of the
+  project pinning the old version): the program delivers in 0.4 s, the
+  suite fails in 10 s on the 3 pinned tests, pause at the first try.
+- (server) **Mettre en forme done by the program** (switch `codeFormat`) when
+  the review lists no correction, the text lives in the artefact, or every
+  correction is an exact replacement `{fichier, avant, apres}` found once in
+  a document; the Relecture is asked for such replacements
+  (`CORRECTIONS_EXACTES=oui`). Anything else goes to the model, as before
+  (`pipeline_format_fallback`).
+- (server) **A green suite is not re-run on an identical tree** (switch
+  `suiteCache`, `scripts/suite-cache.mjs`): key = work tree (tracked and
+  untracked files, through a private git index), command, Node version,
+  platform, test environment minus per-turn variables; green results only,
+  24 h at most, `logs/suite-cache/<project>.json`; a red result or a suite
+  run twice always runs; each reuse is reported (`pipeline_suite_cached`,
+  `test.cached`, `run.json.suiteCache`). youtube-live: 7.4 s → 0.17 s on the
+  tree the previous run delivered.
+- (server) **Inert accepted additions** (decision 7, switch `inertCleanup`,
+  `scripts/inert-custom.mjs`): a custom pipeline the engine cannot run
+  (`x-7e4cf1` in prod) and the attachments written before 0.66.0 that still
+  carry keywords (11 in prod) are hidden from the classifier and the Models
+  page; `node scripts/pipeline-cleanup.mjs plan | apply | restore <backup>`
+  removes them from `model-routing.json` after a byte-identical backup
+  (`model-routing.json.bak-cleanup-*`, ignored by git). On a copy of the prod
+  configuration, the classification prompt goes from 5267 to 3460 characters.
+
+### Changed
+
+- (server) Requirement tests marked ⚠ in the synthesis
+  (`_test_item_delivery`, `_test_release_prebump`,
+  `_test_lane_changelog_rule`) keep every assertion and gain a section « by
+  the program » with the same guarantees (user agreement of 2026-10-20).
+- (server) `_test_dev_instance_pipelines.mjs`: its static check of the
+  project's test delay also counts the launches made through `runSuite`,
+  whose own call keeps that delay (same guarantee, calls centralised).
+- (docs) `docs/PIPELINES-SYNTHESE.md` §11: the user's 18 decisions;
+  `CLAUDE.md`: orchestrateur-dev is out of pipeline service in prod
+  (decision 18); `docs/ROUTAGE-SYNTHESE.md` §5.7: the chef's 4 dead pauses
+  were closed on 2026-10-20, prod in v0.119.0.
+
 ## [0.119.0] - 2026-10-20
 
 ### Added

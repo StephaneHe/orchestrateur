@@ -617,3 +617,21 @@ L'accord porte sur ce que la décision change, rien de plus : chaque assertion a
 garde le même niveau de garantie (mêmes vérifications, faites par le programme), et
 chaque adaptation est tracée dans `docs/USER_REQUIREMENTS.md` avec cette référence.
 Toute autre modification d'un test d'exigence demande un nouvel accord.
+
+### 11.2 État livré : phase 0 (v0.120.0, 2026-10-20)
+
+Leviers 1 à 4 et décision 7, chacun derrière son interrupteur
+(`enforcement.tuning`, coupé par défaut, figé par exécution). Mesures sur de
+vrais cas de la prod (journaux lus en lecture seule, rejeux sur copies) :
+
+| Tâche | Interrupteur | Vrai cas rejoué | Avant | Après |
+|---|---|---|---|---|
+| a) chemins cités | `citedPathsLog` | les 8 refus « chemins cités inexistants » | 5 encore refusés en v0.119.0, 704 s de tours perdus | 0 refus, chemins signalés |
+| b) Livrer par le programme | `codeDeliver`, `codeFormat` | [[p-20261018T154104-6cfbe8]] (8 Livrer refusés) | 8 tours refusés (230 s) puis pause tardive | livraison 0,4 s + suite 10 s, pause au 1er essai sur les 3 tests épinglés |
+| c) suite mémorisée | `suiteCache` | suite de youtube-live, précondition après une livraison | 7,4 s | 0,17 s (même arbre) |
+| d) nettoyage | `inertCleanup` + `pipeline-cleanup.mjs` | `model-routing.json` de la prod (copie) | consigne de classement 5 267 car., `x-7e4cf1` proposé | 3 460 car. (−34 %), plus proposé |
+
+Non fait dans cette phase : levier 5 (arrêt des relances identiques en
+général ; seul le cas « refus du programme » est couvert), banc
+`pipeline-bench.mjs`, `famille` en observation, classifier limité aux
+pipelines exécutables hors interrupteur (couvert par `inertCleanup`).

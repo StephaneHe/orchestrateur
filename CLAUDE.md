@@ -2476,6 +2476,47 @@ Refonte du Routage, phase 0 a (`docs/ROUTAGE-SYNTHESE.md` §3.7).
 - Hors champ : un tour ordinaire (hors pipeline) garde son comportement.
 - Faux claude : `FAKE_CLAUDE_INFRA_FILE`. Recette : `_test_infra_retry.mjs`.
 
+## Refonte des pipelines, phase 0 : gains rapides et interrupteurs (0.120.0)
+
+Décisions de l'utilisateur du 2026-10-20 (« tout comme recommandé ») :
+`docs/PIPELINES-SYNTHESE.md` §11, plan §8. Une phase qui s'en écarte demande
+une nouvelle décision.
+
+- **Interrupteurs** (`scripts/pipeline-tuning.mjs`) : `model-routing.json` →
+  `enforcement.tuning {levier: true | [projets]}`, écrit par `node
+  scripts/pipeline-enforce.mjs tuning <levier|all> on|off [<projet>]`, relu à
+  chaque dispatch, **figé dans `run.json.tuning` au départ** (une reprise garde
+  ses réglages ; une exécution d'avant 0.120.0 : tout coupé). **Tout est coupé
+  par défaut** ; `off --all` les remet à zéro. Mise en service par le chef
+  après le bond, `pipelineLab` d'abord.
+- `citedPathsLog` (`scripts/cited-paths.mjs`) : un chemin cité est jugé sur
+  ce que le tour a observé (Read réussi, sortie d'outil), les noms de
+  l'orchestrateur, chemins abrégés ou hors projet acceptés et **signalés**
+  (`citedReported`) ; un chemin inventé du projet reste refusé.
+- `codeDeliver` (`scripts/code-delivery.mjs`) : le model n'écrit que le
+  texte de Livrer (`LIVRAISON=texte`, `bump`, `## CHANGELOG`, `## Exigence`,
+  `## Livré`) ; le programme écrit version, entrée, exigence, commit, puis le
+  **même** critère de Livrer. Texte invalide ⇒ nouvel essai ; refus du
+  programme (suite rouge) ⇒ pause aussitôt (`noRetry`). Livraison sans version
+  (Rédaction, médias) ⇒ un commit du programme, sans model.
+- `codeFormat` : Mettre en forme par le programme (aucune correction, texte
+  dans l'artefact, remplacements exacts `{fichier, avant, apres}`), sinon le
+  model.
+- `suiteCache` (`scripts/suite-cache.mjs`) : suite verte réutilisée pour un
+  arbre, une commande et un environnement identiques (24 h,
+  `logs/suite-cache/`), jamais un résultat rouge ni une suite à passer deux
+  fois ; chaque réutilisation est dite (`pipeline_suite_cached`).
+- `inertCleanup` (`scripts/inert-custom.mjs`) : pipelines ajoutés non
+  exécutables et rattachements à mots-clés cachés au classement et à la page
+  Models ; `scripts/pipeline-cleanup.mjs plan|apply|restore` les retire avec
+  sauvegarde.
+- Garanties TDD inchangées (Rouge réel, Vert sans toucher aux tests, revue par
+  item, tout défaut bloque).
+- Recettes : `_test_cited_paths_log.mjs`, `_test_code_deliver.mjs`,
+  `_test_suite_cache.mjs`, `_test_inert_cleanup.mjs` ; sections « par le
+  programme » des tests ⚠ `_test_item_delivery`, `_test_release_prebump`,
+  `_test_lane_changelog_rule` (accord du 2026-10-20).
+
 ## Langue de discussion (0.51.0)
 
 Demande utilisateur : « La langue de la discussion doit pouvoir etre fixee et
