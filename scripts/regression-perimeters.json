@@ -128,55 +128,55 @@
       ],
       "uses": [
         {
+          "perimeter": "client",
+          "suites": [
+            "_test_regression_live.mjs"
+          ]
+        },
+        {
           "perimeter": "dispatch",
           "suites": [
-            "_test_fixture_speed.mjs",
-            "_test_stale_run.mjs",
             "_test_config_state_independence.mjs",
-            "_test_regression_live.mjs"
+            "_test_fixture_speed.mjs",
+            "_test_regression_live.mjs",
+            "_test_stale_run.mjs"
           ]
         },
         {
           "perimeter": "noyau",
           "suites": [
             "_test_fixture_speed.mjs",
-            "_test_stale_run.mjs",
-            "_test_regression_live.mjs"
+            "_test_regression_live.mjs",
+            "_test_stale_run.mjs"
           ]
         },
         {
           "perimeter": "panneaux",
           "suites": [
-            "_test_stale_run.mjs",
-            "_test_regression_live.mjs"
+            "_test_regression_live.mjs",
+            "_test_stale_run.mjs"
           ]
         },
         {
           "perimeter": "pipelines",
           "suites": [
             "_test_fixture_speed.mjs",
-            "_test_stale_run.mjs",
-            "_test_regression_live.mjs"
+            "_test_regression_live.mjs",
+            "_test_stale_run.mjs"
           ]
         },
         {
           "perimeter": "routage",
           "suites": [
             "_test_fixture_speed.mjs",
-            "_test_stale_run.mjs",
-            "_test_regression_live.mjs"
+            "_test_regression_live.mjs",
+            "_test_stale_run.mjs"
           ]
         },
         {
           "perimeter": "serveur",
           "suites": [
             "_test_ref_snapshot.mjs",
-            "_test_regression_live.mjs"
-          ]
-        },
-        {
-          "perimeter": "client",
-          "suites": [
             "_test_regression_live.mjs"
           ]
         }
@@ -773,10 +773,20 @@
             "_test_resume_message.mjs",
             "_test_reunion_pipeline.mjs",
             "_test_reunion_redaction_route.mjs",
+            "_test_smart_pause.mjs",
             "_test_step_key_3digits.mjs",
             "_test_suite_cache.mjs",
-            "_test_tests_per_item.mjs",
-            "_test_smart_pause.mjs"
+            "_test_tests_per_item.mjs"
+          ]
+        },
+        {
+          "perimeter": "kg",
+          "suites": [
+            "_test_cited_paths_log.mjs",
+            "_test_dev_instance_pipelines.mjs",
+            "_test_pipeline_catalog.mjs",
+            "_test_pipeline_entries.mjs",
+            "_test_pipeline_onboard.mjs"
           ]
         },
         {
@@ -808,10 +818,10 @@
             "_test_resume_message.mjs",
             "_test_reunion_pipeline.mjs",
             "_test_reunion_redaction_route.mjs",
+            "_test_smart_pause.mjs",
             "_test_step_key_3digits.mjs",
             "_test_suite_cache.mjs",
-            "_test_tests_per_item.mjs",
-            "_test_smart_pause.mjs"
+            "_test_tests_per_item.mjs"
           ]
         },
         {
@@ -850,10 +860,10 @@
             "_test_resume_message.mjs",
             "_test_reunion_pipeline.mjs",
             "_test_reunion_redaction_route.mjs",
+            "_test_smart_pause.mjs",
             "_test_step_key_3digits.mjs",
             "_test_suite_cache.mjs",
-            "_test_tests_per_item.mjs",
-            "_test_smart_pause.mjs"
+            "_test_tests_per_item.mjs"
           ]
         },
         {
@@ -886,22 +896,22 @@
             "_test_resume_message.mjs",
             "_test_reunion_pipeline.mjs",
             "_test_reunion_redaction_route.mjs",
+            "_test_smart_pause.mjs",
             "_test_step_key_3digits.mjs",
             "_test_suite_cache.mjs",
-            "_test_tests_per_item.mjs",
-            "_test_smart_pause.mjs"
+            "_test_tests_per_item.mjs"
           ]
         },
         {
           "perimeter": "serveur",
           "suites": [
             "_test_item_delivery.mjs",
-            "_test_release_prebump.mjs",
             "_test_model_reco.mjs",
             "_test_no_lexical_routing.mjs",
             "_test_pipeline_entries.mjs",
             "_test_pipeline_observe.mjs",
             "_test_pipeline_onboard.mjs",
+            "_test_release_prebump.mjs",
             "_test_smart_pause.mjs"
           ]
         }
@@ -966,23 +976,29 @@
             "_test_chef_handoff.mjs",
             "_test_chef_handoff_failed.mjs",
             "_test_chef_handoff_slot.mjs",
+            "_test_chef_pause_reply.mjs",
             "_test_hors_pipeline_task.mjs",
             "_test_no_dispatch_chef.mjs",
             "_test_pipeline_routage.mjs",
             "_test_report_check.mjs",
             "_test_report_truncation.mjs",
             "_test_request_map.mjs",
+            "_test_resume_explicit_only.mjs",
             "_test_routage_ambiguous.mjs",
             "_test_routage_dedupe.mjs",
             "_test_routage_distinct.mjs",
             "_test_routage_new_session.mjs",
             "_test_routage_pending.mjs",
-            "_test_resume_explicit_only.mjs",
-            "_test_chef_pause_reply.mjs",
             "_test_routage_split.mjs",
             "_test_routage_titles.mjs",
             "_test_todo_capture.mjs",
             "_test_todo_discuss_chef.mjs"
+          ]
+        },
+        {
+          "perimeter": "kg",
+          "suites": [
+            "_test_pipeline_routage.mjs"
           ]
         },
         {
@@ -993,19 +1009,19 @@
             "_test_chef_handoff.mjs",
             "_test_chef_handoff_failed.mjs",
             "_test_chef_handoff_slot.mjs",
+            "_test_chef_pause_reply.mjs",
             "_test_hors_pipeline_task.mjs",
             "_test_no_dispatch_chef.mjs",
             "_test_pipeline_routage.mjs",
             "_test_report_check.mjs",
             "_test_report_truncation.mjs",
             "_test_request_map.mjs",
+            "_test_resume_explicit_only.mjs",
             "_test_routage_ambiguous.mjs",
             "_test_routage_dedupe.mjs",
             "_test_routage_distinct.mjs",
             "_test_routage_new_session.mjs",
             "_test_routage_pending.mjs",
-            "_test_resume_explicit_only.mjs",
-            "_test_chef_pause_reply.mjs",
             "_test_routage_split.mjs",
             "_test_routage_titles.mjs",
             "_test_todo_capture.mjs",
@@ -1026,18 +1042,18 @@
             "_test_chef_handoff.mjs",
             "_test_chef_handoff_failed.mjs",
             "_test_chef_handoff_slot.mjs",
+            "_test_chef_pause_reply.mjs",
             "_test_hors_pipeline_task.mjs",
             "_test_no_dispatch_chef.mjs",
             "_test_pipeline_routage.mjs",
             "_test_report_check.mjs",
             "_test_report_truncation.mjs",
             "_test_request_map.mjs",
+            "_test_resume_explicit_only.mjs",
             "_test_routage_ambiguous.mjs",
             "_test_routage_dedupe.mjs",
             "_test_routage_new_session.mjs",
             "_test_routage_pending.mjs",
-            "_test_resume_explicit_only.mjs",
-            "_test_chef_pause_reply.mjs",
             "_test_routage_split.mjs",
             "_test_routage_titles.mjs",
             "_test_todo_capture.mjs",
@@ -1052,19 +1068,19 @@
             "_test_chef_handoff.mjs",
             "_test_chef_handoff_failed.mjs",
             "_test_chef_handoff_slot.mjs",
+            "_test_chef_pause_reply.mjs",
             "_test_hors_pipeline_task.mjs",
             "_test_no_dispatch_chef.mjs",
             "_test_pipeline_routage.mjs",
             "_test_report_check.mjs",
             "_test_report_truncation.mjs",
             "_test_request_map.mjs",
+            "_test_resume_explicit_only.mjs",
             "_test_routage_ambiguous.mjs",
             "_test_routage_dedupe.mjs",
             "_test_routage_distinct.mjs",
             "_test_routage_new_session.mjs",
             "_test_routage_pending.mjs",
-            "_test_resume_explicit_only.mjs",
-            "_test_chef_pause_reply.mjs",
             "_test_routage_split.mjs",
             "_test_routage_titles.mjs",
             "_test_todo_capture.mjs",
@@ -1189,6 +1205,80 @@
       ],
       "stages": [
         "http"
+      ]
+    },
+    {
+      "id": "kg",
+      "label": "Index de connaissances (KG, phase 0 b, sans model)",
+      "files": [
+        "scripts/kg.mjs",
+        "tests/kg-corpus/**"
+      ],
+      "suites": [
+        "_test_kg_core.mjs",
+        "_test_kg_replay.mjs",
+        "_test_kg_queries.mjs"
+      ],
+      "uses": [
+        {
+          "perimeter": "client",
+          "suites": [
+            "_test_kg_queries.mjs"
+          ]
+        },
+        {
+          "perimeter": "dispatch",
+          "suites": [
+            "_test_kg_core.mjs",
+            "_test_kg_queries.mjs",
+            "_test_kg_replay.mjs"
+          ]
+        },
+        {
+          "perimeter": "noyau",
+          "suites": [
+            "_test_kg_core.mjs",
+            "_test_kg_queries.mjs",
+            "_test_kg_replay.mjs"
+          ]
+        },
+        {
+          "perimeter": "outillage",
+          "suites": [
+            "_test_kg_core.mjs",
+            "_test_kg_queries.mjs"
+          ]
+        },
+        {
+          "perimeter": "panneaux",
+          "suites": [
+            "_test_kg_core.mjs",
+            "_test_kg_queries.mjs"
+          ]
+        },
+        {
+          "perimeter": "pipelines",
+          "suites": [
+            "_test_kg_core.mjs",
+            "_test_kg_queries.mjs",
+            "_test_kg_replay.mjs"
+          ]
+        },
+        {
+          "perimeter": "routage",
+          "suites": [
+            "_test_kg_core.mjs",
+            "_test_kg_queries.mjs",
+            "_test_kg_replay.mjs"
+          ]
+        },
+        {
+          "perimeter": "serveur",
+          "suites": [
+            "_test_kg_core.mjs",
+            "_test_kg_queries.mjs"
+          ]
+        }
       ]
     }
   ]

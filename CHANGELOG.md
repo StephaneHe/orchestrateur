@@ -11,6 +11,55 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.124.0] - 2026-10-20
+
+Knowledge graph, phase 0 b (`docs/KG-SYNTHESE.md`, user decisions of
+2026-10-20, verbatim: « tout comme recommandé »): an index of sourced, dated
+facts built by the program, without any model, from the files that stay the
+only truth. Nothing is injected into any turn at this phase.
+
+### Added
+
+- (server) **`scripts/kg.mjs`** — the single module that writes the index,
+  only under `logs/kg/` (out of git): `derived.json`, `build.json` (source
+  fingerprints, rejected facts) and `contradictions.md`. Sources: config.json,
+  model-routing.json, the chef's memories and CLAUDE.md, the port table,
+  "Décisions de l'utilisateur" sections of `docs/*-SYNTHESE.md`,
+  USER_REQUIREMENTS.md, CHANGELOG.md, TODO_LIST.md, the last 50 commits,
+  `logs/runs/*/run.json`, the suites' coverage and the listening TCP ports.
+  `--state <root>` reads the live config of another installation (read only).
+- (server) **Closed schema and verified provenance**: closed node types and
+  predicates; every fact carries file:line + a quote (≤ 200 chars) that the
+  code finds again in the source, a JSON pointer holding the value, a known
+  commit or a run, else it is rejected; validity date and status
+  (observed / superseded / disputed / to_review…). Secrets are masked before
+  anything is written; `.env`, `secrets/`, `.token`, raw `logs/<p>.jsonl`
+  are never read.
+- (server) **Contradictions by construction**: one active value per subject on
+  a functional predicate (default model, routing policy, project count,
+  environment, ports, state, dev_of…). The live state wins and a contradicted
+  statement is "to review"; two sources of the same authority that disagree are
+  a conflict, shown with the more recent one named, never decided. Memories
+  superseded through their [[links]] or a CADUC banner, and index lines of
+  MEMORY.md that do not say so, are detected. Declared ports that do not listen
+  or are older than 60 days are to review.
+- (server) **Queries without a model, under 100 ms**: `node scripts/kg.mjs
+  fiche | regles | impact | explique | historique | contradictions | perimes |
+  port-libre` (Markdown in French, or `--json`). `impact` gives exactly the
+  suites and stages of the targeted regression, plus the user requirements
+  they protect and the decisions that name the file.
+- (server) **Hot switch** `model-routing.json → kg.mode` = off | shadow |
+  assist, written by `node scripts/pipeline-enforce.mjs kg …` (also reset by
+  `off --all`). Absent = off = the behaviour before: nothing runs, nothing is
+  written, no turn module imports the index.
+- Anonymised corpus of real past cases (`tests/kg-corpus/`): the models rule
+  (4 sources), 17 / 38 projects, a service said WSL but native Windows, the
+  chef's Routage said "in service" while switched off, silent ports.
+- Suites `_test_kg_core.mjs`, `_test_kg_replay.mjs`, `_test_kg_queries.mjs`;
+  regression perimeter `kg`; three lines in USER_REQUIREMENTS.md.
+- (docs) `docs/KG-SYNTHESE.md` (synthesis + the user's 18 decisions) and
+  `docs/KG-SOLUTION-opus.md`.
+
 ## [0.123.0] - 2026-10-20
 
 Incident of the automatic answer (0.121.0 in production). User report

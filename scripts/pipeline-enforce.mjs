@@ -15,6 +15,8 @@
 //   node scripts/pipeline-enforce.mjs tuning          interrupteurs de la phase 0 des pipelines
 //   node scripts/pipeline-enforce.mjs tuning <levier|all> on|off [<projet>]
 //                                                     sans projet : tous les projets ; avec : ce projet
+//   node scripts/pipeline-enforce.mjs kg [off|shadow|assist]
+//                                                     index de connaissances (KG phase 0 b) ; off = rien ne tourne
 //
 // Écrit model-routing.json → enforcement (temp + rename, historique), relu à
 // chaque dispatch : aucun redémarrage. Les cases (models) ne sont pas touchées.
@@ -29,6 +31,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readEnforcement, writeEnforcement, ENGINE_PIPELINES } from './pipeline-engine.mjs';
 import { readTuning, applyTuningChange, describeTuning } from './pipeline-tuning.mjs';
+import { readKgSettings, writeKgSettings, MODES as KG_MODES } from './kg.mjs';
 
 const ROOT = process.env.DISPATCH_ROOT_FOR_TESTS ? path.resolve(process.env.DISPATCH_ROOT_FOR_TESTS) : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const [cmd, target] = process.argv.slice(2);
@@ -61,6 +64,15 @@ if (cmd === 'tuning') {
   console.log(describeTuning(readTuning(ROOT)));
   process.exit(0);
 }
+// kg (knowledge index, phase 0 b): off | shadow | assist, re-read at every call.
+// Phase 0 b injects nothing: shadow and assist only allow building and querying.
+if (cmd === 'kg') {
+  if (!target) { const k = readKgSettings(ROOT); console.log(`kg.mode = ${k.mode}${k.since ? ` depuis ${k.since} (${k.by})` : ''}`); process.exit(0); }
+  if (!KG_MODES.includes(target)) { console.error(`usage: node scripts/pipeline-enforce.mjs kg [${KG_MODES.join('|')}]`); process.exit(64); }
+  const k = writeKgSettings(ROOT, { mode: target, by: `pipeline-enforce kg ${target}` });
+  console.log(`kg.mode = ${k.mode}${k.mode === 'off' ? ' (index arrêté : rien ne tourne)' : ' (phase 0 b : construction et requêtes seulement, aucune injection)'}`);
+  process.exit(0);
+}
 if (!['on', 'off'].includes(cmd) || !target) {
   console.error('usage: node scripts/pipeline-enforce.mjs [status] | on <projet> | off <projet> | on|off --terminal | on|off --chef | pipelines <liste|all> | off --all');
   process.exit(64);
@@ -78,3 +90,4 @@ else {
 }
 const tuning = cmd === 'off' && target === '--all' ? {} : undefined;
 show(writeEnforcement(ROOT, { projects, terminal, chef, pipelines: cur.pipelines.length ? cur.pipelines : ENGINE_PIPELINES, tuning, by: `pipeline-enforce ${cmd} ${target}` }));
+if (cmd === 'off' && target === '--all' && readKgSettings(ROOT).mode !== 'off') writeKgSettings(ROOT, { mode: 'off', by: 'pipeline-enforce off --all' });

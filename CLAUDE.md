@@ -3073,6 +3073,54 @@ intelligent ».
   vrai dispatch). Redémarrage inutile (moteur et dispatch), sauf pour le
   balayage de la réponse automatique du serveur.
 
+## Graphe de connaissances, phase 0 b : l'index par le programme (0.124.0)
+
+Décisions de l'utilisateur du 2026-10-20 (« tout comme recommandé ») :
+`docs/KG-SYNTHESE.md` §6. Une phase qui s'en écarte demande une nouvelle
+décision.
+
+- **`scripts/kg.mjs`, seul écrivain**, seulement sous `logs/kg/` (hors git) :
+  `derived.json` (couche dérivée, jetable), `build.json` (empreintes des
+  sources, faits rejetés), `contradictions.md`. **Aucun model, aucune
+  injection** dans un tour à cette phase : ni `dispatch.mjs`, ni `server.js`, ni
+  le moteur n'importent ce module (vérifié).
+- **Sources** : config.json, model-routing.json (`--state <racine>` pour lire
+  celles de la prod, en lecture seule), mémoires et CLAUDE.md du chef (dossier
+  `~/.claude/projects/<chemin>/memory`, `ORCH_KG_CLAUDE_HOME`), table des ports,
+  sections « Décisions de l'utilisateur » des `docs/*-SYNTHESE.md`, registre
+  des exigences, CHANGELOG, TODO, 50 commits, `logs/runs/*/run.json`
+  (`--runs`), couverture des suites, ports à l'écoute (`netstat`). Jamais :
+  `.env`, `secrets/`, `.token`, `logs/<p>.jsonl` (`forbiddenSource`).
+- **Schéma fermé** (`NODE_TYPES`, `PREDICATES`) ; **provenance vérifiée**
+  (`validateFact` : citation ≤ 200 caractères retrouvée, ligne recalculée,
+  pointeur JSON, commit connu) ; secrets masqués avant écriture.
+- **Affirmations reconnues dans la prose** : liste fermée `CLAIM_PATTERNS`
+  (model par défaut, politique de routage, nombre de projets, Routage du chef,
+  « tourne en Windows natif ») ; le texte barré et les « citations » ne
+  comptent pas ; une ligne datée remplace une ligne non datée ou plus ancienne
+  de la même source. Liens `[[…]]` des mémoires : `supersedes`
+  (« supersede », « remplacé par », « caduc »), `exception_to`, `cites`.
+- **Contradictions** : prédicats fonctionnels ; autorité `live` (état vivant)
+  > `user` (décisions écrites) > `document` ; contredit par plus haut = « à
+  revoir », même autorité et valeurs différentes = conflit (montré, jamais
+  tranché) ; ligne de MEMORY.md d'une mémoire remplacée qui ne le dit pas ;
+  port déclaré muet ou déclaration de plus de 60 jours. Un port tenu par un
+  portproxy « écoute » même si le service derrière est mort.
+- **Requêtes** (< 100 ms, `QUERY_BUDGET_MS`) : `node scripts/kg.mjs fiche <p> |
+  regles [--projet p] | impact <fichier> | explique <id> | historique <case> |
+  contradictions | perimes | port-libre [--from n]` (`--json`). `impact` refait
+  les règles de `selectTargets` sur une couverture précalculée.
+- **Interrupteur** : `node scripts/pipeline-enforce.mjs kg off|shadow|assist`
+  (bloc `kg` de model-routing.json, relu à chaque appel ; `off --all` le
+  coupe). Absent = off : construction et requêtes refusées (code 2, `--force`
+  pour un essai), rien d'écrit. En 0 b, shadow et assist ne font que permettre
+  construction et requêtes.
+- **Corpus** `tests/kg-corpus/` (anonymisé ; exécutions dans
+  `before/runs-fixture.json`, rangées par `fixture.mjs` dans une copie : un
+  `run.json` versionné serait « couvert » par toute suite qui nomme ce fichier).
+- Recettes : `_test_kg_core.mjs`, `_test_kg_replay.mjs`, `_test_kg_queries.mjs`
+  (périmètre `kg`). Pas de redémarrage (aucune route).
+
 ## Attachments
 
 Images uploaded via the dashboard (paste / drag-drop / file picker) land in
