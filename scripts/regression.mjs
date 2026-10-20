@@ -716,14 +716,18 @@ async function apiChecks(sb) {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'run.json'), JSON.stringify({ run, project: 'omega', pipeline: 'dev', status: 'paused', question: 'omega en pause',
       diagnosis: { kind: 'test_passes', transient: false, cause: 'le test passe déjà', options: [{ key: 'corriger le test', does: 'je relance', effect: { message: 'INTERNE' } }, { key: 'abandonner', does: 'j’arrête' }], recommend: { key: 'corriger le test', why: 'agit sur la cause' } } }));
-    const runs = await json('/api/pipeline-runs?project=omega&n=100');
-    const r = runs.runs.find(x => x.run === run);
-    assert(r, 'exécution absente');
-    if (!('pause' in r)) NA('champ pause absent de cet état du code');
-    assert(r.pause?.cause === 'le test passe déjà', `cause : ${JSON.stringify(r.pause)}`);
-    assert(r.pause.options.map(o => o.key).join('|') === 'corriger le test|abandonner', 'choix');
-    assert(r.pause.options[0].recommended === true && r.pause.recommend?.key === 'corriger le test', 'recommandation');
-    assert(!JSON.stringify(r).includes('INTERNE'), 'effet interne exposé');
+    // Removed afterwards: a paused run is a wait the automatic answer would
+    // pick up during the browser walks (it made auto-answer-dismiss fail).
+    try {
+      const runs = await json('/api/pipeline-runs?project=omega&n=100');
+      const r = runs.runs.find(x => x.run === run);
+      assert(r, 'exécution absente');
+      if (!('pause' in r)) NA('champ pause absent de cet état du code');
+      assert(r.pause?.cause === 'le test passe déjà', `cause : ${JSON.stringify(r.pause)}`);
+      assert(r.pause.options.map(o => o.key).join('|') === 'corriger le test|abandonner', 'choix');
+      assert(r.pause.options[0].recommended === true && r.pause.recommend?.key === 'corriger le test', 'recommandation');
+      assert(!JSON.stringify(r).includes('INTERNE'), 'effet interne exposé');
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
   // 0.60.0 — erreurs de lancement : contrôle de l'attente et journaux de test du model.
   await check(S, 'model-backoff', 'Attente après erreurs de lancement : POST /api/pipeline-runs/:run/backoff (retry, test ; 404, 400, origine étrangère 403) et GET /api/model-tests/:name', async () => {

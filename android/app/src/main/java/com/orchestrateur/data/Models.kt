@@ -179,7 +179,12 @@ data class PermissionRequest(
     val blocks: List<PermBlock> = emptyList(),
     val lastText: String? = null,
     val turnPrompt: String? = null,
+    /** Server 0.78.0: what the command does (written by the code), what the musician said, why. */
+    val explanation: PermExplanation? = null,
 )
+
+@Serializable
+data class PermExplanation(val what: String? = null, val said: String? = null, val reason: String? = null, val text: String? = null)
 
 @Serializable
 data class PermissionsResponse(val pending: List<PermissionRequest> = emptyList(), val now: Long = 0)
@@ -211,6 +216,8 @@ data class ConductorChatEntry(
     val awaitingChef: Boolean? = null,
     /** Chef reply that ends on NEEDS_USER_INPUT — a question, not a report. */
     val question: Boolean? = null,
+    /** Reformulated reply (0.51.0): {detected, target, original:{text}}. */
+    val lang: kotlinx.serialization.json.JsonElement? = null,
 )
 
 /**
@@ -226,6 +233,11 @@ data class PupitreSnapshot(
     val noFailover: Boolean = false,
     val limitedUntil: String? = null,
     val fleet: List<PupitreRow> = emptyList(),
+    /** Direction queue of the chef pool (1.0.0: band with Retirer / Interrompre). */
+    val pool: kotlinx.serialization.json.JsonElement? = null,
+    val version: String? = null,
+    val repoVersion: String? = null,
+    val restartRequired: Boolean = false,
 )
 
 @Serializable
@@ -237,8 +249,9 @@ data class PupitreRow(
     val deadInFlight: Boolean = false,
     val activity: String? = null,
     val lastKind: String? = null,
-    val silentMs: Long? = null,
-    val turnElapsedMs: Long? = null,
+    // Fractional on the server side (e.g. 200050.42): decoded as Double, used as Long.
+    val silentMs: Double? = null,
+    val turnElapsedMs: Double? = null,
     val pid: Int? = null,
     val pidAlive: Boolean? = null,
     val model: String? = null,
@@ -246,4 +259,13 @@ data class PupitreRow(
     val configModel: String? = null,
     val queueDepth: Int = 0,
     val isConductor: Boolean = false,
+    // 1.0.0 — kept as JSON trees: read with data/Rest.kt helpers.
+    val awaitingPermission: kotlinx.serialization.json.JsonElement? = null,
+    val queueHeld: kotlinx.serialization.json.JsonElement? = null,
+    val regression: kotlinx.serialization.json.JsonElement? = null,
+    val stopped: kotlinx.serialization.json.JsonElement? = null,
+    val testRun: kotlinx.serialization.json.JsonElement? = null,
+    val lingering: kotlinx.serialization.json.JsonElement? = null,
+    val needsInput: kotlinx.serialization.json.JsonElement? = null,
+    val lastActivityAt: kotlinx.serialization.json.JsonElement? = null,
 )

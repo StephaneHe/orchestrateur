@@ -1,5 +1,8 @@
 package com.orchestrateur.ui.fleet
 
+import com.orchestrateur.data.o
+import com.orchestrateur.data.s
+
 import android.content.Context
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
@@ -102,6 +105,8 @@ data class ChatMsg(
     val observed: Boolean = false,
     // role=missions: la fenêtre du journal chef était pleine — on le dit.
     val truncated: Boolean = false,
+    // role=conductor: the reply was reformulated into the discussion language (0.51.0) — original text.
+    val langOriginal: String? = null,
 ) {
     // activity = the chef's mid-turn steps (thinking / tool_use / intermediate
     // text), kept persistently so nothing is erased when the next block arrives.
@@ -209,6 +214,16 @@ class FleetViewModel(
     /** Text another screen puts in the chef composer (TODO « Envoyer au chef… »,
      *  identifier overlay…). Replaces the draft; consumed once by the composer. */
     var chefDraft: String? by mutableStateOf(null)
+
+    // 1.0.0 — from /api/pupitre: direction queue, pending restart, raw row per musician.
+    var pool by mutableStateOf(com.orchestrateur.data.Pool(0, emptyList(), emptyList()))
+        private set
+    var restartRequired by mutableStateOf(false)
+        private set
+    var repoVersion: String? by mutableStateOf(null)
+        private set
+    var rows: Map<String, com.orchestrateur.data.PupitreRow> by mutableStateOf(emptyMap())
+        private set
     fun prepareChefMessage(text: String) { chefDraft = text }
     fun markReportSeen() { newReportPending = false }
     fun signalNewReport() { newReportPending = true }
@@ -233,6 +248,10 @@ class FleetViewModel(
                     val snap = api.fetchPupitre()
                     val byName = snap.fleet.associateBy { it.name }
                     for (m in musicians) byName[m.name]?.let { m.applyPupitre(it) }
+                    pool = com.orchestrateur.data.parsePool(snap.pool)
+                    restartRequired = snap.restartRequired
+                    repoVersion = snap.repoVersion
+                    rows = byName
                     _limitedUntil.value = snap.limitedUntil
                     _noFailover.value = snap.noFailover
                     _telemetryFresh.value = true
@@ -831,6 +850,7 @@ class FleetViewModel(
                         ChatMsg.Role.conductor, txt, ts = e.ts,
                         taking = taking,
                         question = e.question == true || CHEF_QUESTION_RE.containsMatchIn(txt),
+                        langOriginal = e.lang.o("original").s("text"),
                     ))
                     taking = emptyList()
                     inTurn = false

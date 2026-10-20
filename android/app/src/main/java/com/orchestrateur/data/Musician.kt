@@ -82,8 +82,8 @@ class Musician(
         deadInFlight = row.deadInFlight
         pid = row.pid
         pidAlive = row.pidAlive
-        silentMs = row.silentMs
-        turnElapsedMs = row.turnElapsedMs
+        silentMs = row.silentMs?.toLong()
+        turnElapsedMs = row.turnElapsedMs?.toLong()
         observedModel = row.model ?: row.configModel
         activity = row.activity
         queueDepth = row.queueDepth

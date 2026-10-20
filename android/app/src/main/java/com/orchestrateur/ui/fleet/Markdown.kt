@@ -363,7 +363,8 @@ internal sealed class MdInline {
     data class Text(val text: String) : MdInline()
     data class Bold(val children: List<MdInline>) : MdInline()
     data class Italic(val children: List<MdInline>) : MdInline()
-    data class Code(val text: String) : MdInline()
+    /** [kind]/[value] set when the whole span is one identifier (linked, like the web). */
+    data class Code(val text: String, val kind: String? = null, val value: String? = null) : MdInline()
     data class Link(val children: List<MdInline>, val url: String) : MdInline()
     data class IdRef(val display: String, val kind: String, val value: String) : MdInline()
 }
@@ -450,7 +451,9 @@ internal fun parseInline(src: String, vocab: IdVocab?): List<MdInline> {
         // Inline code `...`
         val ce = codeEnd(src, i)
         if (ce > 0) {
-            flush(); out += MdInline.Code(src.substring(i + 1, ce - 1))
+            val code = src.substring(i + 1, ce - 1)
+            val whole = vocab?.let { v -> IdLinks.find(code, v).singleOrNull()?.takeIf { it.start == 0 && it.end == code.length } }
+            flush(); out += if (whole != null) MdInline.Code(code, whole.kind, whole.value) else MdInline.Code(code)
             i = ce; continue
         }
 
@@ -491,7 +494,11 @@ private fun AnnotatedString.Builder.appendInline(nodes: List<MdInline>, base: Co
         is MdInline.Text -> append(n.text)
         is MdInline.Bold -> withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = base)) { appendInline(n.children, base) }
         is MdInline.Italic -> withStyle(SpanStyle(fontStyle = FontStyle.Italic, color = base)) { appendInline(n.children, base) }
-        is MdInline.Code -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace, color = base, background = Color.White.copy(alpha = 0.08f))) { append(n.text) }
+        is MdInline.Code -> if (n.kind != null && n.value != null) {
+            pushStringAnnotation(ID_TAG, "${n.kind}\n${n.value}")
+            withStyle(SpanStyle(fontFamily = FontFamily.Monospace, color = Palette.Accent, textDecoration = TextDecoration.Underline, background = Color.White.copy(alpha = 0.08f))) { append(n.text) }
+            pop()
+        } else withStyle(SpanStyle(fontFamily = FontFamily.Monospace, color = base, background = Color.White.copy(alpha = 0.08f))) { append(n.text) }
         is MdInline.Link -> {
             pushStringAnnotation(URL_TAG, n.url)
             withStyle(SpanStyle(color = Palette.Accent, textDecoration = TextDecoration.Underline)) { appendInline(n.children, Palette.Accent) }

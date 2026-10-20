@@ -32,7 +32,10 @@ class MarkdownParseTest {
     }
 
     @Test fun neverInsideCodeOrLinks() {
-        assertEquals(listOf(MdInline.Code("t-abc123")), inl("`t-abc123`"))
+        // Like the web (id-links.js links <code>3e3b51b</code>): an inline code span that is exactly one identifier is a link, still monospace.
+        assertEquals(listOf(MdInline.Code("t-abc123", "todo", "t-abc123")), inl("`t-abc123`"))
+        assertEquals(listOf(MdInline.Code("npm test t-abc123")), inl("`npm test t-abc123`"))
+        assertEquals(listOf(MdInline.Code("t-abc123")), inl("`t-abc123`", null))
         assertEquals(listOf(MdInline.Link(listOf(MdInline.Text("t-abc123")), "https://x.org")), inl("[t-abc123](https://x.org)"))
         assertEquals(listOf(MdInline.Link(listOf(MdInline.Text("https://x.org/t-abc123/a.js")), "https://x.org/t-abc123/a.js")), inl("https://x.org/t-abc123/a.js"))
     }

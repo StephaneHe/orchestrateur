@@ -24,6 +24,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.orchestrateur.data.Musician
+import com.orchestrateur.data.i
+import com.orchestrateur.data.o
+import androidx.compose.foundation.horizontalScroll
 import com.orchestrateur.data.RawEvent
 import com.orchestrateur.data.toolArgPreview
 import com.orchestrateur.data.State as MState
@@ -37,7 +40,7 @@ import com.orchestrateur.ui.theme.Palette
 // par la destination Journal, qui n'est jamais démontée par la navigation).
 // ============================================================================
 
-enum class DetailTab { activity, result, journal }
+enum class DetailTab { turns, activity, result, queue, journal }
 
 @Composable
 fun MusicianDetailScreen(
@@ -47,8 +50,10 @@ fun MusicianDetailScreen(
     onTalkToChef: (String) -> Unit,
 ) {
     val m = vm.musicians.find { it.name == name }
-    var tab by rememberSaveable { mutableStateOf(DetailTab.activity) }
+    var tab by rememberSaveable { mutableStateOf(DetailTab.turns) }
     var menu by remember { mutableStateOf(false) }
+    var direct by remember { mutableStateOf(false) }
+    val env = com.orchestrateur.ui.common.LocalEnv.current
 
     LaunchedEffect(name) { vm.openMusician(name) }
 
@@ -92,6 +97,14 @@ fun MusicianDetailScreen(
                     DropdownMenuItem(
                         text = { Text("En parler au chef", fontSize = 14.sp) },
                         onClick = { menu = false; onTalkToChef(name) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Envoyer directement à $name…", fontSize = 14.sp) },
+                        onClick = { menu = false; direct = true },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Session Claude…", fontSize = 14.sp) },
+                        onClick = { menu = false; env.navigate(com.orchestrateur.MainActivity.routeSessions(name)) },
                     )
                     DropdownMenuItem(
                         text = { Text("Marquer lu", fontSize = 14.sp) },
@@ -147,21 +160,40 @@ fun MusicianDetailScreen(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp),
         )
 
-        // ---- Onglets -------------------------------------------------------
+        // ---- Actions : vu / répondue, choix d'une pause, refus -------------
+        val row = vm.rows[name]
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            DetailTabChip("Activité", tab == DetailTab.activity) { tab = DetailTab.activity }
+            AckButtons(name, question = m.state == MState.input, error = m.state == MState.error || m.state == MState.unread)
+            row?.regression?.let { r ->
+                Text("🧪 NR ${r.o("suites").i("done") ?: 0}/${r.o("suites").i("total") ?: 0}" + ((r.o("counts").i("KO") ?: 0).takeIf { it > 0 }?.let { " · $it KO" } ?: ""),
+                    color = Palette.Fg2, fontSize = 11.sp, modifier = Modifier.clickable { env.navigate("non-regressions") }.padding(10.dp))
+            }
+        }
+        if (m.state == MState.input) com.orchestrateur.ui.ops.PauseChoices(name)
+        DenialsBlock(m)
+
+        // ---- Onglets -------------------------------------------------------
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            DetailTabChip("Journal d'activité", tab == DetailTab.turns) { tab = DetailTab.turns }
             DetailTabChip("Résultat", tab == DetailTab.result) { tab = DetailTab.result }
-            DetailTabChip("Journal", tab == DetailTab.journal) { tab = DetailTab.journal }
+            DetailTabChip("En direct", tab == DetailTab.activity) { tab = DetailTab.activity }
+            DetailTabChip("File" + (if (m.queueDepth > 0) " (${m.queueDepth})" else ""), tab == DetailTab.queue) { tab = DetailTab.queue }
+            DetailTabChip("Log brut", tab == DetailTab.journal) { tab = DetailTab.journal }
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.CardBorder))
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when (tab) {
+                DetailTab.turns -> ActivityJournalTab(m)
                 DetailTab.activity -> ActivityTab(m)
                 DetailTab.result -> ResultTab(m)
+                DetailTab.queue -> QueueTab(m, row?.queueHeld)
                 DetailTab.journal -> JournalTab(m)
             }
         }
@@ -188,11 +220,13 @@ fun MusicianDetailScreen(
             )
             Spacer(Modifier.weight(1f))
             Text(
-                "${m.ring.size} evts", color = Palette.Fg3, fontSize = 10.sp,
+                "${m.ring.size} evts" + (if (m.totalCostUsd > 0) String.format(java.util.Locale.US, " · session $%.2f", m.totalCostUsd) else ""),
+                color = Palette.Fg3, fontSize = 10.sp,
                 fontFamily = FontFamily.Monospace,
             )
         }
     }
+    if (direct) DirectSendDialog(name) { direct = false }
 }
 
 @Composable

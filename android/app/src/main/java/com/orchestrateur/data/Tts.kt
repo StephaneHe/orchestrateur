@@ -19,7 +19,7 @@ object SpeechText {
     private val MDLINK = Regex("\\[([^\\]]+)]\\(([^)]+)\\)")
     private val IDREF = Regex("\\[\\[(?:[a-z]+:)?([^\\]]+)]]")
     private val URL = Regex("https?://([^/\\s]+)\\S*")
-    private val PATH = Regex("(?:[A-Za-z]:)?(?:[\\\\/][\\w.\\-]+){2,}[\\\\/]?([\\w.\\-]+)")
+    private val PATH = Regex("(?:[A-Za-z]:)?(?:[\\\\/][\\w.\\-]+){2,}")
     private val HEX = Regex("\\b[0-9a-f]{12,64}\\b")
 
     fun toSpeech(src: String): String {
@@ -31,7 +31,7 @@ object SpeechText {
         t = IDREF.replace(t) { it.groupValues[1] }
         t = MDLINK.replace(t) { it.groupValues[1] }
         t = URL.replace(t) { "lien vers ${it.groupValues[1]}" }
-        t = PATH.replace(t) { it.groupValues[1] }
+        t = PATH.replace(t) { m -> m.value.split('/', '\\').last { it.isNotEmpty() } }
         t = HEX.replace(t, "identifiant")
         t = t.replace(Regex("`([^`]*)`"), "$1")
         t = t.replace(Regex("(?m)^\\s{0,3}#{1,6}\\s*"), "")

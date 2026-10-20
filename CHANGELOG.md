@@ -11,6 +11,67 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.127.0] - 2026-10-20
+
+User request (2026-10-20, verbatim): « Fais une nouvelle application android
+Orchestrateur, qui prend en compte toutes les fonctionalites. Une fois faite,
+mets la sur la page d'exposition des applications http://stephane:7777/downloads ».
+The Android companion app becomes **1.0.0** (versionCode 24, same
+applicationId: it installs over 0.13.0) and covers every feature of the web
+dashboard; the inventory is `docs/ANDROID-PARITY.md`.
+
+### Added
+- (server) `GET /api/pipeline-runs`: a paused run carries its pause menu
+  `pause {cause, kind, transient, step, limit, options:[{key, does,
+  recommended}], recommend}` (`scripts/pipeline-run-view.mjs`), so a client
+  can offer the smart choices of 0.122.0 as buttons. Only what the user reads
+  is exposed (never an option's internal effect nor the raw evidence). HTTP
+  check `pipeline-runs-pause`, suite `_test_pipeline_run_view.mjs`.
+- (android) « Plus » hub with one screen per dashboard area: Projets,
+  Exécutions de pipeline (timeline, backoff, pause choices), Non-régressions
+  (band, list, report), TODO (notes, rejection, ↑/↓ order, send to / discuss
+  with the chef with the web's exact message), Git (lane graph), Release
+  (groups, copy/share the note), Requêtes, Models (steps, principal/second,
+  suggestions, health, observation, gaps, API keys, model languages),
+  Réponse automatique (switch, delays, discreet read-only guardrails,
+  backlog, decisions, undo, dismiss, history), Autorisations permanentes,
+  Réglages (discussion language and per-project exceptions, provider, text
+  size 85–150 %, palette, speech, server), Nouveau musicien, Session Claude.
+- (android) Chef thread: direction queue band (« Retirer », « Interrompre le
+  chef avec ce message »), notification dock (permissions + automatic
+  decisions, bounded height, « Tout réduire »), non-regression band,
+  attention band with « 🔐 Décider », « ✓ Vu », « ✓ Marquer comme
+  répondue », pause choices on question bubbles, « Répondre directement à
+  X », « ✎ Éditer et renvoyer », « 🔊 écouter » and auto-read of new chef
+  replies, « ⚠ langue · voir l'original », every engine pipeline in the
+  selector (long press) plus « 💬 Discuter avec le chef ».
+- (android) Musician detail: activity journal (server turns with pipeline
+  timeline, permissions, chips, unfold), queue tab (detail, edit, ↑/↓ order,
+  remove, held queue), direct send, refused-permission « + Autoriser » /
+  « ✓ Vu », sessions.
+- (android) Rich text: clickable identifiers (`[[…]]` and known formats, also
+  alone in inline code) with the explanation overlay of `/api/identify`; model
+  HTML replies converted and sanitised like `public/html-render.js` (20
+  injection cases refused).
+- (android) Permission requests show the explanation of 0.78.0.
+- Permanent requirement test `scripts/_test_android_parity.mjs`: every feature
+  of `docs/ANDROID-PARITY.md` has its screen and its JVM test (or a reason),
+  every `public/*.js` is covered, every `/api` route is called by the app or
+  listed with a reason.
+
+### Fixed
+- (android) The live stream (SSE and the 5 s snapshot) stopped whenever a
+  screen other than the thread was open: it now follows the activity.
+- (android) A failed send no longer loses the draft.
+- (android) `/api/pupitre` never decoded: `silentMs` / `turnElapsedMs` are
+  fractional on the server (`200050.42`), the app expected integers, so the
+  whole snapshot failed and the header stayed on « instantané non reçu »
+  (states, health, queue depth, model never refreshed). Decoded as numbers,
+  used as milliseconds; JVM test on a real answer of the sandbox.
+
+### Changed
+- (android) The old settings screen is replaced by « Réglages » of the hub.
+
 ## [0.126.0] - 2026-10-20
 
 User decision (2026-10-20, verbatim): « Réponse en votre absence face à une

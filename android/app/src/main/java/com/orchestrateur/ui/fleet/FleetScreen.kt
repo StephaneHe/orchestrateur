@@ -9,6 +9,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import com.orchestrateur.data.s
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -72,6 +75,7 @@ fun JournalScreen(
     onOpenSettings: () -> Unit,
 ) {
     val context = LocalContext.current
+    val env = com.orchestrateur.ui.common.LocalEnv.current
     val connected by vm.connected.collectAsState()
     val scope = rememberCoroutineScope()
 
@@ -95,8 +99,10 @@ fun JournalScreen(
     Column(Modifier.fillMaxSize().background(Palette.Bg0)) {
         JournalHeader(vm, connected, onOpenSettings) { onOpenMusician(FleetViewModel.CONDUCTOR) }
         SystemBanner(vm, connected)
-        PermissionBand(vm)
+        NotificationDock(vm)
         AttentionBand(vm, onOpenMusician)
+        com.orchestrateur.ui.ops.RegressionBand()
+        PoolBand(vm)
 
         if (vm.musicians.isNotEmpty()) {
             PilotageLine(musicians = vm.musicians, onOpen = { showPilotage = true })
@@ -145,7 +151,15 @@ fun JournalScreen(
             onPickImage = { mediaLauncher.launch(arrayOf("image/*", "video/*")) },
             onRemoveImage = vm::removeImage,
             onClearReply = { replyTo = null },
-            onSend = { prompt, displayText -> vm.dispatch(prompt, displayText) },
+            onSend = { prompt, displayText ->
+                vm.dispatch(prompt, displayText) { r ->
+                    // A failed send keeps the draft (web: #composer-error, draft kept).
+                    r.exceptionOrNull()?.let { e ->
+                        vm.prepareChefMessage(displayText)
+                        env.toast("envoi impossible : ${e.message ?: "erreur"} — brouillon gardé")
+                    }
+                }
+            },
         )
     }
 
@@ -177,8 +191,10 @@ private fun JournalHeader(
             Text("Orchestre", color = Palette.Fg0, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
             Spacer(Modifier.width(6.dp))
             Text(
-                "app ${BuildConfig.VERSION_NAME}" + (serverVersion?.let { " · serveur $it" } ?: ""),
-                color = Palette.Fg3, fontSize = 9.sp, fontFamily = FontFamily.Monospace,
+                "app ${BuildConfig.VERSION_NAME}" + (serverVersion?.let { " · serveur $it" } ?: "") +
+                    (if (vm.restartRequired) " · ⚠ redémarrage requis (dépôt ${vm.repoVersion ?: "?"})" else ""),
+                color = if (vm.restartRequired) Palette.StInput else Palette.Fg3, fontSize = 9.sp, fontFamily = FontFamily.Monospace,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
             )
             Spacer(Modifier.weight(1f))
             if (!connected) {
@@ -302,12 +318,15 @@ private fun SystemBanner(vm: FleetViewModel, connected: Boolean) {
 private fun AttentionBand(vm: FleetViewModel, onOpenMusician: (String) -> Unit) {
     var open by remember { mutableStateOf(false) }
 
-    data class Item(val rank: Int, val name: String, val mark: String, val text: String, val question: Boolean)
+    data class Item(val rank: Int, val name: String, val mark: String, val text: String, val question: Boolean, val perm: Boolean = false)
+    val env = com.orchestrateur.ui.common.LocalEnv.current
     val items = vm.musicians
         .filter { it.name != FleetViewModel.CONDUCTOR }
         .mapNotNull { m ->
             val health = healthNote(m)
+            val perm = vm.rows[m.name]?.awaitingPermission
             when {
+                perm != null -> Item(-1, m.name, "🔐", "${perm.s("tool") ?: "outil"} ${perm.s("preview").orEmpty().take(60)}", false, perm = true)
                 m.state == MState.input ->
                     Item(0, m.name, "?", m.lastLine.ifBlank { "question sans texte" }, true)
                 health != null && health.second -> Item(1, m.name, "✗", health.first, false)
@@ -320,6 +339,8 @@ private fun AttentionBand(vm: FleetViewModel, onOpenMusician: (String) -> Unit) 
     if (items.isEmpty()) return
 
     val counts = buildList {
+        val np = items.count { it.perm }
+        if (np > 0) add("$np autorisation${if (np > 1) "s" else ""} à décider")
         val nq = items.count { it.rank == 0 }
         val nd = items.count { it.rank == 1 }
         val ne = items.count { it.rank == 2 }
@@ -389,8 +410,13 @@ private fun AttentionBand(vm: FleetViewModel, onOpenMusician: (String) -> Unit) 
                                 modifier = Modifier.weight(1f),
                             )
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (it2.question) {
+                        Row(
+                            Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            if (it2.perm) {
+                                ActionChip("🔐 Décider", primary = true) { env.prefs.updateDockCollapsed(false) }
+                            } else if (it2.question) {
                                 ActionChip("Répondre via le chef", primary = true) {
                                     vm.applyAnswerContext(AnswerContext(it2.name, it2.text))
                                 }
@@ -399,6 +425,7 @@ private fun AttentionBand(vm: FleetViewModel, onOpenMusician: (String) -> Unit) 
                                     vm.applyAnswerContext(AnswerContext(it2.name, about = true))
                                 }
                             }
+                            if (!it2.perm) AckButtons(it2.name, question = it2.question, error = it2.rank == 2)
                             ActionChip("Ouvrir") { onOpenMusician(it2.name) }
                         }
                     }
@@ -408,80 +435,7 @@ private fun AttentionBand(vm: FleetViewModel, onOpenMusician: (String) -> Unit) 
     }
 }
 
-/** Destination RÉGLAGES — admin hors du fil (version, flotte, parkés). */
-@Composable
-fun SettingsScreen(vm: FleetViewModel, onBack: () -> Unit) {
-    val serverVersion by vm.serverVersion.collectAsState()
-    Column(
-        Modifier.fillMaxSize().background(Palette.Bg0).statusBarsPadding()
-            .verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Text(
-            "‹ Retour", color = Palette.Fg2, fontSize = 13.sp, fontFamily = FontFamily.Monospace,
-            modifier = Modifier
-                .heightIn(min = 48.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .clickable(onClick = onBack)
-                .wrapContentHeight()
-                .padding(horizontal = 8.dp),
-        )
-        Text("Réglages", color = Palette.Fg0, fontSize = 20.sp, fontWeight = FontWeight.Medium)
-        Text(
-            "Application ${BuildConfig.VERSION_NAME}",
-            color = Palette.Fg1, fontSize = 13.sp, fontFamily = FontFamily.Monospace,
-        )
-        Text(
-            "Serveur " + (serverVersion ?: "version non fournie"),
-            color = Palette.Fg1, fontSize = 13.sp, fontFamily = FontFamily.Monospace,
-        )
-        Text(
-            "${vm.musicians.size} musiciens",
-            color = Palette.Fg2, fontSize = 12.sp,
-        )
-        LanguageSetting(vm)
-        Text(
-            "Les projets, sessions et outils se gèrent depuis le tableau de bord web.",
-            color = Palette.Fg3, fontSize = 11.sp,
-        )
-    }
-}
-
-/** Langue de discussion (0.51.0) : la langue du chef et des musiciens, réglée sur le serveur. */
-@Composable
-private fun LanguageSetting(vm: FleetViewModel) {
-    val lang by vm.language.collectAsState()
-    val err by vm.languageError.collectAsState()
-    LaunchedEffect(Unit) { vm.refreshLanguage() }
-    Text("Langue de discussion", color = Palette.Fg0, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-    if (lang == null) {
-        Text("Réglage disponible avec un serveur 0.51.0 ou plus récent.", color = Palette.Fg3, fontSize = 11.sp)
-        return
-    }
-    val options = listOf("fr" to "Français", "en" to "English", "es" to "Español", "de" to "Deutsch", "it" to "Italiano", "pt" to "Português")
-    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        options.forEach { (code, label) ->
-            val on = code == lang
-            Text(
-                label,
-                color = if (on) Palette.Bg0 else Palette.Fg1,
-                fontSize = 13.sp,
-                modifier = Modifier
-                    .heightIn(min = 48.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(if (on) Palette.Fg1 else Palette.Bg0)
-                    .clickable { vm.setLanguage(code) }
-                    .wrapContentHeight()
-                    .padding(horizontal = 12.dp)
-                    .semantics { contentDescription = "Langue de discussion : $label" + if (on) " (choisie)" else "" },
-            )
-        }
-    }
-    Text("Chef et musiciens répondent dans cette langue ; le code et la documentation technique restent en anglais. Une exception par projet se règle dans le tableau de bord web.",
-        color = Palette.Fg3, fontSize = 11.sp)
-    err?.let { Text("Échec : $it", color = Palette.Fg2, fontSize = 11.sp) }
-}
-
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun Composer(
     vm: FleetViewModel,
@@ -609,16 +563,27 @@ private fun Composer(
             )
             // Sélecteur de pipeline (serveur 0.52.0) : un appui passe au choix suivant.
             val choice = vm.pipelineChoice
+            var pipeMenu by remember { mutableStateOf(false) }
+            Box {
             Text(
                 "PIPELINE : ${choice.label.uppercase()} ▾",
                 color = if (choice == PipelineChoice.AUTO) Palette.Fg3 else Palette.Accent,
                 fontSize = 9.sp, letterSpacing = 1.2.sp, fontFamily = FontFamily.Monospace,
                 modifier = Modifier
                     .clip(RoundedCornerShape(6.dp))
-                    .clickable { vm.pipelineChoice = choice.next() }
-                    .semantics { contentDescription = "Pipeline de la demande : ${choice.label}. Appuyer pour changer." }
+                    .combinedClickable(onClick = { vm.pipelineChoice = choice.next() }, onLongClick = { pipeMenu = true })
+                    .semantics { contentDescription = "Pipeline de la demande : ${choice.label}. Appuyer pour changer, appui long pour la liste complète." }
                     .padding(horizontal = 6.dp, vertical = 10.dp),
             )
+            androidx.compose.material3.DropdownMenu(expanded = pipeMenu, onDismissRequest = { pipeMenu = false }) {
+                PipelineChoice.entries.forEach { c ->
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text((if (c == choice) "● " else "") + if (c == PipelineChoice.AUTO) "⇄ auto" else c.label, fontSize = 14.sp) },
+                        onClick = { vm.pipelineChoice = c; pipeMenu = false },
+                    )
+                }
+            }
+            }
             // Interruption coopérative : on le DIT avant, pas après.
             if (directTarget == null && chefBusy) {
                 Text(

@@ -212,7 +212,8 @@
         "scripts/copy-build.mjs",
         "public/attach-policy.js",
         "scripts/auto-answer.mjs",
-        "data/auto-answer-guardrails.json"
+        "data/auto-answer-guardrails.json",
+        "scripts/pipeline-run-view.mjs"
       ],
       "suites": [
         "_test_network_guard.mjs",
@@ -233,7 +234,9 @@
         "_test_queue_api.mjs",
         "_test_queue_sidecar_sweep.mjs",
         "_test_attach_policy.mjs",
-        "_test_auto_answer.mjs"
+        "_test_auto_answer.mjs",
+        "_test_android_parity.mjs",
+        "_test_pipeline_run_view.mjs"
       ],
       "uses": [
         {
@@ -247,6 +250,7 @@
         {
           "perimeter": "dispatch",
           "suites": [
+            "_test_android_parity.mjs",
             "_test_api_keys.mjs",
             "_test_attach_policy.mjs",
             "_test_auto_answer.mjs",
@@ -269,6 +273,7 @@
         {
           "perimeter": "noyau",
           "suites": [
+            "_test_android_parity.mjs",
             "_test_api_keys.mjs",
             "_test_attach_policy.mjs",
             "_test_auto_answer.mjs",
@@ -298,6 +303,7 @@
         {
           "perimeter": "panneaux",
           "suites": [
+            "_test_android_parity.mjs",
             "_test_api_keys.mjs",
             "_test_attach_policy.mjs",
             "_test_auto_answer.mjs",
@@ -320,6 +326,7 @@
         {
           "perimeter": "pipelines",
           "suites": [
+            "_test_android_parity.mjs",
             "_test_api_keys.mjs",
             "_test_attach_policy.mjs",
             "_test_auto_answer.mjs",
@@ -342,6 +349,7 @@
         {
           "perimeter": "routage",
           "suites": [
+            "_test_android_parity.mjs",
             "_test_api_keys.mjs",
             "_test_attach_policy.mjs",
             "_test_auto_answer.mjs",

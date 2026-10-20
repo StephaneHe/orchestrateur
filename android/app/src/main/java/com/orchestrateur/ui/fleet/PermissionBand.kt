@@ -82,6 +82,7 @@ fun PermissionBand(vm: FleetViewModel) {
                             Text(p.tool, color = CyanTool, fontFamily = FontFamily.Monospace, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.width(6.dp))
                             Text(p.preview, color = Palette.Fg1, fontFamily = FontFamily.Monospace, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            p.explanation?.what?.let { Text(it, color = Palette.Fg0, fontSize = 12.sp, maxLines = 3, overflow = TextOverflow.Ellipsis) }
                         }
                         Text("risque ${p.risk.level} · ${p.risk.tags.joinToString(", ")} · toucher pour les détails", color = riskColor(p.risk.level), fontSize = 11.sp)
                     }
@@ -139,6 +140,14 @@ private fun PermissionDetailsDialog(vm: FleetViewModel, id: String, focus: Strin
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                 error?.let { Text(it, color = Palette.StError, fontSize = 13.sp) }
                 req?.let { r ->
+                    r.explanation?.let { e ->
+                        Column(Modifier.fillMaxWidth().background(Palette.Bg2).padding(8.dp)) {
+                            e.what?.let { Text("Ce que fait la commande : $it", color = Palette.Fg0, fontSize = 13.sp) }
+                            e.said?.let { Text("Description du musicien : $it", color = Palette.Fg1, fontSize = 12.sp) }
+                            e.reason?.let { Text("Pourquoi : $it", color = Palette.Fg1, fontSize = 12.sp) }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                    }
                     Text("Pourquoi : ${r.why.text}", color = Palette.Fg0, fontSize = 13.sp, modifier = Modifier.fillMaxWidth().background(Palette.Accent.copy(alpha = 0.12f)).padding(8.dp))
                     Spacer(Modifier.height(6.dp))
                     Text("Risque ${r.risk.level} : ${r.risk.tags.joinToString(", ")}", color = riskColor(r.risk.level), fontSize = 13.sp)

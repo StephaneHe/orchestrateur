@@ -1,5 +1,8 @@
 package com.orchestrateur.ui.fleet
 
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -55,6 +58,15 @@ fun MainPane(
     onReply: (ChatMsg) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    // Auto-read (tts.auto of the web): only replies that arrive while the
+    // thread is on screen, never the history loaded at start.
+    val env = com.orchestrateur.ui.common.LocalEnv.current
+    val shownAt = remember { System.currentTimeMillis() }
+    val lastChef = vm.chat.lastOrNull { it.role == ChatMsg.Role.conductor }
+    LaunchedEffect(lastChef?.id) {
+        val m = lastChef ?: return@LaunchedEffect
+        if (env.prefs.ttsAuto && m.ts > shownAt) env.tts.speak(m.id, m.text)
+    }
     Box(modifier.fillMaxSize()) {
         ConductorTranscript(
             vm = vm,
@@ -404,9 +416,18 @@ private fun QuestionBubble(msg: ChatMsg, vm: FleetViewModel?, onOpenMusician: (S
             fontFamily = FontFamily.Monospace,
         )
         Markdown(msg.text, Palette.Fg0)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        // A pipeline pause of this musician: its choices as buttons (server 0.127.0).
+        com.orchestrateur.ui.ops.PauseChoices(who)
+        Row(
+            Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,
+        ) {
             ActionChip("Répondre via le chef", primary = true) {
                 vm?.applyAnswerContext(AnswerContext(who, msg.text))
+            }
+            ActionChip("Répondre directement à $who") { vm?.prepareChefMessage("@$who ") }
+            if (vm?.musicians?.find { it.name == who }?.state == com.orchestrateur.data.State.input) {
+                AckButtons(who, question = true, error = false)
             }
             ActionChip("Ouvrir $who") { onOpenMusician(who) }
         }
@@ -728,8 +749,13 @@ private fun ChatBubble(
                         text = { Text("Répondre", fontSize = 14.sp) },
                         onClick = { showMenu = false; onReply(msg) },
                     )
+                    if (isUser) DropdownMenuItem(
+                        text = { Text("✎ Éditer et renvoyer", fontSize = 14.sp) },
+                        onClick = { showMenu = false; vm?.prepareChefMessage(msg.text) },
+                    )
                 }
             }
+            if (msg.role == ChatMsg.Role.conductor) ChefBubbleFooter(msg, onReply)
         }
     }
 }
@@ -1079,4 +1105,30 @@ internal fun fmtCost(usd: Double): String = when {
     usd <= 0 -> "$0"
     usd < 0.01 -> "<\$0.01"
     else -> "$%.2f".format(NUM, usd)
+}
+
+/** Under a chef bubble: « ↩ répondre », speech, and « ⚠ langue · voir l'original » (0.51.0). */
+@Composable
+private fun ChefBubbleFooter(msg: ChatMsg, onReply: (ChatMsg) -> Unit) {
+    var showOriginal by remember { mutableStateOf(false) }
+    Row(
+        Modifier.padding(start = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "↩ répondre", color = Palette.Fg3, fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+            modifier = Modifier.heightIn(min = 36.dp).clickable { onReply(msg) }.padding(horizontal = 8.dp, vertical = 8.dp),
+        )
+        TtsButton(msg.id, msg.text)
+        if (msg.langOriginal != null) Text(
+            if (showOriginal) "⚠ langue · masquer l'original" else "⚠ langue · voir l'original",
+            color = Palette.StInput, fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+            modifier = Modifier.heightIn(min = 36.dp).clickable { showOriginal = !showOriginal }.padding(horizontal = 8.dp, vertical = 8.dp),
+        )
+    }
+    if (showOriginal && msg.langOriginal != null) {
+        Column(Modifier.padding(start = 8.dp).border(1.dp, Palette.CardBorder, RoundedCornerShape(8.dp)).padding(8.dp)) {
+            Markdown(msg.langOriginal, Palette.Fg2)
+        }
+    }
 }

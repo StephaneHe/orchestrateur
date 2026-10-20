@@ -3147,6 +3147,30 @@ décision.
 - Recettes : `_test_kg_core.mjs`, `_test_kg_replay.mjs`, `_test_kg_queries.mjs`
   (périmètre `kg`). Pas de redémarrage (aucune route).
 
+## App Android 1.0.0 : parité avec le dashboard (0.127.0)
+
+Demande utilisateur (2026-10-20) : « Fais une nouvelle application android
+Orchestrateur, qui prend en compte toutes les fonctionalites ». Inventaire et
+statut de chaque fonctionnalité : `docs/ANDROID-PARITY.md`.
+
+- **Toute nouvelle fonctionnalité du dashboard** ajoute sa ligne dans
+  `docs/ANDROID-PARITY.md` (écran `chemin#Symbole` + test `jvm:Classe#méthode`,
+  ou `partiel` / `non applicable` et la raison), et toute nouvelle route `/api`
+  est appelée par l'app ou listée dans « Routes sans écran ». Sinon
+  `scripts/_test_android_parity.mjs` (statique, sans Gradle) échoue.
+- Architecture : `data/Rest.kt` (accès JSON générique, lecteurs tolérants),
+  `ui/common/Common.kt` (`LocalEnv` : api, préférences, voix, navigation,
+  `prepareChef`, `openId`), `ui/more/Sections.kt` (une route par section),
+  logique pure testée sur la JVM à côté de chaque écran
+  (`./gradlew testDebugUnitTest`).
+- Le flux en direct suit l'**activité** (`MainActivity`), plus l'écran du fil.
+- `/api/pipeline-runs` porte `pause` (menu de la pause, `scripts/pipeline-run-view.mjs`) :
+  l'app en fait des boutons qui répondent `{project, prompt: "<choix> <run>",
+  pipelineResume}` (sans `pipelineResume` pour « accepter » / « tout
+  supprimer », et pour le chef).
+- Recettes : `_test_android_parity.mjs`, `_test_pipeline_run_view.mjs`, HTTP
+  `pipeline-runs-pause`.
+
 ## Attachments
 
 Images uploaded via the dashboard (paste / drag-drop / file picker) land in

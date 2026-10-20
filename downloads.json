@@ -1,7 +1,7 @@
 {
   "$comment": "Registre de la page /downloads, relu à chaud (aucun redémarrage). Voir la section « Page /downloads » de CLAUDE.md. apps[] : name (= dossier builds/<name>/latest.apk), label?, platform? (défaut phone), description?, version? { file (absolu), regex?, flags? } — sans regex, versionName du gradle. docs[] : project, id, title, file (sous builds/<project>/), fallbacks? (chemins absolus).",
   "apps": [
-    { "name": "orchestrateur",   "version": { "file": "I:\\orchestrateur\\android\\app\\build.gradle.kts" } },
+    { "name": "orchestrateur",   "label": "Orchestrateur", "description": "Tout le tableau de bord sur le téléphone : fil du chef, musiciens, files, pauses, Models, TODO, réponse automatique", "version": { "file": "I:\\orchestrateur\\android\\app\\build.gradle.kts" } },
     { "name": "RemotePad",       "version": { "file": "I:\\Dev\\RemotePad\\server\\__init__.py", "regex": "__version__\\s*=\\s*[\"']([^\"']+)[\"']" } },
     { "name": "BookHaven",       "version": { "file": "I:\\Dev\\BookHaven\\android\\app\\build.gradle.kts" } },
     { "name": "DeskZen",         "version": { "file": "I:\\Dev\\DeskZen\\app\\build.gradle.kts" } },
