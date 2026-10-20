@@ -100,6 +100,7 @@ import { pidAlive as autoPidAlive } from './scripts/fleet-status-core.mjs';
 import { createObserver, TerminalLineBuffer, ENTRY_KINDS, explicitChoice } from './scripts/pipeline-observe.mjs';
 import { classifyEntry } from './scripts/pipeline-classify.mjs';
 import { readEnforcement, isEnforced, ENGINE_PIPELINES, RUN_RE } from './scripts/pipeline-engine.mjs';
+import { runView } from './scripts/pipeline-run-view.mjs';
 import { summarizeResult, fullReport, wakeItemBody } from './scripts/turn-report.mjs';
 import { TerminalRouter, discussionArgs, encodeFrame, targetOf, HOLD_TIMEOUT_MS } from './scripts/terminal-route.mjs';
 import { pipelineOptsFrom, pipelineArgs, withPipelinePrefix } from './scripts/pipeline-entry-opts.mjs';
@@ -3433,9 +3434,7 @@ app.get('/api/pipeline-runs', (req, res) => {
     if (runs.length >= n) break;
     let s; try { s = JSON.parse(fs.readFileSync(path.join(dir, r, 'run.json'), 'utf8')); } catch { continue; }
     if (want && s.project !== want) continue;
-    runs.push({ run: s.run, project: s.project, pipeline: s.pipeline, mode: s.mode, kind: s.kind, status: s.status,
-      createdAt: s.createdAt, endedAt: s.endedAt || null, question: s.question || null, backoff: s.backoff || null,
-      steps: (s.steps || []).map(x => ({ id: x.id, key: x.key, title: x.title, slot: x.slot, model: x.model, served: x.served, source: x.source, status: x.status, why: x.why ? String(x.why).slice(0, 300) : null, durationMs: x.durationMs })) });
+    runs.push(runView(s));
   }
   res.json({ ok: true, runs });
 });

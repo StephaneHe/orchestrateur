@@ -205,6 +205,11 @@ class FleetViewModel(
     }
 
     fun applyAnswerContext(ctx: AnswerContext?) { answerContext = ctx }
+
+    /** Text another screen puts in the chef composer (TODO « Envoyer au chef… »,
+     *  identifier overlay…). Replaces the draft; consumed once by the composer. */
+    var chefDraft: String? by mutableStateOf(null)
+    fun prepareChefMessage(text: String) { chefDraft = text }
     fun markReportSeen() { newReportPending = false }
     fun signalNewReport() { newReportPending = true }
 

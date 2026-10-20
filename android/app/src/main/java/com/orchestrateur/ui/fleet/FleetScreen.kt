@@ -75,22 +75,6 @@ fun JournalScreen(
     val connected by vm.connected.collectAsState()
     val scope = rememberCoroutineScope()
 
-    // Lifecycle-aware SSE: when the app goes to background (ON_STOP) we close
-    // the SSE connection cleanly so the server stops trying to push events into
-    // a socket the OS may suspend silently. Re-opens on ON_START.
-    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            when (event) {
-                androidx.lifecycle.Lifecycle.Event.ON_START -> vm.resumeStream()
-                androidx.lifecycle.Lifecycle.Event.ON_STOP -> vm.pauseStream()
-                else -> {}
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
     val mediaLauncher = rememberLauncherForActivityResult(GetContentMultiMime()) { uri ->
         uri ?: return@rememberLauncherForActivityResult
         scope.launch(Dispatchers.IO) {
@@ -513,6 +497,12 @@ private fun Composer(
     }
     val musicians = vm.musicians
     val ctx = vm.answerContext
+
+    LaunchedEffect(vm.chefDraft) {
+        val d = vm.chefDraft ?: return@LaunchedEffect
+        field = TextFieldValue(d, TextRange(d.length))
+        vm.chefDraft = null
+    }
 
     // « Répondre via le chef » / « En parler au chef » préremplissent le
     // composer : le message part au CHEF, en citant la question et en nommant X.

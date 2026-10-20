@@ -709,6 +709,22 @@ async function apiChecks(sb) {
     const c = await json('/api/config');
     assert(c.projects.find(p => p.name === 'mu').currentState === 'idle', 'mu non repassé idle');
   });
+  // 0.127.0 — Android 1.0.0: a paused run exposes its pause menu as data.
+  await check(S, 'pipeline-runs-pause', 'GET /api/pipeline-runs : une exécution en pause porte son menu (cause, choix, recommandation), sans l’effet interne des options', async () => {
+    const run = 'p-20261020T110000-a1b2c3';
+    const dir = path.join(sb.root, 'logs', 'runs', run);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'run.json'), JSON.stringify({ run, project: 'omega', pipeline: 'dev', status: 'paused', question: 'omega en pause',
+      diagnosis: { kind: 'test_passes', transient: false, cause: 'le test passe déjà', options: [{ key: 'corriger le test', does: 'je relance', effect: { message: 'INTERNE' } }, { key: 'abandonner', does: 'j’arrête' }], recommend: { key: 'corriger le test', why: 'agit sur la cause' } } }));
+    const runs = await json('/api/pipeline-runs?project=omega&n=100');
+    const r = runs.runs.find(x => x.run === run);
+    assert(r, 'exécution absente');
+    if (!('pause' in r)) NA('champ pause absent de cet état du code');
+    assert(r.pause?.cause === 'le test passe déjà', `cause : ${JSON.stringify(r.pause)}`);
+    assert(r.pause.options.map(o => o.key).join('|') === 'corriger le test|abandonner', 'choix');
+    assert(r.pause.options[0].recommended === true && r.pause.recommend?.key === 'corriger le test', 'recommandation');
+    assert(!JSON.stringify(r).includes('INTERNE'), 'effet interne exposé');
+  });
   // 0.60.0 — erreurs de lancement : contrôle de l'attente et journaux de test du model.
   await check(S, 'model-backoff', 'Attente après erreurs de lancement : POST /api/pipeline-runs/:run/backoff (retry, test ; 404, 400, origine étrangère 403) et GET /api/model-tests/:name', async () => {
     const probe = await post('/api/pipeline-runs/p-20261009T000000-aaaaaa/backoff', { action: 'retry' });
