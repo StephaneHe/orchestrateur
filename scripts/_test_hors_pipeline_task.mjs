@@ -126,6 +126,8 @@ ok(pend?.horsPipeline === RAISON, 'la tâche en attente porte la raison hors pip
 RP.dropPending(path.join(T, 'logs'), { all: true });
 
 for (let i = 0; i < 60 && fs.existsSync(path.join(T, 'logs', 'P.pid')); i++) await sleep(500);
-fs.rmSync(T, { recursive: true, force: true });
+// Cleanup only: under a loaded full run, a detached turn may still hold a handle
+// for a moment after its .pid is gone (Windows EPERM); retried, never fatal.
+try { fs.rmSync(T, { recursive: true, force: true, maxRetries: 20, retryDelay: 500 }); } catch (e) { console.log(`  (nettoyage du dossier temporaire impossible : ${e.code})`); }
 console.log(`\n${pass} ok, ${fail} KO`);
 process.exit(fail ? 1 : 0);

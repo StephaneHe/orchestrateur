@@ -69,6 +69,38 @@ export function isLaunchFailure({ code, log }) {
   return !!res.is_error && !res.model_unavailable && (Number(res.num_turns) || 0) <= 1 && TRANSIENT_RE.test(String(res.result || res.subtype || ''));
 }
 
+// Infrastructure failures (Routage v3 phase 0 a, 2026-10-19): not the work's
+// fault, never a step criterion. Patterns taken from production step logs.
+const AUTH_RE = /Failed to authenticate|OAuth (?:session|token)[^\n]{0,60}(?:expired|invalid|revoked|could not be refreshed)|authentication_error|invalid (?:x-)?api[ -]?key|please run \/login|not logged in/i;
+const LIMIT_RE = /you'?ve hit your (?:session|usage) limit|(?:session|usage) limit reached|\d+-hour limit reached|claude (?:ai )?usage limit reached|limite de session/i;
+const REFUSAL_RE = /can['’]t help with (?:this|that)[^\n]{0,80}start a new session/i;
+
+/**
+ * The step turn failed because of the infrastructure, or null:
+ *   auth    — Claude's OAuth session expired (« Failed to authenticate: OAuth
+ *             session expired and could not be refreshed »);
+ *   limit   — session / usage limit (dispatch.mjs' fallback_refused with
+ *             limited_until, or the CLI's own wording, codex included);
+ *   refusal — the provider refused the request (« API Error: … can't help
+ *             with this. Start a new session to continue. », stop_reason
+ *             refusal).
+ * Only a failed turn (error result, non-zero exit, refusal record) qualifies:
+ * a model that merely quotes these words in a good answer never does.
+ */
+export function infraFailure({ code, log, stderr = '' }) {
+  const res = log?.result || null, ref = log?.refused || null;
+  if (!(ref || !res || res.is_error || code !== 0)) return null;
+  const text = [res?.result, res?.subtype, ref?.reason, ref?.evidence, stderr].filter(Boolean).join('\n');
+  const pick = (re) => { const m = re.exec(text); if (!m) return null; const line = text.slice(text.lastIndexOf('\n', m.index) + 1).split('\n')[0]; return line.trim().slice(0, 300); };
+  let d;
+  if ((d = pick(AUTH_RE))) return { cause: 'auth', detail: d };
+  const until = ref?.limited_until || res?.limited_until || null;
+  if (until) return { cause: 'limit', until, detail: String(ref?.evidence || ref?.reason || res?.result || '').slice(0, 300) };
+  if ((d = pick(LIMIT_RE))) return { cause: 'limit', until: null, detail: d };
+  if (res?.stop_reason === 'refusal' || (d = pick(REFUSAL_RE))) return { cause: 'refusal', detail: d || String(res?.result || '').split('\n')[0].slice(0, 300) };
+  return null;
+}
+
 /**
  * The orchestrator itself refused to start the step (0.61.1): dispatch.mjs
  * exited through die() — non-zero code, a "[dispatch] <reason>" line on stderr,

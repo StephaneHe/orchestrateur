@@ -2415,6 +2415,28 @@ nouvel essai ».
 - Faux claude : `FAKE_CLAUDE_LAUNCH_FAIL_FILE` (et `_ALL`, `FAKE_CLAUDE_LAUNCH_LOG`).
 - Recettes : `_test_model_backoff.mjs`, HTTP `model-backoff`.
 
+## Pannes d'infrastructure : en attente de relance, relancées automatiquement (0.118.0)
+
+Refonte du Routage, phase 0 a (`docs/ROUTAGE-SYNTHESE.md` §3.7).
+
+- `infraFailure` (`model-backoff.mjs`), sur un tour d'étape en échec
+  seulement : `auth` (OAuth expirée), `limit` (limite de session ou
+  d'usage), `refusal` (« can't help with this. Start a new session »).
+  Avant les échecs de lancement et « model indisponible ».
+- Moteur : aucun essai compté, aucun défaut, aucun `[DÉFAUT]`, aucune pause
+  « critère ». Refus ⇒ UN essai en session d'étape neuve ; sinon pause
+  `infra` (`state.infra`, `system/pipeline_infra_hold`, message écrit par le
+  code). La pause `launch` (sortie sans résultat après les attentes) est
+  inscrite aussi.
+- `scripts/infra-retry.mjs` (`logs/infra-retry.json`, propriétaire unique) :
+  relance `--pipeline-resume` — limite à son heure de fin, sortie à 5, 15,
+  30 min, OAuth dès que le fichier d'identifiants de Claude change
+  (`ORCH_CLAUDE_CREDENTIALS`), refus jamais. Balayage en fin de chaque tour
+  de `dispatch.mjs` et toutes les 60 s dans le serveur (redémarrage
+  nécessaire pour ce dernier). CLI `list | show <run> | sweep [--dry-run]`.
+- Hors champ : un tour ordinaire (hors pipeline) garde son comportement.
+- Faux claude : `FAKE_CLAUDE_INFRA_FILE`. Recette : `_test_infra_retry.mjs`.
+
 ## Langue de discussion (0.51.0)
 
 Demande utilisateur : « La langue de la discussion doit pouvoir etre fixee et

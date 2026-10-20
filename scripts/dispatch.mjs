@@ -128,6 +128,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { derivedToken } from './local-secret.mjs';
 import { readPending, releaseReady, textHash as taskTextHash } from './routage-pending.mjs';
+import { readRetries, sweepRetries } from './infra-retry.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // DISPATCH_ROOT_FOR_TESTS : racine alternative (config.json, logs/, .env)
@@ -564,6 +565,10 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && process.env.ORCH_NO_PENDING_
   const releasePending = () => {
     if (pendingReleased) return;
     pendingReleased = true;
+    // Runs held by an infrastructure failure, due again (phase 0 a).
+    try {
+      if (readRetries(LOGS).length) for (const l of sweepRetries({ root: ROOT, logsDir: LOGS }).launched) console.error(`[dispatch] exécution en attente de relance relancée : ${l.run} (${l.project}) — ${l.why}`);
+    } catch (e) { console.error(`[dispatch] relance des exécutions en attente (pannes d’infrastructure) : ${e.message}`); }
     try {
       if (!readPending(LOGS).length) return;
       const r = releaseReady({ root: ROOT, logsDir: LOGS, dispatchScript: fileURLToPath(import.meta.url) });

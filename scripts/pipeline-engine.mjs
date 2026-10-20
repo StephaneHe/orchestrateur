@@ -44,7 +44,8 @@ import { checkReportIds } from './report-check.mjs';
 import { readPending, addPending, releaseReady, launchTask, detectReprise, logOffset, taskKey, textHash, duplicatesText, RUN_ID_RE, titleProblem, pendingLabel, cleanTitle, ambiguityProblem, distinctExcerpts } from './routage-pending.mjs';
 import { stepSessionGroup } from './context-policy.mjs';
 export { readPending };
-import { backoffConfig, isLaunchFailure, dispatchRefusal, tierAfter, delayFor, waitBackoff, runDirOf } from './model-backoff.mjs';
+import { backoffConfig, isLaunchFailure, dispatchRefusal, infraFailure, tierAfter, delayFor, waitBackoff, runDirOf } from './model-backoff.mjs';
+import { holdForRetry, retryText, CAUSE_TEXT } from './infra-retry.mjs';
 import { runModelTest } from './model-test.mjs';
 import { PIPELINES } from './model-pipelines.mjs';
 import { checkMediaFiles, listedFiles, wordErrorRate } from './media-check.mjs';
@@ -2499,8 +2500,25 @@ export async function runPipeline(o) {
         C.model, C.abandonner],
       recommend: ['tester le model', 'le journal du test dira si le model est indisponible (attendre ou en changer) ou si le problème vient d’ailleurs.'],
     });
-    const question = `${projectName} en pause — répondez « continuer », « tester le model », « changer le model » ou « abandonner » (je recommande « tester le model ») : ${info.model} ne démarre pas.`;
-    return finish({ code: 2, paused: true, limit: 'launch', question, result: body, notice });
+    // Phase 0 a: also held for an automatic retry (5, 15, 30 min).
+    const held = holdForRetry(logsDir, { run, project: projectName, cause: 'exit', step: step.id, detail: rec.why });
+    const at = new Date(held.retryAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    state.infra = { cause: 'exit', step: step.id, slot: info.slot, model: info.model, at: held.at, until: null, retryAt: held.retryAt, detail: String(rec.why || '').slice(0, 300) };
+    const question = `${projectName} en pause — répondez « continuer », « tester le model », « changer le model » ou « abandonner » (je recommande « tester le model ») : ${info.model} ne démarre pas ; prochain essai automatique à ${at}.`;
+    return finish({ code: 2, paused: true, limit: 'launch', question, result: `${body}\n\n↻ Votre demande est gardée : prochain essai automatique à ${at} (puis 15 et 30 min plus tard si besoin).`, notice });
+  };
+
+  // Phase 0 a (Routage v3): an infrastructure failure sets the run aside. No
+  // attempt counted, no defect, no criteria pause; the registry relaunches it.
+  const holdForInfra = async (step, info, rec, infra) => {
+    const held = holdForRetry(logsDir, { run, project: projectName, cause: infra.cause, step: step.id, until: infra.until || null, detail: infra.detail });
+    state.infra = { cause: infra.cause, step: step.id, slot: info.slot, model: info.model, at: held.at, until: infra.until || null, retryAt: held.retryAt, detail: infra.detail || null };
+    const notice = `⏸ En attente de relance — ${projectName} : ${CAUSE_TEXT[infra.cause]} (étape « ${plainStep(step.id)} »)`;
+    writeEvent({ type: 'system', subtype: 'pipeline_infra_hold', pipeline: { run, step: step.id, slot: info.slot }, infra: state.infra, text: notice });
+    const body = retryText({ project: projectName, run, step: plainStep(step.id), cause: infra.cause, detail: infra.detail, retryAt: held.retryAt });
+    const next = infra.cause === 'auth' ? 'relance automatique dès que Claude est reconnecté' : infra.cause === 'refusal' ? 'pas de relance automatique' : 'relance automatique prévue';
+    const question = `${projectName} : exécution en attente de relance (${CAUSE_TEXT[infra.cause]}) — répondez « continuer » pour relancer maintenant, ou « abandonner » ; ${next}.`;
+    return finish({ code: 2, paused: true, limit: 'infra', question, result: body, notice });
   };
 
   // Refus de lancement par dispatch.mjs (0.61.1) : la cause est nommée, et rien
@@ -2547,8 +2565,10 @@ export async function runPipeline(o) {
     // Calibrated context (0.99.0): a TDD step's session is its item's, the
     // review's is its group's, Livrer has its own — not the whole run's history.
     const sessionGroup = stepSessionGroup({ step, model: info.model, item: ctx.item, reviewGroup: state.reviewGroup ?? ctx.reviewScope?.group ?? null });
+    // A provider refusal asks for a new session (phase 0 a): one fresh try.
+    const stepSession = extra?.freshSession ? `${sessionGroup.slice(0, 30)}-n${Date.now().toString(36).slice(-6)}` : sessionGroup;
     const token = signStepToken(root, { run, key, project: projectName, model: info.model, provider: info.provider, second: info.second, exp: Date.now() + 6 * 3600_000 });
-    const args = [projectName, '--prompt-stdin', '--pipeline-step', `${run}:${key}`, '--pipeline-session', sessionGroup, '--no-queue-if-busy'];
+    const args = [projectName, '--prompt-stdin', '--pipeline-step', `${run}:${key}`, '--pipeline-session', stepSession, '--no-queue-if-busy'];
     if (info.model) args.push('--model', info.model, '--provider', info.provider);
     if (info.model && info.second) args.push('--second-model', info.second.model, '--second-provider', info.second.provider, '--dual-mode', step.judge ? 'judge' : 'action');
     ctx.localTool = localToolFor(readAssignments(root), step.chain);
@@ -2602,6 +2622,17 @@ export async function runPipeline(o) {
         rec.refusal = refusal;
         rec.stderrLog = `logs/runs/${run}/${key}.stderr.log`;
         return { rec, info, before, after, launchRefused: true };
+      }
+      // Infrastructure failure (phase 0 a): checked before the launch failures
+      // (an expired OAuth would otherwise be retried blindly) and before
+      // « model unavailable » (a session limit is not the model's fault).
+      const infra = infraFailure({ code, log, stderr: stderrText });
+      if (infra) {
+        rec.status = 'infra';
+        rec.infra = infra;
+        rec.why = `panne d'infrastructure (${CAUSE_TEXT[infra.cause] || infra.cause})${infra.detail ? ` : ${infra.detail}` : ''}`;
+        rec.stderrLog = `logs/runs/${run}/${key}.stderr.log`;
+        return { rec, info, before, after, infra };
       }
     }
     if (isLaunchFailure({ code, log })) {
@@ -3031,6 +3062,7 @@ export async function runPipeline(o) {
     let graceLeft = 1;
     let attempt = 0, last = null, retryWhy = null;
     let launchFails = 0;   // consecutive launch failures of this step (0.60.0)
+    let freshSession = false, freshTried = false;   // provider refusal: one try in a new session (phase 0 a)
     for (;;) {
       attempt++;
       if (step.id !== 'revue') { try { fs.unlinkSync(path.join(artDir, step.artefact)); } catch {} }
@@ -3039,9 +3071,22 @@ export async function runPipeline(o) {
       const hidden = (step.independent || []).filter(f => fs.existsSync(path.join(artDir, f)));
       for (const f of hidden) fs.renameSync(path.join(artDir, f), path.join(runDir, `hidden-${f}`));
       let r;
-      try { r = await runStep(step, attempt, { retryWhy }); }
+      try { r = await runStep(step, attempt, { retryWhy, freshSession }); }
       finally { for (const f of hidden) { try { fs.renameSync(path.join(runDir, `hidden-${f}`), path.join(artDir, f)); } catch {} } }
       record(r);
+      // Infrastructure failure (phase 0 a): never a try of the step, never a defect.
+      if (r.infra) {
+        if (r.before && r.after) restoreFiles(cwd, r.before, r.after, step.judge ? null : (delivering ? foldBase : null));
+        attempt--;
+        if (r.infra.cause === 'refusal' && !freshTried) {
+          freshTried = true; freshSession = true;
+          writeEvent({ type: 'system', subtype: 'pipeline_retry_fresh_session', pipeline: { run, step: step.id, key: r.rec.key },
+            text: `le fournisseur a refusé la demande (« ${String(r.infra.detail || '').slice(0, 160)} ») : nouvel essai dans une session neuve, comme il l’indique — essai non compté` });
+          continue;
+        }
+        return holdForInfra(step, r.info, r.rec, r.infra);
+      }
+      freshSession = false;
       if (r.unavailable) return pauseForModel(step, r.info, r.rec.why);
       // Refused by dispatch.mjs (0.61.1): deterministic, the model was never
       // called — pause at once with the cause named, no back-off.

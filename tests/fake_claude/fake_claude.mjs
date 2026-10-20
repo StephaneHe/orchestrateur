@@ -200,6 +200,25 @@ async function run() {
     if (process.env.FAKE_CLAUDE_LAUNCH_LOG) fs.appendFileSync(process.env.FAKE_CLAUDE_LAUNCH_LOG, JSON.stringify({ at: Date.now(), model: askedModel, failed: false }) + '\n');
   }
 
+  // FAKE_CLAUDE_INFRA_FILE=<f> (phase 0 a): {"cause": "auth"|"refusal"|"limit", "left": n}
+  // — while n > 0 (pipeline step prompts only), decrement it and end the turn
+  // with the exact result the real CLI gave in production, exit 1.
+  if (process.env.FAKE_CLAUDE_INFRA_FILE && /^PIPELINE_STEP=/m.test(userText)) {
+    const f = process.env.FAKE_CLAUDE_INFRA_FILE;
+    let spec = null; try { spec = JSON.parse(fs.readFileSync(f, 'utf8')); } catch {}
+    if (spec?.left > 0) {
+      fs.writeFileSync(f, JSON.stringify({ ...spec, left: spec.left - 1 }));
+      emit({ type: 'system', subtype: 'init', session_id: sessionId, cwd: process.cwd(), tools: ['Read'], model: servedModel });
+      const base = { type: 'result', subtype: 'success', is_error: true, session_id: sessionId, terminal_reason: 'api_error', total_cost_usd: 0 };
+      if (spec.cause === 'auth') emit({ ...base, num_turns: 1, duration_ms: 109, duration_api_ms: 0, stop_reason: 'stop_sequence', result: 'Failed to authenticate: OAuth session expired and could not be refreshed' });
+      else if (spec.cause === 'refusal') {
+        emit({ type: 'system', subtype: 'model_refusal_no_fallback', session_id: sessionId, original_model: askedModel, api_refusal_category: 'frontier_llm' });
+        emit({ ...base, num_turns: 2, duration_ms: 1946, duration_api_ms: 28715, stop_reason: 'refusal', result: "API Error: Sonnet 5.5 can't help with this. Start a new session to continue.\n\nLearn more: https://www.anthropic.com/legal/aup\n\nDetails: `[frontier_llm]`" });
+      } else emit({ ...base, num_turns: 1, duration_ms: 300, duration_api_ms: 10, stop_reason: 'stop_sequence', result: "You've hit your session limit · resets 2:50pm (Asia/Jerusalem)" });
+      process.exit(1);
+    }
+  }
+
   // 1. system/init
   emit({
     type: 'system', subtype: 'init',

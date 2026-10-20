@@ -1061,6 +1061,18 @@ function sweepRoutagePending() {
 }
 setInterval(sweepRoutagePending, 60_000).unref();
 
+// Pipeline runs held by an infrastructure failure (Routage v3 phase 0 a):
+// relaunched when due, even when no turn ends anywhere (dispatch.mjs also does
+// it at the end of every turn).
+async function sweepInfraRetries() {
+  try {
+    const ip = await import('./scripts/infra-retry.mjs');
+    if (!ip.readRetries(LOGS_DIR).length) return;
+    for (const l of ip.sweepRetries({ root: __dirname, logsDir: LOGS_DIR }).launched) { const m = `[infra-retry] ${l.run} (${l.project}) relancée — ${l.why}`; console.log(m); debugLog(m); }
+  } catch (e) { debugLog(`[infra-retry] balayage : ${e.message}`); }
+}
+setInterval(sweepInfraRetries, 60_000).unref();
+
 // 0.101.1 — finished lane task branches are deleted one week after the end of
 // their task (user decision Q2), even for a musician that gets no new lane task.
 async function sweepLaneBranches() {

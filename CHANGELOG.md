@@ -11,6 +11,58 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.118.0] - 2026-10-20
+
+### Added
+
+- (server) Routage v3, phase 0 a: **infrastructure failures are held for an
+  automatic retry, never counted as errors nor as step criteria.**
+  - Recognition (`infraFailure`, `scripts/model-backoff.mjs`), on a failed
+    step turn only: `auth` (« Failed to authenticate: OAuth session expired
+    and could not be refreshed »), `limit` (session / usage limit, with the
+    reset time when the CLI gives it), `refusal` (« API Error: … can't help
+    with this. Start a new session to continue. », `stop_reason: refusal`).
+    Checked before the launch failures and « model unavailable ».
+  - Engine (`pipeline-engine.mjs`): no attempt counted, no
+    `pipeline_defect`, no `[DÉFAUT]` to the chef, no criteria pause. A
+    refusal gets ONE new try in a fresh step session (event
+    `system/pipeline_retry_fresh_session`); otherwise the run waits for its retry:
+    paused `pausedLimit: "infra"`, `state.infra {cause, step, slot, model,
+    at, until, retryAt, detail}`, event `system/pipeline_infra_hold`, and a
+    message written by the code: « ⚠ Ce qui s’est passé / ✓ Ce que j’ai fait /
+    → Vous pouvez répondre / ℹ Détail ».
+  - `scripts/infra-retry.mjs` (registry `logs/infra-retry.json`, lock +
+    atomic write): automatic relaunch (`dispatch.mjs <p> continuer
+    --pipeline-resume <run> --queue-if-busy`, callback and source of the run)
+    — `limit` at the reset time + 1 min (else 5, 15, 30 min); `exit` (CLI
+    dead without a result, after the in-run back-off: the `launch` pause is
+    registered too) at 5, 15, 30 min; `auth` as soon as the Claude
+    credentials file changed (`claude /login`, `ORCH_CLAUDE_CREDENTIALS`),
+    never by blind retries; `refusal` never (the user decides). CLI `list |
+    show <run> | sweep [--dry-run]`.
+  - The sweep runs at the end of every `dispatch.mjs` turn (active without
+    restart) and in the server's 60 s sweep (`sweepInfraRetries`: after a
+    restart).
+  - Real cases replayed: p-20261014T044705-556920 (OAuth: 2 tries, a
+    `[DÉFAUT]` each, then « refusée 2 fois par les vérifications
+    automatiques »), p-20261012T085659-061170 (refusal, same path),
+    p-20261012T102220-3a6fde (session limit: « changer le model » recommended,
+    no relaunch). Fake claude: `FAKE_CLAUDE_INFRA_FILE` (the exact results).
+  - Test: `_test_infra_retry.mjs` (requirement test).
+
+### Fixed
+
+- (tests) `_test_hors_pipeline_task.mjs`: its final cleanup retries the removal
+  of its temporary folder (a detached turn may still hold a handle for a moment
+  after its `.pid` is gone: Windows EPERM, seen twice under a loaded full run).
+  No assertion changed.
+
+### Notes
+
+- Scope: pipeline runs (every pipeline, the chef's Routage included). An
+  ordinary turn (no pipeline) that hits the same failures is unchanged: the
+  request registry of phase 1 will hold those for a retry.
+
 ## [0.117.0] - 2026-10-20
 
 ### Added
