@@ -473,7 +473,7 @@ Total ≈ **14,5 jours**, hors observation.
 | §5.4 reprise seulement explicite | une exécution à sous-blocs se reprend par son identifiant ; un identifiant cité ne reprend rien |
 | §5.5 réveils par le code | l'avancement d'un sous-bloc est traité par le code |
 | §5.6 Routage coupé en prod | les pipelines des musiciens n'en dépendent pas : la porte de `dispatch.mjs` classe et impose |
-| §5.7 pauses mortes | déjà closes ; le texte du §5.7 est à mettre à jour |
+| §5.7 pauses mortes | closes le 2026-10-20 ; §5.7 mis à jour |
 | §5.8 actions du chef par commande | `typed-operations.mjs` commun ; `supervision` ne devient jamais un pipeline |
 | §5.9 regroupement des suites sous conditions | appliqué au retrait de `fromPipeline` et du panneau Lacunes (phase 5) |
 | §3.3 « aucun pipeline adapté » | **modifié si la décision 1 est acceptée** : Libre pour une action, Discussion pour une question, signalement gardé |

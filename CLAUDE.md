@@ -283,9 +283,14 @@ ce sera utile ». Procédure complète : `docs/DEV-PROD.md`.
   Recette : `_test_todo_untracked.mjs`.
 - Contrôle : `node scripts/dev-split.mjs check`. Recette :
   `_test_dev_split.mjs`.
-- **La dev est en service dans les pipelines** (0.113.0, « Il faut que
-  orchestrateur-dev fonctionne avec des pipelines », option A) :
-  `enforcement.projects` ; son `.orchestrateur/pipeline.json` déclare
+- **La dev peut être en service dans les pipelines** (0.113.0, « Il faut que
+  orchestrateur-dev fonctionne avec des pipelines », option A). **État réel au
+  2026-10-20 : HORS service** — l'utilisateur l'a retirée de
+  `enforcement.projects` le 2026-10-19 ; décision 18 de
+  `docs/PIPELINES-SYNTHESE.md` : la remettre en service après le bond de la
+  phase 0 des pipelines (`pipeline-enforce.mjs on orchestrateur-dev`, depuis la
+  prod). Quand elle est en service : `enforcement.projects` ; son
+  `.orchestrateur/pipeline.json` déclare
   `node scripts/regression.mjs --targeted --no-browser` et `testTimeoutMin: 30`
   (délai par projet de la commande de test, `testTimeoutMs` du moteur, défaut
   10 min, plafond 120). Depuis 0.115.0 (P9 en prod), ses exécutions de

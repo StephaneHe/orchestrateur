@@ -426,9 +426,9 @@ obtenir une nouvelle décision de l'utilisateur.
    décision utilisateur » : [[p-20261014T044705-556920]],
    [[p-20261012T102220-3a6fde]], [[p-20261012T085659-061170]],
    [[p-20261009T193025-d2f51b]]. [[p-20261019T144511-44d707]]
-   (orchestrateur-dev) n'en fait pas partie (autre décision). État au 2026-10-20 :
-   pas encore exécuté, la prod est en 0.114.3 (sans `close-run.mjs`) ; à faire depuis
-   la prod après le bond vers une version ≥ 0.117.0.
+   (orchestrateur-dev) n'en fait pas partie (autre décision). **Fait** : les 4 pauses
+   ont été closes le 2026-10-20 (statut `abandoned`, motif ci-dessus) ; la prod tourne
+   en v0.119.0.
 8. **Actions du chef par commande autorisées**, et inscrites au registre.
 9. **Regroupement des suites de tests en phase 5, accordé SOUS CONDITIONS**
    (verbatim : « ok comme ca ») :
