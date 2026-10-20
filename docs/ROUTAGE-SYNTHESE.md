@@ -400,3 +400,46 @@ Total ≈ **11,5 jours**, hors observation.
    (recommandé), ou n'autoriser les effets que par les actions typées du plan.
 9. **Nettoyage de la phase 5** : accord pour regrouper ou retirer les suites qui ne
    testent que les étapes supprimées, les tests d'exigence restant intacts.
+
+---
+
+## 5. Décisions de l'utilisateur (2026-10-19)
+
+Réponses de l'utilisateur aux questions du §4, dans le même ordre. Elles
+s'imposent aux phases suivantes (§3.9) ; une phase qui s'en écarte doit d'abord
+obtenir une nouvelle décision de l'utilisateur.
+
+1. **Registre des demandes en fichiers**, pas de base de données (v3 ; la règle
+   « No database » reste en vigueur).
+2. **Tour unique du chef sur `claude-sonnet-5-5`** (case `routage.chef`).
+3. **Classement tâche par tâche, en parallèle** : un appel séparé par tâche (lecture
+   littérale de la règle 0.69.0).
+4. **Reprise seulement sur demande explicite.** Accord donné pour inverser le test
+   d'exigence concerné (assertion de reprise implicite de `_test_routage_pending.mjs` :
+   un identifiant cité ne reprend plus rien). Livré en phase 0 c (0.116.0).
+5. **Réveils mis à jour par le code** ; le chef n'est appelé que s'il y a une
+   décision à prendre : échec, question, suite dépendante, choix, rapport promis.
+6. **Routage du chef laissé coupé en prod** pour l'instant (`off`).
+7. **Les 4 pauses mortes du chef sont closes**, par la commande de clôture de la
+   phase 0 b (`scripts/close-run.mjs`, 0.117.0), avec le motif « Routage du chef
+   coupé le 2026-10-19 ; pause irrécupérable (bug corrigé en phase 0) ; clos sur
+   décision utilisateur » : [[p-20261014T044705-556920]],
+   [[p-20261012T102220-3a6fde]], [[p-20261012T085659-061170]],
+   [[p-20261009T193025-d2f51b]]. [[p-20261019T144511-44d707]]
+   (orchestrateur-dev) n'en fait pas partie (autre décision). État au 2026-10-20 :
+   pas encore exécuté, la prod est en 0.114.3 (sans `close-run.mjs`) ; à faire depuis
+   la prod après le bond vers une version ≥ 0.117.0.
+8. **Actions du chef par commande autorisées**, et inscrites au registre.
+9. **Regroupement des suites de tests en phase 5, accordé SOUS CONDITIONS**
+   (verbatim : « ok comme ca ») :
+   a) un tableau de correspondance relie chaque vérification des anciennes suites à
+      sa remplaçante ; une vérification non couverte bloque la suppression ;
+   b) un contrôle fait par un script, pas par un model, refuse toute suppression tant
+      qu'une vérification n'est pas couverte ;
+   c) les anciennes suites restent tant que les nouvelles ne sont pas toutes vertes ;
+   d) les tests d'exigence de `docs/USER_REQUIREMENTS.md` restent intouchables et
+      doivent passer avant comme après ;
+   e) le tableau est présenté à l'utilisateur pour validation avant toute suppression.
+
+   Rappel : les étapes des pipelines des musiciens (test rouge, code vert sans toucher
+   aux tests, revue, livraison) ne changent pas.
