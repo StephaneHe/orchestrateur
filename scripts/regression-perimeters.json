@@ -147,7 +147,6 @@
         {
           "perimeter": "noyau",
           "suites": [
-            "_test_fixture_speed.mjs",
             "_test_regression_live.mjs",
             "_test_stale_run.mjs"
           ]
@@ -410,7 +409,6 @@
         {
           "perimeter": "dispatch",
           "suites": [
-            "_test_html_output.mjs",
             "_test_id_links.mjs",
             "_test_neutral_stop.mjs",
             "_test_projects_view.mjs"
@@ -434,7 +432,6 @@
         {
           "perimeter": "panneaux",
           "suites": [
-            "_test_html_output.mjs",
             "_test_id_links.mjs",
             "_test_neutral_stop.mjs",
             "_test_projects_view.mjs"
@@ -443,7 +440,6 @@
         {
           "perimeter": "pipelines",
           "suites": [
-            "_test_html_output.mjs",
             "_test_id_links.mjs",
             "_test_neutral_stop.mjs",
             "_test_projects_view.mjs"
@@ -452,7 +448,6 @@
         {
           "perimeter": "routage",
           "suites": [
-            "_test_html_output.mjs",
             "_test_id_links.mjs",
             "_test_neutral_stop.mjs",
             "_test_projects_view.mjs"
@@ -709,7 +704,13 @@
         "scripts/pipeline-cleanup.mjs",
         "scripts/pause-diagnosis.mjs",
         "scripts/pause-replay.mjs",
-        "tests/pause-cases.json"
+        "tests/pause-cases.json",
+        "scripts/typed-operations.mjs",
+        "scripts/files-check.mjs",
+        "scripts/document-check.mjs",
+        "scripts/pipeline-corpus-classify.mjs",
+        "scripts/pipeline-discussion-bench.mjs",
+        "tests/pipeline-corpus/cases.json"
       ],
       "suites": [
         "_test_pipeline_catalog.mjs",
@@ -742,15 +743,20 @@
         "_test_code_deliver.mjs",
         "_test_suite_cache.mjs",
         "_test_inert_cleanup.mjs",
-        "_test_smart_pause.mjs"
+        "_test_smart_pause.mjs",
+        "_test_typed_operations.mjs",
+        "_test_generic_operations.mjs",
+        "_test_generic_files.mjs",
+        "_test_generic_document.mjs",
+        "_test_generic_modes.mjs",
+        "_test_pipeline_corpus.mjs"
       ],
       "uses": [
         {
           "perimeter": "client",
           "suites": [
             "_test_model_reco.mjs",
-            "_test_reunion_pipeline.mjs",
-            "_test_reunion_redaction_route.mjs"
+            "_test_reunion_pipeline.mjs"
           ]
         },
         {
@@ -760,6 +766,10 @@
             "_test_code_deliver.mjs",
             "_test_defect_blocks.mjs",
             "_test_dev_instance_pipelines.mjs",
+            "_test_generic_document.mjs",
+            "_test_generic_files.mjs",
+            "_test_generic_modes.mjs",
+            "_test_generic_operations.mjs",
             "_test_inert_cleanup.mjs",
             "_test_infra_retry.mjs",
             "_test_item_delivery.mjs",
@@ -770,6 +780,7 @@
             "_test_no_lexical_routing.mjs",
             "_test_orphaned_run.mjs",
             "_test_pipeline_catalog.mjs",
+            "_test_pipeline_corpus.mjs",
             "_test_pipeline_covered.mjs",
             "_test_pipeline_engine.mjs",
             "_test_pipeline_entries.mjs",
@@ -786,7 +797,8 @@
             "_test_smart_pause.mjs",
             "_test_step_key_3digits.mjs",
             "_test_suite_cache.mjs",
-            "_test_tests_per_item.mjs"
+            "_test_tests_per_item.mjs",
+            "_test_typed_operations.mjs"
           ]
         },
         {
@@ -806,6 +818,10 @@
             "_test_code_deliver.mjs",
             "_test_defect_blocks.mjs",
             "_test_dev_instance_pipelines.mjs",
+            "_test_generic_document.mjs",
+            "_test_generic_files.mjs",
+            "_test_generic_modes.mjs",
+            "_test_generic_operations.mjs",
             "_test_infra_retry.mjs",
             "_test_item_delivery.mjs",
             "_test_item_review.mjs",
@@ -815,6 +831,7 @@
             "_test_no_lexical_routing.mjs",
             "_test_orphaned_run.mjs",
             "_test_pipeline_catalog.mjs",
+            "_test_pipeline_corpus.mjs",
             "_test_pipeline_covered.mjs",
             "_test_pipeline_engine.mjs",
             "_test_pipeline_entries.mjs",
@@ -839,7 +856,9 @@
           "suites": [
             "_test_dev_instance_pipelines.mjs",
             "_test_model_reco.mjs",
-            "_test_pipeline_entries.mjs"
+            "_test_pipeline_corpus.mjs",
+            "_test_pipeline_entries.mjs",
+            "_test_typed_operations.mjs"
           ]
         },
         {
@@ -849,6 +868,10 @@
             "_test_code_deliver.mjs",
             "_test_defect_blocks.mjs",
             "_test_dev_instance_pipelines.mjs",
+            "_test_generic_document.mjs",
+            "_test_generic_files.mjs",
+            "_test_generic_modes.mjs",
+            "_test_generic_operations.mjs",
             "_test_infra_retry.mjs",
             "_test_item_delivery.mjs",
             "_test_item_review.mjs",
@@ -858,6 +881,7 @@
             "_test_no_lexical_routing.mjs",
             "_test_orphaned_run.mjs",
             "_test_pipeline_catalog.mjs",
+            "_test_pipeline_corpus.mjs",
             "_test_pipeline_covered.mjs",
             "_test_pipeline_engine.mjs",
             "_test_pipeline_entries.mjs",
@@ -883,6 +907,10 @@
             "_test_code_deliver.mjs",
             "_test_defect_blocks.mjs",
             "_test_dev_instance_pipelines.mjs",
+            "_test_generic_document.mjs",
+            "_test_generic_files.mjs",
+            "_test_generic_modes.mjs",
+            "_test_generic_operations.mjs",
             "_test_inert_cleanup.mjs",
             "_test_infra_retry.mjs",
             "_test_item_delivery.mjs",
@@ -893,6 +921,7 @@
             "_test_no_lexical_routing.mjs",
             "_test_orphaned_run.mjs",
             "_test_pipeline_catalog.mjs",
+            "_test_pipeline_corpus.mjs",
             "_test_pipeline_covered.mjs",
             "_test_pipeline_engine.mjs",
             "_test_pipeline_entries.mjs",
@@ -915,14 +944,16 @@
         {
           "perimeter": "serveur",
           "suites": [
+            "_test_generic_operations.mjs",
             "_test_item_delivery.mjs",
             "_test_model_reco.mjs",
             "_test_no_lexical_routing.mjs",
+            "_test_pipeline_corpus.mjs",
             "_test_pipeline_entries.mjs",
             "_test_pipeline_observe.mjs",
             "_test_pipeline_onboard.mjs",
-            "_test_release_prebump.mjs",
-            "_test_smart_pause.mjs"
+            "_test_smart_pause.mjs",
+            "_test_typed_operations.mjs"
           ]
         }
       ],
@@ -1033,7 +1064,6 @@
             "_test_resume_explicit_only.mjs",
             "_test_routage_ambiguous.mjs",
             "_test_routage_dedupe.mjs",
-            "_test_routage_distinct.mjs",
             "_test_routage_new_session.mjs",
             "_test_routage_pending.mjs",
             "_test_routage_split.mjs",

@@ -24,19 +24,43 @@ import { oneShotClaude, chatCompletion } from './language.mjs';
 import { explicitChoice, normalizeText } from './pipeline-observe.mjs';
 import { PIPELINES, applyCustom } from './model-pipelines.mjs';
 import { effectiveCustom } from './inert-custom.mjs';
+import { readTuning, tuningFor } from './pipeline-tuning.mjs';
+import { OPERATION_IDS } from './typed-operations.mjs';
 
 export const CLASSIFIER_SLOT = 'routage.classifier';
 export const CLASSIFY_FILE = 'pipeline-classify.ndjson';
 const PROVIDER_OF = { anthropic: 'claude', openai: 'codex', nvidia: 'nvidia', openrouter: 'openrouter' };
 // Routage is the chef's own pipeline: a musician entry is never classified into it.
-const CHOICES = PIPELINES.filter(p => p.id !== 'routage');
+// Pipelines phase 1 (docs/PIPELINES-SYNTHESE.md §3, decision 4): two generic
+// pipelines and three generic modes of existing ones, offered with the switch
+// `generic` only. Their rule is one of MEANING for the model (never keywords).
+export const GENERIC_PIPELINES = ['operations', 'fichiers'];
+export const GENERIC_MODES = { redaction: ['document'], discussion: ['verification'], recherche: ['interne'] };
+const CHOICES = PIPELINES.filter(p => p.id !== 'routage' && !GENERIC_PIPELINES.includes(p.id));
+export const GENERIC_RULE = 'Specialised pipelines first, then the generic ones, then discussion for a pure question. ' +
+  'operations = running ONE or a few operations on the project or its environment, no code to write: git push, git tag, push a tag, restore files to the last commit, prepare the production jump (plan only), publish the APK on the downloads page, install an APK on the device, restart a declared service, run a declared script → operations, never maintenance (maintenance upkeeps code) nor dev. ' +
+  `For operations, set "operations" to the ordered list of ALL the operations the task asks for — every one of them, e.g. publishing then installing is two — each {"id": one of ${OPERATION_IDS.join(', ')}, "params": the parameters the request gives (e.g. {"remote": "origin"}, {"tag": "v1.2.0"})}, and "autorisation" to the user's EXACT words that ask for or authorize them when the request quotes them. ` +
+  'fichiers = the files themselves, not their content: download a video or a file from a URL, copy, move, rename or delete files, compare two folders → fichiers (not video/audio/images, which transform media; not reunion, which files a meeting; not maintenance). ' +
+  'redaction with mode "document" = a one-off piece of work on an EXISTING document the request names: proofread, summarize, translate, reformat, complete (e.g. add two items to a TODO_LIST.md) or convert it; writing a NEW text stays redaction with its usual mode. ' +
+  'discussion with mode "verification" = check or compare and answer with verified findings (« vérifie que… », « compare… »), nothing modified. ' +
+  'recherche with mode "interne" = research in the repository and its logs only, without the web. ';
+const genericRule = (choices) => (choices.some(p => GENERIC_PIPELINES.includes(p.id)) ? GENERIC_RULE : '');
+const modeList = (choices) => (choices.some(p => GENERIC_PIPELINES.includes(p.id)) ? '"leger"|"complet"|"document"|"verification"|"interne"' : '"leger"|"complet"');
+const opFields = (choices) => (choices.some(p => GENERIC_PIPELINES.includes(p.id)) ? ',"operations":[{"id":"<optional>","params":{}}],"autorisation":"<optional>"' : '');
 
 /** Pipelines offered to the model: the Models page structure, accepted gaps included (their description, never keywords). */
-export function classifierChoices(root) {
+export function classifierChoices(root, { generic = false } = {}) {
   let custom = null;
   // Decision 7 (switch inertCleanup): non-executable pipelines and keyword attachments are not offered.
   try { custom = effectiveCustom(JSON.parse(fs.readFileSync(path.join(root, 'model-routing.json'), 'utf8'))) || null; } catch { /* no file */ }
-  try { return applyCustom(custom).filter(p => p.id !== 'routage'); } catch { return CHOICES; }
+  // Phase 1: the generic pipelines are offered only with the switch `generic` (off = exactly as before).
+  const keep = (p) => p.id !== 'routage' && (generic || !GENERIC_PIPELINES.includes(p.id));
+  try { return applyCustom(custom).filter(keep); } catch { return CHOICES.filter(keep); }
+}
+
+/** Is the switch `generic` on for this project (pipeline-tuning.mjs, re-read at each call)? */
+export function genericFor(root, project) {
+  try { return !!tuningFor(readTuning(root), project || '').generic; } catch { return false; }
 }
 
 /** The assigned classifier model, or null when the slot is empty. */
@@ -65,29 +89,53 @@ export function classificationPrompt(text, fixed = {}, choices = CHOICES) {
     (imposed.length ? `The user already chose ${imposed.join(' and ')}: keep it as is and decide only the rest.\n` : '') +
     'Rules: a question, a remark or a reflection that does not ask for a change → discussion. If nothing fits clearly → discussion (user rule: unclassifiable = Discussion). ' +
     meetingRule(choices) +
+    genericRule(choices) +
     'For dev: mode "complet" for a new feature or behaviour, "leger" for a small fix or a mechanical edit; if unsure between the two → "leger". ' +
     'For dev, also the nature: "bugfix" (a defect to reproduce then fix), "mecanique" (a mechanical edit that changes no behaviour: rename, replace, reformat), or "comportement" (a behaviour to add or change). ' +
     'Other pipelines: mode "complet" unless the request is clearly small.\n' +
     'If the request asks for an ACTION that no pipeline covers, answer "discussion" and set "lacune" to one sentence proposing the missing pipeline or step; otherwise leave it out.\n' +
-    'Answer with ONE JSON object and nothing else: {"pipeline":"<id>","mode":"leger"|"complet","nature":"comportement"|"bugfix"|"mecanique","raison":"<one short sentence in French>","lacune":"<optional, French>"}\n\n' +
+    `Answer with ONE JSON object and nothing else: {"pipeline":"<id>","mode":${modeList(choices)},"nature":"comportement"|"bugfix"|"mecanique","raison":"<one short sentence in French>","lacune":"<optional, French>"${opFields(choices)}}\n\n` +
     `Request:\n<<<\n${normalizeText(text).slice(0, 6000)}\n>>>`;
 }
 
-/** Validated {pipeline, mode, kind, raison, lacune} from the model's answer, or null. */
+/** Validated {pipeline, mode, kind, raison, lacune[, operations, autorisation]} from the model's answer, or null. */
 export function parseClassification(answer, fixed = {}, choices = CHOICES) {
   const m = /\{[\s\S]*\}/.exec(String(answer || ''));
   if (!m) return null;
   let j; try { j = JSON.parse(m[0]); } catch { return null; }
   const pipeline = fixed.pipeline || (typeof j.pipeline === 'string' ? j.pipeline.trim().toLowerCase() : '');
   if (!choices.some(p => p.id === pipeline) && pipeline !== fixed.pipeline) return null;
-  const mode = fixed.mode || (j.mode === 'complet' ? 'complet' : j.mode === 'leger' || j.mode === 'léger' ? 'leger' : null);
+  // A generic mode (phase 1) only when the generics are offered, and only for its pipeline.
+  const generic = choices.some(p => GENERIC_PIPELINES.includes(p.id));
+  const asked = typeof j.mode === 'string' ? j.mode.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '') : '';
+  const genericMode = generic && GENERIC_MODES[pipeline]?.includes(asked) ? asked : null;
+  const mode = fixed.mode || genericMode || (asked === 'complet' ? 'complet' : asked === 'leger' ? 'leger' : generic && Object.values(GENERIC_MODES).flat().includes(asked) ? 'complet' : null);
   if (!mode) return null;
   // The nature is part of the classification of a dev request: no default.
   const kind = pipeline === 'dev' ? KINDS[String(j.nature || '').trim().toLowerCase()] || null : null;
   if (pipeline === 'dev' && !kind) return null;
   const raison = typeof j.raison === 'string' ? j.raison.replace(/\s+/g, ' ').trim().slice(0, 300) : '';
   const lacune = typeof j.lacune === 'string' && j.lacune.trim() ? j.lacune.replace(/\s+/g, ' ').trim().slice(0, 400) : null;
-  return { pipeline, mode, kind, raison, lacune };
+  return { pipeline, mode, kind, raison, lacune, ...(pipeline === 'operations' ? operationsOf(j) : {}) };
+}
+
+/**
+ * The operations the classifier named (the engine then skips « Préparer »):
+ * the whole ordered list, or nothing when one id is not in the registry — a
+ * partial list would silently drop an operation the user asked for. A single
+ * `operation` (older answer shape) is a list of one.
+ */
+export function operationsOf(j) {
+  const raw = Array.isArray(j?.operations) ? j.operations : j?.operation ? [{ id: j.operation, params: j.params }] : [];
+  if (!raw.length || raw.length > 6) return {};
+  const list = [];
+  for (const o of raw) {
+    const id = typeof o === 'string' ? o : o?.id;
+    if (!OPERATION_IDS.includes(id)) return {};
+    const params = o && typeof o === 'object' && o.params && typeof o.params === 'object' && !Array.isArray(o.params) ? o.params : {};
+    list.push({ id, params });
+  }
+  return { operations: list, ...(typeof j.autorisation === 'string' && j.autorisation.trim() ? { autorisation: j.autorisation.trim().slice(0, 400) } : {}) };
 }
 
 /** Provider key from the environment, then the orchestrator's own .env (never logged). */
@@ -187,7 +235,8 @@ async function askClassifier({ root, prompt, parse, oneShot, keys, fetchImpl, ti
  *   | { failed: true, why, explicit }   (the caller pauses and asks the user)
  */
 export async function classifyEntry({ root, logsDir, text, project = null, entry = null, fixed = {}, oneShot = null, keys, fetchImpl, timeoutMs = 60_000, env = process.env } = {}) {
-  const e = explicitChoice({ text, entry });
+  const generic = genericFor(root, project);
+  const e = explicitChoice({ text, entry, generic });
   const want = { pipeline: fixed.pipeline || e.pipeline || null, mode: fixed.mode || e.mode || null, kind: fixed.kind || null };
   if (e.system) return { pipeline: 'routage', mode: null, kind: null, explicit: true, classifier: 'explicite', reasons: [`entrée système « ${entry} »`] };
   // Complete explicit choice: dev needs its nature too; other pipelines take
@@ -199,7 +248,7 @@ export async function classifyEntry({ root, logsDir, text, project = null, entry
     return { pipeline: 'dev', mode: want.mode, kind: want.kind, explicit: true, classifier: 'explicite', reasons: ['choix explicite → dev'] };
   }
   const fixedForModel = { ...(want.pipeline ? { pipeline: want.pipeline } : {}), ...(want.mode ? { mode: want.mode } : {}) };
-  const choices = classifierChoices(root);
+  const choices = classifierChoices(root, { generic });
   const r = await askClassifier({ root, prompt: classificationPrompt(text, fixedForModel, choices), parse: (t) => parseClassification(t, fixedForModel, choices), oneShot, keys, fetchImpl, timeoutMs, env });
   if (!r.ok) {
     record(logsDir, { project, entry, provider: r.provider || null, model: r.model || null, ok: false, why: r.why, fixed: fixedForModel });
@@ -211,6 +260,7 @@ export async function classifyEntry({ root, logsDir, text, project = null, entry
     pipeline: v.pipeline, mode: v.mode, kind: v.kind, explicit: !!want.pipeline, confidence: 'model',
     reasons: [`${r.model} : ${v.raison || 'sans raison'}`], classifier: `model:${r.model}`,
     raison: v.raison, ...(v.lacune ? { lacune: v.lacune } : {}),
+    ...(v.operations ? { operations: v.operations, ...(v.autorisation ? { autorisation: v.autorisation } : {}) } : {}),
   };
 }
 
@@ -232,12 +282,13 @@ export function routingTaskPrompt(task, fixed = {}, choices = CHOICES) {
     (imposed.length ? `The user already chose ${imposed.join(' and ')}: keep it as is and decide only the rest.\n` : '') +
     'Rules: a question, a remark or a reflection that does not ask for a change → discussion. ' +
     meetingRule(choices) +
+    genericRule(choices) +
     'For dev: mode "complet" for a new feature or behaviour, "leger" for a small fix or a mechanical edit; if unsure between the two → "leger"; ' +
     'and the nature: "bugfix", "mecanique" (no behaviour change) or "comportement". Other pipelines: mode "complet" unless the task is clearly small.\n' +
     'If the task is ambiguous (you cannot tell what is wanted, or which of two pipelines), do NOT guess: set "question" to the question to ask the user. ' +
     'If the task asks for an ACTION that no pipeline covers, set "lacune" to one sentence proposing the missing pipeline or step.\n' +
     'If the task is NOT work for the project\'s agent but something the CONDUCTOR (chef) must do itself — restart the orchestrator server, stop a running or stalled turn, mark a question as answered, publish an APK, or any other direct supervision action — do NOT pick a pipeline: set "chef" to "restart-orchestrateur", "kill-stalled", "resolve-question", "copy-build", or "autre" if none of them fits. Such a task is never sent to a project agent.\n' +
-    'Answer with ONE JSON object and nothing else: {"pipeline":"<id>","mode":"leger"|"complet","nature":"comportement"|"bugfix"|"mecanique","raison":"<one short sentence in French>","question":"<optional, French>","lacune":"<optional, French>","chef":"<optional>"}\n\n' +
+    `Answer with ONE JSON object and nothing else: {"pipeline":"<id>","mode":${modeList(choices)},"nature":"comportement"|"bugfix"|"mecanique","raison":"<one short sentence in French>","question":"<optional, French>","lacune":"<optional, French>","chef":"<optional>"${opFields(choices)}}\n\n` +
     `Project: ${task.projet || '?'}\n` +
     `Request:\n<<<\n${normalizeText(task.demande).slice(0, 6000)}\n>>>`;
 }
@@ -272,7 +323,7 @@ export async function classifyTask({ root, logsDir, task, fixed = {}, oneShot = 
   }
   if (want.pipeline === 'dev' && want.mode && want.kind) return { pipeline: 'dev', mode: want.mode, kind: want.kind, classifier: 'explicite', raison: 'choix explicite → dev' };
   const fixedForModel = { ...(want.pipeline ? { pipeline: want.pipeline } : {}), ...(want.mode ? { mode: want.mode } : {}) };
-  const choices = classifierChoices(root);
+  const choices = classifierChoices(root, { generic: genericFor(root, task.projet) });
   const r = await askClassifier({ root, prompt: routingTaskPrompt(task, fixedForModel, choices), parse: (t) => parseTaskClassification(t, fixedForModel, choices), oneShot, keys, fetchImpl, timeoutMs, env });
   record(logsDir, { project: task.projet || null, entry: 'routage-tache', provider: r.provider || null, model: r.model || null, ok: r.ok, ...(r.ok ? { model_result: r.value } : { why: r.why }), fixed: fixedForModel });
   if (!r.ok) return { failed: true, why: r.why, model: r.model || null };

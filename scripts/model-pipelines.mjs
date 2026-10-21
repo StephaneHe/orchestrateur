@@ -2,7 +2,7 @@
 // scripts/model-pipelines.mjs — les pipelines de la vue « Models par tâche »
 // ============================================================================
 //
-// Données pures (0.40.0 ; 14 depuis 0.110.0) : pipelines, chacun une suite d'étapes dans
+// Données pures (0.40.0 ; 14 depuis 0.110.0, 16 depuis la phase 1 des pipelines) : pipelines, chacun une suite d'étapes dans
 // l'ordre, avec ses boucles et ses retours. Une étape (ou une variante) est
 // une « case » à laquelle on assigne un model.
 //
@@ -146,6 +146,9 @@ export const PIPELINES = [
         example: 'Lire l’aide de la CLI claude pour vérifier qu’un drapeau existe.' },
       { id: 'repondre', n: '3', title: 'Répondre', what: 'Une réponse directe, argumentée, avec une recommandation.',
         example: 'Le plan du mode discussion : interprétations, recommandation, questions.' },
+      { id: 'verifier', n: 'V', title: 'Vérifier (constats et preuves)', optional: 'variante « vérification »',
+        what: 'Pour « vérifie que… », « compare… » : chaque constat avec ce qui a été observé, sa preuve (fichier lu, commande lancée, URL consultée) et son verdict ; l’orchestrateur vérifie chaque preuve dans le journal du tour.',
+        example: '« Vérifie que la prod est bien en v0.120.0 » → constat « vrai », preuve : la sortie de git describe.' },
       { id: 'tache', n: '4', title: 'Transformer en tâche', optional: 'sur confirmation',
         what: 'Seulement si l’utilisateur le confirme : la discussion devient une tâche.',
         example: 'Le plan validé devient une demande de développement confiée au chef.',
@@ -214,7 +217,10 @@ export const PIPELINES = [
       { id: 'cadrer', n: '1', title: 'Cadrer', what: 'La question précise, les critères, ce qui est hors sujet.',
         example: '« Quels models exposent de la génération d’image sans clé payante ? »' },
       { id: 'rechercher', n: '2', title: 'Rechercher (web)', what: 'Trouver les sources : docs officielles, articles, catalogues.',
-        example: 'Interroger les catalogues publics NVIDIA et OpenRouter.' },
+        example: 'Interroger les catalogues publics NVIDIA et OpenRouter.',
+        variants: [
+          { id: 'interne', label: 'Recherche interne', what: 'Sources : le dépôt et ses journaux seulement, sans le web (vérifié dans le journal du tour).' },
+        ] },
       { id: 'lire', n: '3', title: 'Lire en profondeur', what: 'Lire réellement les sources retenues, pas seulement les titres.',
         example: 'Lire l’article Canon TDD de Kent Beck en entier.' },
       { id: 'recouper', n: '4', title: 'Recouper les sources', what: 'Confronter les sources ; écarter ce qui n’est pas confirmé.',
@@ -318,6 +324,21 @@ export const PIPELINES = [
         example: 'Vérifier qu’aucun nom de projet privé ne figure dans le texte public.' },
       { id: 'mettre-en-forme', n: '3', title: 'Mettre en forme', what: 'Titres, listes, tableaux, Markdown propre.',
         example: 'Une entrée CHANGELOG au format Keep a Changelog.' },
+      // Mode « document » (pipelines phase 1): a one-off piece of work on an EXISTING document.
+      { id: 'cibler', n: 'D1', title: 'Cibler le document', optional: 'mode « document existant »',
+        what: 'Le document visé (existant), l’opération et la sortie (en place, ou nouveau fichier pour résumer, traduire, convertir). Fait par le programme quand la demande nomme un seul document.',
+        example: '« Ajoute ces deux tâches à TODO_LIST.md » → TODO_LIST.md, compléter, en place.' },
+      { id: 'modifier', n: 'D2', title: 'Modifier le document', optional: 'mode « document existant »',
+        what: 'L’opération demandée et rien d’autre ; l’orchestrateur vérifie que seul ce document change et que son format est préservé.',
+        example: 'Résumer un compte rendu dans un nouveau fichier, sans toucher à l’original.',
+        variants: [
+          { id: 'relire-corriger', label: 'Relire et corriger', what: 'Orthographe, justesse, même structure (longueur ±25 %).' },
+          { id: 'resumer', label: 'Résumer', what: 'Un nouveau fichier, moins de la moitié de l’original.' },
+          { id: 'traduire', label: 'Traduire', what: 'Un nouveau fichier dans la langue demandée.' },
+          { id: 'reformater', label: 'Reformater', what: 'Mise en page seulement, même contenu.' },
+          { id: 'completer', label: 'Compléter', what: 'Ajouter sans rien retirer.' },
+          { id: 'convertir', label: 'Convertir', what: 'Un nouveau fichier dans un autre format texte.' },
+        ] },
     ],
   },
 
@@ -439,6 +460,44 @@ export const PIPELINES = [
         example: 'Le compte rendu de réunion, ou la voix du dashboard réglée.' },
     ],
   },
+
+  // ── 15. Opérations (pipelines phase 1) ────────────────────────────────────
+  // `code: true`: a step done by the program, without a model (no case).
+  {
+    id: 'operations', label: 'Opérations', icon: '⏵',
+    purpose: 'Exécuter une opération sur le projet ou son environnement, sans code à écrire — et vérifier son effet réel, jamais sur un simple code de retour.',
+    when: 'Pousser une branche ou un tag, poser un tag, remettre des fichiers à l’état du dernier commit, préparer le bond de la prod (plan seulement), publier l’APK, l’installer sur l’appareil, redémarrer un service ou lancer un script déclarés par le projet. Pas de la maintenance de code, pas du développement.',
+    flow: [
+      { id: 'preparer', n: '1', title: 'Préparer les opérations', what: 'Choisir les opérations dans une liste fermée, avec leurs paramètres et, pour une action irréversible, les mots exacts de l’utilisateur qui l’autorisent. Fait par le programme quand le classement a déjà nommé une seule opération.',
+        example: '« pousse les commits de dev » → git_push (origin, dev), autorisation « pousse les commits de dev ».' },
+      { id: 'autoriser', n: '2', title: 'Autoriser (par le programme)', code: true, what: 'Une action irréversible part seulement si la demande écrite de l’utilisateur la cite, sinon une pause ; jamais par une réponse automatique. Les conditions préalables sont vérifiées avant tout lancement.',
+        example: 'Un push vers origin demandé sans le dire : « autoriser ou abandonner ? ».' },
+      { id: 'executer', n: '3', title: 'Exécuter et vérifier (par le programme)', code: true, what: 'Commande en arguments (jamais une ligne de shell), puis l’effet relu : git ls-remote, versionCode installé, URL qui répond. Arrêt à la première vérification fausse.',
+        example: 'git push origin dev, puis ls-remote : origin/dev = le commit local.' },
+      { id: 'rapporter', n: '4', title: 'Rapporter (par le programme)', code: true, what: 'Chaque opération, sa commande, ce qui a été vérifié, et qui l’a autorisée.',
+        example: '« ✓ git_push — 29 commits vers origin/main : git ls-remote = 4751bd6 ».' },
+    ],
+  },
+
+  // ── 16. Fichiers (pipelines phase 1) ──────────────────────────────────────
+  {
+    id: 'fichiers', label: 'Fichiers', icon: '🗁',
+    purpose: 'Télécharger, copier, déplacer, renommer, supprimer ou comparer des fichiers : le modèle écrit la liste, le programme l’exécute et vérifie chaque effet.',
+    when: 'Les fichiers eux-mêmes, pas leur contenu : récupérer une vidéo depuis une URL et la ranger, copier ou renommer des fichiers, comparer deux dossiers, supprimer des fichiers listés. Pas le montage d’une vidéo, pas la réunion, pas la maintenance de code.',
+    flow: [
+      { id: 'inventorier', n: '1', title: 'Inventorier les opérations', what: 'Une opération par fichier, dans une liste fermée, destinations dans le projet ; un doute sur une suppression est posé à l’utilisateur avant toute exécution.',
+        example: '« récupère la vidéo X et mets-la avec les autres » → acquérir l’URL vers « Titre.mp4 ».' },
+      { id: 'acquerir', n: '2', title: 'Acquérir (téléchargement)', optional: 'si le plan télécharge',
+        what: 'Télécharger chaque URL du plan vers sa destination exacte, rien d’autre ; le programme ouvre le fichier (présent, non vide, média lisible).',
+        example: 'yt-dlp vers la destination prévue, puis ffprobe.', need: { llm: 'text', local: ['acquire'] } },
+      { id: 'executer', n: '3', title: 'Copier, déplacer, supprimer, comparer (par le programme)', code: true, what: 'Exactement la liste, jamais une destination écrasée, chaque suppression copiée d’abord dans la corbeille de l’exécution.',
+        example: 'Comparer deux dossiers : seulement dans A, seulement dans B, différents, identiques.' },
+      { id: 'verifier', n: '4', title: 'Vérifier (par le programme)', code: true, what: 'Chaque effet relu sur le disque ; c’est le résultat rendu à l’utilisateur.',
+        example: '« ✓ Titre.mp4 (412 Mo, vidéo valide) ».' },
+      { id: 'livrer', n: '5', title: 'Livrer (par le programme)', code: true, what: 'Un commit des seuls fichiers texte touchés par le plan ; jamais un binaire.',
+        example: 'Le sommaire mis à jour est commité ; la vidéo reste hors de git.' },
+    ],
+  },
 ];
 
 // Ancienne structure (0.39.0, 20 types) → nouvelles cases. Une ancienne
@@ -483,6 +542,8 @@ export const JUDGE_STEPS = new Set([
   'reunion.trier',
   'nouveau.cadrage',
   'images.cadrer',
+  // Pipelines phase 1: read-only steps of the generics.
+  'operations.preparer', 'fichiers.inventorier', 'discussion.verifier', 'redaction.cibler',
 ]);
 for (const p of PIPELINES) {
   for (const n of p.flow) {
@@ -547,7 +608,8 @@ export function slotsOf(pipelines = PIPELINES) {
   const slots = [];
   for (const p of pipelines) {
     for (const s of stepsOf(p)) {
-      if (s.ref) continue;
+      // A reference has no case; neither has a step done by the program (phase 1).
+      if (s.ref || s.code) continue;
       const need = s.need || T;
       const judge = !!s.judge;
       slots.push({ id: `${p.id}.${s.id}`, pipeline: p.id, step: s.id, label: `${p.label} · ${s.n} ${s.title}`, need, judge });

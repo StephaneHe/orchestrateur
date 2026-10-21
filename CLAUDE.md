@@ -2570,6 +2570,60 @@ une nouvelle décision.
   programme » des tests ⚠ `_test_item_delivery`, `_test_release_prebump`,
   `_test_lane_changelog_rule` (accord du 2026-10-20).
 
+## Refonte des pipelines, phase 1 : les génériques (0.129.0)
+
+Décision « vas y » (2026-10-21) ; `docs/PIPELINES-SYNTHESE.md` §3.3, §8.2,
+décisions 4, 5 et 10 (« tout comme recommandé »). État livré et mesures : §11.3.
+
+- **Interrupteurs** (`pipeline-tuning.mjs`, coupés par défaut, figés dans
+  `run.json.tuning`) : `generic` (génériques proposés au classement, modes
+  génériques, préfixes `/operations`, `/fichiers`, `/document`, `/verification`,
+  `/interne`) et `discussionOne` (levier 6). Coupés = exactement 0.128.0. Mise en
+  service par le chef après le bond, `pipelineLab` d'abord ; `operations` et
+  `fichiers` doivent aussi entrer dans `enforcement.pipelines`
+  (`pipeline-enforce.mjs pipelines all`).
+- **`scripts/typed-operations.mjs`, registre unique** des opérations typées
+  (`{label, irreversible, params, prepare, verify}`), à réutiliser tel quel par
+  les actions typées du chef (Routage v3, phase 2) : `git_push`, `git_tag`,
+  `git_push_tag`, `git_restore`, `prod_jump` (PLAN seulement, jamais
+  `--apply`), `copy_build`, `adb_install`, `service_restart` et `run_script`
+  (seulement ce que déclare `.orchestrateur/pipeline.json` →
+  `operations.services|scripts`, contrôle obligatoire). Argv en tableau,
+  préconditions d'abord, **effet relu** ensuite : un code retour seul ne vaut
+  jamais « fait ». `ORCH_ADB` (chemin d'adb, ou script Node de test).
+- **Pipeline `operations`** : Préparer (model, sauté si le classement a nommé
+  toutes les opérations) → Autoriser → Exécuter → Rapporter (code). Une
+  opération irréversible part seulement avec les mots exacts de l'utilisateur
+  (`userSaid`) ou la réponse « autoriser » à la pause `autoriser` ; jamais par
+  la réponse automatique (`USER_ONLY_PAUSES` de `auto-answer.mjs`). Pause
+  `operation` (« relancer l’opération ») sur une condition ou un effet faux ;
+  une opération vérifiée n'est jamais relancée (`state.opsDone`).
+- **Pipeline `fichiers`** (`scripts/files-check.mjs`) : le model écrit la liste
+  (`fichiers.json`) et télécharge ; copier, déplacer, renommer, supprimer
+  (corbeille `logs/runs/<run>/corbeille/`) et comparer sont faits par le code,
+  chaque effet relu ; doute ⇒ pause `doutes` avant toute suppression ; la
+  livraison ne commite jamais un binaire.
+- **Rédaction `document`** (`scripts/document-check.mjs`) : Cibler (programme
+  si un seul document nommé, sinon model) → Modifier (case
+  `redaction.modifier.<opération>`) → Relire (au-delà de 80 lignes) → Livrer
+  (programme, sans version). Copie des cibles d'abord (`doc-base.json`,
+  `sauvegarde/`) ; hors git, un essai refusé est annulé depuis la copie.
+- **Discussion `verification`** (preuves vérifiées dans le journal du tour,
+  `toolUsesInTurn` de `cited-paths.mjs`) et **Recherche `interne`** (sources =
+  fichiers du projet, web refusé).
+- **Étapes du catalogue** : `kind: 'code'` peut rendre `{pause}` ou
+  `{finish}` ; `codeFirst` (le programme fait l'étape, sinon le model),
+  `chainFrom` (case choisie d'après un artefact), `skipUnless` (`SKIP_RULES`),
+  `needsByMode`. Page Models : `code: true` = étape sans case (badge
+  « programme »).
+- Corpus réel anonymisé `tests/pipeline-corpus/` ; mesures hors non-régression :
+  `node scripts/pipeline-corpus-classify.mjs --model <id>` (vrai classement) et
+  `node scripts/pipeline-discussion-bench.mjs --routing <model-routing.json>`
+  (vrais tours, racine jetable).
+- Recettes : `_test_typed_operations.mjs`, `_test_generic_operations.mjs`,
+  `_test_generic_files.mjs`, `_test_generic_document.mjs`,
+  `_test_generic_modes.mjs`, `_test_pipeline_corpus.mjs` (série).
+
 ## Langue de discussion (0.51.0)
 
 Demande utilisateur : « La langue de la discussion doit pouvoir etre fixee et

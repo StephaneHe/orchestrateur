@@ -54,8 +54,11 @@ import { countTests, addedTests, itemTestsVerdict } from './item-tests.mjs';
 import { groupOf, groupCases, groupReady, insertAttachedCases, worktreeTree, treeDiff } from './item-review.mjs';
 import { foldTo, commitWork, itemCommitMessage, setAsideWork, reapplyWork, head as headOf } from './item-delivery.mjs';
 import { readFragments } from './lanes.mjs';
-import { cleanTuning, runTuning } from './pipeline-tuning.mjs';
-import { judgeCitedPaths, observedInTurn } from './cited-paths.mjs';
+import { cleanTuning, runTuning, readTuning, tuningFor } from './pipeline-tuning.mjs';
+import { judgeCitedPaths, observedInTurn, toolUsesInTurn } from './cited-paths.mjs';
+import * as Ops from './typed-operations.mjs';
+import * as Files from './files-check.mjs';
+import * as Doc from './document-check.mjs';
 import { diagnosePause, diagnoseWithModel, smartMenu, fixMenu, menuQuestion, menuBlock, matchOptionKey, readTestOutput } from './pause-diagnosis.mjs';
 import { releasePlan, parseDeliveryText, deliverRelease, deliverCommit } from './code-delivery.mjs';
 import { cachedSuite } from './suite-cache.mjs';
@@ -105,8 +108,12 @@ export function plainStep(id) {
   for (const p of CATALOG_PIPELINES) { const s = catalogOf(p).steps.find(x => x.id === id); if (s) return s.title.replace(/^\d+[a-z]?\s+/, '').toLowerCase(); }
   return id || 'exécution';
 }
+// Modes of the generics (pipelines phase 1): the label says which one runs.
+export const GENERIC_MODES = { redaction: ['document'], discussion: ['verification'], recherche: ['interne'] };
+const MODE_LABEL = { document: 'document existant', verification: 'vérification', interne: 'interne' };
 export function pipelineLabel(pipeline, mode) {
   if (pipeline === 'dev') return mode === 'complet' ? 'Développement complet' : 'Développement léger';
+  if (GENERIC_MODES[pipeline]?.includes(mode)) return `${pipeline === 'discussion' ? 'Discussion' : PIPELINES.find(p => p.id === pipeline)?.label || pipeline} — ${MODE_LABEL[mode]}`;
   if (pipeline === 'discussion') return 'Discussion';
   return PIPELINES.find(p => p.id === pipeline)?.label || pipeline;
 }
@@ -236,8 +243,13 @@ function readAssignments(root) {
 const STRIP = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
 /** Étapes d'une exécution, dans l'ordre. */
-export function planSteps(pipeline, { mode = 'leger', kind = 'simple' } = {}) {
+export function planSteps(pipeline, { mode = 'leger', kind = 'simple', tuning = null } = {}) {
   if (pipeline === 'discussion') {
+    // Variant « vérification » (decision 4): verified findings, nothing modified.
+    if (mode === 'verification') return [DISCUSSION_VERIFY];
+    // Lever 6 (decision 10, switch `discussionOne`): Understand + Answer in ONE
+    // read-only call; the research step comes back only if the answer asks for it.
+    if (tuning?.discussionOne) return [DISCUSSION_ONE];
     return [
       { id: 'comprendre', title: '1 Comprendre la question', chain: ['discussion.comprendre'], group: 'discussion', artefact: 'comprehension.md', judge: true },
       { id: 'rechercher', title: '2 Rechercher', chain: ['discussion.rechercher'], group: 'discussion', artefact: 'recherche.md', judge: true },
@@ -262,6 +274,17 @@ export function planSteps(pipeline, { mode = 'leger', kind = 'simple' } = {}) {
   if (cat) return catalogSteps(pipeline);
   throw new Error(`pipeline « ${pipeline} » pas encore en service`);
 }
+
+export const RESEARCH_MARK = 'RECHERCHE_NECESSAIRE';
+export const DISCUSSION_ONE = { id: 'repondre', title: '1 Répondre (en un appel)', chain: ['discussion.repondre'], group: 'discussion', artefact: 'reponse.md', kind: 'judge', judge: true, final: true,
+  role: `RÉPONDRE à la question de l’utilisateur (demande.md), en UN seul tour et en lecture seule : comprends ce qui est réellement demandé, lis ce qu’il faut (code, docs, journaux ; le web si c’est utile et permis), puis écris la réponse directe, argumentée, avec une recommandation. Si un fichier recherche.md existe dans le dossier, appuie-toi dessus. Si la réponse exige une recherche approfondie que tu ne peux pas mener dans ce tour, écris en tête une ligne « ${RESEARCH_MARK}: <ce qu’il faut chercher> » : l’orchestrateur lance alors la recherche, puis te redonne la main. Ne modifie AUCUN fichier ; si une modification est souhaitable, propose-la : elle deviendra une tâche si l’utilisateur la confirme.`,
+  checks: { sections: ['Réponse', 'Sources'], citedPaths: true, researchMark: RESEARCH_MARK } };
+export const VERIFY_VERDICTS = ['vrai', 'faux', 'partiel', 'indetermine'];
+export const DISCUSSION_VERIFY = { id: 'verifier', title: '1 Vérifier (constats et preuves)', chain: ['discussion.verifier', 'discussion.repondre'], group: 'discussion', artefact: 'verification.json', kind: 'judge', judge: true, final: true,
+  role: 'VÉRIFIER ce que demande l’utilisateur (demande.md : « vérifie que… », « compare… ») en lecture seule : pour chaque affirmation à vérifier, ce que tu as OBSERVÉ, la PREUVE (un fichier que tu as lu, avec :ligne si utile ; une commande que tu as lancée dans ce tour et sa sortie ; une URL que tu as consultée) et le verdict. L’orchestrateur vérifie chaque preuve dans le journal de ton tour et sur le disque : une preuve non observée fait refuser l’étape. Ne modifie AUCUN fichier.',
+  checks: { json: { constats: 'array' }, verification: true },
+  jsonExample: '{"constats": [{"affirmation": "ce qui est vérifié", "observe": "ce que tu as constaté", "preuve": {"type": "fichier|commande|url", "ref": "chemin/relatif:12 | la commande exacte | https://…"}, "verdict": "vrai|faux|partiel|indetermine"}]}' };
+const DISCUSSION_RESEARCH = { id: 'rechercher', title: '2 Rechercher', chain: ['discussion.rechercher'], group: 'discussion', artefact: 'recherche.md', judge: true };
 
 /** Toutes les étapes possibles du Développement (léger, complet, montée en complet). */
 export function devCatalog({ mode = 'leger', kind = 'simple' } = {}) {
@@ -893,8 +916,9 @@ export function missingSections(text, wanted) {
   return (wanted || []).filter(w => !heads.some(h => h.includes(fold(w))));
 }
 /** Sources distinctes : URL http(s), et (option) chemins cités entre accents graves. */
-export function countSources(text, { files = false } = {}) {
-  const urls = new Set([...String(text || '').matchAll(/https?:\/\/[^\s)>\]"'`]+/g)].map(m => m[0].replace(/[.,;:]+$/, '')));
+export function countSources(text, { files = false, urls: withUrls = true } = {}) {
+  // Internal research (phase 1): only files of the project count, never an URL.
+  const urls = new Set([...(withUrls ? String(text || '') : '').matchAll(/https?:\/\/[^\s)>\]"'`]+/g)].map(m => m[0].replace(/[.,;:]+$/, '')));
   if (files) for (const m of String(text || '').matchAll(/`([\w.\-/\\]+\.[a-z0-9]{1,6})`/gi)) urls.add(m[1]);
   return urls.size;
 }
@@ -925,7 +949,7 @@ export function validateTasks(root, tasks) {
     if (!t.renvoi_chef && (t.projet === conductor || new RegExp(`^${conductor}-\\d+$`).test(t.projet))) return `${n} : le chef ne se délègue pas de tâche (s’il doit agir lui-même : « renvoi_chef »)`;
     if (t.apres != null && tasks[t.apres - 1]?.renvoi_chef) return `${n} : « apres » ne peut pas désigner une tâche renvoyée au chef (elle part à la fin de ce tour)`;
     if (!ENGINE_PIPELINES.includes(t.pipeline) || t.pipeline === 'routage') return `${n} : pipeline inconnu « ${t.pipeline} »`;
-    if (t.mode != null && !['leger', 'complet'].includes(t.mode)) return `${n} : mode « ${t.mode} » (leger ou complet)`;
+    if (t.mode != null && !['leger', 'complet', ...(GENERIC_MODES[t.pipeline] || [])].includes(t.mode)) return `${n} : mode « ${t.mode} » (leger ou complet${GENERIC_MODES[t.pipeline] ? `, ou ${GENERIC_MODES[t.pipeline].join(', ')}` : ''})`;
     if (typeof t.demande !== 'string' || t.demande.trim().length < 8) return `${n} : demande absente ou trop courte`;
     if (t.apres != null && !(Number.isInteger(t.apres) && t.apres >= 1 && t.apres <= i)) return `${n} : « apres » doit désigner une tâche précédente (1 à ${i})`;
     // 0.58.0: resuming a paused run is explicit, and only a real paused run of
@@ -1226,6 +1250,118 @@ export function conversationExcerpt(logFile, { max = 30, maxChars = 30_000, perM
   return `# Conversation récente (extraite du log par l'orchestrateur)\n\n${head}${kept.join('\n\n') || '(aucune)'}\n`;
 }
 
+// ── Helpers of the generic pipelines (phase 1) ─────────────────────────────
+/** Context of a typed operation run from a pipeline step. */
+function opContext(root, ctx, projectName) {
+  const adb = process.env.ORCH_ADB || 'adb';
+  // ORCH_ADB may name a Node script (a stand-in device for the tests): run by node, argv kept.
+  const exec = /\.m?js$/i.test(adb) ? (argv, o) => Ops.defaultExec(argv[0] === adb ? [process.execPath, adb, ...argv.slice(1)] : argv, o) : undefined;
+  return { cwd: ctx.cwd, root, project: projectName, cfg: ctx.cfg || {}, config: readConfig(root), env: ctx.testEnv || process.env,
+    backupDir: path.join(ctx.runDir, 'sauvegarde'), bins: { adb }, ...(exec ? { exec } : {}) };
+}
+/** One commit of exactly these paths (never `git add -A` of the whole tree); hooks run. */
+function commitPaths(cwd, files, message) {
+  const ident = git(cwd, ['config', 'user.email']).out ? [] : ['-c', 'user.name=orchestrateur', '-c', 'user.email=orchestrateur@localhost'];
+  const a = git(cwd, ['add', '-A', '--', ...files]);
+  if (!a.ok) return { ok: false, why: a.err.split('\n')[0] };
+  if (!git(cwd, ['diff', '--cached', '--name-only', '--', ...files]).out) return { ok: true, empty: true };
+  const c = git(cwd, [...ident, 'commit', '-q', '-m', message, '--', ...files]);
+  if (!c.ok) return { ok: false, why: (c.err || c.out).split('\n')[0] };
+  return { ok: true, commit: git(cwd, ['rev-parse', 'HEAD']).out };
+}
+export const DOC_OPERATION_OPTIONS = [
+  { id: 'relire-corriger', what: 'proofread and correct the document in place (spelling, grammar, accuracy), same structure and length' },
+  { id: 'resumer', what: 'write a summary of the document as a NEW file (the source is kept)' },
+  { id: 'traduire', what: 'translate the document into another language as a NEW file (the source is kept)' },
+  { id: 'reformater', what: 'reformat the document in place (layout, headings, lists, tables), same content' },
+  { id: 'completer', what: 'complete the document in place: add lines, items or sections, remove nothing' },
+  { id: 'convertir', what: 'convert the document to another text format as a NEW file (e.g. Markdown to HTML)' },
+];
+const LANG_NAMES = { fr: 'French', en: 'English', es: 'Spanish', de: 'German', it: 'Italian', pt: 'Portuguese', nl: 'Dutch' };
+export const DOC_REVIEW_LINES = 80;
+/** Snapshot and copies of the targets taken before the first « Modifier » (document mode). */
+function readDocBase(ctx) {
+  const j = readJson(path.join(ctx.runDir, 'doc-base.json')) || {};
+  const backups = new Map(), files = new Map();
+  for (const [p, f] of Object.entries(j.backups || {})) { try { backups.set(p, fs.readFileSync(f)); files.set(p, f); } catch { /* gone */ } }
+  return { snapshot: new Map(Object.entries(j.snapshot || {})), backups, files };
+}
+function saveDocBase(ctx, cible) {
+  const f = path.join(ctx.runDir, 'doc-base.json');
+  if (fs.existsSync(f)) return;
+  const dir = path.join(ctx.runDir, 'sauvegarde');
+  fs.mkdirSync(dir, { recursive: true });
+  const backups = {};
+  cible.targets.forEach((t, i) => { const to = path.join(dir, `${i + 1}-${path.basename(t.abs)}`); fs.copyFileSync(t.abs, to); backups[t.path] = to; });
+  fs.writeFileSync(f, JSON.stringify({ at: new Date().toISOString(), backups, snapshot: Object.fromEntries(snapshot(ctx.cwd)) }));
+}
+/** A refused document attempt outside git: the targets come back from their copy, new files go. */
+function restoreDocAttempt(ctx, before, after) {
+  const base = readDocBase(ctx);
+  for (const [p, buf] of base.backups) { const abs = path.isAbsolute(p) ? p : path.join(ctx.cwd, p); try { if (!fs.readFileSync(abs).equals(buf)) fs.writeFileSync(abs, buf); } catch { /* gone */ } }
+  for (const f of changedFiles(before, after)) if (!before.has(f) && !base.backups.has(f)) { try { fs.rmSync(path.join(ctx.cwd, f), { force: true }); } catch {} }
+}
+/** Named skip rules (`skipUnless`): null = the step runs, else the reason it is skipped. */
+const SKIP_RULES = {
+  'files-acquire': ({ ctx }) => {
+    const pl = Files.checkFilesPlan(ctx.cwd, readArtefact(ctx, 'fichiers.json'), { demande: readArtefact(ctx, 'demande.md') || '', exists: false });
+    return pl.ok && pl.value.ops.some(o => o.op === 'acquerir') ? null : 'aucun téléchargement dans le plan';
+  },
+  'document-relire': ({ ctx, state }) => {
+    const outs = state.docOutputs || [];
+    if (!outs.length) return 'document déjà conforme : rien à relire';
+    const n = Doc.changedLineCount(ctx.cwd, outs, readDocBase(ctx).backups);
+    return n > DOC_REVIEW_LINES ? null : `modification de ${n} ligne(s) : relecture seulement au-delà de ${DOC_REVIEW_LINES}`;
+  },
+};
+const WEB_TOOLS = /^(WebSearch|WebFetch|web_search|web_fetch|mcp__.*web)/i;
+/**
+ * Discussion « vérification »: every finding carries a proof the code can
+ * check — a file that exists (and was read or seen in the turn), a command run
+ * in THIS turn, or an URL seen in the turn.
+ */
+function checkVerification(ctx, json) {
+  const list = Array.isArray(json.constats) ? json.constats : [];
+  if (!list.length) return { ok: false, why: 'verification.json : aucun constat' };
+  const uses = toolUsesInTurn(ctx.stepLogFile || '');
+  const seen = observedInTurn(ctx.stepLogFile || '');
+  const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  for (const [i, c] of list.entries()) {
+    const n = `constat ${i + 1}`;
+    if (!c || typeof c.affirmation !== 'string' || c.affirmation.trim().length < 3) return { ok: false, why: `${n} : « affirmation » absente` };
+    if (typeof c.observe !== 'string' || !c.observe.trim()) return { ok: false, why: `${n} : « observe » (ce qui a été constaté) absent` };
+    const verdict = STRIP(c.verdict || '');
+    if (!VERIFY_VERDICTS.includes(verdict)) return { ok: false, why: `${n} : « verdict » doit valoir ${VERIFY_VERDICTS.join(', ')} (reçu « ${c.verdict} »)` };
+    const pr = typeof c.preuve === 'string' ? { type: /^https?:/i.test(c.preuve) ? 'url' : 'fichier', ref: c.preuve } : c.preuve;
+    if (!pr?.ref) { if (verdict === 'indetermine') continue; return { ok: false, why: `${n} : « preuve » obligatoire pour un verdict « ${verdict} »` }; }
+    const ref = String(pr.ref).trim();
+    if (pr.type === 'fichier') {
+      const m = /^(.*?)(?::(\d+)(?:-\d+)?)?$/.exec(ref);
+      const abs = path.isAbsolute(m[1]) ? m[1] : path.join(ctx.cwd, m[1]);
+      if (!fs.existsSync(abs)) return { ok: false, why: `${n} : preuve « ${ref} » introuvable` };
+      if (m[2] && fs.statSync(abs).isFile() && Number(m[2]) > fs.readFileSync(abs, 'utf8').split('\n').length) return { ok: false, why: `${n} : la ligne ${m[2]} n’existe pas dans ${m[1]}` };
+      const key = norm(m[1]).replace(/\\/g, '/');
+      if (!seen.text.includes(key) && !seen.text.includes(norm(path.basename(m[1])))) return { ok: false, why: `${n} : le fichier « ${m[1]} » n’a pas été lu ni vu pendant le tour (preuve non observée)` };
+    } else if (pr.type === 'commande') {
+      if (!uses.some(u => /^(Bash|PowerShell)$/.test(u.name) && u.ok && norm(u.input?.command).includes(norm(ref)))) return { ok: false, why: `${n} : la commande « ${ref.slice(0, 80)} » n’a pas été lancée dans ce tour (preuve non observée)` };
+    } else if (pr.type === 'url') {
+      if (!/^https?:\/\/\S+$/i.test(ref)) return { ok: false, why: `${n} : URL invalide « ${ref.slice(0, 80)} »` };
+      if (!seen.text.includes(norm(ref)) && !uses.some(u => JSON.stringify(u.input || {}).toLowerCase().includes(norm(ref)))) return { ok: false, why: `${n} : l’URL « ${ref.slice(0, 80)} » n’a pas été consultée dans ce tour` };
+    } else return { ok: false, why: `${n} : type de preuve « ${pr.type} » (fichier, commande ou url)` };
+  }
+  return { ok: true };
+}
+/** Markdown of a verification (the answer of the Discussion « vérification »). */
+export function verificationMarkdown(json) {
+  const icon = { vrai: '✓', faux: '✕', partiel: '◐', indetermine: '?' };
+  const rows = (json?.constats || []).map((c) => {
+    const v = STRIP(c.verdict || '');
+    const pr = typeof c.preuve === 'string' ? c.preuve : c.preuve?.ref ? `${c.preuve.type} : ${c.preuve.ref}` : '—';
+    return `| ${icon[v] || ''} ${v} | ${String(c.affirmation).replace(/\|/g, '/')} | ${String(c.observe).replace(/\|/g, '/')} | \`${String(pr).replace(/\|/g, '/').replace(/`/g, '')}\` |`;
+  });
+  return ['## Vérification', '', '| Verdict | Affirmation | Constaté | Preuve (vérifiée par l’orchestrateur) |', '|---|---|---|---|', ...rows, ''].join('\n');
+}
+
 const CODE_STEPS = {
   /**
    * Meeting pipeline (0.110.0): the drafts are deleted by the CODE, from the
@@ -1271,6 +1407,229 @@ const CODE_STEPS = {
     writeEvent({ type: 'system', subtype: 'meeting_verified', pipeline: { run, step: 'verifier' }, ok: v.ok, problems: v.problems, index: f.value.index,
       text: v.ok ? `✓ réunion « ${m.inv.nom} » : ${f.value.elements.length} élément(s) rangé(s), index ${f.value.index}, supprimés absents` : `✕ vérification de la réunion : ${v.problems.join(' ; ')}` });
     return v.ok ? { ok: true } : { ok: false, why: `vérification finale : ${v.problems.join(' ; ')}` };
+  },
+
+  // ── Opérations (pipelines phase 1, typed-operations.mjs) ───────────────
+  /** codeFirst of « Préparer »: the classifier named the operations, all in the registry → no model turn. */
+  async 'operations-preparer'({ state, artDir }) {
+    const c = state.classification || {};
+    if (!Array.isArray(c.operations) || !c.operations.length) return null;
+    const p = Ops.parseOperations({ operations: c.operations.map(o => ({ id: o.id, params: o.params || {} })), ...(c.autorisation ? { autorisation: c.autorisation } : {}) });
+    if (!p.ok) return null;
+    fs.writeFileSync(path.join(artDir, 'operations.json'), JSON.stringify({ operations: p.ops, ...(p.autorisation ? { autorisation: p.autorisation } : {}), source: 'classement' }, null, 2));
+    return { done: true, why: `opération(s) nommée(s) par le classement (${p.ops.map(o => o.id).join(', ')}) : préparées par le programme, sans tour de model` };
+  },
+  /**
+   * Decision 5: an irreversible operation runs only with the user's own words
+   * (a quote found in demande.md or a user line of the conversation, never a
+   * relayed musician), or the answer « autoriser » at the pause. Preconditions
+   * are read first: nothing runs on a plan that cannot run.
+   */
+  async 'operations-autoriser'({ root, ctx, state, artDir, projectName, run, writeEvent }) {
+    const j = parseJsonArtefact(readArtefact(ctx, 'operations.json') || '') || {};
+    if (Array.isArray(j.operations) && !j.operations.length) {
+      const what = String(j.hors_liste || 'ce qui est demandé').replace(/\s+/g, ' ').trim().slice(0, 400);
+      const q = `${projectName} : aucune opération de la liste fermée ne fait « ${what} ». Voulez-vous la déclarer comme script du projet (operations.scripts de .orchestrateur/pipeline.json, avec son contrôle), ou la faire autrement ?`;
+      return { finish: `Rien n’a été exécuté : aucune opération de la liste fermée ne fait ce qui est demandé (${what}).\n\nOpérations possibles : ${Ops.OPERATION_IDS.join(', ')}. Une commande propre au projet peut être déclarée dans \`.orchestrateur/pipeline.json\` (« operations.scripts », avec un contrôle de son effet), puis demandée comme « run_script ».\n\nNEEDS_USER_INPUT: ${q}` };
+    }
+    const p = Ops.parseOperations(j);
+    if (!p.ok) return { ok: false, why: `operations.json : ${p.why}` };
+    const octx = opContext(root, ctx, projectName);
+    const done = new Set(state.opsDone || []);
+    const pre = Ops.precheckOperations(octx, p.ops);
+    // Only the next operation is checked now: a later one may need what an
+    // earlier one makes (install the APK that copy_build publishes) — it is
+    // checked again when its turn comes, and the run stops there if it fails.
+    const next = p.ops.findIndex((_, i) => !done.has(i));
+    const blocked = pre.map((x, i) => ({ ...x, i })).filter(x => !x.ok && x.i === next);
+    if (blocked.length) {
+      const why = blocked.map(b => `${b.id} : ${b.why}`).join(' ; ');
+      return { pause: { limit: 'operation', notice: `⏸ ${projectName} : une opération ne peut pas partir (condition préalable non remplie)`,
+        what: `avant toute exécution, l’orchestrateur a vérifié les conditions de chaque opération : ${why}. Rien n’a été lancé.`, input: { why, extra: { stage: 'precondition', operations: blocked.map(b => b.id) } } } };
+    }
+    const authorized = new Set(state.authorizedOps || []);
+    const rows = [], need = [];
+    p.ops.forEach((op, i) => {
+      const irr = pre[i].irreversible && !pre[i].already && !done.has(i);
+      const quote = op.autorisation || p.autorisation || '';
+      let by = null;
+      if (!irr) by = pre[i].already ? 'déjà fait' : 'réversible';
+      else if (authorized.has(i)) by = 'réponse « autoriser » de l’utilisateur à la pause';
+      else if (quote.replace(/\s+/g, ' ').trim().length >= 4 && userSaid(ctx, quote)) by = `demande écrite de l’utilisateur : « ${quote.slice(0, 200)} »`;
+      if (irr && !by) need.push(i);
+      rows.push({ n: i + 1, id: op.id, detail: pre[i].detail, irreversible: pre[i].irreversible, authorized: !!by, by });
+    });
+    fs.writeFileSync(path.join(artDir, 'autorisation.json'), JSON.stringify({ operations: rows }, null, 2));
+    state.opsAuthorized = rows.filter(r => r.authorized).map(r => r.n - 1);
+    if (need.length) {
+      state.pendingAuth = need;
+      const list = need.map(i => `${p.ops[i].id} (${pre[i].detail || Ops.OPERATIONS[p.ops[i].id].label})`);
+      return { pause: { limit: 'autoriser', notice: `⏸ ${projectName} : action irréversible en attente de votre autorisation`,
+        what: `ces opérations sont irréversibles et votre demande ne les autorise pas en toutes lettres : ${list.join(' ; ')}. Rien n’a été lancé. Seule votre réponse « autoriser » les déclenche (jamais une réponse automatique).`,
+        input: { extra: { operations: list } } } };
+    }
+    writeEvent({ type: 'system', subtype: 'pipeline_operations_authorized', pipeline: { run, step: 'autoriser' }, operations: rows,
+      text: `opérations autorisées : ${rows.map(r => `${r.id} (${r.by})`).join(' ; ')}` });
+    return { ok: true };
+  },
+  /** Each operation: preconditions, argv (never a shell), then its postcondition re-read; stops at the first false one. */
+  async 'operations-executer'({ root, ctx, state, artDir, projectName, run, writeEvent }) {
+    const p = Ops.parseOperations(parseJsonArtefact(readArtefact(ctx, 'operations.json') || '') || {});
+    if (!p.ok) return { ok: false, why: `operations.json : ${p.why}` };
+    const octx = opContext(root, ctx, projectName);
+    const done = new Set(state.opsDone || []);
+    const allowed = new Set(state.opsAuthorized || []);
+    const results = Array.isArray(state.opsResults) ? state.opsResults : [];
+    for (const [i, op] of p.ops.entries()) {
+      if (done.has(i)) continue;
+      // Defence in depth: an irreversible operation never runs without its authorization.
+      if (Ops.isIrreversible(octx, op) && !allowed.has(i)) {
+        const prep = Ops.precheckOperations(octx, [op])[0];
+        if (!prep.already) return { ok: false, why: `${op.id} : irréversible et non autorisée — refusée par le code` };
+      }
+      const r = await Ops.runOperation(octx, op);
+      results[i] = { n: i + 1, ...r };
+      state.opsResults = results;
+      fs.writeFileSync(path.join(artDir, 'execution.json'), JSON.stringify({ operations: results.filter(Boolean) }, null, 2));
+      writeEvent({ type: 'system', subtype: 'pipeline_operation', pipeline: { run, step: 'executer' }, operation: { n: i + 1, id: op.id, ok: r.ok, already: !!r.already, code: r.code ?? null, observed: r.observed, why: r.why || null, ms: r.ms },
+        text: `${r.ok ? '✓' : '✕'} ${op.id}${r.detail ? ` — ${r.detail}` : ''} : ${r.ok ? `${r.already ? 'déjà fait, ' : ''}vérifié (${r.observed})` : `${r.why} (${r.observed})`}` });
+      if (!r.ok) {
+        return { pause: { limit: 'operation', notice: `⏸ ${projectName} : l’opération ${op.id} n’a pas produit l’effet vérifié`,
+          what: `${op.id}${r.detail ? ` (${r.detail})` : ''} : ${r.why}. Constaté : ${r.observed}.${r.out ? ` Sortie : ${String(r.out).split('\n').slice(-4).join(' | ').slice(0, 600)}` : ''} Les opérations suivantes n’ont pas été lancées.`,
+          input: { why: r.why, extra: { stage: r.stage || 'postcondition', operation: op.id, observed: r.observed } } } };
+      }
+      done.add(i);
+      state.opsDone = [...done];
+    }
+    return { ok: true };
+  },
+  /** The report, written by the code from execution.json: what ran, what was verified. */
+  async 'operations-rapporter'({ ctx, state, artDir }) {
+    const res = (parseJsonArtefact(readArtefact(ctx, 'execution.json') || '') || {}).operations || state.opsResults || [];
+    const auth = (parseJsonArtefact(readArtefact(ctx, 'autorisation.json') || '') || {}).operations || [];
+    const md = ['## Opérations', '', '| # | Opération | Résultat vérifié par l’orchestrateur |', '|---|---|---|',
+      ...res.filter(Boolean).map(r => `| ${r.n} | ${r.id}${r.detail ? ` — ${String(r.detail).replace(/\|/g, '/')}` : ''} | ${r.ok ? `✓ ${r.already ? 'déjà fait — ' : ''}${String(r.observed).replace(/\|/g, '/')}` : `✕ ${String(r.why).replace(/\|/g, '/')}`} |`), '',
+      '## Autorisations', '', ...(auth.length ? auth.map(a => `- ${a.id} : ${a.irreversible ? `irréversible — ${a.by || 'non autorisée'}` : a.by}`) : ['- aucune nécessaire']), '',
+      '## Commandes', '', ...res.filter(r => r?.argv).map(r => `- \`${r.argv.join(' ')}\` (code ${r.code})`), '',
+      '_Un code retour seul ne vaut jamais « fait » : chaque effet a été relu (postcondition)._'];
+    fs.writeFileSync(path.join(artDir, 'rapport.md'), `${md.join('\n')}\n`);
+    return { ok: true };
+  },
+
+  // ── Fichiers (pipelines phase 1, files-check.mjs) ──────────────────────
+  /** Copy, move, rename, delete (trash first) and compare: by the code, from the explicit plan only. */
+  async 'fichiers-executer'({ ctx, state, artDir, projectName, run, writeEvent }) {
+    const pl = Files.checkFilesPlan(ctx.cwd, readArtefact(ctx, 'fichiers.json'), { demande: readArtefact(ctx, 'demande.md') || '', exists: false });
+    if (!pl.ok) return { ok: false, why: pl.why };
+    const plan = pl.value;
+    const before = snapshot(ctx.cwd);
+    const ex = Files.executeFilesPlan(ctx.cwd, plan, { trashDir: path.join(ctx.runDir, 'corbeille'), withDoubts: !!state.deleteDoubts });
+    const after = snapshot(ctx.cwd);
+    const allowed = new Set([...plan.ops.flatMap(o => [o.destination, ['deplacer', 'renommer', 'supprimer'].includes(o.op) && !o.outside ? o.source : null]), ...(state.deleteDoubts ? plan.doutes.map(d => d.chemin) : [])].filter(Boolean));
+    const extra = changedFiles(before, after).filter(f => !isLocalOnly(f) && !allowed.has(f));
+    fs.writeFileSync(path.join(artDir, 'execution.json'), JSON.stringify({ results: ex.results.map(({ sourceAbs, ...r }) => r), comparisons: ex.comparisons }, null, 2));
+    const by = (s) => ex.results.filter(r => r.status === s).length;
+    writeEvent({ type: 'system', subtype: 'pipeline_files_done', pipeline: { run, step: 'executer' }, done: by('done'), already: by('already'), failed: by('failed'),
+      text: `📁 ${by('done')} opération(s) de fichiers faite(s) par le code${by('already') ? `, ${by('already')} déjà faite(s)` : ''}${by('failed') ? `, ${by('failed')} en échec` : ''}${ex.comparisons.length ? ` ; ${ex.comparisons.length} comparaison(s)` : ''}` });
+    if (extra.length) return { ok: false, why: `des fichiers hors du plan ont changé pendant l’exécution : ${extra.slice(0, 8).join(', ')}` };
+    const failed = ex.results.filter(r => r.status === 'failed');
+    if (failed.length) {
+      const why = failed.map(r => `${r.op} ${r.source || r.label || ''} : ${r.why}`).join(' ; ');
+      return { pause: { limit: 'operation', notice: `⏸ ${projectName} : ${failed.length} opération(s) de fichiers en échec`,
+        what: `${why}. Les autres opérations sont faites (voir execution.json) ; rien n’a été écrasé.`, input: { why, extra: { stage: 'execution' } } } };
+    }
+    return { ok: true };
+  },
+  /** The postconditions, re-read on the disk; verification.md is the result of the run. */
+  async 'fichiers-verifier'({ ctx, run, writeEvent }) {
+    const pl = Files.checkFilesPlan(ctx.cwd, readArtefact(ctx, 'fichiers.json'), { demande: readArtefact(ctx, 'demande.md') || '', exists: false });
+    if (!pl.ok) return { ok: false, why: pl.why };
+    const ex = parseJsonArtefact(readArtefact(ctx, 'execution.json') || '') || { results: [], comparisons: [] };
+    const v = Files.verifyFilesPlan(ctx.cwd, pl.value, ex.results || []);
+    const kept = pl.value.doutes.filter(d => fs.existsSync(path.join(ctx.cwd, d.chemin)));
+    const md = ['## Fichiers (vérifiés par l’orchestrateur)', '', ...(v.lines.length ? v.lines : ['- aucune opération de fichier']), '',
+      ...(ex.comparisons?.length ? ['## Comparaisons', '', Files.comparisonsMarkdown(ex.comparisons)] : []),
+      ...(kept.length ? ['## Gardés (en doute, sans réponse « tout supprimer »)', ...kept.map(d => `- \`${d.chemin}\` — ${d.question}`), ''] : []),
+      `## Vérification : ${v.ok ? '✓ chaque effet est présent sur le disque' : `✕ ${v.problems.join(' ; ')}`}`];
+    fs.writeFileSync(path.join(ctx.artDir, 'verification.md'), `${md.join('\n')}\n`);
+    writeEvent({ type: 'system', subtype: 'pipeline_files_verified', pipeline: { run, step: 'verifier' }, ok: v.ok, problems: v.problems,
+      text: v.ok ? '✓ fichiers vérifiés par l’orchestrateur' : `✕ vérification des fichiers : ${v.problems.join(' ; ')}` });
+    return v.ok ? { ok: true } : { ok: false, why: `vérification : ${v.problems.join(' ; ')}` };
+  },
+  /** One commit of the text files the plan touched, never a binary, never another file; outside git: nothing. */
+  async 'fichiers-livrer'({ ctx, run }) {
+    const art = path.join(ctx.artDir, 'livraison.md');
+    if (!isGitWorkTree(ctx.cwd)) { fs.writeFileSync(art, '# Livraison\n\nDossier hors git : rien à commiter. Chaque effet a été vérifié sur le disque (verification.md) ; les fichiers supprimés ont une copie dans la corbeille de l’exécution.\n'); return { ok: true }; }
+    const pl = Files.checkFilesPlan(ctx.cwd, readArtefact(ctx, 'fichiers.json'), { demande: readArtefact(ctx, 'demande.md') || '', exists: false });
+    if (!pl.ok) return { ok: false, why: pl.why };
+    const touched = [...new Set([...pl.value.ops.flatMap(o => [o.destination, ['deplacer', 'renommer', 'supprimer'].includes(o.op) && !o.outside ? o.source : null]), ...pl.value.doutes.map(d => d.chemin)].filter(Boolean))];
+    const changed = touched.length ? git(ctx.cwd, ['status', '--porcelain', '--', ...touched]).out.split('\n').filter(Boolean).map(l => l.slice(3).replace(/^"|"$/g, '')) : [];
+    const binary = changed.filter(f => fs.existsSync(path.join(ctx.cwd, f)) && Files.isBinaryFile(path.join(ctx.cwd, f)));
+    const text = changed.filter(f => !binary.includes(f));
+    if (!text.length) {
+      fs.writeFileSync(art, `# Livraison\n\nRien à commiter${binary.length ? ` : les fichiers binaires ne sont jamais versionnés par la livraison (${binary.slice(0, 10).map(f => `\`${f}\``).join(', ')})` : ''}.\n`);
+      return { ok: true };
+    }
+    const c = commitPaths(ctx.cwd, text, `files: ${String(ctx.request || '').split('\n').find(l => l.trim())?.slice(0, 80) || 'file operations'}\n\nDelivered by the orchestrator (pipeline run ${run}): file operations done and verified by the program.`);
+    if (!c.ok) return { ok: false, why: `commit impossible : ${c.why}` };
+    fs.writeFileSync(art, `# Livraison\n\n${c.empty ? 'Rien de nouveau à commiter.' : `Commit ${c.commit.slice(0, 12)} fait par le programme (aucun model) : ${text.map(f => `\`${f}\``).join(', ')}.`}${binary.length ? `\n\nNon versionnés (binaires) : ${binary.map(f => `\`${f}\``).join(', ')}.` : ''}\n`);
+    return { ok: true };
+  },
+
+  // ── Rédaction « document » (pipelines phase 1, document-check.mjs) ─────
+  /**
+   * codeFirst of « Cibler »: the request names ONE existing document (path
+   * found on the disk); the operation is chosen by the MEANING (classifier
+   * model, closed list). Otherwise the model's Cibler step runs.
+   */
+  async 'document-cibler'({ root, logsDir, ctx, artDir, projectName }) {
+    const demande = readArtefact(ctx, 'demande.md') || '';
+    const cands = Doc.candidateTargets(ctx.cwd, demande);
+    if (cands.length !== 1) return null;
+    const { chooseOption } = await import('./pipeline-classify.mjs');
+    const r = await chooseOption({ root, logsDir, project: projectName, request: demande, question: `Which one-off operation does this request ask on the existing document ${cands[0].path}?`,
+      options: DOC_OPERATION_OPTIONS });
+    if (!r.ok) return null;
+    let langue = null;
+    if (r.id === 'traduire') {
+      const l = await chooseOption({ root, logsDir, project: projectName, request: demande, question: 'Into which language must the document be translated?', options: Doc.LANGS.map(id => ({ id, what: LANG_NAMES[id] || id })) });
+      if (!l.ok) return null;
+      langue = l.id;
+    }
+    const cible = { fichiers: [cands[0].path], operation: r.id, sortie: Doc.NEW_FILE_OPS.has(r.id) ? 'nouveau' : 'remplacer', ...(langue ? { langue } : {}) };
+    const v = Doc.checkTarget(ctx.cwd, cible, { demande, protectedFn: (f) => isTestFile(f, ctx.cfg.testGlobs || []) });
+    if (!v.ok) return { ok: false, why: v.why };
+    fs.writeFileSync(path.join(artDir, 'cible.json'), JSON.stringify({ ...cible, source: 'programme' }, null, 2));
+    return { done: true, model: r.model, why: `un seul document nommé par la demande (${cands[0].path}) ; opération « ${r.id} » choisie par le model de classement, par le sens` };
+  },
+  /** Commit of the document(s) only (no version); outside git: backup, fingerprints and diff. */
+  async 'document-livrer'({ ctx, state, run }) {
+    const art = path.join(ctx.artDir, 'livraison.md');
+    const outs = state.docOutputs || [];
+    if (!outs.length) { fs.writeFileSync(art, `# Livraison\n\nDocument déjà conforme (${Doc.DOC_ALREADY}) : rien n’a été modifié, rien à livrer.\n`); return { ok: true }; }
+    const base = readDocBase(ctx);
+    const L = ['# Livraison', '', '| Document | Avant (SHA-256) | Après (SHA-256) |', '|---|---|---|'];
+    const sha = (b) => crypto.createHash('sha256').update(b).digest('hex').slice(0, 16);
+    const diffs = [];
+    for (const o of outs) {
+      const absOut = path.join(ctx.cwd, o.output);
+      const before = base.backups.get(o.source);
+      L.push(`| \`${o.output}\`${o.output !== o.source ? ` (depuis \`${o.source}\`)` : ''} | ${before ? sha(before) : '—'} | ${sha(fs.readFileSync(absOut))} |`);
+      const bf = base.files.get(o.source);
+      if (bf) diffs.push(spawnSync('git', ['diff', '--no-index', '--no-color', '--', bf, absOut], { encoding: 'utf8', windowsHide: true, maxBuffer: 16 * 1024 * 1024 }).stdout || '');
+    }
+    const inGit = isGitWorkTree(ctx.cwd);
+    let commitLine = 'Dossier hors git : la copie d’avant est gardée dans la sauvegarde de l’exécution (`logs/runs/' + run + '/sauvegarde/`), avec les empreintes et le diff ci-dessous.';
+    if (inGit) {
+      const c = commitPaths(ctx.cwd, outs.map(o => o.output), `docs: ${String(ctx.request || '').split('\n').find(l => l.trim())?.slice(0, 80) || 'document'}\n\nDelivered by the orchestrator (pipeline run ${run}): document checked and committed by the program, no version.`);
+      if (!c.ok) return { ok: false, why: `commit impossible : ${c.why}` };
+      commitLine = c.empty ? 'Rien de nouveau à commiter.' : `Commit ${c.commit.slice(0, 12)} fait par le programme (aucun model), seulement ${outs.map(o => `\`${o.output}\``).join(', ')} ; pas de version.`;
+    }
+    L.push('', commitLine, '', '## Diff', '', '```diff', diffs.join('\n').slice(0, 20_000), '```');
+    const mod = (readArtefact(ctx, 'modification.md') || '').trim();
+    if (mod) L.push('', '## Ce qui a été fait', '', mod.slice(0, 4000));
+    fs.writeFileSync(art, `${L.join('\n')}\n`);
+    return { ok: true };
   },
   /**
    * Split before classify (0.69.0): every unit task of taches.json is
@@ -1706,6 +2065,7 @@ function meetingCheck(ctx, kind, art, changed) {
 /** Critères génériques d'une étape du catalogue. */
 function checkCatalogCriteria(ctx, step, before, after) {
   ctx.lastCheck = null;
+  ctx.docResult = null;
   const { cwd } = ctx;
   const c = step.checks || {};
   const changed = changedFiles(before, after);
@@ -1742,6 +2102,25 @@ function checkCatalogCriteria(ctx, step, before, after) {
     // already in place (definitive text already written, files already filed) is valid.
     let meetingOk = false;
     if (c.meeting) { const m = meetingCheck(ctx, c.meeting, art, changed); if (!m.ok) return fail(m.why); meetingOk = true; }
+    // Generics (phase 1): an acquisition is judged on the files on the disk (often
+    // gitignored, so absent from the snapshot); a document on its copy before the step.
+    if (c.files === 'acquisition') {
+      const pl = Files.checkFilesPlan(cwd, readArtefact(ctx, 'fichiers.json'), { demande: readArtefact(ctx, 'demande.md') || '', exists: false });
+      if (!pl.ok) return fail(pl.why);
+      const a = Files.checkAcquisition(cwd, pl.value, { changed: changed.filter(f => !isLocalOnly(f)) });
+      if (!a.ok) return fail(a.why);
+      meetingOk = true;
+    }
+    if (c.document === 'modification') {
+      const v = Doc.checkTarget(cwd, readArtefact(ctx, 'cible.json'), { demande: readArtefact(ctx, 'demande.md') || '' });
+      if (!v.ok) return fail(v.why);
+      const base = readDocBase(ctx);
+      const sinceBase = changedFiles(base.snapshot, after).filter(f => !isLocalOnly(f));
+      const d = Doc.checkDocumentChange(cwd, v.value, { backups: base.backups, changed: sinceBase, added: sinceBase.filter(f => !base.snapshot.has(f) && after.has(f)), art });
+      if (!d.ok) return fail(d.why);
+      ctx.docResult = d;
+      meetingOk = true;
+    }
     // Médias (0.55.0) : chaque fichier annoncé est ouvert et vérifié par le code.
     let media = null, waived = false, wer = null;
     if (c.media) {
@@ -1798,12 +2177,19 @@ function checkCatalogCriteria(ctx, step, before, after) {
       }
     }
   }
-  if (c.sections?.length) {
+  // Recherche « interne »: the web is not a source here (checked on the turn's own log, first).
+  if (c.noWeb) {
+    const web = toolUsesInTurn(ctx.stepLogFile || '').filter(u => WEB_TOOLS.test(u.name));
+    if (web.length) return fail(`recherche interne : le web a été utilisé (${[...new Set(web.map(u => u.name))].join(', ')}), interdit dans ce mode — sources : le dépôt et les journaux`);
+  }
+  // Discussion in one call: an answer that asks for the research step first is not judged on its sections.
+  const asksResearch = c.researchMark && new RegExp(`^\\s*${c.researchMark}\\s*:`, 'm').test(art);
+  if (c.sections?.length && !asksResearch) {
     const miss = missingSections(art, c.sections);
     if (miss.length) return fail(`${step.artefact} : sections manquantes « ${miss.map(s => `## ${s}`).join(' », « ')} »`);
   }
-  if (c.minSources && countSources(art, { files: step.kind !== 'judge' }) < c.minSources) {
-    return fail(`${step.artefact} : au moins ${c.minSources} source(s) distincte(s) avec URL attendue(s) (${countSources(art)} trouvée(s))`);
+  if (c.minSources && countSources(art, c.sourcesFiles ? { files: true, urls: false } : { files: step.kind !== 'judge' }) < c.minSources) {
+    return fail(c.sourcesFiles ? `${step.artefact} : au moins ${c.minSources} source(s) distincte(s) du projet, chacune citée entre accents graves (${countSources(art, { files: true, urls: false })} trouvée(s))` : `${step.artefact} : au moins ${c.minSources} source(s) distincte(s) avec URL attendue(s) (${countSources(art)} trouvée(s))`);
   }
   if (c.citedPaths) {
     const { missing, reported } = citedPathsCheck(ctx, art);
@@ -1822,6 +2208,14 @@ function checkCatalogCriteria(ctx, step, before, after) {
       if (!allowed.includes(json[k])) return fail(`${step.artefact} : « ${k} » doit valoir ${allowed.map(a => `« ${a} »`).join(' ou ')} (reçu « ${json[k]} »)`);
     }
     if (json.nature === 'question' && !String(json.question || '').trim()) return fail(`${step.artefact} : « question » choisie, mais aucune question à poser`);
+    // Generics (phase 1): plans checked by the code before anything runs.
+    if (c.operations && !(Array.isArray(json.operations) && !json.operations.length && String(json.hors_liste || '').trim())) {
+      const p = Ops.parseOperations(json);
+      if (!p.ok) return fail(`${step.artefact} : ${p.why}`);
+    }
+    if (c.files === 'plan') { const pl = Files.checkFilesPlan(cwd, json, { demande: readArtefact(ctx, 'demande.md') || '' }); if (!pl.ok) return fail(`${step.artefact} : ${pl.why}`); }
+    if (c.document === 'cible') { const v = Doc.checkTarget(cwd, json, { demande: readArtefact(ctx, 'demande.md') || '', protectedFn: (f) => isTestFile(f, ctx.cfg.testGlobs || []) }); if (!v.ok) return fail(`${step.artefact} : ${v.why}`); }
+    if (c.verification) { const v = checkVerification(ctx, json); if (!v.ok) return fail(`${step.artefact} : ${v.why}`); }
     if (c.tasks) {
       const why = validateTasks(ctx.root, json.taches);
       if (why) return fail(`${step.artefact} : ${why}`);
@@ -2162,7 +2556,8 @@ export async function runPipeline(o) {
   const cfg = readJson(path.join(cwd, '.orchestrateur', 'pipeline.json')) || {};
   const pipeline = state?.pipeline || o.pipeline;
   if (!ENGINE_PIPELINES.includes(pipeline)) return refuse(64, `« ${pipeline} » n'est pas en service (${ENGINE_PIPELINES.join(', ')}).`);
-  const needs = pipeline === 'dev' ? { tests: true, clean: true } : catalogOf(pipeline)?.needs || {};
+  // A mode may have its own preconditions (Rédaction « document »: outside git, tree not clean).
+  const needs = pipeline === 'dev' ? { tests: true, clean: true } : { ...(catalogOf(pipeline)?.needs || {}), ...(catalogOf(pipeline)?.needsByMode?.[state?.mode || o.mode] || {}) };
   const isGit = git(cwd, ['rev-parse', '--is-inside-work-tree']).out === 'true';
   // Le Routage (dossier du chef, hors git) se juge sur une empreinte du dossier.
   if (!isGit && needs.git !== false) {
@@ -2198,17 +2593,20 @@ export async function runPipeline(o) {
   fs.mkdirSync(runDir, { recursive: true });
   fs.mkdirSync(artDir, { recursive: true });
   const modes = catalogOf(pipeline)?.modes;
-  const mode = state?.mode || (pipeline === 'dev' && o.mode === 'complet' ? 'complet' : modes ? (modes[o.mode] ? o.mode : Object.keys(modes)[0]) : 'leger');
+  const mode = state?.mode || (pipeline === 'dev' && o.mode === 'complet' ? 'complet' : pipeline === 'discussion' && o.mode === 'verification' ? 'verification' : modes ? (modes[o.mode] ? o.mode : Object.keys(modes)[0]) : 'leger');
   // The nature of a dev request comes from the classifier model or --kind
   // (0.66.0) — never guessed from its words.
   const kind = state?.kind || (pipeline === 'dev' ? o.kind || null : pipeline === 'incident' ? 'bugfix' : null);
   if (pipeline === 'dev' && !kind) return refuse(64, 'nature de la demande (comportement, bugfix ou mécanique) non classée : le model de classement doit la donner (ou --kind).');
   const assignments = readAssignments(root);
+  // Switches read when the run starts and frozen in run.json (pipeline-tuning.mjs):
+  // the plan itself may depend on them (lever 6), so they are read first.
+  const startTuning = state ? null : tuningFor(readTuning(root), projectName);
   if (!state) {
     state = {
       run, project: projectName, pipeline, mode, kind, base, status: 'running',
       createdAt: new Date().toISOString(), request: prompt.slice(0, 20_000),
-      plan: planSteps(pipeline, { mode, kind }).map(s => s.id), index: 0, reviewRounds: 0, steps: [],
+      plan: planSteps(pipeline, { mode, kind, tuning: startTuning }).map(s => s.id), index: 0, reviewRounds: 0, steps: [], tuning: startTuning,
       // Runs paused by an older engine keep their whole-run Review / single
       // commit (no flag): per-item Review (0.63.0), per-item delivery (0.64.0).
       ...(pipeline === 'dev' && mode === 'complet' ? { itemReview: true, itemDelivery: true, lastDelivered: base, delivered: [], aside: [] } : {}),
@@ -2286,6 +2684,14 @@ export async function runPipeline(o) {
     }
     if (eff.message) {
       state.resumeMessages = [...(state.resumeMessages || []), { at: new Date().toISOString(), step: state.plan?.[state.index] || null, pausedLimit: state.pausedLimit || null, from: 'diagnostic', text: eff.message }];
+    }
+    // Decision 5 (phase 1): « autoriser » at the authorization pause — only the
+    // operations that pause listed, and only by this explicit menu word.
+    if (eff.authorize && state.pausedLimit === 'autoriser') {
+      state.authorizedOps = [...new Set([...(state.authorizedOps || []), ...(state.pendingAuth || [])])];
+      writeEvent({ type: 'system', subtype: 'pipeline_operations_authorized', pipeline: { run }, operations: state.pendingAuth || [],
+        text: `opération(s) irréversible(s) autorisée(s) par la réponse « autoriser » de l’utilisateur : n° ${(state.pendingAuth || []).map(i => i + 1).join(', ')}` });
+      state.pendingAuth = [];
     }
   }
   if (resumed && ['items', 'duration', 'review'].includes(state.pausedLimit)) {
@@ -2375,7 +2781,9 @@ export async function runPipeline(o) {
       saveState();
     }
   }
-  let stepDefs = pipeline === 'dev' ? devCatalog({ mode: state.mode, kind }) : Object.fromEntries(planSteps(pipeline, { mode: state.mode, kind }).map(s => [s.id, s]));
+  let stepDefs = pipeline === 'dev' ? devCatalog({ mode: state.mode, kind }) : Object.fromEntries(planSteps(pipeline, { mode: state.mode, kind, tuning: state.tuning }).map(s => [s.id, s]));
+  // Discussion in one call: its research step is inserted only when the answer asks for it.
+  if (pipeline === 'discussion' && stepDefs.repondre?.checks?.researchMark) stepDefs.rechercher = DISCUSSION_RESEARCH;
   const catalog = catalogOf(pipeline);
   // Variante d'étape (média, 0.55.0) : sa case passe en tête de la chaîne, et le
   // type de fichier attendu peut en dépendre. Depuis 0.66.0 elle est choisie par
@@ -2450,7 +2858,7 @@ export async function runPipeline(o) {
   if (obsId) childEnv.ORCH_OBS_ID = obsId;
   const testEnv = { ...childEnv };
   delete testEnv.ORCH_OBS_ID;
-  const ctx = { root, request: state.request || prompt, run, pipeline, kind, mode: state.mode, cwd, cfg, artDir, base, testEnv, reviewItems: null, testPrint: null, limits,
+  const ctx = { root, request: state.request || prompt, run, pipeline, kind, mode: state.mode, cwd, cfg, artDir, runDir, base, testEnv, reviewItems: null, testPrint: null, limits,
     item: state.item || null, itemTestBase: state.itemTestBase || null, reviewScope: null, acceptedDefects: state.acceptedDefects || [], escalated: !!state.escalated, coveredItems: state.coveredItems || [], deliveryFixes: state.deliveryFixes || [], suiteRedAtStart: !!state.suiteRedAtStart, lastMedia: state.lastMedia || null,
     resumeMessages: state.resumeMessages || [], relaxed: state.relaxed || [],
     // P9: in a lane, Livrer writes a changelog.d fragment; the integrator assigns the version.
@@ -3237,6 +3645,47 @@ export async function runPipeline(o) {
         state.index++; saveState(); continue;
       }
     }
+    // Generics (phase 1): a named rule of the code decides (download in the
+    // plan? document change large enough to be re-read?) — said, never silent.
+    if (step.skipUnless && SKIP_RULES[step.skipUnless]) {
+      const why = SKIP_RULES[step.skipUnless]({ ctx, state });
+      if (why) {
+        const key = `${String(state.steps.length + 1).padStart(2, '0')}-${id}`;
+        state.steps.push({ id, key, title: step.title, status: 'skipped', why, attempt: 1, durationMs: 0 });
+        writeEvent({ type: 'system', subtype: 'pipeline_step_done', pipeline: { run, step: id, key, attempt: 1 }, status: 'skipped', why, durationMs: 0, text: `étape ${step.title} : sautée — ${why}` });
+        state.index++; saveState(); continue;
+      }
+    }
+    // A step the PROGRAM may do itself (one named operation, one named
+    // document): done → no model turn; null → the model's step runs as usual.
+    if (step.codeFirst && CODE_STEPS[step.codeFirst]) {
+      const key = `${String(state.steps.length + 1).padStart(2, '0')}-${id}`;
+      const t0 = Date.now();
+      let out = null;
+      try { out = await CODE_STEPS[step.codeFirst]({ root, logsDir, ctx, state, artDir, projectName, dispatchScript, run, writeEvent }); }
+      catch (e) { writeEvent({ type: 'system', subtype: 'pipeline_warning', pipeline: { run, step: id }, text: `${step.title} : le programme n’a pas pu faire l’étape (${e.message}) — confiée au model` }); }
+      if (out?.ok === false) {
+        record({ rec: { id, key, title: step.title, slot: null, model: out.model || null, source: 'code', status: 'refused', why: out.why, attempt: 1, durationMs: Date.now() - t0 } });
+        return finish({ code: 1, isError: true, result: `✕ ${projectName} — ${step.title.replace(/^[A-Z]?\d+\s+/, '')} : ${out.why}. Rien n’a été modifié.` });
+      }
+      if (out?.done) {
+        record({ rec: { id, key, title: step.title, slot: out.model ? step.chain[0] : null, model: out.model || null, ...(out.model ? { served: out.model } : {}), source: 'code', status: 'ok', why: null, attempt: 1, durationMs: Date.now() - t0 } });
+        writeEvent({ type: 'system', subtype: 'pipeline_step_by_code', pipeline: { run, step: id, key }, text: `étape ${step.title} faite par le programme : ${out.why}` });
+        state.index++; saveState(); continue;
+      }
+    }
+    // The case of a step may depend on an earlier decision (the document's operation).
+    if (step.chainFrom) {
+      const v = (parseJsonArtefact(readArtefact(ctx, step.chainFrom.artefact) || '') || {})[step.chainFrom.field];
+      if (typeof v === 'string' && /^[a-z0-9-]{1,40}$/.test(v)) step = { ...step, chain: [`${step.chainFrom.prefix}${v}`, ...step.chain] };
+    }
+    // Rédaction « document »: a copy of each target before its first change
+    // (the criterion compares to it; outside git it is the only way back).
+    if (step.checks?.document === 'modification') {
+      const v = Doc.checkTarget(cwd, readArtefact(ctx, 'cible.json'), { demande: readArtefact(ctx, 'demande.md') || '' });
+      if (!v.ok) return finish({ code: 1, isError: true, result: `✕ ${projectName} — cible du document invalide : ${v.why}. Rien n’a été modifié.` });
+      saveDocBase(ctx, v.value);
+    }
     // Contexte du chef : la conversation récente, extraite de son log par le code.
     if (step.prerun === 'conversation') {
       fs.writeFileSync(path.join(artDir, 'conversation.md'), conversationExcerpt(projectLog, { fullDir: path.join(artDir, 'conversation') }));
@@ -3249,6 +3698,14 @@ export async function runPipeline(o) {
       let out;
       try { out = await CODE_STEPS[step.handler]({ root, logsDir, ctx, state, artDir, projectName, dispatchScript, run, writeEvent }); }
       catch (e) { out = { ok: false, why: e.message }; }
+      // A code step of the generics may pause the run (authorization, an
+      // operation that failed: phase 1) — re-run from the same step on resume —
+      // or end it with its own result (nothing runnable, said with a question).
+      if (out?.pause) { saveState(); return pauseWith(out.pause); }
+      if (out?.finish) {
+        record({ rec: { id, key, title: step.title, slot: null, model: null, source: 'code', status: 'ok', why: null, attempt: 1, durationMs: Date.now() - t0 } });
+        return finish({ code: 0, result: out.finish });
+      }
       // A code step may call a model itself (« classer »: one classifier call per task).
       const rec = { id, key, title: step.title, slot: out.model ? step.chain[0] : null, model: out.model || null, ...(out.model ? { served: out.model } : {}), source: 'code', status: out.ok ? 'ok' : 'refused', why: out.ok ? null : out.why, attempt: 1, durationMs: Date.now() - t0 };
       record({ rec });
@@ -3346,6 +3803,8 @@ export async function runPipeline(o) {
       if (r.rec.status === 'ok') break;
       // Un essai refusé n'est pas gardé : retour à l'état d'avant l'essai.
       if (!step.judge && r.before && r.after) restoreFiles(cwd, r.before, r.after, delivering ? foldBase : null);
+      // Outside git restoreFiles never undoes anything: a document has its own copy (phase 1).
+      if (step.checks?.document === 'modification' && r.before && r.after && isWalkSnapshot(r.before)) restoreDocAttempt(ctx, r.before, r.after);
       if (step.judge && r.before && r.after) restoreFiles(cwd, r.before, r.after, null);
       if (r.crit?.noRetry && delivering) git(cwd, ['reset', '-q']);
       retryWhy = r.rec.why;
@@ -3383,6 +3842,15 @@ export async function runPipeline(o) {
       state.externalChanges = [...new Set([...(state.externalChanges || []), ...files])];
       writeEvent({ type: 'system', subtype: 'pipeline_external_change', pipeline: { run, step: step.id }, files,
         text: `fichiers du dossier modifiés pendant l’étape ${step.title}, conservés tels quels (pas annulés) : ${files.slice(0, 8).join(', ')}` });
+    }
+    // Rédaction « document »: the outputs the code accepted (what Relire and Livrer work on).
+    if (step.checks?.document === 'modification' && ctx.docResult) { state.docOutputs = ctx.docResult.outputs || []; state.docAlready = !!ctx.docResult.already; }
+    // Discussion in one call (lever 6): the answer asked for a research first —
+    // the research step, then the answer again, once.
+    if (pipeline === 'discussion' && step.checks?.researchMark && !state.discussionResearch && new RegExp(`^\\s*${RESEARCH_MARK}\\s*:`, 'm').test(readArtefact(ctx, step.artefact) || '')) {
+      state.discussionResearch = true;
+      state.plan.splice(state.index + 1, 0, 'rechercher', 'repondre');
+      writeEvent({ type: 'system', subtype: 'pipeline_research_inserted', pipeline: { run, step: id }, text: 'la réponse demande une recherche : étape « Rechercher », puis la réponse de nouveau (une fois)' });
     }
     if (last.crit?.media?.length) { ctx.lastMedia = state.lastMedia = last.crit.media.map(f => f.path); state.media = [...new Set([...(state.media || []), ...ctx.lastMedia])]; }
     // Boucle déclarée (audit : re-vérifier → corriger tant qu'il reste des failles),
@@ -3627,14 +4095,16 @@ export async function runPipeline(o) {
     const delivered = head && head !== base ? git(cwd, ['log', '-1', '--format=%h %s']).out : null;
     const skipped = state.steps.filter(s => s.status === 'skipped');
     return `✓ ${projectName} — pipeline ${label} terminé (${run}).\n\n` +
-      `- Étapes : ${state.steps.filter(s => s.status === 'ok').map(s => `${s.title.replace(/^\d+[a-z]?\s+/, '')} (${s.model || 'défaut'})`).join(' → ')}\n` +
+      `- Étapes : ${state.steps.filter(s => s.status === 'ok').map(s => `${s.title.replace(/^\d+[a-z]?\s+/, '')} (${s.model || (s.source === 'code' ? 'programme' : 'défaut')})`).join(' → ')}\n` +
       (skipped.length ? `- Sautées : ${skipped.map(s => `${s.title.replace(/^\d+[a-z]?\s+/, '')} — ${s.why}`).join(' ; ')}\n` : '') +
       `- ${delivered ? `Commit : ${delivered}` : 'Aucun commit (rien à livrer)'} ; pas de push (soumis à autorisation).\n` +
       `- Critères vérifiés par l'orchestrateur à chaque étape (artefacts, lecture seule, suite verte, livraison).\n` +
       (body ? `\n${body.slice(0, 8000)}` : (readArtefact(ctx, 'livraison.md') || '').trim().slice(0, 4000) ? `\n${(readArtefact(ctx, 'livraison.md') || '').trim().slice(0, 4000)}` : '');
   }
   let result;
-  if (pipeline === 'discussion') {
+  if (pipeline === 'discussion' && state.mode === 'verification') {
+    result = verificationMarkdown(parseJsonArtefact(readArtefact(ctx, 'verification.json') || '') || {});
+  } else if (pipeline === 'discussion') {
     result = (readArtefact(ctx, 'reponse.md') || '').trim() || '(réponse vide)';
   } else if (catalog) {
     result = catalogResult();

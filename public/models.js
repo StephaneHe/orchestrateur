@@ -819,6 +819,15 @@
           <span class="mr-sym mr-sym-ref" aria-hidden="true">⤳</span> ${esc(s.ref.label)} — ouvrir « ${esc(target?.label || s.ref.pipeline)} »</button>
       </article>`;
     }
+    // A step done by the program (pipelines phase 1): no case, no menu — said as such.
+    if (s.code) {
+      return `<article class="mr-card mr-code" data-step="${esc(s.id)}" data-code="1">
+        <header class="mr-card-head"><span class="mr-num">${esc(s.n)}</span><h3 class="mr-card-title">${esc(s.title)}</h3>${opt}<span class="mr-kind" data-kind="code" title="Fait par le programme de l’orchestrateur, sans model : rien à choisir">programme</span></header>
+        <p class="mr-what">${esc(s.what)}</p>
+        <p class="mr-ex"><b>Ex.</b> ${esc(s.example)}</p>
+        ${ret}${inc}
+      </article>`;
+    }
     const variants = s.variants || [];
     const openKey = slotId;
     const vars = variants.length ? `

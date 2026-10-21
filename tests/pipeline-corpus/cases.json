@@ -1,0 +1,81 @@
+{
+  "about": "Real requests of the production orchestrator (logs read read-only on 2026-10-21), anonymised for this public repository: project names replaced, texts abridged, URLs replaced by example.org, no mail nor secret. Pipelines redesign, phase 1 (docs/PIPELINES-SYNTHESE.md §8.2, §8.3): each one must go to the right generic, its effect verified by the code.",
+  "cases": [
+    {
+      "id": "push",
+      "run": "p-20261019T162957-4ebfbf",
+      "project": "projet-video",
+      "request": "Pousser (git push) vers le dépôt distant tous les commits locaux non poussés de projet-video (environ 29 commits). Contexte : le chef a demandé à l'utilisateur « Je fais pousser les 29 commits ? » ; l'utilisateur a répondu « pousses, puis ajoutes les videos » — le push est donc autorisé explicitement. Ne pousse que des commits déjà faits, aucun force-push.",
+      "before": { "pipeline": "maintenance", "steps": "dependances, historique, tests-instables, dette ; livrer sautée", "effect": "rien poussé" },
+      "expected": { "pipeline": "operations", "operation": "git_push" },
+      "authorization": "pousses, puis ajoutes les videos"
+    },
+    {
+      "id": "reel",
+      "run": "p-20261019T150341-318fcf",
+      "project": "projet-video",
+      "request": "Reel à télécharger : https://www.example.org/reels/AbC123/ — télécharge-le (par exemple avec yt-dlp), vérifie que le fichier produit existe et est lisible (taille non nulle, durée et format cohérents), puis rends son chemin local absolu exact. Cette tâche est indépendante de l'ajout des vidéos.",
+      "before": { "pipeline": "donnees", "steps": "collecter, nettoyer, stocker, presenter ×3, livrer", "effect": "7 appels de model" },
+      "expected": { "pipeline": "fichiers" }
+    },
+    {
+      "id": "todo",
+      "run": "p-20261019T145920-68172b",
+      "project": "projet-video",
+      "request": "Inscris deux nouvelles tâches dans le TODO_LIST.md de projet-video (format horodaté, case [ ], ne rien effacer), dans cet ordre, SANS les exécuter (aucun téléchargement, aucun code, aucun push) : 1. ajouter au lecteur les 5 vidéos demandées ; 2. ensuite, télécharger le reel.",
+      "before": { "pipeline": "dev (léger)", "steps": "vert, revue, vert, revue, livrer", "effect": "5 appels de model pour deux lignes" },
+      "expected": { "pipeline": "redaction", "mode": "document" }
+    },
+    {
+      "id": "apk",
+      "run": null,
+      "project": "projet-app",
+      "request": "L'application Android est construite et testée (versionCode 42). Publie son APK sur la page /downloads, puis installe-le sur le téléphone branché. L'utilisateur a dit « publie et installe l'APK sur le téléphone ».",
+      "before": { "pipeline": "aucun générique", "steps": "demande restée à faire (« la publication sur /downloads reste à faire », 2026-10-20)", "effect": "—" },
+      "expected": { "pipeline": "operations", "operations": ["copy_build", "adb_install"] },
+      "authorization": "publie et installe l'APK sur le téléphone"
+    },
+    {
+      "id": "bond",
+      "run": null,
+      "project": "orchestrateur-dev",
+      "request": "Bond de production de l'orchestrateur, décidé par l'utilisateur : la version v1.4.0 est testée dans la dev ; prépare le bond vers la prod (le plan de prod-jump), sans l'appliquer.",
+      "before": { "pipeline": "à classer (2026-10-15)", "steps": "tour ordinaire", "effect": "—" },
+      "expected": { "pipeline": "operations", "operation": "prod_jump" }
+    },
+    {
+      "id": "comparaison",
+      "run": "p-20261019T112349-2cfade",
+      "project": "projet-media",
+      "request": "Comparaison en lecture seule (ne modifie, ne déplace et ne supprime aucun fichier) : compare le contenu des dossiers « {A} » et « {B} ». Question de l'utilisateur : « quelle différence de contenu y a-t-il entre les deux dossiers ? ». Liste les fichiers présents d'un seul côté et ceux qui diffèrent.",
+      "before": { "pipeline": "discussion", "steps": "comprendre, rechercher, repondre", "effect": "210 s actives, comparaison faite par le model" },
+      "expected": { "pipeline": "fichiers" },
+      "accepted": [{ "pipeline": "discussion", "mode": "verification" }]
+    },
+    {
+      "id": "video",
+      "run": "p-20261012T152601-2e8a3b",
+      "project": "projet-video",
+      "request": "Demande de l'utilisateur : « récupère la vidéo https://www.example.org/video/x1y2z3 et mets la avec les autres ». Télécharge-la en un seul fichier .mp4, à la racine du projet à côté des autres .mp4, nommée d'après son titre.",
+      "before": { "pipeline": "video", "steps": "acquerir, analyser, monter ×3, verifier ×3, livrer", "effect": "9 étapes pour un téléchargement" },
+      "expected": { "pipeline": "fichiers" }
+    },
+    {
+      "id": "deploiement",
+      "run": null,
+      "project": "projet-box",
+      "request": "Serveur de projet-box : mettre en production la version v1.49.5 (commit local 7edbf88). Demande de l'utilisateur : « lance le deploiement ». Le projet déclare son redémarrage de service.",
+      "before": { "pipeline": "à classer (2026-10-19)", "steps": "—", "effect": "—" },
+      "expected": { "pipeline": "operations" }
+    },
+    {
+      "id": "reunion",
+      "run": "p-20261016T132118-ddfd3b",
+      "project": "projet-reunion",
+      "request": "Réunion du 16 octobre : ranger ses fichiers pour qu'il ne reste que 4 éléments, retrouvables sous le nom « réunion du 16 octobre ». Un seul mail a été envoyé, le mail définitif ; supprime les brouillons de mail et range la transcription et la vidéo.",
+      "before": { "pipeline": "maintenance", "steps": "dependances, historique, tests-instables, dette refusée ×2", "effect": "en pause, rien rangé" },
+      "expected": { "pipeline": "reunion" },
+      "note": "spécialisé avant générique : une réunion reste au pipeline Réunion"
+    }
+  ]
+}

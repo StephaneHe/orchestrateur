@@ -91,6 +91,8 @@ export const CAUSE_KINDS = Object.freeze({
   git_commit: 'git a refusé le commit',
   interrupted: 'l’exécution a été interrompue (processus arrêté)',
   repeated: 'la même erreur se répète d’un essai à l’autre',
+  authorization: 'une action irréversible attend l’autorisation explicite de l’utilisateur',
+  operation_failed: 'une opération n’a pas produit l’effet vérifié (condition préalable ou postcondition fausse)',
   unknown: 'cause non établie',
 });
 
@@ -196,6 +198,9 @@ export function diagnosePause(input = {}) {
   }
   // Pauses whose cause is their very nature (no criterion to read).
   switch (input.limit) {
+    // Generics (pipelines phase 1): an irreversible operation without the user's words; an operation that failed.
+    case 'autoriser': return out('authorization', `Ces opérations sont irréversibles et votre demande ne les autorise pas en toutes lettres : ${(input.extra?.operations || []).join(' ; ') || 'voir la liste'}. Rien n’a été lancé.`, { operations: input.extra?.operations || [] });
+    case 'operation': return out('operation_failed', `${input.extra?.stage === 'precondition' ? 'Une condition préalable n’est pas remplie' : input.extra?.stage === 'execution' ? 'Une opération de fichiers a échoué' : `L’opération ${input.extra?.operation || ''} n’a pas produit l’effet vérifié`} : ${clean(motif, 260)}.`, { stage: input.extra?.stage || 'postcondition', operation: input.extra?.operation || null });
     case 'doutes': return out('missing_info', `Avant toute suppression, ${input.extra?.doubts || 'des'} fichier(s) sont en doute : seule votre réponse dit s’il faut les supprimer.`);
     case 'orphaned': return out('interrupted', `L’exécution s’est arrêtée sans finir : ${clean(why || 'son processus n’existe plus', 200)}.`);
     case 'items_blocked': return out('items_blocked', `${(input.aside || []).length} item(s) ont été mis de côté pour une raison précise (${(input.aside || []).map(a => `item ${a.group} : ${clean(a.reason || a.why, 80)}`).join(' ; ')}), les autres sont livrés.`, { aside: input.aside || [] });
@@ -339,6 +344,7 @@ export const OPTION_KEYS = Object.freeze({
   'compléter le compte rendu': 'resume', 'respecter le périmètre': 'resume', 'corriger le format': 'resume',
   'réparer': 'resume','réparé': 'resume', 'reconnecté': 'resume', 'relancer après correction': 'resume', 'garder les doutes': 'resume',
   'reprendre les items': 'resume', 'écarter l’item': 'resume', 'relancer l’étape': 'resume', 'refaire le commit': 'resume',
+  'autoriser': 'resume', 'relancer l’opération': 'resume',
   'accepter': 'accept', 'tout supprimer': 'deleteDoubts',
   'abandonner': 'abandon', 'simplifier': 'abandon', 'livrer sans eux': 'abandon',
   'tester le model': 'test', 'changer le model': 'model',
@@ -544,6 +550,16 @@ export function smartMenu(d, ctx = {}) {
     case 'aside_conflict':
       add('écarter l’item', `j’écarte cet item (ses modifications restent gardées dans son correctif) et je continue avec ${ctx.restoreQueue ? `les ${ctx.restoreQueue} autre(s) item(s) mis de côté` : 'la fin de l’exécution'}.`);
       rec = ['écarter l’item', 'ses modifications ont été dépassées par les items livrés depuis : les réappliquer échouerait toujours.'];
+      break;
+    case 'authorization':
+      add('autoriser', `j’exécute ${(d.operations || []).join(' ; ') || 'ces opérations'}, puis je relis leur effet (postcondition) ; rien d’autre.`, { authorize: true });
+      rec = ['autoriser', 'c’est l’action demandée ; seule votre réponse explicite peut l’autoriser (jamais une réponse automatique).'];
+      break;
+    case 'operation_failed':
+      add('relancer l’opération', d.stage === 'precondition'
+        ? 'une fois la condition remplie (par vous), je revérifie les conditions et je lance les opérations ; rien n’a été lancé jusqu’ici.'
+        : 'une fois la cause corrigée (par vous), je reprends à l’opération en échec ; celles déjà vérifiées ne sont pas relancées.');
+      rec = ['relancer l’opération', 'la cause est nommée et rien n’a été fait à l’aveugle : la corriger puis relancer reprend exactement là.'];
       break;
     case 'git_commit':
       add('refaire le commit', 'vous avez corrigé ce que git refuse (crochet, identité, verrou) : je refais le commit de l’item.');

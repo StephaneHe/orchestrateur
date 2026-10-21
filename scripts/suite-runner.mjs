@@ -65,6 +65,7 @@ export const SERIAL_SUITES = new Set([
   '_test_dev_pilot_first.mjs',     // concurrent turns: overlap and wait timings
   '_test_lane_pipeline.mjs',       // concurrent pipeline runs: overlap timings
   '_test_dev_pipeline_lanes.mjs',   // concurrent pipeline runs of the dev instance: overlap timings
+  '_test_pipeline_corpus.mjs',     // the real corpus replayed end to end; a service polled with a deadline (PIPELINES-SYNTHESE §8.3)
 ]);
 
 /** Default parallelism: ORCH_REGRESS_JOBS, else a quarter of the CPUs, 1 to 4. */

@@ -47,6 +47,15 @@ const PREFIXES = [
   [/^\/(audio|son)\b/i, 'audio'],
 ];
 const MODE_PREFIX = [[/(^|\s)\/(léger|leger)\b/i, 'leger'], [/(^|\s)\/complet\b/i, 'complet']];
+// Generics (pipelines phase 1): explicit choices too, recognised only with the
+// switch `generic` on for the project (off = exactly as before).
+const GENERIC_PREFIXES = [
+  [/^\/(opérations|operations|operation|opération)\b/i, 'operations', null],
+  [/^\/fichiers\b/i, 'fichiers', null],
+  [/^\/document\b/i, 'redaction', 'document'],
+  [/^\/(vérification|verification|verifier|vérifier)\b/i, 'discussion', 'verification'],
+  [/^\/(recherche-interne|interne)\b/i, 'recherche', 'interne'],
+];
 
 /** Texte utile d'une entrée : sans nos propres blocs de consignes injectées. */
 export function normalizeText(text) {
@@ -68,11 +77,12 @@ const has = (re, s) => new RegExp(stripAccents(re.source), re.flags).test(stripA
  * Renvoie {pipeline|null, mode|null, explicit, system}. pipeline null = « à
  * classer » : c'est au model de la case routage.classifier de décider.
  */
-export function explicitChoice({ text, entry } = {}) {
+export function explicitChoice({ text, entry, generic = false } = {}) {
   if (SYSTEM_ENTRIES.has(entry)) return { pipeline: 'routage', mode: null, explicit: true, system: true };
   const raw = normalizeText(text);
   let mode = null;
   for (const [re, m] of MODE_PREFIX) if (has(re, raw)) mode = m;
+  if (generic) for (const [re, p, m] of GENERIC_PREFIXES) if (has(re, raw)) return { pipeline: p, mode: m || mode, explicit: true, system: false };
   for (const [re, p] of PREFIXES) if (has(re, raw)) return { pipeline: p, mode, explicit: true, system: false };
   return { pipeline: null, mode, explicit: false, system: false };
 }

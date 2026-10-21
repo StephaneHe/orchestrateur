@@ -65,6 +65,8 @@ export const LIMIT_MARK = '🤖 auto';
 // Never picked on a limit: `abandon` closes the run (abandonner, simplifier,
 // livrer sans eux); `model` only works after the user changes the Models page.
 export const LIMIT_FORBIDDEN_EFFECTS = Object.freeze(['abandon', 'model']);
+/** Pauses only the user's own answer may close (pipelines phase 1): never answered automatically. */
+export const USER_ONLY_PAUSES = Object.freeze(['autoriser']);
 export const isLimitPause = (w) => w?.kind === 'pause' && LIMIT_PAUSES.includes(w.context?.pausedLimit);
 /** The options of a limit pause the automatic answer may choose (derived from the diagnosed cause). */
 export function limitOptions(diagnosis) {
@@ -305,6 +307,7 @@ export const BACKLOG_TEXT = {
   'non-presentee': 'lacune jamais présentée (page Models) : jamais traitée automatiquement',
   'limite-deja-repondue': 'limite de pipeline : la réponse automatique a déjà répondu une fois pour cette exécution, la suivante vous attend',
   'limite-sans-choix': 'limite de pipeline sans option autorisée (seulement abandonner ou changer le model) : elle vous attend',
+  'autorisation-utilisateur': 'autorisation d’une opération irréversible (push, installation, redémarrage…) : seule votre réponse l’accorde, jamais une réponse automatique',
 };
 
 /**
@@ -323,6 +326,8 @@ export function classifyWaits({ waits, settings, idle, presented = {}, ledger = 
     if (w.since < activatedAt) reason = 'avant-activation';
     else if (Number.isFinite(idle?.presentSince) && w.since < idle.presentSince) reason = 'avant-retour';
     else if (w.kind === 'gap' && !presented[w.key]) reason = 'non-presentee';
+    // Pipelines phase 1, decision 5: an irreversible operation is authorized by the user only.
+    else if (w.kind === 'pause' && USER_ONLY_PAUSES.includes(w.context?.pausedLimit)) reason = 'autorisation-utilisateur';
     else if (isLimitPause(w) && limitAnswered(w, ledger)) reason = 'limite-deja-repondue';
     else if (isLimitPause(w) && !limitOptions(w.context?.diagnosis).length) reason = 'limite-sans-choix';
     if (reason) backlog.push({ ...w, backlog: reason, backlogText: BACKLOG_TEXT[reason] });

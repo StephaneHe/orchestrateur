@@ -39,7 +39,8 @@ const make = (dir, extra = {}) => createModelRouting({ root: dir, cacheFile: pat
 const stepsOf = (p) => p.flow.flatMap(n => (n.kind === 'loop' ? n.steps : [n]));
 
 console.log('\n── 1. Les 14 pipelines');
-t('14 pipelines dans l’ordre demandé (reunion depuis 0.110.0)', PIPELINES.map(p => p.id).join() === 'dev,discussion,routage,incident,recherche,audit,maintenance,nouveau,donnees,redaction,reunion,images,video,audio');
+// Pipelines phase 1 (decision 4 of 2026-10-20): the generics « operations » and « fichiers » come last.
+t('16 pipelines dans l’ordre demandé (reunion depuis 0.110.0, génériques depuis la phase 1 des pipelines)', PIPELINES.map(p => p.id).join() === 'dev,discussion,routage,incident,recherche,audit,maintenance,nouveau,donnees,redaction,reunion,images,video,audio,operations,fichiers');
 t('chaque pipeline a un bandeau (à quoi il sert, quand)', PIPELINES.every(p => p.purpose && p.when));
 const incomplete = PIPELINES.flatMap(p => stepsOf(p).filter(s => !s.title || !s.what || !s.example || !s.n).map(s => `${p.id}.${s.id}`));
 t('chaque étape a numéro, titre, quand/quoi et exemple', !incomplete.length, incomplete.join(', '));
@@ -60,8 +61,8 @@ t('Images : vérification → retour à générer', stepsOf(PIPELINES.find(p => 
 t('Images : 5 variantes (génération, retouche, OCR, légende, vignettes)', stepsOf(PIPELINES.find(p => p.id === 'images')).find(s => s.id === 'produire').variants.length === 5);
 t('Vidéo et Audio : 5 et 4 étapes', stepsOf(PIPELINES.find(p => p.id === 'video')).length === 5 && stepsOf(PIPELINES.find(p => p.id === 'audio')).length === 4);
 const refs = new Set(PIPELINES.flatMap(p => stepsOf(p).filter(s => s.ref).map(s => `${p.id}.${s.id}`)));
-const missing = PIPELINES.flatMap(p => stepsOf(p).flatMap(s => [s.ref ? null : `${p.id}.${s.id}`, ...(s.variants || []).map(v => `${p.id}.${s.id}.${v.id}`)])).filter(Boolean).filter(id => !SLOTS.some(x => x.id === id));
-t('une case par étape (hors renvois) et par variante', !missing.length && SLOTS.every(s => !refs.has(s.id)), missing.join(', '));
+const missing = PIPELINES.flatMap(p => stepsOf(p).flatMap(s => [s.ref || s.code ? null : `${p.id}.${s.id}`, ...(s.variants || []).map(v => `${p.id}.${s.id}.${v.id}`)])).filter(Boolean).filter(id => !SLOTS.some(x => x.id === id));
+t('une case par étape (hors renvois et étapes faites par le programme) et par variante', !missing.length && SLOTS.every(s => !refs.has(s.id)), missing.join(', '));
 t('étapes de jugement : toutes existent et portent une case marquée', [...JUDGE_STEPS].every(id => SLOTS.some(s => s.id === id && s.judge)) && SLOTS.filter(s => s.id === 'dev.vert').every(s => !s.judge));
 t('les cibles de retour existent', PIPELINES.every(p => { const ids = new Set([...p.flow.map(n => n.id), ...stepsOf(p).map(s => s.id)]); return stepsOf(p).every(s => (s.returns || []).every(r => ids.has(r.to))); }));
 t('l’ancienne structure (20 types) se projette sur des cases existantes', Object.keys(LEGACY_MAP).length === 20 && Object.values(LEGACY_MAP).flat().every(id => SLOTS.some(s => s.id === id)));

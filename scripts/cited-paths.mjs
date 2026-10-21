@@ -78,6 +78,34 @@ export function observedInTurn(logFile) {
   return { text: norm([...reads, ...parts].join('\n')), reads };
 }
 
+/**
+ * The tool calls of a step turn, from its stream-json log, with whether their
+ * result succeeded: [{ name, input, ok, output }] (pipelines phase 1: proofs of
+ * a verification, and the « no web » rule of the internal research).
+ */
+export function toolUsesInTurn(logFile) {
+  let lines = [];
+  try { lines = fs.readFileSync(logFile, 'utf8').split('\n'); } catch { return []; }
+  const byId = new Map();
+  const out = [];
+  for (const l of lines) {
+    if (!l) continue;
+    let e; try { e = JSON.parse(l); } catch { continue; }
+    const content = e?.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const b of content) {
+      if (b?.type === 'tool_use') { const u = { name: String(b.name || ''), input: b.input || {}, ok: false, output: '' }; byId.set(b.id, u); out.push(u); }
+      else if (b?.type === 'tool_result' && byId.has(b.tool_use_id)) {
+        const u = byId.get(b.tool_use_id);
+        u.ok = !b.is_error;
+        const c = b.content;
+        u.output = typeof c === 'string' ? c : Array.isArray(c) ? c.map(x => (typeof x?.text === 'string' ? x.text : '')).join('\n') : '';
+      }
+    }
+  }
+  return out;
+}
+
 function seenIn(observed, p) {
   const n = norm(p);
   if (!n || !observed.text) return false;

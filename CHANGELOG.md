@@ -11,6 +11,97 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.129.0] - 2026-10-21
+
+Pipelines redesign, **phase 1 « génériques »** (user decision of 2026-10-21,
+« vas y »; `docs/PIPELINES-SYNTHESE.md` §3.3, §8.2, decisions 4, 5 and 10 of
+2026-10-20 « tout comme recommandé »). Every new behaviour is behind its own
+switch (`enforcement.tuning`), **off by default**, frozen in `run.json` when a
+run starts; off = exactly the behaviour of 0.128.0.
+
+### Added
+- (server) `scripts/typed-operations.mjs`: the registry of typed operations,
+  written once and meant to be shared with the chef's typed actions (Routage
+  v3, phase 2): `git_push` (fast-forward only, never forced), `git_tag`,
+  `git_push_tag`, `git_restore` (backup copy first), `prod_jump` (the PLAN of
+  `prod-jump.mjs` only — `--apply` is never in the argv), `copy_build`,
+  `adb_install`, `service_restart` and `run_script` (only what
+  `.orchestrateur/pipeline.json` declares, with a mandatory check). Argv
+  arrays, `shell: false`, preconditions read first, and the effect RE-READ
+  after the command (`git ls-remote`, installed `versionCode`, URL, file): a
+  return code alone is never « done ».
+- (server) Pipeline **« operations »**: Préparer (model, closed list; skipped
+  when the classifier already named every operation) → Autoriser (code) →
+  Exécuter et vérifier (code) → Rapporter (code). An irreversible operation
+  runs only with the user's exact words found in the request, or the answer
+  « autoriser » at the pause; « continuer » authorizes nothing; the automatic
+  answer never handles this pause (`USER_ONLY_PAUSES`). A false precondition
+  or postcondition pauses with its cause (« relancer l’opération »); the
+  resume never re-runs an operation already verified. Nothing runnable in the
+  list ⇒ nothing runs, the answer says what to declare and asks.
+- (server) Pipeline **« fichiers »** (`scripts/files-check.mjs`): the model
+  writes the plan (acquire, copy, move, rename, delete with a reason, compare;
+  destinations and deletions inside the project, a source outside it only
+  when the user wrote its path, never an overwrite, 50 at most) and downloads;
+  copy / move / rename / delete (trash copy first) / compare are done by the
+  code, every effect re-read (present, not empty, readable media); a doubt
+  pauses before any deletion; the delivery commits the plan's text files only,
+  never a binary.
+- (server) Rédaction mode **« document »** (`scripts/document-check.mjs`): a
+  one-off piece of work on an EXISTING document — Cibler (by the program when
+  the request names one document, the operation chosen by the classifier
+  model's meaning; else the model), Modifier (case
+  `redaction.modifier.<operation>`), Relire only above 80 changed lines,
+  Livrer by the program (commit of the targeted files only, no version;
+  outside git: backup, fingerprints, diff). Only the targets change; format
+  preserved (extension, encoding/BOM, line endings, front-matter, JSON, light
+  YAML/TOML check, headings); ±25 % to correct, < 50 % to summarise, nothing
+  removed to complete, target language to translate; a summary, translation or
+  conversion is a NEW file; Office formats refused explicitly; a protected
+  document goes to Dev.
+- (server) Discussion variant **« verification »**: findings with proofs the
+  code checks in the turn's log and on the disk (file read, command run in
+  this turn, URL consulted); the answer is the table of findings.
+- (server) Recherche mode **« interne »**: sources are the project's files and
+  logs only (cited between backquotes); a web tool use in the turn is refused.
+- (server) Lever 6, switch **`discussionOne`**: the Discussion in ONE
+  read-only call (`## Réponse`, `## Sources`, cited paths checked); the
+  research step is inserted once, only if the answer asks for it
+  (`RECHERCHE_NECESSAIRE:`). Real bench (`scripts/pipeline-discussion-bench.mjs`,
+  production models): 39 s and 1 call, against 110 s and 3 calls.
+- (server) Switch **`generic`**: the classifier is offered the generics and
+  their rule of meaning (specialised first, then generic, then Discussion for
+  a question), the generic modes, and names ALL the operations a task asks
+  for (`operations` list, never a partial one); explicit prefixes
+  `/operations`, `/fichiers`, `/document`, `/verification`, `/interne`.
+  `dispatch.mjs --mode` and the Routage tasks accept the generic modes.
+- (server) Models page: the two pipelines, the new steps and variants; a step
+  done by the program shows a « programme » badge and has no case. Suggestions
+  for the 13 new cases (`data/model-recommendations.json`).
+- Real corpus `tests/pipeline-corpus/` (anonymised): push, reel, TODO, APK,
+  bond, folder comparison, video download, deployment, meeting.
+  `_test_pipeline_corpus.mjs` replays each end to end with its effect verified;
+  `scripts/pipeline-corpus-classify.mjs` measures the real classifier:
+  claude-sonnet-5 (production case) puts 9/9 in the right pipeline.
+- Suites `_test_typed_operations.mjs`, `_test_generic_operations.mjs`,
+  `_test_generic_files.mjs`, `_test_generic_document.mjs`,
+  `_test_generic_modes.mjs`, `_test_pipeline_corpus.mjs` (serial); perimeter
+  `pipelines`.
+
+### Changed
+- (server) Models page and HTTP / browser checks: 16 pipelines (the generics
+  last); `_test_model_routing.mjs` and `_test_model_reco.mjs` count them.
+
+## [0.128.0] - 2026-10-21
+
+Recorded afterwards from the release commit (the entry was missing).
+
+### Added
+- (server) Routage v3, phase 1: requests registry in files
+  (`scripts/requests.mjs`, `logs/requests/`), task acknowledgement
+  (`--task-id`, second launch refused), reconciliation sweep of the server.
+  Suite `_test_requests_registry.mjs`.
+
 ## [0.127.0] - 2026-10-20
 
 User request (2026-10-20, verbatim): « Fais une nouvelle application android

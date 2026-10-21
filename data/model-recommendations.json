@@ -290,6 +290,19 @@
     "audio.traiter.tts": { "step": "audio", "principal": { "external": "ElevenLabs v4", "note": "synthèse vocale (pas encore câblée dans l'orchestrateur)" }, "alternatives": [] },
     "audio.traiter.traitement": { "step": "audio", "extrapolated": "traitement du son : ffmpeg, retenu pour la vidéo", "principal": { "provider": "local", "model": "ffmpeg" }, "alternatives": [] },
     "audio.verifier": { "step": "audio", "extrapolated": "vérification : taux d'erreur de mots (jiwer), le rapport ne la couvre pas", "principal": { "provider": "local", "model": "jiwer" }, "alternatives": [] },
-    "audio.livrer": "livrer"
+    "audio.livrer": "livrer",
+    "discussion.verifier": { "step": "discussion", "extrapolated": "variante « vérification » ajoutée après le rapport (phase 1 des pipelines) : lire le projet et apporter des preuves, comme la Discussion" },
+    "recherche.rechercher.interne": { "step": "recherche", "extrapolated": "mode « interne » ajouté après le rapport (phase 1 des pipelines) : les sources sont le dépôt et ses journaux, comme la Recherche sans le web" },
+    "redaction.cibler": { "step": "redaction", "extrapolated": "mode « document » ajouté après le rapport (phase 1 des pipelines) : choisir le document et l’opération ; la synthèse prévoit Sonnet", "principal": { "provider": "anthropic", "model": "claude-sonnet-5-5", "effort": "medium" }, "alternatives": [] },
+    "redaction.modifier": { "step": "redaction", "extrapolated": "mode « document » ajouté après le rapport (phase 1 des pipelines) : la modification d’un document existant, comme la Rédaction" },
+    "redaction.modifier.relire-corriger": { "step": "redaction", "extrapolated": "opération « relire-corriger » d’un document existant (phase 1 des pipelines), comme la Rédaction" },
+    "redaction.modifier.resumer": { "step": "redaction", "extrapolated": "opération « resumer » d’un document existant (phase 1 des pipelines), comme la Rédaction" },
+    "redaction.modifier.traduire": { "step": "redaction", "extrapolated": "opération « traduire » d’un document existant (phase 1 des pipelines), comme la Rédaction" },
+    "redaction.modifier.reformater": { "step": "redaction", "extrapolated": "opération « reformater » d’un document existant (phase 1 des pipelines), comme la Rédaction" },
+    "redaction.modifier.completer": { "step": "redaction", "extrapolated": "opération « completer » d’un document existant (phase 1 des pipelines), comme la Rédaction" },
+    "redaction.modifier.convertir": { "step": "redaction", "extrapolated": "opération « convertir » d’un document existant (phase 1 des pipelines), comme la Rédaction" },
+    "operations.preparer": { "step": "routage", "extrapolated": "pipeline ajouté après le rapport (phase 1 des pipelines) : choisir dans une liste fermée, comme le classement du Routage ; la synthèse prévoit Sonnet", "principal": { "provider": "anthropic", "model": "claude-sonnet-5-5", "effort": "medium" }, "alternatives": [] },
+    "fichiers.inventorier": { "step": "comprendre", "extrapolated": "pipeline ajouté après le rapport (phase 1 des pipelines) : inventorier des fichiers, comme celui de la réunion ; la synthèse prévoit Sonnet", "principal": { "provider": "anthropic", "model": "claude-sonnet-5-5", "effort": "medium" }, "alternatives": [] },
+    "fichiers.acquerir": { "step": "video", "extrapolated": "pipeline ajouté après le rapport (phase 1 des pipelines) : télécharger, comme l’acquisition de la Vidéo (outil local possible : yt-dlp)", "principal": { "provider": "local", "model": "yt-dlp" }, "alternatives": [] }
   }
 }

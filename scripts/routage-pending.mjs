@@ -377,6 +377,8 @@ export function launchTask(root, t, dispatchScript, { released = false } = {}) {
   else if (t.served) {
     args.push('--pipeline', t.pipeline);
     if (t.pipeline === 'dev' && t.mode) args.push('--mode', t.mode);
+    // A generic mode found when the task was classified (pipelines phase 1).
+    else if (['document', 'verification', 'interne'].includes(t.mode)) args.push('--mode', t.mode);
     // The nature found when the task was classified on its own (0.69.0).
     if (t.pipeline === 'dev' && ['simple', 'bugfix', 'mecanique'].includes(t.kind)) args.push('--kind', t.kind);
   }

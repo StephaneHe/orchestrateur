@@ -636,3 +636,28 @@ Non fait dans cette phase : levier 5 (arrêt des relances identiques en
 général ; seul le cas « refus du programme » est couvert), banc
 `pipeline-bench.mjs`, `famille` en observation, classifier limité aux
 pipelines exécutables hors interrupteur (couvert par `inertCleanup`).
+
+### 11.3 État livré : phase 1 « génériques » (v0.129.0, 2026-10-21)
+
+Décision de l'utilisateur du 2026-10-21 : « vas y ». Contenu du §8.2, chaque
+nouveauté derrière son interrupteur (`enforcement.tuning`, coupé par défaut,
+figé par exécution) : `generic` (Opérations, Fichiers, Rédaction « document »,
+Discussion « vérification », Recherche « interne », règles de classement) et
+`discussionOne` (levier 6). Aucun écart à la synthèse ; aucun test d'exigence
+existant affaibli (seuls les comptes de la page Models passent de 14 à 16
+pipelines, décision 4).
+
+| Critère de sortie (§8.2) | Mesure |
+|---|---|
+| push, reel, TODO, APK, bond, comparaison de dossiers vont au bon générique | classement réel par claude-sonnet-5 (case `routage.classifier` de la prod), interrupteur actif, corpus anonymisé `tests/pipeline-corpus/` : **9 / 9** (avec vidéo, déploiement et réunion) ; la liste complète des opérations est nommée (APK : publier + installer) |
+| postconditions vérifiées | `_test_pipeline_corpus.mjs` rejoue chaque cas de bout en bout : distant relu par `git ls-remote`, fichier téléchargé ouvert, TODO complété sans rien retirer, APK publié puis `versionCode` relu sur l'appareil, plan du bond sans `--apply` et prod inchangée, différence de dossiers listée par le code, URL du service relue |
+| Discussion ≤ 70 s | banc réel (`pipeline-discussion-bench.mjs`, models de la prod) : en un appel **39 s, 1 appel** ; classique 110 s, 3 appels |
+
+Appels de model sur le corpus (étapes, classement commun exclu) : push 0
+(au lieu de 4 étapes sans effet), reel 2 (au lieu de 7), TODO 1 (au lieu de 5),
+comparaison 1 (au lieu de 3 et 210 s), bond 0, APK 1.
+
+Reste pour la mise en service (après le bond, décision 17) : allumer `generic`
+puis `discussionOne` sur `pipelineLab`, ajouter `operations` et `fichiers` à
+`enforcement.pipelines`. `typed-operations.mjs` est le registre que la phase 2
+du Routage v3 complète avec les actions du chef.

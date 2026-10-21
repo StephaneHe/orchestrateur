@@ -254,7 +254,8 @@ const HANDOFF_TOKEN = process.env.ORCH_HANDOFF_TOKEN || null;
 delete process.env.ORCH_HANDOFF_TOKEN;
 // --mode leger|complet (0.49.0) : force le mode du Développement ; sinon la classification.
 const pipelineModeArg   = takeFlagValue('--mode');
-if (pipelineModeArg && !['leger', 'complet'].includes(pipelineModeArg)) die(`--mode leger|complet (reçu « ${pipelineModeArg} »)`);
+// Pipelines phase 1: the generic modes (Rédaction « document », Discussion « verification », Recherche « interne »).
+if (pipelineModeArg && !['leger', 'complet', 'document', 'verification', 'interne'].includes(pipelineModeArg)) die(`--mode leger|complet|document|verification|interne (reçu « ${pipelineModeArg} »)`);
 // --kind simple|bugfix|mecanique (0.66.0): explicit nature of a dev request;
 // otherwise the classifier model decides it (never a keyword guess).
 const pipelineKindArg   = takeFlagValue('--kind');
@@ -1705,7 +1706,9 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
     }
     if (retriedPending) writePendingCls(readPendingCls().filter(p => p.prompt !== retriedPending.prompt));
     classification = { pipeline: c.pipeline, mode: c.mode, kind: c.kind || null, confidence: c.confidence || 'explicite', classifier: c.classifier,
-      ...(c.raison ? { raison: c.raison } : {}) };
+      ...(c.raison ? { raison: c.raison } : {}),
+      // Pipelines phase 1: the operations named by the classifier (the engine then skips « Préparer »).
+      ...(c.operations ? { operations: c.operations, ...(c.autorisation ? { autorisation: c.autorisation } : {}) } : {}) };
     if (!kind && c.kind) kind = c.kind;
     // A gap is reported by the MODEL (« lacune »), never detected on words (0.66.0).
     if (c.lacune) {

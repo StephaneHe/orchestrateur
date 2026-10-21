@@ -296,6 +296,18 @@ ${process.env.FAKE_CLAUDE_TOOL_OUTPUT}` : ''}` },
     await sleep(LATENCY);
   }
 
+  // 2a. Pipelines phase 1: a Bash command (proof of a verification) or a web
+  // search (forbidden in the internal research), as the CLI logs them.
+  for (const [env, name, input, out] of [
+    ['FAKE_CLAUDE_BASH_COMMAND', 'Bash', () => ({ command: process.env.FAKE_CLAUDE_BASH_COMMAND, description: 'commande simulée' }), () => process.env.FAKE_CLAUDE_BASH_OUTPUT || 'sortie simulée'],
+    ['FAKE_CLAUDE_WEB', 'WebSearch', () => ({ query: 'recherche simulée' }), () => 'https://example.org/resultat'],
+  ]) {
+    if (!process.env[env]) continue;
+    const id = newId('toolu');
+    emit({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input: input() }] } });
+    emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: out() }] } });
+  }
+
   // 2b. Demande d'autorisation (FAKE_CLAUDE_PERM)
   let permNote = '';
   const permDenials = [];
@@ -606,6 +618,26 @@ function pipelineStep(text) {
 function catalogStep(text, step, artefact, bad, w, once) {
   // FAKE_PIPE_REPORT : texte imposé du rapport du Routage (0.92.0, contrôle des identifiants).
   if (step === 'rapporter' && process.env.FAKE_PIPE_REPORT) { w(artefact, process.env.FAKE_PIPE_REPORT); return; }
+  // Pipelines phase 1: FAKE_PIPE_JSON[step].writes = {rel: content} writes those
+  // project files ("@mp4" = a minimal valid MP4), then the artefact
+  // (FAKE_PIPE_JSON[step].artefact, else a short report) — action steps of the generics.
+  let spec0 = {};
+  try { spec0 = JSON.parse(process.env.FAKE_PIPE_JSON || '{}')[step] || {}; } catch { /* ignored */ }
+  if (spec0.writes && /^MODIFIER=(oui|docs)/m.test(text)) {
+    const mp4 = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypisom'), Buffer.alloc(12)]);
+    for (const [rel, content] of Object.entries(spec0.writes)) {
+      const abs = path.isAbsolute(rel) ? rel : path.join(process.cwd(), rel);
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, content === '@mp4' ? mp4 : String(content));
+    }
+    w(artefact, spec0.artefact || `# ${step}\n\nFichiers écrits par l'étape ${step} : ${Object.keys(spec0.writes).join(', ')}.\n`);
+    return;
+  }
+  // FAKE_PIPE_RESEARCH=1: the one-call Discussion first asks for the research step (lever 6).
+  if (process.env.FAKE_PIPE_RESEARCH === '1' && /^PIPELINE_STEP=repondre/m.test(text) && /RECHERCHE_NECESSAIRE/.test(text) && !fs.existsSync(path.join(path.dirname(artefact), 'recherche.md'))) {
+    w(artefact, 'RECHERCHE_NECESSAIRE: les versions publiées de la bibliothèque\n');
+    return;
+  }
   const line = (k) => (new RegExp(`^${k}=(.+)$`, 'm').exec(text) || [])[1]?.trim() || '';
   const modify = line('MODIFIER');
   const sections = line('ATTENDU_SECTIONS').split('|').map(s => s.trim()).filter(Boolean);
@@ -617,7 +649,10 @@ function catalogStep(text, step, artefact, bad, w, once) {
   const reunion = line('REUNION');
   if (reunion === 'definitif' || reunion === 'rangement') return meetingStep(reunion, step, artefact, bad, w, wantNothing);
   if (process.env.FAKE_PIPE_SEEN_LOG) fs.appendFileSync(process.env.FAKE_PIPE_SEEN_LOG, JSON.stringify({ step, files: fs.readdirSync(path.dirname(artefact)) }) + '\n');
-  const urls = Array.from({ length: nSources }, (_, i) => `- Source ${i + 1} : https://example.org/source-${i + 1}`).join('\n');
+  // FAKE_PIPE_FILE_SOURCES=a,b,c: the sources are these project files instead of URLs (internal research).
+  const fileSources = String(process.env.FAKE_PIPE_FILE_SOURCES || '').split(',').filter(Boolean);
+  const urls = fileSources.length ? fileSources.map(f => `- \`${f}\` : source du projet`).join('\n')
+    : Array.from({ length: nSources }, (_, i) => `- Source ${i + 1} : https://example.org/source-${i + 1}`).join('\n');
   if (jsonKeys.length) {
     const j = {};
     const enums = Object.fromEntries(line('ATTENDU_ENUM').split(';').filter(Boolean).map(p => { const [k, v] = p.split(':'); return [k, v.split('|')]; }));

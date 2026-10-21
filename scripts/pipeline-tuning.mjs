@@ -23,6 +23,9 @@ export const TUNING_LEVERS = {
   codeFormat: 'Mettre en forme fait par le programme quand la relecture rend des corrections exactes ou aucune (levier 3)',
   suiteCache: 'suite de tests verte mémorisée par empreinte d’arbre, jamais relancée sur un arbre identique (levier 4)',
   inertCleanup: 'pipelines ajoutés non exécutables et anciens rattachements à mots-clés ignorés (décision 7)',
+  // Phase 1 (génériques), off by default like every lever.
+  generic: 'génériques proposés au classement : Opérations, Fichiers, Rédaction « document », Discussion « vérification », Recherche « interne » (décision 4)',
+  discussionOne: 'Discussion en un seul appel, la recherche seulement si la réponse la demande (levier 6, décision 10)',
 };
 export const LEVER_IDS = Object.keys(TUNING_LEVERS);
 
