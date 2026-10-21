@@ -942,7 +942,8 @@
         "scripts/todo-capture.mjs",
         "scripts/terminal-route.mjs",
         "tests/request-fixture.mjs",
-        "scripts/close-run.mjs"
+        "scripts/close-run.mjs",
+        "scripts/requests.mjs"
       ],
       "suites": [
         "_test_routage_ambiguous.mjs",
@@ -967,7 +968,8 @@
         "_test_report_truncation.mjs",
         "_test_request_map.mjs",
         "_test_todo_capture.mjs",
-        "_test_todo_discuss_chef.mjs"
+        "_test_todo_discuss_chef.mjs",
+        "_test_requests_registry.mjs"
       ],
       "uses": [
         {
@@ -993,6 +995,7 @@
             "_test_report_check.mjs",
             "_test_report_truncation.mjs",
             "_test_request_map.mjs",
+            "_test_requests_registry.mjs",
             "_test_resume_explicit_only.mjs",
             "_test_routage_ambiguous.mjs",
             "_test_routage_dedupe.mjs",
@@ -1026,6 +1029,7 @@
             "_test_report_check.mjs",
             "_test_report_truncation.mjs",
             "_test_request_map.mjs",
+            "_test_requests_registry.mjs",
             "_test_resume_explicit_only.mjs",
             "_test_routage_ambiguous.mjs",
             "_test_routage_dedupe.mjs",
@@ -1059,6 +1063,7 @@
             "_test_report_check.mjs",
             "_test_report_truncation.mjs",
             "_test_request_map.mjs",
+            "_test_requests_registry.mjs",
             "_test_resume_explicit_only.mjs",
             "_test_routage_ambiguous.mjs",
             "_test_routage_dedupe.mjs",
@@ -1085,6 +1090,7 @@
             "_test_report_check.mjs",
             "_test_report_truncation.mjs",
             "_test_request_map.mjs",
+            "_test_requests_registry.mjs",
             "_test_resume_explicit_only.mjs",
             "_test_routage_ambiguous.mjs",
             "_test_routage_dedupe.mjs",
@@ -1103,6 +1109,7 @@
             "_test_chef_actions.mjs",
             "_test_report_truncation.mjs",
             "_test_request_map.mjs",
+            "_test_requests_registry.mjs",
             "_test_routage_pending.mjs"
           ]
         }

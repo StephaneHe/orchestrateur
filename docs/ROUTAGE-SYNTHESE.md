@@ -331,6 +331,12 @@ chef-mode …`). `"off"` est l'état actuel de la prod.
 
 Total ≈ **11,5 jours**, hors observation.
 
+État : phase 0 livrée (0.115.1 à 0.118.0) ; **phase 1 livrée en 0.128.0**
+(`scripts/requests.mjs`, `_test_requests_registry.mjs`). Les boutons de chaque
+état et les chemins directs du chat (« abandonne r-… », « relance ») arrivent
+avec les phases 2 et 3 ; d'ici là, la sortie par le chat passe par le chef, qui
+lance la commande (décision 8).
+
 ### 3.10 Tests
 
 - **Rejouer les vrais cas refusés de la prod** **[F, A]** : corpus anonymisé

@@ -109,7 +109,7 @@ export function launchResume(root, e, env0 = process.env) {
   if (st.callback) args.push('--callback', st.callback);
   if (st.source) args.push('--source', st.source);
   const env = { ...env0 };
-  for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'ORCH_TURN_PROJECT', 'ORCH_TURN_STEP', 'ORCH_STEP_TOKEN', 'ORCH_OBS_ID', 'ORCH_TURN_ID']) delete env[k];
+  for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'ORCH_TURN_PROJECT', 'ORCH_TURN_STEP', 'ORCH_STEP_TOKEN', 'ORCH_OBS_ID', 'ORCH_TURN_ID', 'ORCH_REQUEST_ID']) delete env[k];
   let pid = null;
   try { const c = spawn(process.execPath, args, { cwd: root, env, detached: true, stdio: 'ignore', windowsHide: true }); c.on('error', () => {}); c.unref(); pid = c.pid || null; } catch {}
   return { pid };

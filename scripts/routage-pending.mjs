@@ -365,7 +365,7 @@ function conductorOf(root) { return readJson(path.join(root, 'config.json'))?.co
  * Returns the launch record, including the awaited log offset taken BEFORE the
  * spawn (what a later "after this task" waiter anchors on).
  */
-export function launchTask(root, t, dispatchScript) {
+export function launchTask(root, t, dispatchScript, { released = false } = {}) {
   const conductor = conductorOf(root);
   const logsDir = path.join(root, 'logs');
   const offset = logOffset(logsDir, t.projet);
@@ -389,6 +389,8 @@ export function launchTask(root, t, dispatchScript) {
   else if (t.memeTache === true) args.push('--meme-tache');
   const env = { ...process.env };
   for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'ORCH_TURN_PROJECT', 'ORCH_TURN_STEP', 'ORCH_STEP_TOKEN', 'ORCH_OBS_ID']) delete env[k];
+  // A released waiter belongs to the request that queued it, not to the turn that releases it (requests registry, phase 1).
+  if (released) delete env.ORCH_REQUEST_ID;
   let pid = null;
   try {
     const c = spawn(process.execPath, args, { cwd: root, env, detached: true, stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
@@ -453,7 +455,7 @@ export function releaseReady({ root, logsDir = path.join(root, 'logs'), dispatch
     // explicit field resumes (phase 0 c): a run cited in the text is a reference.
     const reprise = detectReprise(logsDir, t);
     if (t.reprise && !reprise) return { id: t.id, label: pendingLabel(t).text, projet: t.projet, skipped: `exécution ${t.reprise} plus en pause : rien relancé` };
-    return { id: t.id, run: t.run || null, n: t.n ?? null, label: pendingLabel(t).text, ...launch(root, { ...t, reprise }, dispatchScript), after: t.after?.projet };
+    return { id: t.id, run: t.run || null, n: t.n ?? null, label: pendingLabel(t).text, ...launch(root, { ...t, reprise }, dispatchScript, { released: true }), after: t.after?.projet };
   });
   // A released task leaves the pending file: its launch (log offset, text
   // fingerprint) is kept so the request map still follows it (0.100.0).

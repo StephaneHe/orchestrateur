@@ -139,6 +139,8 @@ async function run() {
   const userText = await readUserTurn();
   const askedModel = flag('--model');
   const servedModel = process.env.FAKE_CLAUDE_ECHO_MODEL === '1' && askedModel ? askedModel : 'fake-claude';
+  // FAKE_CLAUDE_ENV_DUMP=<f> (requests registry, 0.128.0): what the turn's tools inherit.
+  if (process.env.FAKE_CLAUDE_ENV_DUMP) fs.appendFileSync(process.env.FAKE_CLAUDE_ENV_DUMP, JSON.stringify({ requestId: process.env.ORCH_REQUEST_ID || null, turnProject: process.env.ORCH_TURN_PROJECT || null }) + '\n');
   // Langue (0.51.0) : trace du prompt reçu, réponse imposée, et rôle de « reformulateur ».
   if (process.env.FAKE_CLAUDE_DUMP_PROMPT) fs.appendFileSync(process.env.FAKE_CLAUDE_DUMP_PROMPT, JSON.stringify({ model: askedModel, prompt: userText }) + '\n');
   const isReformulation = /^\[REFORMULATION\]/.test(userText);
@@ -220,7 +222,7 @@ async function run() {
   // FAKE_CLAUDE_INFRA_FILE=<f> (phase 0 a): {"cause": "auth"|"refusal"|"limit", "left": n}
   // — while n > 0 (pipeline step prompts only), decrement it and end the turn
   // with the exact result the real CLI gave in production, exit 1.
-  if (process.env.FAKE_CLAUDE_INFRA_FILE && /^PIPELINE_STEP=/m.test(userText)) {
+  if (process.env.FAKE_CLAUDE_INFRA_FILE && (/^PIPELINE_STEP=/m.test(userText) || process.env.FAKE_CLAUDE_INFRA_ANY === '1')) {
     const f = process.env.FAKE_CLAUDE_INFRA_FILE;
     let spec = null; try { spec = JSON.parse(fs.readFileSync(f, 'utf8')); } catch {}
     if (spec?.left > 0) {

@@ -2249,6 +2249,45 @@ l'utilisateur du 2026-10-19).
   de l'utilisateur).
 - Recette : `_test_chef_pause_reply.mjs`.
 
+## Routage v3, phase 1 : registre des demandes et secours (0.128.0)
+
+Décision « vas y » (2026-10-21) ; `docs/ROUTAGE-SYNTHESE.md` §3.4 et §3.9,
+décisions 1 (registre en fichiers) et 8 (actions du chef par commande, inscrites
+au registre). Branché sur le chef **actuel** (`off` en prod, ou `routage`) sans
+rien changer à son comportement : le registre n'est qu'écrit et lu ; retirer
+`logs/requests/` ne change rien d'autre.
+
+- **`scripts/requests.mjs`, propriétaire unique** de `logs/requests/<r-…>.json`
+  (verrou par demande, écriture atomique). **Ne jamais éditer ces fichiers à la
+  main.** États `reçue | en_cours | attend_utilisateur | garée | à_traiter |
+  suivie | terminée | abandonnée` ; tâches `en_attente_de | lancée | en_file |
+  en_cours | réussie | à_traiter | annulée`. `EXITS` : pour chaque état non
+  terminal, sa sortie par le chat (en phase 1 : le chef lance la commande), par
+  commande, par bouton (phase 3) ou par un événement avec échéance.
+- CLI : `list [--all] | show <id>[#n] | answer <id> "<texte>" | close <id> |
+  retry <id>[#n] | fix <id>#<n> [--pipeline|--mode|--projet|--after] |
+  cancel <id>#<n> | drop <id> | replay <id> | reconcile`. Rien n'est annulé ni
+  abandonné pendant un tour vivant (code 3).
+- **`dispatch.mjs`** : un tour du chef = une demande (créée, ou continuée par
+  `ORCH_REQUEST_ID` pour `answer` / `retry`), issue relevée à la fin du tour
+  (question, panne d'infra ou erreur ⇒ `garée`). `ORCH_REQUEST_ID` est posé
+  dans l'environnement du tour du chef : ses dispatches (outil Bash, Routage)
+  sont ses tâches ; jamais hérité par le tour d'un musicien, ni par une tâche
+  libérée (`releaseReady`) ou une relance d'infra.
+- **Accusé** : `--task-id r-…#n` (`.k` pour le k-ième lancement) écrit `taskId`
+  sur le `user_prompt` ; la file le garde (`POST /api/dispatch`, drain). Second
+  lancement du même identifiant (journal ou file) : refusé (65). Arrêt avant
+  d'écrire la demande : tâche `à_traiter` aussitôt.
+- **Réconciliation** (balayage de 60 s du serveur, `ORCH_REQUESTS_SWEEP_MS`) :
+  tour du chef mort ⇒ son résultat ou `garée` ; accusés et résultats relus dans
+  les journaux et la file (`dependencyResult` : une pause ne vaut jamais
+  « réussie ») ; sans accusé 2 min après un lancement ⇒ `à_traiter`, jamais de
+  relance à l'aveugle ; demande muette depuis 2 h signalée une fois (console et
+  `server-debug.log`) ; dépendances posées par `fix --after`.
+- Redémarrage nécessaire pour le balayage et le `taskId` de la file ;
+  `dispatch.mjs` est actif tout de suite.
+- Recette : `_test_requests_registry.mjs` (périmètre `routage`).
+
 ## Routage : renvoi au chef, qui agit lui-même (0.88.0)
 
 Demande utilisateur (2026-10-14) : « IL faut que le routage puisse renvoyer au

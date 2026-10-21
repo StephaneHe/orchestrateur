@@ -422,6 +422,7 @@ function queueEntryView(e, i) {
     editedAt: e.editedAt || null, edits: e.edits || 0,
     pipeline: e.pipeline || null, pipelineResume: e.pipelineResume || null, horsPipeline: e.horsPipeline || null, pipelineMode: e.pipelineMode || null,
     lane: Number.isInteger(e.lane) ? e.lane : null, ressources: e.ressources || null, exclusive: e.exclusive || null,
+    taskId: e.taskId || null,
   };
 }
 
@@ -872,6 +873,8 @@ function spawnDirectDispatch(name, prompt, attachmentPaths = [], videoPaths = []
   const lo = laneOptsFrom(opts);
   if (lo.lane != null) args.push('--lane', String(lo.lane));
   if (lo.ressources) args.push('--ressources', lo.ressources);
+  // Requests registry (Routage v3, phase 1): the task id travels with the queue entry.
+  if (typeof opts.taskId === 'string' && /^r-\d{8}T\d{6}-[0-9a-f]{6}#\d{1,3}(\.\d{1,2})?$/.test(opts.taskId)) args.push('--task-id', opts.taskId);
 
   const child = spawn(process.execPath, args, {
     cwd: __dirname,
@@ -954,7 +957,7 @@ function drainAttempt(name, reason) {
     return;
   }
   drainPending.delete(name);
-  const { id, prompt, attachmentPaths, videoPaths, callback, source, model, provider, slot, ticket, newSession, sameTask, resumeSession, obsId, secondModel, secondProvider, dualMode, pipeline, pipelineResume, horsPipeline, pipelineMode, lane, ressources } = q.shift();
+  const { id, prompt, attachmentPaths, videoPaths, callback, source, model, provider, slot, ticket, newSession, sameTask, resumeSession, obsId, secondModel, secondProvider, dualMode, pipeline, pipelineResume, horsPipeline, pipelineMode, lane, ressources, taskId } = q.shift();
   if (q.length === 0) dispatchQueue.delete(name);
   persistQueue(name);
   drainLaunchedAt.set(name, Date.now());
@@ -963,7 +966,7 @@ function drainAttempt(name, reason) {
     ` attente-pid=${Date.now() - since}ms`;
   console.log(msg); debugLog(msg);
   spawnDirectDispatch(name, prompt, attachmentPaths, videoPaths,
-    { callback, source, model, provider, slot, ticket, newSession, sameTask, resumeSession, obsId, secondModel, secondProvider, dualMode, pipeline, pipelineResume, horsPipeline, pipelineMode, lane, ressources, noQueueIfBusy: true });
+    { callback, source, model, provider, slot, ticket, newSession, sameTask, resumeSession, obsId, secondModel, secondProvider, dualMode, pipeline, pipelineResume, horsPipeline, pipelineMode, lane, ressources, taskId, noQueueIfBusy: true });
 }
 
 const DRAIN_WAIT_STEP_MS = 1000;
@@ -1079,6 +1082,21 @@ async function sweepInfraRetries() {
   } catch (e) { debugLog(`[infra-retry] balayage : ${e.message}`); }
 }
 setInterval(sweepInfraRetries, 60_000).unref();
+
+// Requests registry (Routage v3, phase 1, scripts/requests.mjs): chef turns
+// whose process died, task acknowledgements and results read in the logs and
+// queue files, no acknowledgement after 2 min ⇒ « à traiter » (never a blind
+// relaunch), requests silent for 2 h reported. Recording only.
+async function sweepRequests() {
+  try {
+    const rq = await import('./scripts/requests.mjs');
+    if (!rq.listRequests(LOGS_DIR).some(r => !rq.TERMINAL.has(r.state))) return;
+    const r = rq.reconcile({ root: __dirname, logsDir: LOGS_DIR });
+    for (const l of r.launched) { const m = `[requests] ${l.id} lancée (dépendance satisfaite)`; console.log(m); debugLog(m); }
+    if (r.stale.length) { const m = `[requests] sans activité depuis 2 h : ${r.stale.join(', ')} — node scripts/requests.mjs show <id>`; console.log(m); debugLog(m); }
+  } catch (e) { debugLog(`[requests] balayage : ${e.message}`); }
+}
+setInterval(sweepRequests, Number(process.env.ORCH_REQUESTS_SWEEP_MS) || 60_000).unref();
 
 // 0.101.1 — finished lane task branches are deleted one week after the end of
 // their task (user decision Q2), even for a musician that gets no new lane task.
@@ -5745,6 +5763,7 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
       dualMode:       req.body?.dualMode === 'judge' ? 'judge' : undefined,
       ...pipelineOptsFrom(req.body),
       ...laneOptsFrom(req.body),
+      taskId: typeof req.body?.taskId === 'string' && /^r-\d{8}T\d{6}-[0-9a-f]{6}#\d{1,3}(\.\d{1,2})?$/.test(req.body.taskId) ? req.body.taskId : undefined,
     };
     // Lanes (0.101.0): a lane rule kept this task serial — it waits in the
     // queue, with its justification, even when lane 0 happens to be free.

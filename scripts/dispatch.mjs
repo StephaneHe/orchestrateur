@@ -266,6 +266,15 @@ const laneArgRaw        = takeFlagValue('--lane');
 if (laneArgRaw != null && !/^[0-9]$/.test(laneArgRaw)) die(`--lane <0-9> (reçu « ${laneArgRaw} »)`);
 const LANE_ARG = laneArgRaw != null ? Number(laneArgRaw) : null;
 const ressourcesArg     = takeFlagValue('--ressources');
+// Requests registry (Routage v3, phase 1, scripts/requests.mjs): --task-id
+// r-…#n is the registry's id of this launch; ORCH_REQUEST_ID is set in the
+// environment of a chef turn, so the dispatches its Bash tool makes are
+// recorded as tasks of its request (user decision 8). Read once, never
+// inherited further: a musician's own turn does not belong to the chef's request.
+const taskIdArg = takeFlagValue('--task-id');
+if (taskIdArg != null && !/^r-\d{8}T\d{6}-[0-9a-f]{6}#\d{1,3}(\.\d{1,2})?$/.test(taskIdArg)) die(`--task-id r-<horodatage>-<hex>#<n> (reçu « ${taskIdArg} »)`);
+const REQUEST_FROM_ENV = /^r-\d{8}T\d{6}-[0-9a-f]{6}$/.test(process.env.ORCH_REQUEST_ID || '') ? process.env.ORCH_REQUEST_ID : null;
+delete process.env.ORCH_REQUEST_ID;
 const STEP_TOKEN = process.env.ORCH_STEP_TOKEN || null;
 const TURN_OF    = process.env.ORCH_TURN_PROJECT || null;   // ce dispatch est lancé DEPUIS un tour de ce projet
 const TURN_STEP  = process.env.ORCH_TURN_STEP || null;      // … qui est une étape de pipeline
@@ -613,6 +622,9 @@ const TURN_ID = dualSynthesis && /^t-[\w-]{6,64}$/.test(process.env.ORCH_TURN_ID
 process.env.ORCH_TURN_ID = TURN_ID;
 /** Adds `orch_turn` to each JSON line written (cheap string insertion, no re-parse). */
 function tagLine(l) {
+  if (REQ?.task && /^\s*\{/.test(l) && l.includes('"user_prompt"') && !l.includes('"taskId"')) {
+    try { const ev = JSON.parse(l); if (ev.type === 'user_prompt') l = JSON.stringify({ ...ev, ...taskTag(ev) }); } catch {}
+  }
   if (!/^\s*\{/.test(l) || l.includes('"orch_turn"')) return l;
   return l.replace(/^(\s*)\{\s*\}?/, (m, sp) => (m.replace(/\s/g, '') === '{}' ? `${sp}{"orch_turn":"${TURN_ID}"}` : `${sp}{"orch_turn":"${TURN_ID}",`));
 }
@@ -1115,6 +1127,7 @@ function postQueueIfBusy() {
     if (LANE_ARG != null)  payload.lane            = LANE_ARG;
     if (ressourcesArg)     payload.ressources      = ressourcesArg;
     if (QUEUE_EXCLUSIVE)   payload.exclusive       = QUEUE_EXCLUSIVE;
+    if (REQ?.task)         payload.taskId          = REQ.task;
     const body = Buffer.from(JSON.stringify(payload));
     const req = http.request({
       hostname: '127.0.0.1', port: Number(process.env.ORCH_PORT) || 7777, path: '/api/dispatch', method: 'POST',
@@ -1129,13 +1142,91 @@ function postQueueIfBusy() {
       res.on('data', c => { buf += c; });
       res.on('end', () => {
         if (res.statusCode !== 202 && res.statusCode !== 200) return resolve(null);
-        try { resolve(JSON.parse(buf)); } catch { resolve(null); }
+        let r = null; try { r = JSON.parse(buf); } catch {}
+        // Acknowledgement of a registered task (phase 1): queued, or handed to the server.
+        if (REQ?.task && (r?.queued || r?.direct)) { try { REQ.mod.ackTask(LOGS, REQ.task, r.queued ? { where: 'queue', queueId: r.id || null } : { where: 'server', pid: r.pid || null }); REQ.handed = true; } catch {} }
+        resolve(r);
       });
     });
     req.on('error', () => resolve(null));
     req.setTimeout(5000, () => { try { req.destroy(); } catch {} resolve(null); });
     req.end(body);
   });
+}
+
+// ---------- requests registry (Routage v3, phase 1) --------------------------
+// User decisions 1 and 8 (2026-10-19, docs/ROUTAGE-SYNTHESE.md §3.4): a chef
+// turn is a request of logs/requests/ (created, or continued by
+// ORCH_REQUEST_ID: answer, retry); a dispatch launched from it is one of its
+// tasks, acknowledged once its user_prompt is written (`taskId`). Recording
+// only: nothing here changes the turn, except refusing a second launch of the
+// same --task-id (already in the log or in the queue).
+let REQ = null;   // { mod, request, chef?: {offset}, task?: 'r-…#n', ack?, handed? }
+let backoffMod = null;
+if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis) {
+  let mod = null;
+  try { mod = await import('./requests.mjs'); } catch (e) { console.error(`[dispatch] registre des demandes indisponible : ${e.message}`); }
+  if (mod && taskIdArg && !CHEF_TARGET) {
+    const seen = mod.taskSeen(LOGS, projectName, taskIdArg);
+    const p = mod.parseTaskId(taskIdArg);
+    const t = mod.findTask(mod.readRequest(LOGS, p.request), taskIdArg);
+    if (seen || (t?.ack?.where === 'log' && (t.attempt || 1) === p.attempt)) {
+      die(`--task-id ${taskIdArg} : déjà lancée (${seen?.where === 'queue' ? `en file, ${seen.queueId || '?'}` : 'demande déjà écrite dans le journal'}) — second lancement refusé ; voir node scripts/requests.mjs show ${p.request}`, 65);
+    }
+    if (t) REQ = { mod, request: p.request, task: taskIdArg };
+    else console.error(`[dispatch] --task-id ${taskIdArg} : inconnue du registre — le tour part sans y être inscrit`);
+  } else if (mod) {
+    try {
+      if (CHEF_TARGET) {
+        const known = REQUEST_FROM_ENV && mod.readRequest(LOGS, REQUEST_FROM_ENV);
+        const r = known || mod.createRequest(LOGS, { project: projectName, text: prompt, source: sourceProject, callback: callbackProject,
+          kind: mod.requestKind({ source: sourceProject, text: prompt, handoff: !!CHEF_HANDOFF }), chefMode: ENFORCEMENT.chef ? 'routage' : 'off' });
+        let offset = 0; try { offset = fs.statSync(path.join(LOGS, `${projectName}.jsonl`)).size; } catch {}
+        mod.startTurn(LOGS, r.id, { turn: TURN_ID, log: path.join(LOGS, `${projectName}.jsonl`), offset });
+        REQ = { mod, request: r.id, chef: { offset } };
+        process.env.ORCH_REQUEST_ID = r.id;
+        try { backoffMod = await import('./model-backoff.mjs'); } catch {}
+      } else if (REQUEST_FROM_ENV && mod.readRequest(LOGS, REQUEST_FROM_ENV)) {
+        const t = mod.addTask(LOGS, REQUEST_FROM_ENV, { projet: projectName, demande: prompt, launch: { callback: callbackProject, source: sourceProject,
+          pipeline: pipelineArg || null, pipelineMode: pipelineModeArg || null, horsPipeline: horsPipelineArg ?? null, newSession: !!NEW_SESSION } });
+        REQ = { mod, request: REQUEST_FROM_ENV, task: t.id };
+      }
+    } catch (e) { console.error(`[dispatch] registre des demandes : ${e.message} (le tour continue)`); REQ = null; }
+  }
+  if (REQ?.task) {
+    try { REQ.mainOffset = fs.statSync(path.join(LOGS, `${projectName}.jsonl`)).size; } catch { REQ.mainOffset = 0; }
+  }
+  if (REQ) {
+    let settled = false;
+    const settle = (code) => {
+      if (settled) return;
+      settled = true;
+      // Launches made by this process's exit hooks (pending tasks, infra retries) are not this request's.
+      delete process.env.ORCH_REQUEST_ID;
+      try {
+        if (REQ.chef) {
+          const log = path.join(LOGS, `${projectName}.jsonl`);
+          const result = REQ.mod.turnResult(log, TURN_ID, REQ.chef.offset);
+          const c = result && !result.is_error ? 0 : (code || 1);
+          REQ.mod.finishTurn(LOGS, REQ.request, { turn: TURN_ID, result, code: code || 0, infra: backoffMod?.infraFailure({ code: c, log: { result } }) || null });
+        } else if (REQ.task && !REQ.ack && !REQ.handed) {
+          REQ.mod.failTask(LOGS, REQ.task, { code: 'lancement', why: `dispatch.mjs s’est arrêté (code ${code ?? '?'}) avant d’écrire la demande` });
+        }
+      } catch (e) { console.error(`[dispatch] registre des demandes, fin du tour : ${e.message}`); }
+    };
+    const prevExit = process.exit;
+    process.exit = (code) => { settle(code ?? process.exitCode ?? 0); return prevExit(code); };
+    process.once('beforeExit', () => settle(process.exitCode ?? 0));
+  }
+}
+/** `taskId` on the task's user_prompt (the acknowledgement, phase 1). */
+function taskTag(ev) {
+  if (!REQ?.task || ev?.type !== 'user_prompt') return {};
+  if (!REQ.ack) {
+    REQ.ack = { where: 'log', log: logPath, offset: REQ.mainOffset, hash: taskTextHash(String(ev.text || '')), turn: TURN_ID, pid: process.pid };
+    try { REQ.mod.ackTask(LOGS, REQ.task, REQ.ack); } catch (e) { console.error(`[dispatch] accusé de réception de ${REQ.task} : ${e.message}`); }
+  }
+  return { taskId: REQ.task };
 }
 
 // ---------- pipelines, phase 1 : observation (0.41.0) ------------------------
@@ -1252,7 +1343,7 @@ if (TURN_LOCK && LANES_MAX > 1) {
   const WAIT_MAX = Number(process.env.ORCH_TURN_LOCK_WAIT_MS) || 4 * 3600_000;
   const POLL = Number(process.env.ORCH_TURN_LOCK_POLL_MS) || 1000;
   const files = (k) => lanesMod.laneFiles(LOGS, projectName, k);
-  laneMainLog = (ev) => { try { fs.appendFileSync(files(0).log, JSON.stringify({ orch_turn: TURN_ID, ...ev, timestamp: new Date().toISOString() }) + '\n'); } catch {} };
+  laneMainLog = (ev) => { try { fs.appendFileSync(files(0).log, JSON.stringify({ orch_turn: TURN_ID, ...taskTag(ev), ...ev, timestamp: new Date().toISOString() }) + '\n'); } catch {} };
   const title = prompt.replace(/\s+/g, ' ').trim().slice(0, 140);
   const declared = rulesMod.parseResources(ressourcesArg);
   if (declared.unknown.length) console.error(`[dispatch] --ressources : ${declared.unknown.join(', ')} inconnu(s), ignoré(s) (liste fermée : ${rulesMod.DECLARED_RESOURCES.join(', ')})`);
@@ -1564,7 +1655,7 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
   const readPendingCls = () => { try { const a = JSON.parse(fs.readFileSync(PENDING_CLS, 'utf8')); return Array.isArray(a) ? a : []; } catch { return []; } };
   const writePendingCls = (a) => { if (a.length) fs.writeFileSync(PENDING_CLS, JSON.stringify(a, null, 2)); else { try { fs.rmSync(PENDING_CLS, { force: true }); } catch {} } };
   // logPath: the lane's log when the run works in a lane (P9); lane 0: logs/<p>.jsonl.
-  const musicianLog = (ev) => { try { fs.appendFileSync(logPath, JSON.stringify({ orch_turn: TURN_ID, ...ev, timestamp: new Date().toISOString() }) + '\n'); } catch {} };
+  const musicianLog = (ev) => { try { fs.appendFileSync(logPath, JSON.stringify({ orch_turn: TURN_ID, ...taskTag(ev), ...ev, timestamp: new Date().toISOString() }) + '\n'); } catch {} };
   const endTurn = (text, { paused = false } = {}) => {
     musicianLog({ type: 'assistant', message: { model: '<synthetic>', content: [{ type: 'text', text }] } });
     musicianLog({ type: 'result', subtype: paused ? 'success' : 'success', is_error: false, num_turns: 1, duration_ms: 1, duration_api_ms: 1, stop_reason: 'end_turn',
