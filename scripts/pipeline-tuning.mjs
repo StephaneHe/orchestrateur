@@ -27,6 +27,8 @@ export const TUNING_LEVERS = {
   // Phase 1 (génériques), off by default like every lever.
   generic: 'génériques proposés au classement : Opérations, Fichiers, Rédaction « document », Discussion « vérification », Recherche « interne » (décision 4)',
   discussionOne: 'Discussion en un seul appel, la recherche seulement si la réponse la demande (levier 6, décision 10)',
+  // 0.133.0, user rule « arrête de poser des questions de découpage » (process-pause.mjs).
+  chefPauses: 'pauses de processus (découpage, items mis de côté, limites de tests ou d’étapes, reprises) tranchées par le chef, plus posées à l’utilisateur',
 };
 export const LEVER_IDS = Object.keys(TUNING_LEVERS);
 

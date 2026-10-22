@@ -247,6 +247,8 @@
         ${p.extended ? `<div class="jt-dim">${esc(p.extended)}</div>` : ""}
         ${p.defects?.length ? `<div class="jt-defects" data-defects="${esc(p.defects.length)}">⚑ ${esc(p.defects.length)} défaut(s) signalé(s), livraison bloquée jusqu’à correction ou acceptation — dernier : ${esc(p.defects[p.defects.length - 1])}</div>` : ""}
         ${p.limit ? `<div class="jt-warn" data-limit="${esc(p.limit.limit)}">${esc(p.limit.text)}</div>` : ""}
+        ${p.chefPause ? `<div class="jt-chef-pause jt-dim">${esc(p.chefPause)}</div>` : ""}
+        ${(p.chefDecisions || []).map(x => `<div class="jt-chef-decision">${esc(x)}</div>`).join("")}
         ${p.backoff && p.status === "running" ? `<div class="jt-backoff" data-run="${esc(p.run)}" data-tier="${esc(p.backoff.tier)}">
           <div>${esc(p.backoff.text)}</div>
           <div class="jt-backoff-actions">

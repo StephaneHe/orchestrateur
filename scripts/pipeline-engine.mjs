@@ -60,6 +60,7 @@ import * as Ops from './typed-operations.mjs';
 import * as Files from './files-check.mjs';
 import * as Doc from './document-check.mjs';
 import { diagnosePause, diagnoseWithModel, smartMenu, fixMenu, menuQuestion, menuBlock, matchOptionKey, readTestOutput } from './pause-diagnosis.mjs';
+import { routePause, pauseSignature, decisionText } from './process-pause.mjs';
 import { releasePlan, parseDeliveryText, deliverRelease, deliverCommit } from './code-delivery.mjs';
 import { cachedSuite } from './suite-cache.mjs';
 
@@ -2720,6 +2721,17 @@ export async function runPipeline(o) {
       state.pendingAuth = [];
     }
   }
+  // 0.133.0: every answer to a pause is remembered with the pause's signature
+  // (anti-loop of process-pause.mjs); a decision of the chef is traced below.
+  let chefDecided = null;
+  if (resumed && state.lastPause) {
+    const key = o.chefDecision?.key || o.pauseOption || (o.acceptDefects ? 'accepter' : o.deleteDoubts ? 'tout supprimer' : 'continuer');
+    const by = o.chefDecision ? 'chef' : 'utilisateur';
+    state.pauseAnswers = [...(state.pauseAnswers || []), { n: state.lastPause.n, limit: state.lastPause.limit, sig: state.lastPause.sig, key, by, at: new Date().toISOString() }].slice(-200);
+    if (state.chefPause?.status === 'pending') state.chefPause = { ...state.chefPause, status: by === 'chef' ? 'decided' : 'answered-by-user', key, answeredAt: new Date().toISOString() };
+    if (o.chefDecision) chefDecided = { n: state.lastPause.n, limit: state.lastPause.limit, key, reason: o.chefDecision.reason };
+    state.lastPause = null;
+  }
   if (resumed && ['items', 'duration', 'review'].includes(state.pausedLimit)) {
     state.budgets = state.budgets || {};
     const L = state.pausedLimit;
@@ -2846,6 +2858,10 @@ export async function runPipeline(o) {
   writeEvent({ type: 'system', subtype: 'pipeline_start', pipeline: { run, pipeline, mode: state.mode, kind, base, ...(state.lane ? { lane: state.lane.k, branch: state.lane.branch } : {}) },
     text: `${resumed ? 'reprise de l’exécution' : 'exécution'} ${run} : pipeline ${pipelineLabel(pipeline, state.mode)} — ${state.plan.filter(id => id !== '@check' && id !== '@aside').map(id => stepDefs[id].title).join(' → ')}${state.lane ? ` — couloir ${state.lane.k} (branche ${state.lane.branch})` : ''}`,
     ...(o.modeNote ? { note: o.modeNote } : {}) });
+  if (chefDecided) {
+    writeEvent({ type: 'system', subtype: 'pipeline_chef_decision', pipeline: { run }, n: chefDecided.n, limit: chefDecided.limit, key: chefDecided.key, reason: chefDecided.reason,
+      text: decisionText(chefDecided) });
+  }
   if (state.route && !state.routeAnnounced) {
     writeEvent({ type: 'system', subtype: 'pipeline_route', pipeline: { run, pipeline, route: state.route.id }, model: state.route.model,
       text: `↪ routage interne : ${route?.labels?.[state.route.id] || state.route.id}${state.route.why ? ` — ${state.route.why}` : ''} (choisi par le model de la case routage.classifier)` });
@@ -2909,7 +2925,7 @@ export async function runPipeline(o) {
   const elapsed = () => (Number(state.activeMs) || 0) + (Date.now() - sessionStart);
   const totals = { costUsd: 0, apiMs: 0, turns: 0 };
 
-  const finish = async ({ code, result, isError = false, paused = false, question = null, limit = null, notice = null }) => {
+  const finish = async ({ code, result, isError = false, paused = false, question = null, limit = null, notice = null, chef = false }) => {
     clearInterval(progress);
     state.status = paused ? 'paused' : isError ? 'failed' : 'done';
     state.endedAt = new Date().toISOString();
@@ -2947,7 +2963,9 @@ export async function runPipeline(o) {
         resultLang = meta;
       }
     }
-    const text = paused ? `${result}\n\nNEEDS_USER_INPUT: ${question}` : result;
+    // A process pause (0.133.0) asks the CHEF: the server relays this line to it
+    // and its answer back ([CHEF_ANSWER]); the user is not asked.
+    const text = paused ? `${result}\n\n${chef ? 'NEEDS_CHEF_INPUT' : 'NEEDS_USER_INPUT'}: ${question}` : result;
     // Routage : la réponse du chef doit apparaître dans son fil comme un message
     // (le fil lit les messages assistant), même sans reformulation de langue.
     if (paused || (catalogOf(pipeline)?.assistantFinal && !resultLang)) writeEvent({ type: 'assistant', message: { model: '<synthetic>', content: [{ type: 'text', text }] } });
@@ -2956,15 +2974,15 @@ export async function runPipeline(o) {
     writeEvent({ type: 'result', subtype: isError ? 'error_pipeline' : 'success', is_error: isError,
       num_turns: Math.max(1, totals.turns), duration_ms: elapsed(), duration_api_ms: Math.max(1, totals.apiMs),
       stop_reason: 'end_turn', pipeline: { run, pipeline, status: state.status, ...(limit ? { limit } : {}) },
-      ...(paused ? { pipeline_paused: true } : {}), ...(resultLang ? { lang: resultLang } : {}), result: text });
+      ...(paused ? { pipeline_paused: true } : {}), ...(paused && chef ? { chef_pause: true } : {}), ...(resultLang ? { lang: resultLang } : {}), result: text });
     try { fs.unlinkSync(pidPath); } catch {}
     // Une pause part au chef avec TOUTE l'explication (ce qui s'est passé, où en
     // est le travail, les choix et la recommandation), pas seulement la question.
     const pausedText = paused ? [notice, result, question].filter(Boolean).join('\n\n') : null;
     if (callbackProject) {
-      await postNotify(root, callbackProject, `[PIPELINE — ${projectName} — ${run}] ${paused ? pausedText : isError ? `✕ ${result.slice(0, 1500)}` : result.slice(0, 8000)}`, paused && limit ? 'pipeline-limit' : 'pipeline');
+      await postNotify(root, callbackProject, `[PIPELINE — ${projectName} — ${run}] ${paused ? pausedText : isError ? `✕ ${result.slice(0, 1500)}` : result.slice(0, 8000)}`, paused && chef ? 'pipeline-chef-pause' : paused && limit ? 'pipeline-limit' : 'pipeline');
     } else if (paused && limit) {
-      await postNotify(root, 'chef', `[PIPELINE — ${projectName} — ${run}] ${pausedText}`, 'pipeline-limit');
+      await postNotify(root, 'chef', `[PIPELINE — ${projectName} — ${run}] ${pausedText}`, chef ? 'pipeline-chef-pause' : 'pipeline-limit');
     }
     say(`${summary.text}`);
     return code;
@@ -3030,6 +3048,32 @@ export async function runPipeline(o) {
   };
   const pauseWith = async ({ limit, input = {}, what, body = null, notice, menuCtx = {}, tail = '' }) => {
     const { d, menu } = await diagnose({ limit, ...input }, menuCtx);
+    // 0.133.0 (lever chefPauses, frozen per run): a PROCESS pause is settled by
+    // the chef, never asked to the user (process-pause.mjs; in doubt: the user).
+    if (ctx.tuning?.chefPauses) {
+      const n = state.pauseCount = (Number(state.pauseCount) || 0) + 1;
+      const sig = pauseSignature({ limit, kind: d.kind, step: input.step?.id || null, item: (input.item || state.item)?.n ?? null, aside: state.aside, asideConflict: state.asideConflict });
+      const r = routePause({ limit, d, menu, pipeline, lane: state.lane?.k || 0, history: state.pauseAnswers || [], sig, project: projectName, run, n, aside: state.aside || [] });
+      state.lastPause = { n, limit, sig, to: r.to, why: r.why };
+      if (r.to === 'chef') {
+        const userQuestion = menuQuestion(projectName, d, menu);
+        state.chefPause = { status: 'pending', n, at: new Date().toISOString(), limit, sig, options: r.menu.options.map(o => o.key), recommend: r.menu.recommend,
+          blocked: r.blocked, suggestions: r.suggestions, question: r.question, userQuestion, userText: `${pauseText({ what, diag: d, menu, body })}${tail}` };
+        const b = menuBlock(d, r.menu);
+        const info = [
+          `⇄ **${projectName} — pause de processus, transmise au chef** : aucune décision de votre part n’est attendue (votre règle : « arrête de poser des questions de découpage »).`, '',
+          b.cause, '',
+          ...(body ? [body] : [`**Ce qui s'est passé** : ${what}`, '', `**Où en est le travail** : ${progressText()}`]), '',
+          `**Choix soumis au chef** : ${r.menu.options.map(o => `« ${o.key} »`).join(', ')} — recommandé : « ${r.menu.recommend.key} ».`,
+          ...(r.blocked.length ? ['', `**Anti-boucle** : ${r.blocked.map(x => `« ${x.key} » déjà choisi ${x.times} fois sur cette même pause, plus proposé`).join(' ; ')}.`] : []),
+          ...(r.suggestions.length ? ['', '**Demandes séparées suggérées** :', ...r.suggestions.map(s => `- ${s}`)] : []),
+        ].join('\n');
+        writeEvent({ type: 'system', subtype: 'pipeline_chef_pause', pipeline: { run }, limit, n, options: state.chefPause.options, recommend: r.menu.recommend.key,
+          ...(r.blocked.length ? { blocked: r.blocked } : {}), ...(r.suggestions.length ? { suggestions: r.suggestions } : {}),
+          text: `⇄ pause de processus n° ${n} (« ${limit} ») transmise au chef — choix : ${state.chefPause.options.join(', ')} ; recommandé « ${r.menu.recommend.key} »` });
+        return finish({ code: 2, paused: true, chef: true, limit, question: r.question, result: `${info}${tail}`, notice: notice ? `${notice} — transmise au chef` : notice });
+      }
+    }
     return finish({ code: 2, paused: true, limit, question: menuQuestion(projectName, d, menu), result: `${pauseText({ what, diag: d, menu, body })}${tail}`, notice });
   };
 
@@ -4159,7 +4203,7 @@ export async function runPipeline(o) {
  *   changer le model → reste en pause, dit quelle case changer, attend « continuer ».
  * Un tour côté musicien : user_prompt + result. Renvoie le code de sortie.
  */
-export async function answerPausedRun({ logsDir, project, projectName, run, answer, promptForLog, sourceProject, callbackProject, testLabel, logFile = null, cwd = null, eventTag = null }) {
+export async function answerPausedRun({ logsDir, project, projectName, run, answer, promptForLog, sourceProject, callbackProject, testLabel, logFile = null, cwd = null, eventTag = null, chefDecision = null }) {
   const f = path.join(logsDir, 'runs', run, 'run.json');
   const state = readJson(f);
   if (!state || state.status !== 'paused' || state.project !== projectName) { console.error(`[pipeline] aucune exécution en pause ${run} pour ${projectName}`); return 65; }
@@ -4170,6 +4214,16 @@ export async function answerPausedRun({ logsDir, project, projectName, run, answ
   writeEvent({ type: 'user_prompt', text: promptForLog, pipeline: { run, pipeline: state.pipeline, mode: state.mode, answer },
     ...(sourceProject ? { source: sourceProject } : {}), ...(callbackProject ? { callback: callbackProject } : {}), ...(testLabel ? { test: { label: testLabel } } : {}) });
   const save = () => { state.updatedAt = new Date().toISOString(); writeFileAtomic(f, JSON.stringify(state, null, 2)); };
+  // 0.133.0: the answer is remembered with the pause's signature; the chef's decision is traced.
+  if (state.lastPause) {
+    const by = chefDecision ? 'chef' : 'utilisateur';
+    state.pauseAnswers = [...(state.pauseAnswers || []), { n: state.lastPause.n, limit: state.lastPause.limit, sig: state.lastPause.sig, key: answer, by, at: new Date().toISOString() }].slice(-200);
+    if (state.chefPause?.status === 'pending') state.chefPause = { ...state.chefPause, status: chefDecision ? 'decided' : 'answered-by-user', key: answer, answeredAt: new Date().toISOString() };
+    if (chefDecision) writeEvent({ type: 'system', subtype: 'pipeline_chef_decision', pipeline: { run }, n: state.lastPause.n, limit: state.lastPause.limit, key: answer, reason: chefDecision.reason, text: decisionText({ key: answer, reason: chefDecision.reason }) });
+    state.lastPause = null;
+    save();
+  }
+  const whose = chefDecision ? 'par décision du chef' : 'à votre demande';
   let text, paused = false;
   if (answer === 'tester le model') {
     // 0.60.0: a short trial of the step's model, with its full log; still paused.
@@ -4205,11 +4259,12 @@ export async function answerPausedRun({ logsDir, project, projectName, run, answ
     state.status = 'abandoned'; state.abandonedBy = answer; state.endedAt = new Date().toISOString();
     save();
     writeEvent({ type: 'system', subtype: 'pipeline_summary', pipeline: { run, pipeline: state.pipeline, mode: state.mode, status: 'abandoned' },
-      text: `exécution ${run} arrêtée à la demande de l’utilisateur (« ${answer} ») — ${(state.delivered || []).length ? `${state.delivered.length} item(s) déjà livré(s), le reste non livré` : 'rien n’est livré'}` });
+      text: `exécution ${run} arrêtée ${chefDecision ? 'par décision du chef' : 'à la demande de l’utilisateur'} (« ${answer} ») — ${(state.delivered || []).length ? `${state.delivered.length} item(s) déjà livré(s), le reste non livré` : 'rien n’est livré'}` });
     const ds = state.delivered || [], as = state.aside || [];
-    text = (ds.length
-      ? `■ Exécution arrêtée à votre demande (« ${answer} »). Les items déjà livrés restent dans leurs commits : ${ds.map(d => `${d.group === 0 ? 'travail d’avant la montée en complet' : `item ${d.group}`} (${d.commit.slice(0, 7)})`).join(' ; ')}. Le reste n’est pas livré.\n\n`
-      : `■ Exécution arrêtée à votre demande (« ${answer} »). Rien n’est livré, aucun commit n’a été fait.\n\n`) +
+    const sugg = chefDecision && state.chefPause?.suggestions?.length ? `**Demandes séparées suggérées** (une par item bloqué, à envoyer ensuite) :\n${state.chefPause.suggestions.map(s => `- ${s}`).join('\n')}\n\n` : '';
+    text = (chefDecision ? `${decisionText({ key: answer, reason: chefDecision.reason })}\n\n` : '') + (ds.length
+      ? `■ Exécution arrêtée ${whose} (« ${answer} »). Les items déjà livrés restent dans leurs commits : ${ds.map(d => `${d.group === 0 ? 'travail d’avant la montée en complet' : `item ${d.group}`} (${d.commit.slice(0, 7)})`).join(' ; ')}. Le reste n’est pas livré.\n\n`
+      : `■ Exécution arrêtée ${whose} (« ${answer} »). Rien n’est livré, aucun commit n’a été fait.\n\n`) + sugg +
       (as.length ? `Items mis de côté, non livrés — leurs modifications sont gardées hors du projet (à réappliquer avec « git apply » si vous voulez les reprendre) :\n${as.map(a => `- ${a.group === 0 ? 'travail d’avant la montée en complet' : `item ${a.group}`} : \`${a.patch}\` (${(a.files || []).slice(0, 10).join(', ')})${a.conflict ? ' — ne s’applique plus sur le travail livré depuis' : ''}`).join('\n')}\n\n` : '') +
       (discardedText(state) ? `${discardedText(state)}\n` : '') +
       (state.lane?.k >= 1
@@ -4230,6 +4285,47 @@ export async function answerPausedRun({ logsDir, project, projectName, run, answ
     pipeline: { run, pipeline: state.pipeline, status: state.status, answer }, ...(paused ? { pipeline_paused: true } : {}), result: text });
   console.log(`[pipeline] exécution ${run} : réponse « ${answer} » — ${state.status}`);
   return paused ? 2 : 0;
+}
+
+/**
+ * 0.133.0: the chef's answer to a process pause could not be applied (outside
+ * the options offered, or handed back with NEEDS_USER_INPUT): the pause goes to
+ * the user, with its full menu — never guessed. The run stays paused.
+ */
+export async function handChefPauseToUser({ logsDir, projectName, run, why, promptForLog, sourceProject = null, logFile = null, eventTag = null }) {
+  const f = path.join(logsDir, 'runs', run, 'run.json');
+  const state = readJson(f);
+  if (!state || state.status !== 'paused' || state.project !== projectName || state.chefPause?.status !== 'pending') { console.error(`[pipeline] aucune pause de processus en attente du chef pour ${run}`); return 65; }
+  const projectLog = logFile || path.join(logsDir, `${projectName}.jsonl`);
+  const writeEvent = (ev) => { try { fs.appendFileSync(projectLog, JSON.stringify({ ...(process.env.ORCH_TURN_ID ? { orch_turn: process.env.ORCH_TURN_ID } : {}), ...eventTagOf({ eventTag }, ev), ...ev, timestamp: new Date().toISOString() }) + '\n'); } catch {} };
+  writeEvent({ type: 'user_prompt', text: promptForLog, pipeline: { run, pipeline: state.pipeline, mode: state.mode, answer: 'chef-vers-utilisateur' }, ...(sourceProject ? { source: sourceProject } : {}) });
+  state.chefPause = { ...state.chefPause, status: 'to-user', why: String(why || '').slice(0, 600), handedAt: new Date().toISOString() };
+  state.question = state.chefPause.userQuestion || state.question;
+  // The pause is now the user's: an answer of theirs is not an answer of the chef.
+  state.lastPause = state.lastPause || { n: state.chefPause.n, limit: state.chefPause.limit, sig: state.chefPause.sig, to: 'user', why };
+  state.updatedAt = new Date().toISOString();
+  writeFileAtomic(f, JSON.stringify(state, null, 2));
+  writeEvent({ type: 'system', subtype: 'pipeline_chef_pause_to_user', pipeline: { run }, n: state.chefPause.n, why: state.chefPause.why,
+    text: `⇄ pause n° ${state.chefPause.n} rendue à l’utilisateur : ${state.chefPause.why}` });
+  const text = `⇄ Le chef n’a pas tranché cette pause de processus (${state.chefPause.why}) : elle vous revient.\n\n${state.chefPause.userText || ''}\n\nNEEDS_USER_INPUT: ${state.question}`;
+  writeEvent({ type: 'assistant', message: { model: '<synthetic>', content: [{ type: 'text', text }] } });
+  writeEvent({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, duration_ms: 1, duration_api_ms: 1, stop_reason: 'end_turn',
+    pipeline: { run, pipeline: state.pipeline, status: 'paused', limit: state.pausedLimit || null }, pipeline_paused: true, result: text });
+  console.log(`[pipeline] exécution ${run} : pause de processus rendue à l’utilisateur — ${state.chefPause.why}`);
+  return 2;
+}
+
+/** The pending process pause of a project's latest paused run (lane 0), or null. */
+export function pendingChefPause(logsDir, projectName) {
+  let runs = [];
+  try { runs = fs.readdirSync(path.join(logsDir, 'runs')).filter(r => /^p-\d{8}T\d{6}-[a-z0-9]{4,8}$/.test(r)).sort().reverse().slice(0, 50); } catch { return null; }
+  for (const r of runs) {
+    const s = readJson(path.join(logsDir, 'runs', r, 'run.json'));
+    if (!s || s.project !== projectName) continue;
+    if (s.status !== 'paused') continue;
+    return s.chefPause?.status === 'pending' && !(s.lane?.k >= 1) ? { run: r, chefPause: s.chefPause } : null;
+  }
+  return null;
 }
 
 const CODE_RE = /\.(m?js|cjs|ts|tsx|jsx|kt|kts|java|py|go|rs|cs|swift|c|cc|cpp|h)$/i;

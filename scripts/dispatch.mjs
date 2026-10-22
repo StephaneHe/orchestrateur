@@ -243,7 +243,7 @@ const testLabel      = (takeFlagValue('--test') || process.env.ORCH_TEST_LABEL |
 // --pipeline est classée et part dans le bon pipeline ; un musicien ne peut pas
 // y lancer de tour ; une étape ne lance aucun tour.
 const pipelineArg       = takeFlagValue('--pipeline');
-const pipelineResumeArg = takeFlagValue('--pipeline-resume');
+let pipelineResumeArg = takeFlagValue('--pipeline-resume');   // also set by a chef's answer to a process pause (0.133.0)
 const pipelineStepArg   = takeFlagValue('--pipeline-step');
 const pipelineSession   = takeFlagValue('--pipeline-session');
 const horsPipelineArg   = takeFlagValue('--hors-pipeline');
@@ -520,6 +520,12 @@ if (PIPE_STEP || (ENFORCED && (DUAL_BRANCH || dualSynthesis))) {
   if (!okModel) gateDie(`tour d'étape refusé : model « ${modelOverride || 'défaut'} » ≠ model de la case (« ${g.model || 'défaut du projet'} »)`, 65, 'jeton');
   STEP_GRANT = g;
 }
+// 0.133.0: the chef's relayed answer ([CHEF_ANSWER], server relay of a
+// NEEDS_CHEF_INPUT) to a PROCESS pause goes to that paused run, even on a
+// project not in service — the relay carries no --pipeline-resume.
+const CHEF_PAUSE = !pipelineArg && !pipelineResumeArg && !PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && !CHEF_TARGET && horsPipelineArg == null
+  && /^\s*\[CHEF_ANSWER\]/i.test(prompt) ? pipeEngine.pendingChefPause(path.join(ROOT, 'logs'), projectName) : null;
+if (CHEF_PAUSE) pipelineResumeArg = CHEF_PAUSE.run;
 // 4. Un projet en service ne reçoit pas de model choisi à la main : ce sont les
 //    cases de la page Models qui décident (sauf sortie d'urgence tracée).
 const AUTO_PIPELINE = ENFORCED && !PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && horsPipelineArg == null;
@@ -1604,6 +1610,22 @@ if (CHEF_ROUTED || CHEF_DISCUSSION) {
 }
 if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResumeArg || AUTO_PIPELINE)) {
   let pipe = pipelineArg, resumeRun = pipelineResumeArg, classification = null, mode = pipelineModeArg, acceptDefects = false, deleteDoubts = false, pauseOption = null;
+  let chefDecision = null;
+  // 0.133.0: the chef settles a process pause with ONE of the options offered
+  // to it; anything else (another word, NEEDS_USER_INPUT) hands it to the user.
+  if (CHEF_PAUSE) {
+    const { parseChefDecision } = await import('./process-pause.mjs');
+    const dec = parseChefDecision(prompt, CHEF_PAUSE.chefPause);
+    if (!dec.ok) {
+      process.exit(await pipeEngine.handChefPauseToUser({ logsDir: LOGS, projectName, run: CHEF_PAUSE.run, why: dec.why, promptForLog: prompt, sourceProject, logFile: logPath, eventTag: taskTag }));
+    }
+    chefDecision = { key: dec.key, reason: dec.reason };
+    if (pauseMenu.OPTION_KEYS[dec.key] === 'abandon') {
+      process.exit(await pipeEngine.answerPausedRun({ logsDir: LOGS, project, projectName, run: CHEF_PAUSE.run, answer: dec.key, promptForLog: prompt, sourceProject, callbackProject, testLabel, eventTag: taskTag,
+        logFile: logPath, cwd: WORK_DIR, chefDecision }));
+    }
+    if (dec.key !== 'continuer') pauseOption = dec.key;
+  }
   // 0.113.2: the Routage launches every answer to a paused run with
   // --pipeline-resume — « simplifier » included (user report 2026-10-18: it
   // resumed the run instead of closing it). A reply that IS one of the pause's
@@ -1757,7 +1779,7 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
         ? `\n\n[Note de l'orchestrateur : cette demande relève du pipeline « ${classification.notInService} », pas encore en service sur ce projet. ` +
           'Elle est traitée en Discussion : ne modifie rien ; si elle demande une action, termine ta réponse en disant à l’utilisateur de la relancer avec /dev.]'
         : ''),
-      promptForLog: prompt, pipeline: pipe, resumeRun, classification, mode, kind, acceptDefects, deleteDoubts, pauseOption,
+      promptForLog: prompt, pipeline: pipe, resumeRun, classification, mode, kind, acceptDefects, deleteDoubts, pauseOption, chefDecision,
       ...(pipeNotes.length ? { modeNote: pipeNotes.join(' ; ') } : {}),
       callbackProject, sourceProject, obsId, testLabel,
       dispatchScript: fileURLToPath(import.meta.url),

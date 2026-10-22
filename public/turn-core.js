@@ -355,6 +355,12 @@
           // 0.65.0: every detected defect is reported at once and blocks delivery.
           p.defects = p.defects || [];
           for (const d of ev.defects || []) p.defects.push(`[${d.severity || "?"}] ${String(d.description || "").slice(0, 200)}`);
+        } else if (ev.subtype === "pipeline_chef_pause") {
+          // 0.133.0: a process pause is settled by the chef, not asked to the user.
+          p.chefPause = ev.text || "pause de processus transmise au chef";
+        } else if (ev.subtype === "pipeline_chef_decision" || ev.subtype === "pipeline_chef_pause_to_user") {
+          p.chefDecisions = p.chefDecisions || [];
+          p.chefDecisions.push(ev.text || "");
         } else if (ev.subtype === "pipeline_summary") {
           p.backoff = null;
           p.status = (q && q.status) || p.status;

@@ -421,6 +421,8 @@ export function collectLogWaits({ logsDir, projects, conductor = 'chef', busy = 
       const isChef = p.name === conductor;
       const run = lane === 0 && !isChef ? latestRunOf(logsDir, p.name) : null;
       const paused = run && run.state.status === 'paused' ? run : null;
+      // 0.133.0: a process pause belongs to the chef (process-pause.mjs), never to the automatic answer.
+      if (paused?.state.chefPause?.status === 'pending') continue;
       waits.push({
         key: `log:${p.name}:${lane}:${new Date(since).toISOString()}`,
         kind: paused ? 'pause' : 'question', project: p.name, lane, isChef, since,

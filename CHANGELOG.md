@@ -11,6 +11,48 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.133.0] - 2026-10-22
+
+User rule (2026-10-22): « arrête de poser des questions de découpage. tu sais
+comment est organisé le process mieux que moi ». On one dev run the user had to
+answer four purely mechanical pauses (« découper », « reprendre les items »
+twice, « écarter l’item »).
+
+### Added
+- (server) `scripts/process-pause.mjs`: pipeline pauses fall in two families.
+  PROCESS pauses (limits `items`, `items_blocked`, `aside_conflict`,
+  `item_tests`, `green`, `criteria`, `review`, `duration`, `orphaned`, with a
+  cause the chef can settle) are routed to the chef like a musician's question:
+  the run ends with `NEEDS_CHEF_INPUT:` (one line: run, pause number, cause,
+  options, recommendation, expected answer format), the server's existing relay
+  asks the chef, and its `[CHEF_ANSWER]` resumes THAT run (found by
+  `pendingChefPause`, no `--pipeline-resume` needed) with the option's effect.
+  USER-DECISION pauses (authorization, operation, doubts before deletion, red
+  base, infrastructure, model, launch refusal, unknown cause, the chef's own
+  Routage, a lane ≥ 1) stay with the user, and so does any pause in doubt. The
+  chef is never offered abandonner, simplifier, accepter, tout supprimer,
+  autoriser, a repair or a model change.
+- (server) Anti-loop: every answer to a pause is remembered with the pause's
+  signature (`run.json.pauseAnswers`); the same option on the same pause (same
+  set-aside items for the same reasons, or same limit/cause/step/item) is not
+  offered a 3rd time. For set-aside items « livrer sans eux » is then
+  recommended with the reason, and a separate request per blocked item is
+  suggested (question, pause message, closing message).
+- (server) Traceability: `system/pipeline_chef_pause` and
+  `system/pipeline_chef_decision` (« ⚖ tranché par le chef : <option> —
+  <raison> ») in the timeline and the activity journal; the pause message is an
+  information for the user (« aucune décision de votre part n’est attendue »);
+  `/api/pipeline-runs` shows no buttons for it (`pause.byChef`, `info`).
+- (server) An answer of the chef outside the options offered, or handed back
+  with NEEDS_USER_INPUT, gives the pause to the user with its full menu
+  (`handChefPauseToUser`, `system/pipeline_chef_pause_to_user`).
+- (server) Switch `chefPauses` (`pipeline-tuning.mjs`, `node
+  scripts/pipeline-enforce.mjs tuning chefPauses on [<projet>]`), off by
+  default, frozen per run; off = exactly the behaviour before.
+
+### Changed
+- (server) The automatic answer never takes a pause waiting for the chef.
+
 ## [0.132.0] - 2026-10-22
 
 Requests registry (Routage v3, phase 1) defect seen in prod on 2026-10-22:

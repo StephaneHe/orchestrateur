@@ -3245,6 +3245,42 @@ intelligent ».
   vrai dispatch). Redémarrage inutile (moteur et dispatch), sauf pour le
   balayage de la réponse automatique du serveur.
 
+## Pauses de processus tranchées par le chef (0.133.0)
+
+Règle utilisateur (2026-10-22) : « arrête de poser des questions de découpage.
+tu sais comment est organisé le process mieux que moi ».
+
+- `scripts/process-pause.mjs`, appelé par `pauseWith` du moteur quand le
+  levier `chefPauses` est allumé (`pipeline-tuning.mjs`, coupé par défaut,
+  **figé dans `run.json.tuning`** ; coupé = comportement d'avant exact) :
+  - **processus** (`PROCESS_LIMITS` × `PROCESS_KINDS` : items, items mis de
+    côté, correctif périmé, limites de tests, d'étapes, de relecture, de durée,
+    reprise) → **chef** : fin de tour `NEEDS_CHEF_INPUT:` sur UNE ligne
+    (`[<run> · pause n] …`, cause, choix, recommandation, format « [ANSWER]
+    <choix> — <raison> ») ; relais existant du serveur ; `[CHEF_ANSWER]`
+    → `dispatch.mjs` (`CHEF_PAUSE`, `pendingChefPause`) reprend CETTE exécution
+    même hors service, avec l'effet de l'option ;
+  - **décision utilisateur** (autoriser, opération, doutes, base rouge, infra,
+    lancement, model, classement, commit, cause non établie, Routage du chef,
+    couloir ≥ 1) et **tout doute** → l'utilisateur, comme avant.
+  - Le chef ne choisit que dans `CHEF_KEYS` (jamais abandonner, simplifier,
+    accepter, tout supprimer, autoriser, réparer, tester / changer le model).
+    Réponse hors des choix ou `NEEDS_USER_INPUT` ⇒ `handChefPauseToUser` (menu
+    complet rendu à l'utilisateur).
+- **Anti-boucle** : `run.json.pauseAnswers` (signature `pauseSignature`) ; une
+  option déjà choisie `MAX_SAME_ANSWER` (2) fois sur la même pause n'est plus
+  proposée ; items mis de côté ⇒ « livrer sans eux » recommandé avec la raison,
+  une demande séparée par item suggérée.
+- **Traces** : `system/pipeline_chef_pause`, `system/pipeline_chef_decision`
+  (« ⚖ tranché par le chef : <option> — <raison> », frise `p.chefDecisions`
+  de `turn-core.js`, `.jt-chef-decision`), notify `pipeline-chef-pause` ;
+  `/api/pipeline-runs` : `pause.byChef`, aucun bouton (app Android comprise).
+- La réponse automatique ne prend jamais une pause en attente du chef.
+- Mise en service : `node scripts/pipeline-enforce.mjs tuning chefPauses on
+  [<projet>]` (relu à chaque dispatch, pas de redémarrage ; `turn-core.js` :
+  redémarrage pour le journal servi).
+- Recette : `_test_chef_process_pauses.mjs` (rejeu des 4 pauses réelles).
+
 ## Graphe de connaissances, phase 0 b : l'index par le programme (0.124.0)
 
 Décisions de l'utilisateur du 2026-10-20 (« tout comme recommandé ») :

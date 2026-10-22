@@ -704,6 +704,7 @@
         "scripts/pipeline-cleanup.mjs",
         "scripts/pause-diagnosis.mjs",
         "scripts/pause-replay.mjs",
+        "scripts/process-pause.mjs",
         "tests/pause-cases.json",
         "scripts/typed-operations.mjs",
         "scripts/files-check.mjs",
@@ -744,6 +745,7 @@
         "_test_suite_cache.mjs",
         "_test_inert_cleanup.mjs",
         "_test_smart_pause.mjs",
+        "_test_chef_process_pauses.mjs",
         "_test_typed_operations.mjs",
         "_test_generic_operations.mjs",
         "_test_generic_files.mjs",
@@ -755,6 +757,7 @@
         {
           "perimeter": "client",
           "suites": [
+            "_test_chef_process_pauses.mjs",
             "_test_model_reco.mjs",
             "_test_reunion_pipeline.mjs"
           ]
@@ -762,6 +765,7 @@
         {
           "perimeter": "dispatch",
           "suites": [
+            "_test_chef_process_pauses.mjs",
             "_test_cited_paths_log.mjs",
             "_test_code_deliver.mjs",
             "_test_defect_blocks.mjs",
@@ -814,6 +818,7 @@
         {
           "perimeter": "noyau",
           "suites": [
+            "_test_chef_process_pauses.mjs",
             "_test_cited_paths_log.mjs",
             "_test_code_deliver.mjs",
             "_test_defect_blocks.mjs",
@@ -864,6 +869,7 @@
         {
           "perimeter": "panneaux",
           "suites": [
+            "_test_chef_process_pauses.mjs",
             "_test_cited_paths_log.mjs",
             "_test_code_deliver.mjs",
             "_test_defect_blocks.mjs",
@@ -903,6 +909,7 @@
         {
           "perimeter": "routage",
           "suites": [
+            "_test_chef_process_pauses.mjs",
             "_test_cited_paths_log.mjs",
             "_test_code_deliver.mjs",
             "_test_defect_blocks.mjs",
@@ -944,6 +951,7 @@
         {
           "perimeter": "serveur",
           "suites": [
+            "_test_chef_process_pauses.mjs",
             "_test_generic_operations.mjs",
             "_test_item_delivery.mjs",
             "_test_model_reco.mjs",
