@@ -3281,6 +3281,41 @@ tu sais comment est organisé le process mieux que moi ».
   redémarrage pour le journal servi).
 - Recette : `_test_chef_process_pauses.mjs` (rejeu des 4 pauses réelles).
 
+## Reprise d'une pause : plus aucune « réponse attendue » (0.134.0)
+
+Signalement (2026-10-22) : « [projet] est toujours marqué avec "votre réponse
+attendue" ».
+
+- Moteur : à la reprise (toute réponse), `question` quitte `run.json`
+  (historique `answeredQuestions`). `/api/pipeline-runs` : `question` et
+  `pause` seulement pour une exécution en pause.
+- **Une question n'attend plus dès qu'un tour du même musicien s'est ouvert
+  après elle** (`TurnCore.questionOpen`, `QuestionRule` côté Android) : bulle du
+  fil « ↻ reprise — plus de réponse attendue », sans bouton. Source du début de
+  tour : flux en direct, `lastTurnStartAt` de `/api/config` et `/api/pupitre`.
+  Redémarrage nécessaire (routes, `turn-core.js`).
+- Recettes : `_test_resume_clears_question.mjs`, HTTP `resume-no-question`,
+  navigateur `question-superseded`, JVM `QuestionRuleTest`.
+
+## Cartes à jour en direct, pipelines et coupures du flux compris (0.135.0)
+
+Signalement (2026-10-22, app 1.1.0) : « a l'instant je ne vois dans pilotage sur
+l'application : 1 en cours » / « après avoir relancé l'application je vois bien
+les 2 tâches en cours ».
+
+- **Ouverture de tour** : partout la règle du serveur (`TurnCore.isTurnStart`,
+  `stateAtTurnStart`). Une exécution de pipeline lancée ou reprise par le chef
+  n'écrit ni `init` ni message assistant dans le journal du musicien : l'app
+  Android (`Musician.ingest`, `LiveStateRule.stateAtTurnStart`) l'ouvre sur
+  `pipeline_start`, comme le dashboard.
+- **Rattrapage par le relevé** (`TurnCore.snapshotState`, miroir
+  `data/LiveStateRule.kt`) appliqué à chaque `/api/pupitre` : départ vu par le
+  serveur (`lastTurnStartAt` plus récent) ⇒ aussitôt ; autre écart (en cours,
+  question, échec) ⇒ au 2ᵉ relevé consécutif ; non lu / prêt et en cours /
+  réflexion jamais. L'app relit `/api/config` au retour au premier plan.
+- Recettes : `_test_live_state.mjs`, navigateur `snapshot-live`, JVM
+  `LiveStateRuleTest`. Redémarrage nécessaire pour `turn-core.js` servi.
+
 ## Graphe de connaissances, phase 0 b : l'index par le programme (0.124.0)
 
 Décisions de l'utilisateur du 2026-10-20 (« tout comme recommandé ») :

@@ -12,8 +12,8 @@ android {
         applicationId = "com.orchestrateur"
         minSdk = 29
         targetSdk = 34
-        versionCode = 25
-        versionName = "1.1.0"
+        versionCode = 27
+        versionName = "1.1.2"
     }
 
     buildTypes {

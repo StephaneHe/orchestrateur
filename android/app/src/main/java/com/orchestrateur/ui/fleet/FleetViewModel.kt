@@ -302,6 +302,7 @@ class FleetViewModel(
                     lastLine = p.lastLine.orEmpty(),
                     readAt = p.readAt,
                 )
+                m.noteTurnStart(p.lastTurnStartAt?.toLong())
                 m
             }
             musicians.clear()
@@ -347,6 +348,10 @@ class FleetViewModel(
         if (streamJob?.isActive != true) {
             reconnectDelayMs = 1_000L
             startStream()
+        } else {
+            // 0.135.0 — back from sleep on a stream that looks alive: events
+            // may have been lost, re-read the authoritative states at once.
+            viewModelScope.launch { syncFromConfig() }
         }
         startPupitrePoll()   // resumes the authoritative telemetry with the UI
     }

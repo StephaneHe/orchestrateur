@@ -11,6 +11,73 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.135.0] - 2026-10-22
+
+User report (2026-10-22, Android app 1.1.0): « a l'instant je ne vois dans
+pilotage sur l'application : 1 en cours (Orchestrateur-dev) », then « après
+avoir relancé l'application je vois bien les 2 tâches en cours ». The server
+data was right; the app's live reducer opened a turn only on `system/init`,
+which a pipeline run (and its resume) never writes in the musician's log
+(sourced `user_prompt` + `system/pipeline_start`). Neither client corrected an
+event missed during a stream gap.
+
+### Fixed
+- (android) The live reducer opens a turn on the server's turn starts
+  (`QuestionRule.isTurnStart`: source-less prompt, `init`, `pipeline_start`,
+  `dual_start`) with the server's rule (`LiveStateRule.stateAtTurnStart`:
+  idle, unread, input, error → live): a pipeline run started or resumed by the
+  chef shows « en cours » in Pilotage and on the cards at once. App 1.1.2
+  (versionCode 27).
+- (android) Each `/api/pupitre` snapshot (5 s) corrects a missed event
+  (`LiveStateRule.fromSnapshot`): a start seen by the server (newer
+  `lastTurnStartAt`) is adopted at once, any other disagreement on running /
+  question / failure from the second snapshot in a row; unread vs idle and
+  live vs think are never touched. Back to the foreground on a stream that
+  still looks alive, `/api/config` is re-read at once.
+- (server) Same snapshot rule for the dashboard: `TurnCore.snapshotState`,
+  applied in `applyPupitreToCards` (missed start or end after sleep, hidden
+  tab or reconnect). The dashboard already opened a turn on `pipeline_start`.
+- (server) `lanes.mjs` writes `lanes.json` and task files through
+  `renameRetry` (rule 0.74.3): `_test_parallel_lanes.mjs` failed with EPERM
+  under the full regression's load (TODO t-cfee05).
+
+### Added
+- Tests: `_test_live_state.mjs`, browser `snapshot-live`, JVM
+  `LiveStateRuleTest`.
+
+## [0.134.0] - 2026-10-22
+
+User report (2026-10-22): « [projet] est toujours marqué avec "votre réponse
+attendue" ». A run had been resumed (« reprendre les items »), the musician was
+LIVE, but `run.json` still carried the previous pause's question and the chef
+thread kept the question bubble with its « votre décision » buttons.
+
+### Fixed
+- (server) The engine drops `question` from `run.json` when a paused run goes
+  again, whoever answered (user, chef, menu choice); the text is kept as history
+  in `answeredQuestions` (last 20).
+- (server) `GET /api/pipeline-runs` exposes `question` only for a paused run,
+  so a `run.json` written by an older engine no longer shows a stale question.
+- (server) Question bubble of the chef thread: `TurnCore.questionOpen` — once a
+  turn of the musician opened after the question (reply, chef answer, pipeline
+  resume), the bubble reads « ↻ reprise — plus de réponse attendue », without
+  buttons. Live (SSE turn start), after a reload and from each snapshot.
+- (android) Same rule (`QuestionRule`) in the question bubble; app 1.1.1
+  (versionCode 26).
+- (tooling) `_test_hors_pipeline_task.mjs` and `_test_phase4b_harness.mjs` run
+  alone (`SERIAL_SUITES`): the first awaits detached task turns with a deadline
+  (green alone, red in 5 kept failure reports), the second caps the harness
+  latency at 500 ms (547 ms measured under parallel load).
+
+### Added
+- (server) `lastTurnStartAt` (epoch ms of the last turn opening) in
+  `/api/config` and `/api/pupitre`. Restart needed for the routes and for
+  `turn-core.js`; the engine and `/api/pipeline-runs` view fix apply to new
+  resumes at once (engine), the view after the restart.
+- Tests: `_test_resume_clears_question.mjs` (real dispatch: pause → resume →
+  no awaited answer), HTTP `resume-no-question`, browser
+  `question-superseded`, JVM `QuestionRuleTest`.
+
 ## [0.133.0] - 2026-10-22
 
 User rule (2026-10-22): « arrête de poser des questions de découpage. tu sais

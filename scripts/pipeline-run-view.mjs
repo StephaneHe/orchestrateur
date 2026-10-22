@@ -33,7 +33,9 @@ export function pauseView(s) {
 export function runView(s) {
   return {
     run: s.run, project: s.project, pipeline: s.pipeline, mode: s.mode, kind: s.kind, status: s.status,
-    createdAt: s.createdAt, endedAt: s.endedAt || null, question: s.chefPause?.status === 'pending' ? null : s.question || null, backoff: s.backoff || null,
+    // 0.134.0: a question is awaited only while the run is paused (a resumed
+    // run of an older engine still carries the text of its previous pause).
+    createdAt: s.createdAt, endedAt: s.endedAt || null, question: s.status !== 'paused' || s.chefPause?.status === 'pending' ? null : s.question || null, backoff: s.backoff || null,
     steps: (s.steps || []).map(x => ({ id: x.id, key: x.key, title: x.title, slot: x.slot, model: x.model, served: x.served,
       source: x.source, status: x.status, why: x.why ? String(x.why).slice(0, 300) : null, durationMs: x.durationMs })),
     pause: pauseView(s),

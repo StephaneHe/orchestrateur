@@ -73,6 +73,14 @@ class Musician(
         private set
     var queueDepth: Int by mutableStateOf(0)
         private set
+    /** Epoch ms of the last turn opening seen (server 0.134.0 or live event):
+     *  a question asked before it is no longer awaited (QuestionRule). */
+    var lastTurnStartMs: Long? by mutableStateOf(null)
+        private set
+
+    fun noteTurnStart(ms: Long?) {
+        if (ms != null && ms > (lastTurnStartMs ?: 0L)) lastTurnStartMs = ms
+    }
 
     /** Merge one authoritative snapshot row. Never touches `state`: the SSE
      *  reducer owns it — except that a confirmed-dead producer must not keep
@@ -87,8 +95,26 @@ class Musician(
         observedModel = row.model ?: row.configModel
         activity = row.activity
         queueDepth = row.queueDepth
+        val newerTurn = (row.lastTurnStartAt?.toLong() ?: 0L) > (lastTurnStartMs ?: 0L)
+        noteTurnStart(row.lastTurnStartAt?.toLong())
         if (row.awaitingChef) awaitingChef = true
+        // 0.135.0 — a missed live event must not freeze the card (LiveStateRule).
+        val server = LiveStateRule.parse(row.state)
+        val disagree = server != null && server != state
+        val next = LiveStateRule.fromSnapshot(state, server, if (disagree && server == lastDisagreement) disagreeStreak else 0, newerTurn)
+        if (next != null) {
+            if (next == State.live || next == State.think) awaitingChef = row.awaitingChef
+            state = next
+            disagreeStreak = 0; lastDisagreement = null
+        } else if (disagree) {
+            disagreeStreak = if (server == lastDisagreement) disagreeStreak + 1 else 1
+            lastDisagreement = server
+        } else {
+            disagreeStreak = 0; lastDisagreement = null
+        }
     }
+    private var disagreeStreak = 0
+    private var lastDisagreement: State? = null
 
     // Cumulative usage for this musician — harvested from `result` events.
     var totalCostUsd: Double by mutableStateOf(0.0)
@@ -140,9 +166,19 @@ class Musician(
         ring.add(raw)
         if (ring.size > RING_MAX) ring.removeAt(0)
         ingestSeq++
+        if (QuestionRule.isTurnStart(raw.type, raw.subtype, raw.source)) {
+            noteTurnStart(raw.timestamp?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() }
+                ?: System.currentTimeMillis())
+            // 0.135.0 — same turn opening as the server: a pipeline run or its
+            // resume writes no init (« 1 en cours » while 2 were running).
+            state = LiveStateRule.stateAtTurnStart(state)
+            lastAssistantText = ""
+            awaitingChef = false
+            stalled = false
+            deadInFlight = false
+        }
         when (raw.type) {
             "system" -> if (raw.subtype == "init") {
-                if (state == State.idle || state == State.unread || state == State.error) state = State.live
                 pendingDenials.clear()
                 lastToolUseName = null
                 liveText = ""

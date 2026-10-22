@@ -736,6 +736,27 @@ async function apiChecks(sb) {
       assert(!JSON.stringify(r).includes('INTERNE'), 'effet interne exposé');
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
+  // User report (2026-10-22): « [projet] est toujours marqué avec "votre réponse attendue" ».
+  await check(S, 'resume-no-question', 'Exécution reprise : /api/pipeline-runs ne présente plus la question de la pause précédente ; /api/config et /api/pupitre donnent le début du dernier tour (lastTurnStartAt)', async () => {
+    const run = 'p-20261022T133600-d4e5f6';
+    const dir = path.join(sb.root, 'logs', 'runs', run);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'run.json'), JSON.stringify({ run, project: 'omega', pipeline: 'dev', status: 'running', question: 'omega en pause — répondez « reprendre les items »',
+      diagnosis: { kind: 'items_blocked', cause: 'item mis de côté', options: [{ key: 'reprendre les items', does: 'je reprends' }] } }));
+    try {
+      const r = (await json('/api/pipeline-runs?project=omega&n=100')).runs.find(x => x.run === run);
+      assert(r, 'exécution absente');
+      const c = await json('/api/config');
+      const beta = c.projects.find(p => p.name === 'beta');
+      if (!('lastTurnStartAt' in beta)) NA('lastTurnStartAt absent de cet état du code');
+      assert(r.question === null, `question encore exposée : ${r.question}`);
+      assert(r.pause === null, 'menu de pause exposé pour une exécution en cours');
+      assert(Number.isFinite(beta.lastTurnStartAt) && beta.lastTurnStartAt <= Date.now(), `config : ${beta.lastTurnStartAt}`);
+      const row = (await json('/api/pupitre')).fleet.find(x => x.name === 'beta');
+      assert(row.lastTurnStartAt === beta.lastTurnStartAt, `pupitre ${row.lastTurnStartAt} ≠ config ${beta.lastTurnStartAt}`);
+      return `début du dernier tour de beta : ${new Date(beta.lastTurnStartAt).toISOString()}`;
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
   // 0.60.0 — erreurs de lancement : contrôle de l'attente et journaux de test du model.
   await check(S, 'model-backoff', 'Attente après erreurs de lancement : POST /api/pipeline-runs/:run/backoff (retry, test ; 404, 400, origine étrangère 403) et GET /api/model-tests/:name', async () => {
     const probe = await post('/api/pipeline-runs/p-20261009T000000-aaaaaa/backoff', { action: 'retry' });

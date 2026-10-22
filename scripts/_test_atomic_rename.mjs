@@ -67,6 +67,9 @@ try {
   ok(/import \{ renameRetry, writeFileAtomic \} from '\.\/atomic-file\.mjs'/.test(eng), 'pipeline-engine importe atomic-file.mjs');
   ok(/writeFileAtomic\(path\.join\(runDir, 'run\.json'\)/.test(eng) && !/fs\.renameSync\(`\$\{f\}\.tmp`, f\)/.test(eng), 'saveState passe par writeFileAtomic ; plus aucun renameSync simple de run.json');
   ok(!/fs\.renameSync\(tmp, file\)/.test(eng) && /renameRetry\(tmp, file\)/.test(eng), 'l’écriture de la mise en service passe par renameRetry');
+  // 0.135.0 — t-cfee05: lanes.json (EPERM in _test_parallel_lanes under load).
+  const lanes = fs.readFileSync(path.join(ROOT, 'scripts', 'lanes.mjs'), 'utf8');
+  ok(!/fs\.renameSync\(/.test(lanes) && /renameRetry\(tmp, file\)/.test(lanes), 'lanes.mjs : lanes.json et les fichiers de tâche passent par renameRetry');
 } finally {
   fs.rmSync(T, { recursive: true, force: true });
 }

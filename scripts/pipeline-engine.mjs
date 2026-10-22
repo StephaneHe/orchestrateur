@@ -2794,6 +2794,13 @@ export async function runPipeline(o) {
       writeEvent({ type: 'system', subtype: 'pipeline_resume_message', pipeline: { run, step: state.plan?.[state.index] || null }, text: `message joint à la reprise transmis aux étapes suivantes (${msg.length} caractères)` });
     }
   }
+  // 0.134.0 — « [projet] est toujours marqué avec "votre réponse attendue" » :
+  // once the run goes again, its pause question is answered, whoever answered.
+  // Kept as history only; `question` is what a client reads as « awaited ».
+  if (state.question) {
+    state.answeredQuestions = [...(state.answeredQuestions || []), { text: state.question, pausedLimit: state.pausedLimit || null, answeredAt: new Date().toISOString() }].slice(-20);
+    delete state.question;
+  }
   state.status = 'running';
   state.pid = process.pid;
   saveState();

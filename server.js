@@ -2574,6 +2574,7 @@ function scanProjectState(name) {
   let unreadCount = 0;
   let questionResolved = null;
   let stopped = null;        // 0.31.0 : arrêt par le chef du dernier tour
+  let lastTurnStartAt = null; // 0.134.0 : une question antérieure n'attend plus
   for (const ln of lines) {
     if (!ln) continue;
     let ev; try { ev = JSON.parse(ln); } catch { continue; }
@@ -2597,6 +2598,7 @@ function scanProjectState(name) {
     // dual_start instead (TurnCore.isTurnStart, 0.57.1).
     if (globalThis.TurnCore.isTurnStart(ev)) {
       stopped = null;
+      if (ev.timestamp) lastTurnStartAt = Date.parse(ev.timestamp) || lastTurnStartAt;
       state = globalThis.TurnCore.stateAtTurnStart(state);
       lastAssistantText = '';
     } else if (t === 'assistant') {
@@ -2631,7 +2633,7 @@ function scanProjectState(name) {
       }
     }
   }
-  return { state, lastLine, unreadCount, questionResolved, stopped: state === 'error' ? stopped : null };
+  return { state, lastLine, unreadCount, questionResolved, stopped: state === 'error' ? stopped : null, lastTurnStartAt };
 }
 
 // 0.58.0: the served version is read once at boot; the repository's is read on
@@ -2678,6 +2680,7 @@ app.get('/api/config', (req, res) => {
         lastLine: snap.lastLine,
         unreadCount: snap.unreadCount,
         questionResolved: snap.questionResolved || null,
+        lastTurnStartAt: snap.lastTurnStartAt || null,
         stopped: snap.stopped || null,
       };
     }),

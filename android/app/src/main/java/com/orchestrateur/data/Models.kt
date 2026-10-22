@@ -34,6 +34,8 @@ data class ProjectConfig(
     val currentState: String? = null,
     val lastLine: String? = null,
     val unreadCount: Int? = null,
+    // Server 0.134.0: epoch ms of the last turn opening (a question asked before is no longer awaited).
+    val lastTurnStartAt: Double? = null,
 )
 
 @Serializable
@@ -268,4 +270,6 @@ data class PupitreRow(
     val lingering: kotlinx.serialization.json.JsonElement? = null,
     val needsInput: kotlinx.serialization.json.JsonElement? = null,
     val lastActivityAt: kotlinx.serialization.json.JsonElement? = null,
+    // Server 0.134.0: epoch ms of the last turn opening (QuestionRule).
+    val lastTurnStartAt: Double? = null,
 )

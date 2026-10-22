@@ -99,6 +99,9 @@ class Musician {
     this.questionResolved = project.questionResolved
       ? { ts: Date.parse(project.questionResolved.ts) || 0, note: project.questionResolved.note || "" }
       : null;
+    // 0.134.0 : début du dernier tour (ms) — une question posée avant n'attend
+    // plus de réponse (TurnCore.questionOpen). Mis à jour à chaque ouverture.
+    this.turnStartMs = Number(project.lastTurnStartAt) || null;
     this.lastLine = project.lastLine || "";
     // Arrêt par le chef du dernier tour ({by, reason, ts}), 0.31.0 — l'état
     // reste `error` (vocabulaire verrouillé), l'affichage dit « Arrêté par le chef ».
@@ -950,6 +953,8 @@ class FleetStream {
       if (raw?.type === "result" && !raw.synthetic && raw.num_turns === 0 && raw.duration_api_ms === 0) return;
       const prevDenials = m.pendingDenials.length;
       m.transition(raw);
+      // 0.134.0 — the musician moved on: its question bubble stops asking.
+      if (window.TurnCore?.isTurnStart(raw) && App.chat.some(b => b.role === "question" && b.source === m.name)) App.renderChat();
       if (m.pendingDenials.length > prevDenials && App.focused !== m) {
         App.showPermDenialToast(m, m.pendingDenials[m.pendingDenials.length - 1]);
       }
@@ -2054,6 +2059,15 @@ const App = {
             <div class="cv-byline">Question de ${who} · ✓ marquée répondue${tsChip}</div>
             <div class="cv-body md">${mdToHtml(b.text || "")}</div>
             ${res.note ? `<div class="cv-q-resolved">${esc(res.note)}</div>` : ""}
+          </div>`;
+      }
+      // 0.134.0 — « [projet] est toujours marqué avec "votre réponse
+      // attendue" » : a turn of this musician opened after the question (reply
+      // by the user or the chef, pipeline resume) ⇒ nothing waits for the user.
+      if (!window.TurnCore.questionOpen({ askedAt: b.ts, turnStartedAt: m?.turnStartMs })) {
+        return `<div class="cv-bubble is-question is-resolved is-superseded">
+            <div class="cv-byline">Question de ${who} · ↻ reprise — plus de réponse attendue${tsChip}</div>
+            <div class="cv-body md">${mdToHtml(b.text || "")}</div>
           </div>`;
       }
       const canResolve = latest && m?.state === "input";
@@ -3472,9 +3486,18 @@ const App = {
     for (const r of snap.fleet) {
       const m = this.musicians.get(r.name);
       if (!m || !window.TurnCore?.reconcileBusy) continue;
+      const newerTurn = Number(r.lastTurnStartAt) > (m.turnStartMs || 0);
+      if (newerTurn) m.turnStartMs = Number(r.lastTurnStartAt);
       const next = window.TurnCore.reconcileBusy(m.state, m.heldState || null, !!r.lingering);
       m.heldState = next.held;
       if (next.state !== m.state) m.setState(next.state);
+      // 0.135.0 — an event missed during a stream gap must not freeze the card.
+      if (window.TurnCore.snapshotState && r.state && r.state !== m.state) {
+        const streak = m._snapDisagree === r.state ? (m._snapStreak || 0) : 0;
+        const adopt = window.TurnCore.snapshotState(m.state, r.state, streak, newerTurn);
+        if (adopt) { m.heldState = null; m.setState(adopt); m._snapDisagree = null; m._snapStreak = 0; }
+        else { m._snapStreak = streak + 1; m._snapDisagree = r.state; }
+      } else { m._snapDisagree = null; m._snapStreak = 0; }
     }
     window.Projets?.applyUi(snap.ui); window.Activite?.applyUi(snap.ui); window.Tts?.applyUi(snap.ui); window.Models?.applyUi(snap.ui); window.SidePanel?.applyUi(snap.ui); window.KgPanel?.applyUi(snap.ui);
     window.Projets?.render();

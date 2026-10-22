@@ -142,6 +142,9 @@ export function deriveState(lines) {
   let state = 'idle';
   let lastAssistantText = '';
   let turnStartTs = null;     // ts of the in-flight turn's opening event, else null
+  // 0.134.0: last turn opening seen, finished or not — a question asked before
+  // it is no longer awaited (TurnCore.questionOpen).
+  let lastTurnStartAt = null;
   let model = null;
   let provider = null;
   // Finished, but blocked on a CHEF decision (NEEDS_CHEF_INPUT). The state stays
@@ -204,6 +207,7 @@ export function deriveState(lines) {
     // only a source-less prompt or a system/init is (a --source dispatch emits
     // init too, so real turns are still covered).
     if (TurnCore.isTurnStart(ev)) {
+      if (ev.timestamp) lastTurnStartAt = Date.parse(ev.timestamp) || lastTurnStartAt;
       if (state !== 'live' && state !== 'think') {
         state = TurnCore.stateAtTurnStart(state);
         turnStartTs = ev.timestamp ? Date.parse(ev.timestamp) : Date.now();
@@ -242,7 +246,7 @@ export function deriveState(lines) {
   const awaitingPermission = (state === 'live' || state === 'think') && waiting.length
     ? { ...waiting[waiting.length - 1], count: waiting.length } : null;
   return {
-    state, lastAssistantText, turnStartTs, model, provider, awaitingChef, resolution,
+    state, lastAssistantText, turnStartTs, lastTurnStartAt, model, provider, awaitingChef, resolution,
     stopped: state === 'error' ? stopped : null, acknowledged, awaitingPermission,
     testRun,
   };
@@ -403,7 +407,7 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
   const { lines, mtimeMs, size } = tailLines(logPath);
   const last = lastMeaningful(lines);
   const tail = lastAny(lines);
-  const { state, lastAssistantText, turnStartTs, model, provider, awaitingChef, resolution, stopped, acknowledged, awaitingPermission, testRun } = deriveState(lines);
+  const { state, lastAssistantText, turnStartTs, lastTurnStartAt, model, provider, awaitingChef, resolution, stopped, acknowledged, awaitingPermission, testRun } = deriveState(lines);
   const now = Date.now();
   const lastMeaningfulTs = last?.timestamp ? Date.parse(last.timestamp) : (mtimeMs || 0);
   const silentMs = now - (lastMeaningfulTs || now);
@@ -493,6 +497,9 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
     needsInput: needs ? needs[1].trim().slice(0, 160) : null,
     // Additif : dernier acquittement (« répondue via le chef »), pour l'UI.
     questionResolved: resolution,
+    // Additif 0.134.0 : début (ms) du dernier tour ouvert dans la fenêtre — une
+    // question antérieure n'attend plus de réponse (TurnCore.questionOpen).
+    lastTurnStartAt,
     // Additifs 0.31.0 : arrêt par le chef ({by, reason, ts}) tant que l'état
     // est `error`, et dernier « vu » (acquittement d'un échec / arrêt).
     stopped,

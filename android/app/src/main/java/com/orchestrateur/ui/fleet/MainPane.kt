@@ -401,6 +401,27 @@ private fun ResultCard(
 @Composable
 private fun QuestionBubble(msg: ChatMsg, vm: FleetViewModel?, onOpenMusician: (String) -> Unit) {
     val who = msg.source ?: "musicien"
+    // 0.134.0 / app 1.1.1 — the musician moved on (reply by the user or the chef,
+    // pipeline resume): nothing waits for the user any more.
+    val m = vm?.musicians?.find { it.name == who }
+    if (!com.orchestrateur.data.QuestionRule.isOpen(msg.ts, m?.lastTurnStartMs)) {
+        Column(
+            Modifier
+                .fillMaxWidth(0.94f)
+                .clip(RoundedCornerShape(12.dp))
+                .border(1.dp, Palette.CardBorder, RoundedCornerShape(12.dp))
+                .padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                "QUESTION DE ${who.uppercase()} · ↻ REPRISE — PLUS DE RÉPONSE ATTENDUE",
+                color = Palette.Fg3, fontSize = 9.sp, letterSpacing = 1.4.sp,
+                fontFamily = FontFamily.Monospace,
+            )
+            Markdown(msg.text, Palette.Fg2)
+        }
+        return
+    }
     Column(
         Modifier
             .fillMaxWidth(0.94f)

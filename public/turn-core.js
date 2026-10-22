@@ -548,9 +548,53 @@
     return { state: cur, held: lingeringNow && cur === "live" ? held : null };
   }
 
+  /**
+   * 0.135.0 — « a l'instant je ne vois dans pilotage sur l'application : 1 en
+   * cours » / « après avoir relancé l'application je vois bien les 2 tâches en
+   * cours ». A live event missed during a stream gap (sleep, hidden tab,
+   * reconnect) must not freeze a card until a reload: the /api/pupitre snapshot
+   * corrects it. Returns the state to adopt, or null to keep `local`.
+   *  - server busy, and it saw a turn opening newer than ours: at once;
+   *  - any other disagreement on busy / question / failure: from the second
+   *    consecutive snapshot (`streak` = earlier snapshots that disagreed the
+   *    same way), the live stream may just be a beat ahead of the snapshot;
+   *  - unread vs idle (read marker) and live vs think: never.
+   * Same rule in the Android app (data/LiveStateRule.kt).
+   */
+  function snapshotState(local, server, streak, newerTurn) {
+    const busy = s => s === "live" || s === "think";
+    if (!server || server === local || (busy(server) && busy(local))) return null;
+    if (busy(server) && newerTurn) return server;
+    const meaningful = busy(server) || busy(local) || server === "input" || local === "input" || server === "error";
+    if (!meaningful) return null;
+    return streak >= 1 ? server : null;
+  }
+
+  /**
+   * 0.134.0 — « [projet] est toujours marqué avec "votre réponse attendue" ».
+   * Is a question asked at `askedAt` still waiting for the user? No once it was
+   * marked answered after it, or once a turn of the same musician opened after
+   * it (the user's reply, the chef's, a pipeline resume — whoever answered, the
+   * musician has moved on; a new pause brings a new, newer question).
+   * Times: epoch ms or ISO strings; unknown = no evidence.
+   */
+  function toMs(v) {
+    if (typeof v === "number") return Number.isFinite(v) ? v : NaN;
+    if (typeof v === "string" && v) return Date.parse(v);
+    return NaN;
+  }
+  function questionOpen({ askedAt, turnStartedAt, resolvedAt } = {}) {
+    const asked = toMs(askedAt);
+    if (!Number.isFinite(asked)) return true;
+    const resolved = toMs(resolvedAt), started = toMs(turnStartedAt);
+    if (Number.isFinite(resolved) && resolved >= asked) return false;
+    if (Number.isFinite(started) && started > asked) return false;
+    return true;
+  }
+
   g.TurnCore = {
     isAcknowledged, isQuestionResolved, isConductorStop, isPhantomResult,
-    isResultError, isTurnStart, stateAtTurnStart, stopInfo, stopWord, stopText, testInfo, reconcileBusy,
+    isResultError, isTurnStart, stateAtTurnStart, stopInfo, stopWord, stopText, testInfo, reconcileBusy, snapshotState, questionOpen,
     summarizePrompt, summarizeResult, cleanPrompt, createJournal, FULL_MAX,
   };
 })(typeof globalThis !== "undefined" ? globalThis : window);

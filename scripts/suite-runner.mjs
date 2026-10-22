@@ -68,6 +68,8 @@ export const SERIAL_SUITES = new Set([
   '_test_lane_pipeline.mjs',       // concurrent pipeline runs: overlap timings
   '_test_dev_pipeline_lanes.mjs',   // concurrent pipeline runs of the dev instance: overlap timings
   '_test_pipeline_corpus.mjs',     // the real corpus replayed end to end; a service polled with a deadline (PIPELINES-SYNTHESE §8.3)
+  '_test_hors_pipeline_task.mjs',  // detached task turns awaited with a deadline (failed under parallel load, 0.134.0)
+  '_test_phase4b_harness.mjs',     // harness latency capped at 500 ms per turn (547 ms under parallel load, 0.134.0)
 ]);
 
 /** Default parallelism: ORCH_REGRESS_JOBS, else a quarter of the CPUs, 1 to 4. */

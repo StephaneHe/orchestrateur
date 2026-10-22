@@ -1002,6 +1002,63 @@ export async function browserChecks(sb, t) {
       const c = await api('/api/config');
       assert(c.projects.find(p => p.name === 'beta').currentState === 'idle', 'serveur : beta pas idle');
     });
+    // User report (2026-10-22): « [projet] est toujours marqué avec "votre réponse attendue" ».
+    await check(B, 'question-superseded', 'Bulle de question du fil : dès qu’un tour du musicien démarre après elle (reprise par l’utilisateur ou le chef), plus de « votre décision » ni de bouton de réponse', async () => {
+      if (!(await page.evaluate(() => !!window.TurnCore?.questionOpen))) NA('règle absente de cet état du code');
+      const sel = '.cv-bubble.is-question';
+      const asked = await page.evaluate(() => {
+        const ts = Date.now() - 60_000;
+        App.chat.push({ role: 'question', source: 'alpha', text: 'Recette : reprendre les items ?', ts });
+        App.renderChat();
+        return ts;
+      });
+      const open = page.locator(sel, { hasText: 'Recette : reprendre les items ?' });
+      assert(await until(async () => (await open.count()) === 1, 5000), 'bulle absente');
+      const before = (await open.textContent()).replace(/\s+/g, ' ');
+      assert(/votre décision/.test(before) && await open.locator('[data-via-chef]').count() === 1, `bulle ouverte : ${before}`);
+      // The musician's run resumes: the same SSE event the server streams.
+      await page.evaluate((t) => {
+        const m = App.musicians.get('alpha');
+        window.__qsSaved = { state: m.state, turnStartMs: m.turnStartMs, ringLen: m.ring.length, stopped: m.stopped, heldState: m.heldState, lastAssistantText: m.lastAssistantText };
+        const raw = { type: 'system', subtype: 'pipeline_start', timestamp: new Date(t + 30_000).toISOString(), text: 'reprise de l’exécution' };
+        m.transition(raw);
+        App.renderChat();
+      }, asked);
+      assert(await until(async () => /plus de réponse attendue/.test(await open.textContent()), 5000), 'bulle toujours ouverte après la reprise');
+      const after = (await open.textContent()).replace(/\s+/g, ' ');
+      assert(!/votre décision/.test(after) && await open.locator('button').count() === 0, `bulle reprise : ${after}`);
+      // Put alpha back as it was: the following walks read its real state.
+      await page.evaluate(() => {
+        const m = App.musicians.get('alpha'), s = window.__qsSaved;
+        m.ring.length = s.ringLen; m.turnStartMs = s.turnStartMs; m.stopped = s.stopped; m.heldState = s.heldState; m.lastAssistantText = s.lastAssistantText; m.setState(s.state);
+        App.chat = App.chat.filter(b => b.text !== 'Recette : reprendre les items ?'); App.renderChat();
+      });
+      return after.slice(0, 120);
+    });
+    // User report (2026-10-22): « a l'instant je ne vois dans pilotage sur
+    // l'application : 1 en cours » / « après avoir relancé l'application je vois
+    // bien les 2 tâches en cours ». A missed live event is corrected by the snapshot.
+    await check(B, 'snapshot-live', 'Événement manqué (sommeil, coupure du flux) : le relevé /api/pupitre remet le cadre « en cours » sans recharger, et la fin manquée au 2ᵉ relevé', async () => {
+      if (!(await page.evaluate(() => !!window.TurnCore?.snapshotState))) NA('règle absente de cet état du code');
+      const r = await page.evaluate(() => {
+        const m = App.musicians.get('alpha');
+        const saved = { state: m.state, turnStartMs: m.turnStartMs, heldState: m.heldState, snap: App.pupitreSnapshot };
+        const row = (state, start) => ({ ...(saved.snap?.fleet || []).find(x => x.name === 'alpha'), name: 'alpha', state, lingering: null, lastTurnStartAt: start });
+        const apply = (state, start) => { App.pupitreSnapshot = { ...(saved.snap || {}), fleet: [row(state, start)] }; App.applyPupitreToCards(); return m.state; };
+        m.setState('idle'); m.turnStartMs = Date.now() - 600_000; m._snapStreak = 0; m._snapDisagree = null;
+        const rail = () => document.querySelector('.rail-row[data-name="alpha"]')?.getAttribute('data-state') || null;
+        const start = Date.now() - 1000;
+        const s1 = apply('live', start), rail1 = rail();
+        const s2 = apply('unread', start), s3 = apply('unread', start);
+        m._snapStreak = 0; m._snapDisagree = null; m.heldState = saved.heldState; m.turnStartMs = saved.turnStartMs;
+        App.pupitreSnapshot = saved.snap; m.setState(saved.state); App.applyPupitreToCards();
+        return { s1, rail1, s2, s3 };
+      });
+      assert(r.s1 === 'live', `départ manqué non rattrapé : ${r.s1}`);
+      assert(r.rail1 === null || r.rail1 === 'live', `rail : ${r.rail1}`);
+      assert(r.s2 === 'live' && r.s3 === 'unread', `fin manquée : ${r.s2} → ${r.s3}`);
+      return JSON.stringify(r);
+    });
     await check(B, 'dive', 'Volet musicien : ouverture depuis le rail, onglets, retour', async () => {
       if (!(await visible(page, '.rail-row[data-name="alpha"]'))) await page.click('[data-fold="all"]');
       await page.locator('.rail-row[data-name="alpha"]').first().click();

@@ -33,6 +33,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { renameRetry } from './atomic-file.mjs';
 
 export const HARD_CAP = 4;
 // User decision Q1 (2026-10-15): « Q1: defaut a 2, et on monitore pour verifier
@@ -144,7 +145,7 @@ function writeJson(file, obj) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(obj, null, 2));
-  fs.renameSync(tmp, file);
+  renameRetry(tmp, file);   // EPERM while another process reads lanes.json (rule 0.74.3)
 }
 
 // ---------- git ---------------------------------------------------------------
