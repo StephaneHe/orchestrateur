@@ -11,6 +11,41 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.132.0] - 2026-10-22
+
+Requests registry (Routage v3, phase 1) defect seen in prod on 2026-10-22:
+« l'interface montre toujours la question de psyProfile, alors que je crois y
+avoir répondu. est-ce normal ? ». Chef tasks sent to a project in service
+(`dispatch.mjs <p> --prompt-stdin --pipeline recherche|redaction|dev
+--callback chef`) stayed `à_traiter` although their pipeline runs started and
+ended normally, and the chef could only drop the requests.
+
+### Fixed
+- (server) The pipeline engine wrote the run's `user_prompt` itself, without
+  the registry's `taskId`: the task was never acknowledged, went `à_traiter`
+  after 2 min (« aucun accusé de réception »), then « dispatch.mjs s'est arrêté
+  avant d'écrire la demande » at the end of the run (exit 0, or 2 for a pause).
+  `runPipeline` and `answerPausedRun` now take an `eventTag` hook, given by
+  `dispatch.mjs` (`taskTag`): the acknowledgement is recorded when the run
+  starts, then the sweep follows its outcome (done ⇒ `réussie`, paused ⇒ still
+  followed, closed without delivery ⇒ `à_traiter`).
+- (server) Reconciliation catches up a missed acknowledgement
+  (`MISSED_ACK_CODES`: `sans-accusé`, `lancement`; `recoverAck`): the task's
+  user_prompt is found in the musician's logs by the fingerprint of its whole
+  text, written after its launch; the task is then followed like any
+  acknowledged one. Any other error is left for a decision.
+
+### Added
+- (server) `node scripts/requests.mjs recheck <id> [--by chef]`: re-reads the
+  facts of a request, including one dropped because of a missed
+  acknowledgement; such a task whose run is done becomes `réussie` and the
+  request `terminée` (traced `abandonnée → terminée`). A task cancelled for
+  another reason is never touched; nothing to fix ⇒ exit 2. Never launches
+  anything.
+- Suite `_test_requests_pipeline_ack.mjs` (perimeter `routage`): real
+  dispatch and engine, done / pause / abandoned run, catch-up, `recheck`, and
+  the dashboard not reading the registry.
+
 ## [0.131.0] - 2026-10-22
 
 Knowledge graph, **phase 1 « faits curés et onglet Mémoire »** (user decision

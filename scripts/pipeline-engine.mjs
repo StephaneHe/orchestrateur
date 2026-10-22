@@ -2530,6 +2530,9 @@ function checkCriteria(ctx, step, before, after) {
  * Lance (ou reprend) une exécution. Renvoie le code de sortie du processus :
  * 0 terminée, 2 pause (question à l'utilisateur), 64/65 refus avant écriture.
  */
+/** Extra fields the caller adds to an event of the musician's log (never throws). */
+function eventTagOf(o, ev) { try { return (typeof o?.eventTag === 'function' && o.eventTag(ev)) || {}; } catch { return {}; } }
+
 export async function runPipeline(o) {
   const { root, logsDir, project, projectName, prompt, dispatchScript, callbackProject, sourceProject, obsId, classification } = o;
   const say = (m) => console.log(`[pipeline] ${m}`);
@@ -2538,7 +2541,10 @@ export async function runPipeline(o) {
   const cwd = o.cwd || project.path;
   const projectLog = o.logFile || path.join(logsDir, `${projectName}.jsonl`);
   const pidPath = o.pidFile || path.join(logsDir, `${projectName}.pid`);
-  const writeEvent = (ev) => { try { fs.appendFileSync(projectLog, JSON.stringify({ ...(process.env.ORCH_TURN_ID ? { orch_turn: process.env.ORCH_TURN_ID } : {}), ...ev, timestamp: new Date().toISOString() }) + '\n'); } catch {} };
+  // o.eventTag (dispatch.mjs) adds the requests registry's acknowledgement
+  // (`taskId`) to the run's user_prompt: without it, a chef task launched with
+  // --pipeline was never acknowledged (prod, 2026-10-22).
+  const writeEvent = (ev) => { try { fs.appendFileSync(projectLog, JSON.stringify({ ...(process.env.ORCH_TURN_ID ? { orch_turn: process.env.ORCH_TURN_ID } : {}), ...eventTagOf(o, ev), ...ev, timestamp: new Date().toISOString() }) + '\n'); } catch {} };
   const limits = {
     criteriaAttempts: Number(process.env.ORCH_PIPE_CRITERIA_ATTEMPTS) || LIMITS.criteriaAttempts,
     greenAttempts: Number(process.env.ORCH_PIPE_GREEN_ATTEMPTS) || LIMITS.greenAttempts,
@@ -4153,14 +4159,14 @@ export async function runPipeline(o) {
  *   changer le model → reste en pause, dit quelle case changer, attend « continuer ».
  * Un tour côté musicien : user_prompt + result. Renvoie le code de sortie.
  */
-export async function answerPausedRun({ logsDir, project, projectName, run, answer, promptForLog, sourceProject, callbackProject, testLabel, logFile = null, cwd = null }) {
+export async function answerPausedRun({ logsDir, project, projectName, run, answer, promptForLog, sourceProject, callbackProject, testLabel, logFile = null, cwd = null, eventTag = null }) {
   const f = path.join(logsDir, 'runs', run, 'run.json');
   const state = readJson(f);
   if (!state || state.status !== 'paused' || state.project !== projectName) { console.error(`[pipeline] aucune exécution en pause ${run} pour ${projectName}`); return 65; }
   // P9: the run's lane (log, worktree) when it works in one.
   const projectLog = logFile || path.join(logsDir, `${projectName}.jsonl`);
   const workDir = cwd || project.path;
-  const writeEvent = (ev) => { try { fs.appendFileSync(projectLog, JSON.stringify({ ...(process.env.ORCH_TURN_ID ? { orch_turn: process.env.ORCH_TURN_ID } : {}), ...ev, timestamp: new Date().toISOString() }) + '\n'); } catch {} };
+  const writeEvent = (ev) => { try { fs.appendFileSync(projectLog, JSON.stringify({ ...(process.env.ORCH_TURN_ID ? { orch_turn: process.env.ORCH_TURN_ID } : {}), ...eventTagOf({ eventTag }, ev), ...ev, timestamp: new Date().toISOString() }) + '\n'); } catch {} };
   writeEvent({ type: 'user_prompt', text: promptForLog, pipeline: { run, pipeline: state.pipeline, mode: state.mode, answer },
     ...(sourceProject ? { source: sourceProject } : {}), ...(callbackProject ? { callback: callbackProject } : {}), ...(testLabel ? { test: { label: testLabel } } : {}) });
   const save = () => { state.updatedAt = new Date().toISOString(); writeFileAtomic(f, JSON.stringify(state, null, 2)); };

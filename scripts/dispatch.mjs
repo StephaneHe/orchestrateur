@@ -1614,7 +1614,7 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
     const k = pauseMenu.matchOptionKey(said);
     if (k && pauseMenu.OPTION_KEYS[k] === 'resume' && k !== 'continuer') pauseOption = k;
     if (answer) {
-      process.exit(await pipeEngine.answerPausedRun({ logsDir: LOGS, project, projectName, run: resumeRun, answer, promptForLog: prompt, sourceProject, callbackProject, testLabel }));
+      process.exit(await pipeEngine.answerPausedRun({ logsDir: LOGS, project, projectName, run: resumeRun, answer, promptForLog: prompt, sourceProject, callbackProject, testLabel, eventTag: taskTag }));
     }
   }
   if (!pipe && !resumeRun) {
@@ -1639,7 +1639,7 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
     // Les autres choix proposés par la pause font vraiment quelque chose.
     const answer = paused ? pauseAnswer(reply) : null;
     if (answer) {
-      const code = await pipeEngine.answerPausedRun({ logsDir: LOGS, project, projectName, run: paused, answer, promptForLog: prompt, sourceProject, callbackProject, testLabel,
+      const code = await pipeEngine.answerPausedRun({ logsDir: LOGS, project, projectName, run: paused, answer, promptForLog: prompt, sourceProject, callbackProject, testLabel, eventTag: taskTag,
         logFile: logPath, cwd: WORK_DIR });
       if (LANE && LANE.k >= 1) {
         // The run stays paused (lane kept for the next answer), or it is closed
@@ -1762,7 +1762,7 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
       callbackProject, sourceProject, obsId, testLabel,
       dispatchScript: fileURLToPath(import.meta.url),
       // P9: the run works in the lane acquired above (worktree, task branch).
-      cwd: WORK_DIR, logFile: logPath, pidFile: pidPath,
+      cwd: WORK_DIR, logFile: logPath, pidFile: pidPath, eventTag: taskTag,
       ...(LANE && LANE.k >= 1 ? { lane: { k: LANE.k, task: LANE.task, branch: LANE.branch, integration: LANE.integration } } : {}),
     });
     await laneExit(code);

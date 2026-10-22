@@ -2287,6 +2287,15 @@ rien changer à son comportement : le registre n'est qu'écrit et lu ; retirer
 - Redémarrage nécessaire pour le balayage et le `taskId` de la file ;
   `dispatch.mjs` est actif tout de suite.
 - Recette : `_test_requests_registry.mjs` (périmètre `routage`).
+- **Tâche lancée avec `--pipeline`** (0.132.0, signalement « l'interface montre
+  toujours la question de psyProfile, alors que je crois y avoir répondu ») :
+  le moteur écrit le `user_prompt` de l'exécution avec l'accusé (`eventTag` de
+  `runPipeline` / `answerPausedRun`, fourni par `taskTag` de `dispatch.mjs`) ;
+  **toute nouvelle écriture d'un `user_prompt` hors de `musicianLog` doit
+  passer par lui**. Accusé manqué (`sans-accusé`, `lancement`) : rattrapé par la
+  réconciliation (`recoverAck`, empreinte du texte). Demande abandonnée à tort :
+  `requests.mjs recheck <id> [--by chef]`. Le dashboard n'affiche pas le
+  registre. Recette : `_test_requests_pipeline_ack.mjs`.
 
 ## Routage v3, phase 2 : tour unique du chef, en OMBRE (0.130.0)
 

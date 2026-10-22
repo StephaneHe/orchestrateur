@@ -22,7 +22,7 @@
 //     | answer <id> "<texte>" | close <id> [--note "…"]
 //     | retry <id> | retry <id>#<n>
 //     | fix <id>#<n> [--pipeline p] [--mode m] [--projet p] [--after <id>#<m>]
-//     | cancel <id>#<n> | drop <id> | replay <id>
+//     | cancel <id>#<n> | drop <id> | replay <id> | recheck <id>
 //     | reconcile [--dry-run]
 // ============================================================================
 
@@ -32,7 +32,7 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { writeFileAtomic } from './atomic-file.mjs';
-import { dependencyResult, readPending, dropPending } from './routage-pending.mjs';
+import { dependencyResult, readPending, dropPending, textHash } from './routage-pending.mjs';
 import { infraFailure } from './model-backoff.mjs';
 
 export const REQUESTS_DIR = 'requests';
@@ -336,6 +336,117 @@ export function turnResult(logFile, turn, offset = null) {
 // ---------------------------------------------------------------------------
 
 /**
+ * A task error that may only mean « the acknowledgement was missed »: up to
+ * 0.131.0 a dispatch run by the pipeline engine wrote its user_prompt without
+ * `taskId` (prod, 2026-10-22), so the task went `à_traiter` (no
+ * acknowledgement after 2 min, then « stopped before writing the request »)
+ * although its run started and ended normally.
+ */
+export const MISSED_ACK_CODES = new Set(['sans-accusé', 'lancement']);
+
+/** Byte offset of the first line of `file` timestamped at or after `iso` (end of file if none). */
+function offsetAtTime(file, iso) {
+  let buf; try { buf = fs.readFileSync(file); } catch { return null; }
+  let pos = 0;
+  while (pos < buf.length) {
+    const nl = buf.indexOf(10, pos);
+    const end = nl === -1 ? buf.length : nl;
+    const m = /"timestamp":"([^"]+)"/.exec(buf.toString('utf8', pos, end));
+    if (m && m[1] >= iso) return pos;
+    pos = end + 1;
+  }
+  return buf.length;
+}
+
+/**
+ * The acknowledgement a task should have had, recovered from the facts: the
+ * user_prompt carrying the fingerprint of its whole text (`textHash`, the one
+ * dispatch.mjs records), written in one of the musician's logs at or after its
+ * launch. `offset` is taken in the MAIN log (what dependencyResult reads, lane
+ * ends included). null when no such prompt exists.
+ */
+export function recoverAck(logsDir, t, tid = null) {
+  const since = t.launchedAt || null;
+  if (!since || !t.demande) return null;
+  const hash = textHash(t.demande);
+  const main = path.join(logsDir, `${t.projet}.jsonl`);
+  for (const log of projectLogs(logsDir, t.projet)) {
+    const text = tail(log);
+    if (!text.includes('"user_prompt"')) continue;
+    for (const l of text.split('\n')) {
+      if (!l.includes('"user_prompt"')) continue;
+      let e; try { e = JSON.parse(l); } catch { continue; }
+      if (e.type !== 'user_prompt' || typeof e.text !== 'string' || !(e.timestamp >= since)) continue;
+      if (e.taskId && tid && e.taskId !== tid) continue;
+      if (textHash(e.text) !== hash) continue;
+      const offset = offsetAtTime(main, log === main ? e.timestamp : since);
+      if (offset == null) return null;
+      return { where: 'log', log, offset, hash, turn: e.orch_turn || null, run: e.pipeline?.run || null, recovered: true };
+    }
+  }
+  return null;
+}
+
+/** Brings one task in line with the facts (reconcile, recheck). Mutates `t`. */
+function followTask(r, t, { logsDir, now, alive, toLaunch = [], pending = () => readPending(logsDir) }) {
+  if (TASK_TERMINAL.has(t.state)) return;
+  const tid = taskIdOf(r.id, t.n, t.attempt || 1);
+  if (t.state === 'en_attente_de' && t.waitsFor && !t.after) {
+    const entry = pending().find(e => e.taskId === tid);
+    if (!entry) { setTaskState(t, 'annulée', 'retirée de l’attente du Routage sans être libérée (routage-pending drop)', now); }
+    else if (entry.blocked && !t.error) { t.error = { code: 'prédécesseur', why: `la tâche attendue (${entry.after?.projet || '?'}) a échoué ou a été close sans livraison : non relancée`, at: nowIso(now) }; t.actions = [`node scripts/routage-pending.mjs release ${entry.id} --force`, `node scripts/routage-pending.mjs drop ${entry.id}`]; setTaskState(t, 'à_traiter', t.error.why, now); }
+    return;
+  }
+  if (t.state === 'en_attente_de' && t.after) {
+    const dep = parseTaskId(t.after);
+    const pre = dep && dep.request === r.id ? r.tasks.find(x => x.n === dep.n) : null;
+    if (pre?.state === 'réussie') { setTaskState(t, 'lancée', `${t.after} réussie`, now); t.launchedAt = nowIso(now); toLaunch.push(t); }
+    else if (!pre || ['à_traiter', 'annulée'].includes(pre.state)) { t.error = { code: 'prédécesseur', why: `${t.after} ${pre ? pre.state : 'introuvable'}`, at: nowIso(now) }; setTaskState(t, 'à_traiter', t.error.why, now); }
+    return;
+  }
+  if (t.state === 'à_traiter') {
+    // Only a missed acknowledgement is caught up; any other error waits for a decision.
+    if (t.ack?.where === 'log' || !MISSED_ACK_CODES.has(t.error?.code)) return;
+    const ack = recoverAck(logsDir, t, tid);
+    if (!ack) return;
+    t.ack = { ...ack, at: nowIso(now) };
+    t.recoveredFrom = t.error; delete t.error; delete t.actions;
+    setTaskState(t, 'en_cours', `accusé rattrapé : demande retrouvée dans ${path.basename(ack.log)}${ack.run ? ` (exécution ${ack.run})` : ''}`, now);
+  }
+  if (t.ack?.where !== 'log') {
+    const seen = taskSeen(logsDir, t.projet, tid);
+    if (seen?.where === 'log') { t.ack = { ...(t.ack || {}), where: 'log', log: seen.log, turn: seen.turn, at: nowIso(now) }; setTaskState(t, 'en_cours', 'demande relue dans le journal', now); }
+    else if (seen?.where === 'queue') { if (t.ack?.where !== 'queue') { t.ack = { where: 'queue', queueId: seen.queueId, at: nowIso(now) }; setTaskState(t, 'en_file', 'relue dans la file', now); } return; }
+    else {
+      const ack = t.ack?.where !== 'queue' ? recoverAck(logsDir, t, tid) : null;
+      if (ack) { t.ack = { ...ack, at: nowIso(now) }; setTaskState(t, 'en_cours', `accusé rattrapé : demande retrouvée dans ${path.basename(ack.log)}${ack.run ? ` (exécution ${ack.run})` : ''}`, now); }
+      else {
+        const since = Date.parse(t.ack?.at || t.launchedAt || r.createdAt);
+        if (now - since >= ACK_TIMEOUT_MS) {
+          t.error = { code: 'sans-accusé', why: t.ack?.where === 'queue' ? 'retirée de la file sans avoir démarré (processus tué entre le retrait et le lancement ?)' : 'aucun accusé de réception après 2 min (lancement interrompu ?)', at: nowIso(now) };
+          t.actions = [`node scripts/requests.mjs retry ${r.id}#${t.n}`, `node scripts/requests.mjs cancel ${r.id}#${t.n}`];
+          setTaskState(t, 'à_traiter', t.error.why, now);
+        }
+        return;
+      }
+    }
+  }
+  // acknowledged in a log: follow its result (pauses and questions keep it running)
+  const info = {};
+  const res = t.ack.hash ? dependencyResult(logsDir, { projet: t.projet, offset: t.ack.offset, hash: t.ack.hash }, info) : null;
+  if (res) {
+    if (res.is_error) { t.error = { code: 'échec', why: String(res.result || res.subtype || '').replace(/\s+/g, ' ').slice(0, 300), at: nowIso(now) }; t.actions = [`node scripts/requests.mjs retry ${r.id}#${t.n}`, `node scripts/requests.mjs fix ${r.id}#${t.n} --pipeline …`, `node scripts/requests.mjs cancel ${r.id}#${t.n}`]; setTaskState(t, 'à_traiter', t.error.why, now); }
+    else { t.result = { at: nowIso(now), text: String(res.result || '').slice(0, 300) }; setTaskState(t, 'réussie', null, now); }
+    delete t.waiting;
+  } else if (info.held) t.waiting = info.held.run ? { pause: info.held.run } : { question: true };
+  else if (t.ack.pid && !alive(t.ack.pid) && now - Date.parse(t.ack.at) >= ACK_TIMEOUT_MS) {
+    t.error = { code: 'sans-résultat', why: 'le tour s’est arrêté sans résultat', at: nowIso(now) };
+    t.actions = [`node scripts/requests.mjs retry ${r.id}#${t.n}`, `node scripts/requests.mjs cancel ${r.id}#${t.n}`];
+    setTaskState(t, 'à_traiter', t.error.why, now);
+  }
+}
+
+/**
  * Brings every non-terminal request in line with the facts: a chef turn whose
  * process died (result found ⇒ its outcome; none ⇒ `garée`), task
  * acknowledgements read in the logs and queue files, task results (a paused
@@ -368,51 +479,7 @@ export function reconcile({ root, logsDir = path.join(root, 'logs'), now = Date.
         r.parked = { cause: 'exit', detail: 'le tour du chef relancé n’a pas démarré', at: nowIso(now) };
       }
       // 2. tasks
-      for (const t of r.tasks) {
-        if (TASK_TERMINAL.has(t.state)) continue;
-        const tid = taskIdOf(r.id, t.n, t.attempt || 1);
-        if (t.state === 'en_attente_de' && t.waitsFor && !t.after) {
-          const entry = (pendingNow ||= readPending(logsDir)).find(e => e.taskId === taskIdOf(r.id, t.n, t.attempt || 1));
-          if (!entry) { setTaskState(t, 'annulée', 'retirée de l’attente du Routage sans être libérée (routage-pending drop)', now); }
-          else if (entry.blocked && !t.error) { t.error = { code: 'prédécesseur', why: `la tâche attendue (${entry.after?.projet || '?'}) a échoué ou a été close sans livraison : non relancée`, at: nowIso(now) }; t.actions = [`node scripts/routage-pending.mjs release ${entry.id} --force`, `node scripts/routage-pending.mjs drop ${entry.id}`]; setTaskState(t, 'à_traiter', t.error.why, now); }
-          continue;
-        }
-        if (t.state === 'en_attente_de' && t.after) {
-          const dep = parseTaskId(t.after);
-          const pre = dep && dep.request === r.id ? r.tasks.find(x => x.n === dep.n) : null;
-          if (pre?.state === 'réussie') { setTaskState(t, 'lancée', `${t.after} réussie`, now); t.launchedAt = nowIso(now); toLaunch.push(t); }
-          else if (!pre || ['à_traiter', 'annulée'].includes(pre.state)) { t.error = { code: 'prédécesseur', why: `${t.after} ${pre ? pre.state : 'introuvable'}`, at: nowIso(now) }; setTaskState(t, 'à_traiter', t.error.why, now); }
-          continue;
-        }
-        if (t.state === 'à_traiter') continue;
-        if (t.ack?.where !== 'log') {
-          const seen = taskSeen(logsDir, t.projet, tid);
-          if (seen?.where === 'log') { t.ack = { ...(t.ack || {}), where: 'log', log: seen.log, turn: seen.turn, at: nowIso(now) }; setTaskState(t, 'en_cours', 'demande relue dans le journal', now); }
-          else if (seen?.where === 'queue') { if (t.ack?.where !== 'queue') { t.ack = { where: 'queue', queueId: seen.queueId, at: nowIso(now) }; setTaskState(t, 'en_file', 'relue dans la file', now); } continue; }
-          else {
-            const since = Date.parse(t.ack?.at || t.launchedAt || r.createdAt);
-            if (now - since >= ACK_TIMEOUT_MS) {
-              t.error = { code: 'sans-accusé', why: t.ack?.where === 'queue' ? 'retirée de la file sans avoir démarré (processus tué entre le retrait et le lancement ?)' : 'aucun accusé de réception après 2 min (lancement interrompu ?)', at: nowIso(now) };
-              t.actions = [`node scripts/requests.mjs retry ${r.id}#${t.n}`, `node scripts/requests.mjs cancel ${r.id}#${t.n}`];
-              setTaskState(t, 'à_traiter', t.error.why, now);
-            }
-            continue;
-          }
-        }
-        // acknowledged in a log: follow its result (pauses and questions keep it running)
-        const info = {};
-        const res = t.ack.hash ? dependencyResult(logsDir, { projet: t.projet, offset: t.ack.offset, hash: t.ack.hash }, info) : null;
-        if (res) {
-          if (res.is_error) { t.error = { code: 'échec', why: String(res.result || res.subtype || '').replace(/\s+/g, ' ').slice(0, 300), at: nowIso(now) }; t.actions = [`node scripts/requests.mjs retry ${r.id}#${t.n}`, `node scripts/requests.mjs fix ${r.id}#${t.n} --pipeline …`, `node scripts/requests.mjs cancel ${r.id}#${t.n}`]; setTaskState(t, 'à_traiter', t.error.why, now); }
-          else { t.result = { at: nowIso(now), text: String(res.result || '').slice(0, 300) }; setTaskState(t, 'réussie', null, now); }
-          delete t.waiting;
-        } else if (info.held) t.waiting = info.held.run ? { pause: info.held.run } : { question: true };
-        else if (t.ack.pid && !alive(t.ack.pid) && now - Date.parse(t.ack.at) >= ACK_TIMEOUT_MS) {
-          t.error = { code: 'sans-résultat', why: 'le tour s’est arrêté sans résultat', at: nowIso(now) };
-          t.actions = [`node scripts/requests.mjs retry ${r.id}#${t.n}`, `node scripts/requests.mjs cancel ${r.id}#${t.n}`];
-          setTaskState(t, 'à_traiter', t.error.why, now);
-        }
-      }
+      for (const t of r.tasks) followTask(r, t, { logsDir, now, alive, toLaunch, pending: () => (pendingNow ||= readPending(logsDir)) });
       setState(r, deriveState(r), 'réconciliation', 'balayage', now);
       // 3. silent too long
       if (!TERMINAL.has(r.state) && now - Date.parse(r.lastActivityAt || r.updatedAt) >= staleMs && !r.staleNotifiedAt) { r.staleNotifiedAt = nowIso(now); out.stale.push(r.id); }
@@ -556,6 +623,41 @@ export function cmdDrop({ logsDir, id, reason = null, by = 'utilisateur', now = 
   const u = updateRequest(logsDir, id, (x) => { for (const t of x.tasks) if (['en_attente_de', 'lancée', 'à_traiter'].includes(t.state)) setTaskState(t, 'annulée', 'demande abandonnée', now); setState(x, 'abandonnée', reason || `abandonnée par ${by}`, by, now); }, { now });
   return { ok: true, code: 0, text: `${id} abandonnée${running.length ? ` — encore en cours ou en file, non arrêtées : ${running.map(t => `${id}#${t.n} (${t.projet})`).join(', ')}` : ''}`, request: u };
 }
+/**
+ * Re-reads the facts of a request, including one abandoned while its tasks had
+ * only missed their acknowledgement (prod, 2026-10-22: dropped because nothing
+ * else could close them). A task cancelled by the drop, or still `à_traiter`,
+ * whose error is a missed acknowledgement and whose user_prompt is found in the
+ * musician's log, is followed again: run done ⇒ `réussie`. If every task ends
+ * that way, an abandoned request becomes `terminée`. Never launches anything,
+ * never touches a task cancelled for another reason.
+ */
+export function cmdRecheck({ logsDir, id, by = 'utilisateur', now = Date.now(), alive = pidAlive }) {
+  const r = readRequest(logsDir, id);
+  if (!r) return refuse(64, `demande inconnue : ${id}`);
+  const fixed = [];
+  const u = updateRequest(logsDir, id, (x) => {
+    for (const t of x.tasks) {
+      const droppedMissed = t.state === 'annulée' && MISSED_ACK_CODES.has(t.error?.code) && t.ack?.where !== 'log';
+      const before = t.state;
+      if (droppedMissed) t.state = 'à_traiter';
+      if (t.state !== 'à_traiter' && TASK_TERMINAL.has(t.state)) continue;
+      const snapshot = JSON.stringify(t);
+      followTask(x, t, { logsDir, now, alive });
+      if (droppedMissed && !t.recoveredFrom) { t.state = before; continue; }
+      if (JSON.stringify(t) !== snapshot) fixed.push(`${x.id}#${t.n} ${before} → ${t.state}`);
+      if (droppedMissed) (t.history ||= []).push({ at: nowIso(now), from: before, to: t.state, why: `réexamen par ${by} : l’annulation suivait un accusé manqué` });
+    }
+    if (!fixed.length) return;
+    const live = x.tasks.filter(t => t.state !== 'annulée');
+    const wasDropped = x.state === 'abandonnée';
+    if (wasDropped && live.length && live.every(t => t.state === 'réussie')) setState(x, 'terminée', `réexamen : ${fixed.join(', ')}`, by, now);
+    else if (wasDropped && live.some(t => !TASK_TERMINAL.has(t.state))) { x.state = null; setState(x, deriveState(x), `réexamen : ${fixed.join(', ')}`, by, now); x.history[x.history.length - 1].from = 'abandonnée'; }
+    else if (!TERMINAL.has(x.state)) setState(x, deriveState(x), `réexamen : ${fixed.join(', ')}`, by, now);
+  }, { now });
+  if (!fixed.length) return { ok: true, code: 2, text: `${id} : rien à corriger d’après les journaux (état ${u.state})`, request: u };
+  return { ok: true, code: 0, text: `${id} : ${fixed.join(', ')} → demande ${u.state}`, request: u };
+}
 export function cmdReplay({ root, logsDir, id, now = Date.now(), launch = (rt, rq) => spawnDetached(rt, [rq.project, rq.text], cleanEnv()) }) {
   const r = readRequest(logsDir, id);
   if (!r) return refuse(64, `demande inconnue : ${id}`);
@@ -613,11 +715,12 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   if (cmd === 'cancel') print(cmdCancel({ logsDir: LOGS, id, by }));
   if (cmd === 'drop') print(cmdDrop({ logsDir: LOGS, id, reason: flag('--reason'), by }));
   if (cmd === 'replay') print(cmdReplay({ root: ROOT, logsDir: LOGS, id }));
+  if (cmd === 'recheck') print(cmdRecheck({ logsDir: LOGS, id, by }));
   if (cmd === 'reconcile') {
     const r = reconcile({ root: ROOT, logsDir: LOGS, dryRun: argv.includes('--dry-run') });
     console.log(`changées : ${r.changed.join(', ') || 'aucune'} ; lancées : ${r.launched.map(l => l.id).join(', ') || 'aucune'} ; silencieuses depuis 2 h : ${r.stale.join(', ') || 'aucune'}`);
     process.exit(0);
   }
-  console.error('usage: node scripts/requests.mjs list [--all] | show <id>[#n] | answer <id> "<texte>" | close <id> [--note …] | retry <id>[#n] | fix <id>#<n> [--pipeline p] [--mode m] [--projet p] [--after <id>#<m>] | cancel <id>#<n> | drop <id> [--reason …] | replay <id> | reconcile [--dry-run]');
+  console.error('usage: node scripts/requests.mjs list [--all] | show <id>[#n] | answer <id> "<texte>" | close <id> [--note …] | retry <id>[#n] | fix <id>#<n> [--pipeline p] [--mode m] [--projet p] [--after <id>#<m>] | cancel <id>#<n> | drop <id> [--reason …] | replay <id> | recheck <id> | reconcile [--dry-run]');
   process.exit(64);
 }
