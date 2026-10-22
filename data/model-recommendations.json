@@ -215,6 +215,22 @@
     "discussion.comprendre": "discussion",
     "discussion.rechercher": "recherche",
     "discussion.repondre": "discussion",
+    "kg.extraire": {
+      "step": "routage",
+      "principal": {
+        "provider": "anthropic",
+        "model": "claude-sonnet-5-5",
+        "note": "décision 8 de l'utilisateur (2026-10-20) : extraction de liens pour la mémoire, à partir de la phase 1"
+      }
+    },
+    "kg.juger": {
+      "step": "routage",
+      "principal": {
+        "provider": "anthropic",
+        "model": "claude-sonnet-5-5",
+        "note": "décision 8 de l'utilisateur (2026-10-20) : jugement court d'une paire de règles suspecte"
+      }
+    },
     "routage.chef": {
       "step": "routage",
       "principal": {

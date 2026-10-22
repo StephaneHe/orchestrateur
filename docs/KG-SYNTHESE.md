@@ -708,3 +708,31 @@ ajoutée dans orchestrateur-dev.
 18. **Condition pour continuer après la mesure** : gain ≥ 10 points face à un bon index
     textuel sur les cas relationnels, zéro faute de garde-fou, budgets tenus ; sinon on
     garde l'index simple et on coupe l'injection.
+
+---
+
+## 7. État livré de la phase 1 (orchestrator-dev 0.131.0)
+
+Décision de l'utilisateur du 2026-10-22 : « vas y » (phase 1 « faits curés et onglet
+Mémoire »). Tout est derrière un interrupteur, coupé par défaut ; coupé = 0.130.0 exact.
+
+| Élément (§4, phase 1) | Livré |
+|---|---|
+| `facts.jsonl`, événements, verrou | `logs/kg/facts.jsonl` en ajout seul, écrit par `scripts/kg.mjs` seul, sous verrou (`withFactsLock`) ; événements `assert` (toujours `proposed` pour un model), `seen`, `pair`, `decide` (`validate`, `reject` + motif, `correct`, `expire` à une date, `arbitrate` « celle-ci vaut »), `cutoff`. Décision idempotente par `commandId`, révision attendue (409). Les décisions sont posées sur l'index dérivé au chargement : jamais écrasées par une reconstruction. `review.jsonl` journalise l'entrée et la sortie de la file de revue ; `backup/` garde une copie quotidienne (30 jours). |
+| extraction par model (`kg.extraire`) | `kg.mjs extract`, case `kg.extraire` de la page Models (vide : `claude-sonnet-5-5`, décision 8 ; Claude seulement en phase 1). Mémoires, sections des synthèses, TODO ; secrets masqués avant le model ; identifiants et prédicats fournis par le code (liens seulement) ; citation de 200 caractères au plus retrouvée, sinon rejet motivé ; source inchangée jamais relue ; appel en échec = lot suspendu, sans repli ; 30 appels par jour. |
+| citation vérifiée et coupure automatique | plus d'un faux (rejeté ou corrigé) parmi les 30 derniers faits de model jugés = `kg.extract` coupé d'office, raison écrite dans `model-routing.json` et dans l'onglet ; rallumer ouvre une nouvelle fenêtre. |
+| `proposed` jamais injecté | `injectable()` : seuls les faits observés par le code ou validés par l'utilisateur sont énoncés (règles, fiches, et l'injection de la phase 2) ; toujours aucune injection dans un tour. |
+| paires suspectes | `kg.mjs pairs`, case `kg.juger` : deux règles actives sur la même cible, portées qui se recouvrent, sans lien de remplacement ni d'exception ; « compatible » gardé et jamais montré ; le reste en revue, confirmé puis tranché. |
+| onglet, bandeau, API d'écriture | onglet « 🧠 Mémoire » (bureau et mobile) : Revue, Règles en vigueur (chaîne des remplacements), Statistiques ; bandeau « N contradictions entre règles » dans la zone des demandes ; `GET /api/kg/status|review|rules|stats|source`, `POST /api/kg/decision` (même origine). Le serveur ne charge jamais `kg.mjs` : il le lance en sous-processus. App Android 1.1.0 : écran Mémoire. |
+| reconstruction (`kg.build`) | balayage du serveur toutes les 5 min : reconstruction seulement si une source a changé (empreinte), sauvegarde quotidienne ; avec `kg.extract`, mémoires modifiées aussitôt, tout le corpus la nuit (après 3 h) puis les paires. |
+
+**Critères de sortie.** `proposed` jamais injecté, HTTP `kg-review` et navigateur `kg-tab`
+(bureau et mobile) : vérifiés par la non-régression. « ≤ 5 % de faux sur 30 faits » : se
+mesure en prod, sur les 30 premiers faits que l'utilisateur juge dans l'onglet ; la coupure
+automatique applique le même seuil.
+
+**Mise en service (après le bond, décision de l'utilisateur)** : `kg.mode` est déjà
+`shadow` en prod ; puis `pipeline-enforce.mjs kg ui on` (onglet), `kg build on`
+(reconstruction automatique), et `kg extract on` (extraction par model : ≈ 175 appels pour
+l'amorçage, 30 par jour au plus, ou `kg.mjs extract --max N` à la main). Retour arrière :
+`kg <clé> off`, ou `kg off` (tout coupé).

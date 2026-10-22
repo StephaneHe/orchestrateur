@@ -2778,6 +2778,8 @@ function uiFlags() {
     modelRouting: config.ui?.modelRouting !== false,
     // 0.75.0 — side panel (TODO list; git graphs next).
     sidePanel: config.ui?.sidePanel !== false,
+    // 0.131.0 — onglet « 🧠 Mémoire » (model-routing.json → kg.ui, relu à chaud).
+    kgMemory: kgUiOn(),
   };
 }
 
@@ -2907,6 +2909,98 @@ app.get('/api/git-graph/:project', async (req, res) => {
   gitGraphCache.set(key, { at: Date.now(), body });
   res.json(body);
 });
+
+// ── Mémoire : graphe de connaissances, phase 1 (0.131.0) ─────────────────────
+// Decision « vas y » (2026-10-22), docs/KG-SYNTHESE.md §3.7 and §4 phase 1: the
+// « 🧠 Mémoire » tab (review of proposed facts, rules in force, model stats,
+// banner of contradictions). The server never LOADS scripts/kg.mjs — the single
+// writer of the index: every route runs it as a child process (argv array, JSON
+// out). Switch `kg.ui` (or `kg.mode`) off ⇒ 404 « désactivé », as before 0.131.0.
+const KG_SCRIPT = path.join(__dirname, 'scripts', 'kg.mjs');
+const KG_MODES_ON = new Set(['shadow', 'assist']);
+let kgBlockCache = { mtimeMs: -1, kg: null };
+function kgBlock() {
+  const file = path.join(__dirname, 'model-routing.json');
+  let st; try { st = fs.statSync(file); } catch { return null; }
+  if (st.mtimeMs !== kgBlockCache.mtimeMs) {
+    let j = null; try { j = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* unreadable: keep off */ }
+    kgBlockCache = { mtimeMs: st.mtimeMs, kg: j?.kg && typeof j.kg === 'object' ? j.kg : null };
+  }
+  return kgBlockCache.kg;
+}
+const kgUiOn = () => { const k = kgBlock(); return !!(k && KG_MODES_ON.has(k.mode) && k.ui === true); };
+function kgCli(args, { input = null, timeoutMs = 20_000 } = {}) {
+  return new Promise((resolve) => {
+    const env = { ...process.env };
+    for (const k of ['ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'DISPATCH_ROOT_FOR_TESTS']) delete env[k];
+    let c;
+    try { c = spawn(process.execPath, [KG_SCRIPT, ...args, '--json'], { cwd: __dirname, env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }); }
+    catch (e) { resolve({ code: null, json: null, stderr: e.message }); return; }
+    let out = '', err = '';
+    const timer = setTimeout(() => { try { c.kill(); } catch { /* gone */ } }, timeoutMs);
+    c.stdout.on('data', d => { out += d; });
+    c.stderr.on('data', d => { err += d; });
+    c.stdin.on('error', () => {});
+    c.on('error', (e) => { clearTimeout(timer); resolve({ code: null, json: null, stderr: e.message }); });
+    c.on('close', (code) => {
+      clearTimeout(timer);
+      let json = null; try { json = JSON.parse(out); } catch { /* not JSON */ }
+      resolve({ code, json, stderr: err.trim().slice(0, 500) });
+    });
+    c.stdin.end(input == null ? '' : input);
+  });
+}
+async function kgReply(res, args, opts) {
+  if (!kgUiOn()) return res.status(404).json({ ok: false, disabled: true, error: 'onglet Mémoire désactivé (kg.ui ou kg.mode = off)' });
+  const r = await kgCli(args, opts);
+  if (r.json && r.json.ok !== false) return res.json(r.json);
+  if (r.json) return res.status(r.json.status || 400).json(r.json);
+  res.status(r.code === 2 ? 404 : 500).json({ ok: false, error: r.stderr || `kg.mjs : code ${r.code}` });
+}
+const KG_CASE_RE = /^[a-z][a-z0-9-]*(?:\.[a-z0-9-]+){0,3}$/;
+app.get('/api/kg/status', (req, res) => kgReply(res, ['status']));
+app.get('/api/kg/review', (req, res) => kgReply(res, ['review']));
+app.get('/api/kg/rules', (req, res) => {
+  const projet = req.query.projet ? String(req.query.projet) : null;
+  const kase = req.query.case ? String(req.query.case) : null;
+  if (projet && !(config.projects || []).some(p => p.name === projet)) return res.status(400).json({ ok: false, error: `projet inconnu : ${projet}` });
+  if (kase && !KG_CASE_RE.test(kase)) return res.status(400).json({ ok: false, error: 'case invalide' });
+  kgReply(res, ['rules', ...(projet ? ['--projet', projet] : []), ...(kase ? ['--case', kase] : [])]);
+});
+app.get('/api/kg/stats', (req, res) => {
+  const kase = req.query.case ? String(req.query.case) : null;
+  if (kase && !KG_CASE_RE.test(kase)) return res.status(400).json({ ok: false, error: 'case invalide' });
+  kgReply(res, ['stats', ...(kase ? [kase] : [])]);
+});
+app.get('/api/kg/source', (req, res) => {
+  const key = String(req.query.key || '');
+  const line = Number.parseInt(String(req.query.line || ''), 10);
+  // A key the index knows (kg.mjs checks it against build.json); never a path.
+  if (!/^[\w.:/ -]{1,200}$/.test(key) || key.includes('..') || /^[\\/]|^[a-z]:/i.test(key)) return res.status(400).json({ ok: false, error: 'clé de source invalide' });
+  kgReply(res, ['source', key, ...(Number.isInteger(line) && line > 0 ? ['--line', String(line)] : [])]);
+});
+app.post('/api/kg/decision', sameOriginOnly, express.json({ limit: '16kb' }), (req, res) => {
+  const b = req.body || {};
+  const body = { id: b.id, action: b.action, rev: b.rev, commandId: b.commandId, reason: b.reason ?? null, o: b.o ?? null, valid_to: b.valid_to ?? null, keep: b.keep ?? null };
+  const by = b.client === 'android' ? 'user:android' : 'user:dashboard';
+  kgReply(res, ['decide', '--by', by], { input: JSON.stringify(body) });
+});
+// Upkeep (kg.mjs sweep): automatic rebuild (kg.build), daily backup, extraction
+// (kg.extract). Every 5 min, one at a time, nothing at all while kg.mode is off.
+const KG_SWEEP_MS = Number(process.env.ORCH_KG_SWEEP_MS) || 5 * 60_000;
+let kgSweeping = false;
+setInterval(async () => {
+  const k = kgBlock();
+  if (kgSweeping || !k || !KG_MODES_ON.has(k.mode)) return;
+  kgSweeping = true;
+  try {
+    const r = await kgCli(['sweep'], { timeoutMs: 30 * 60_000 });
+    const did = [r.json?.build && `index reconstruit (${r.json.build.facts ?? '?'} faits)`, r.json?.extract?.calls && `extraction : ${r.json.extract.calls} appel(s), ${r.json.extract.proposed} proposé(s)`,
+      r.json?.extract?.suspended && `extraction suspendue : ${r.json.extract.suspended.why}`, r.json?.pairs?.judged && `${r.json.pairs.judged} paire(s) jugée(s)`].filter(Boolean);
+    if (did.length) console.log(`[kg] ${did.join(' ; ')}`);
+    if (r.code !== 0 && !r.json) console.log(`[kg] balayage en échec : ${r.stderr || r.code}`);
+  } finally { kgSweeping = false; }
+}, KG_SWEEP_MS).unref?.();
 
 // ── Release list (0.97.0) ────────────────────────────────────────────────────
 // User request (2026-10-14): « Je dois voir comme TODO ou GIT, une liste qui

@@ -28,6 +28,8 @@
 <!-- v0.75.0 — panneau latéral à bascule (TODO ; désactivable : ui.sidePanel=false ou ?todo=0) -->
 <link rel="stylesheet" href="./side-panel.css?v=0.100.0">
 <link rel="stylesheet" href="./id-links.css?v=0.107.0">
+<!-- v0.131.0 — onglet « 🧠 Mémoire » (graphe de connaissances, phase 1 ; interrupteur kg.ui) -->
+<link rel="stylesheet" href="./kg-panel.css?v=0.131.0">
 </head>
 <body data-theme="cinematic">
 
@@ -104,6 +106,8 @@
       <div id="perm-band" class="perm-band" hidden aria-live="polite" data-nd-count="0"></div>
       <!-- 0.121.0 — décisions prises à votre place pendant votre absence (résumé au retour) -->
       <div id="auto-band" class="auto-band" hidden aria-live="polite" aria-label="Réponses automatiques" data-nd-count="0"></div>
+      <!-- 0.131.0 — contradictions entre règles de la mémoire (« celle-ci vaut ») -->
+      <div id="kg-band" class="kg-band" hidden aria-live="polite" aria-label="Contradictions entre règles" data-nd-count="0"></div>
     </div>
   </section>
   <div id="auto-overlay" class="auto-overlay" hidden role="dialog" aria-modal="true" aria-label="Réponse automatique">
@@ -443,6 +447,7 @@
 <script src="./git-panel.js?v=0.76.0"></script>
 <script src="./release-panel.js?v=0.98.0"></script>
 <script src="./requests-panel.js?v=0.100.0"></script>
+<script src="./kg-panel.js?v=0.131.0"></script>
 <script src="./attach-policy.js?v=0.108.0"></script>
 <script src="./app.js?v=0.108.0"></script>
 </body>

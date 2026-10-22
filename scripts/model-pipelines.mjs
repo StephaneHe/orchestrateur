@@ -500,6 +500,21 @@ export const PIPELINES = [
         example: 'Le sommaire mis à jour est commité ; la vidéo reste hors de git.' },
     ],
   },
+
+  // ── 17. Mémoire (graphe de connaissances, phase 1, 0.131.0) ───────────────
+  // Not a pipeline a request is routed to (excluded from classification like
+  // the Routage): the two model cases of the knowledge index (KG-SYNTHESE §3.4).
+  {
+    id: 'kg', label: 'Mémoire (graphe)', icon: '🧠',
+    purpose: 'Ce que les models apportent à la mémoire de l’orchestrateur : proposer des liens entre règles, décisions et projets, et juger les paires suspectes. Rien de proposé ne sert de règle avant votre validation (onglet Mémoire).',
+    when: 'Jamais pour une demande : lot nocturne et mémoire modifiée, seulement quand l’interrupteur kg.extract est allumé.',
+    flow: [
+      { id: 'extraire', n: '1', title: 'Extraire des liens (proposés)', what: 'Lire une mémoire, une synthèse ou la TODO et proposer des liens (s’applique à, exception à, remplace, motivé par…) entre des identifiants fournis par le programme, chacun avec une citation exacte que le programme retrouve. Décision 8 : claude-sonnet-5-5.',
+        example: '« Pour le développement de boxapp, router… » → la mémoire s’applique à boxapp (proposé).' },
+      { id: 'juger', n: '2', title: 'Juger une paire suspecte', what: 'Deux règles actives visent la même cible : se contredisent-elles ? Le programme choisit la paire, le model juge, vous tranchez (« celle-ci vaut »).',
+        example: '« Tout sur Opus 5.5 » et « boxapp avec Opus 5 » → contradiction possible, montrée dans la revue.' },
+    ],
+  },
 ];
 
 // Ancienne structure (0.39.0, 20 types) → nouvelles cases. Une ancienne
@@ -537,6 +552,7 @@ export const JUDGE_STEPS = new Set([
   'dev.concevoir', 'dev.liste-tests', 'dev.revue',
   'discussion.comprendre', 'discussion.repondre',
   'routage.lire', 'routage.classifier', 'routage.decomposer', 'routage.affecter', 'routage.rapporter',
+  'kg.extraire', 'kg.juger',
   'incident.evaluer',
   'recherche.cadrer', 'recherche.recouper', 'recherche.synthetiser',
   'audit.second-avis',

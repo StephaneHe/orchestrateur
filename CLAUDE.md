@@ -3284,6 +3284,57 @@ décision.
 - Recettes : `_test_kg_core.mjs`, `_test_kg_replay.mjs`, `_test_kg_queries.mjs`
   (périmètre `kg`). Pas de redémarrage (aucune route).
 
+## Graphe de connaissances, phase 1 : faits curés et onglet Mémoire (0.131.0)
+
+Décision « vas y » (2026-10-22) ; `docs/KG-SYNTHESE.md` §4 phase 1, §6 décisions
+8, 9, 15, état livré §7. Toujours **aucune injection** dans un tour.
+
+- **Interrupteurs** (bloc `kg` de model-routing.json, relus à chaque appel,
+  effectifs seulement si `kg.mode` ≠ off, coupés par défaut) : `kg.build`
+  (reconstruction automatique), `kg.extract` (extraction par model et paires),
+  `kg.ui` (onglet, bandeau, routes). `node scripts/pipeline-enforce.mjs kg
+  <build|extract|ui> on|off` ; `kg off` et `off --all` retirent tout le bloc.
+- **Couche des faits** `logs/kg/facts.jsonl` : ajout seul, `kg.mjs` seul
+  écrivain, sous verrou (`withFactsLock`) ; ajouts, verrou et suppressions par
+  `appendLines` / `withExclusiveLock` / `removeFile` d'`atomic-file.mjs`,
+  **toujours sur un chemin `kgPath`** (logs/kg ou logs/kg/backup ; vérifié par
+  `_test_kg_facts.mjs`). Décisions (`decide`) : idempotentes par `commandId`,
+  révision attendue (409), posées sur l'index dérivé au chargement (`overlay`),
+  jamais écrasées par une reconstruction. **Ne jamais éditer ce fichier à la
+  main.** `review.jsonl` (entrées et sorties de la file), `backup/` (copie
+  quotidienne, 30 jours), `extract.json` (sources lues, appels du jour, rejets).
+- **Extraction** (`kg.mjs extract`, case `kg.extraire`, défaut
+  `claude-sonnet-5-5`, Claude seulement) : identifiants fournis par le code
+  (`candidateIds`), prédicats `MODEL_PREDICATES` (liens seulement), citation
+  retrouvée (`checkProposal`), secrets masqués avant le model ; fait toujours
+  `proposed` ; source inchangée jamais relue ; appel en échec = lot suspendu ;
+  30 appels par jour (`DAILY_CALLS`). **Coupure automatique** (`CUTOFF`) : plus
+  d'un faux parmi les 30 derniers faits de model jugés ⇒ `kg.extract` coupé
+  d'office (`kg.cutoff.why`).
+- **Paires suspectes** (`kg.mjs pairs`, case `kg.juger`, `suspectPairs`) : le
+  code choisit, le model juge, l'utilisateur confirme puis « celle-ci vaut ».
+- **`injectable(f)`** : seuls `observed` / `validated` non périmés peuvent être
+  énoncés ; **un fait `proposed` ne l'est jamais** (règle à garder pour
+  l'injection de la phase 2).
+- **Serveur** : `GET /api/kg/status|review|rules|stats|source`, `POST
+  /api/kg/decision` (`sameOriginOnly`). Le serveur **ne charge jamais
+  `kg.mjs`** (`kgCli` le lance en sous-processus ; `_test_kg_core` /
+  `_test_kg_facts` vérifient qu'aucun module des tours ni `server.js` ne
+  l'importe). `kg.ui` coupé ⇒ 404 `disabled`. Balayage toutes les 5 min
+  (`kg.mjs sweep`, `ORCH_KG_SWEEP_MS`). `ui.kgMemory` dans `uiFlags()`.
+  Redémarrage nécessaire (routes, balayage).
+- **Client** `public/kg-panel.js` + `kg-panel.css` : onglet « 🧠 Mémoire »
+  (touche `k`), créé à chaud quand `ui.kgMemory` passe à vrai ; Revue (quatre
+  questions, Valider / Corriger / Périmer / Rejeter, Ouvrir la source — fenêtre
+  `#kg-source-overlay`, Échap en capture —, Corriger la source =
+  `App.prepareChefMessage(…, {kg: true})`), Règles en vigueur, Statistiques ;
+  bandeau `#kg-band` dans `.nd-body`. App Android 1.1.0 : écran Mémoire.
+- Page Models : pipeline `kg` (cases `kg.extraire`, `kg.juger`), exclu du
+  classement (`NOT_ROUTED` de `pipeline-classify.mjs`).
+- Faux claude : `[KG_EXTRACT]` / `[KG_PAIR]`, `FAKE_CLAUDE_KG(_MAP|_FILE|_FAIL|_LOG)`.
+- Recettes : `_test_kg_facts.mjs` (périmètre `kg`), HTTP `kg-review`,
+  navigateur `kg-tab` et `kg-tab-mobile` (`tests/kg-fixture.mjs`).
+
 ## App Android 1.0.0 : parité avec le dashboard (0.127.0)
 
 Demande utilisateur (2026-10-20) : « Fais une nouvelle application android

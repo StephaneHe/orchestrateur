@@ -274,6 +274,65 @@ export async function browserChecks(sb, t) {
         await page.evaluate(() => { if (window.SidePanel?.isOpen()) window.SidePanel.close(); });
       }
     });
+    // 0.131.0 — knowledge graph phase 1 (« vas y », 2026-10-22), exit criterion « navigateur kg-tab ».
+    const kgState = (p) => p.evaluate(() => {
+      const pane = document.querySelector('#side-panel [data-sp-pane="kg"]');
+      const n = (sel) => pane ? pane.querySelectorAll(sel).length : 0;
+      return { open: !!pane && pane.offsetParent !== null, facts: n('.kg-item[data-kind="fact"]'), conflicts: n('.kg-item[data-kind="conflict"]'), cards: n('.kg-card'),
+        notice: pane?.querySelector('.kg-notice')?.textContent || '', text: pane?.innerText || '', pill: !!document.getElementById('btn-kg'),
+        band: (() => { const b = document.getElementById('kg-band'); return b && !b.hidden ? Number(b.dataset.ndCount) : 0; })() };
+    });
+    await check(B, 'kg-tab', 'Onglet « 🧠 Mémoire » (bureau) : absent tant que kg.ui est coupé, apparaît à chaud ; revue des faits proposés avec leurs quatre questions, Valider, Rejeter avec motif, Ouvrir la source (Échap ferme la fenêtre, pas le panneau), Corriger la source (message au chef, rien réécrit) ; bandeau « contradictions entre règles » avec « celle-ci vaut » ; Règles en vigueur et Statistiques', async () => {
+      const fxFile = path.join(sb.root, 'tests', 'kg-fixture.mjs');
+      if (!fs.existsSync(fxFile)) NA('onglet Mémoire absent de cet état du code');
+      const FX = await import(pathToFileURL(fxFile).href);
+      const fx = await FX.seedKg(sb.root);
+      if (!fx) NA('onglet Mémoire absent de cet état du code');
+      try {
+        await sleep(6000);
+        assert(!(await kgState(page)).pill, 'pill 🧠 présente alors que kg.ui est coupé');
+        fx.ui(true);
+        assert(await until(async () => visible(page, '#btn-kg'), 15_000), 'pill 🧠 Mémoire absente après kg.ui on (à chaud)');
+        assert(await until(async () => (await kgState(page)).band >= 1, 10_000), 'bandeau des contradictions absent');
+        await page.click('#btn-kg');
+        assert(await until(async () => { const s = await kgState(page); return s.open && s.facts === 2; }, 10_000), `revue : ${JSON.stringify(await kgState(page))}`);
+        let s = await kgState(page);
+        assert(s.cards >= 2 && /Ce que nous savons/.test(s.text) && /Pourquoi/.test(s.text) && /Depuis quand/.test(s.text) && /Où cela s’applique/.test(s.text), 'fiche à quatre questions absente');
+        await page.click('#side-panel .kg-item[data-kind="fact"] .kg-act[data-action="validate"]');
+        assert(await until(async () => { const x = await kgState(page); return x.facts === 1 && /Enregistré/.test(x.notice); }, 8000), `validation : ${JSON.stringify(await kgState(page))}`);
+        await page.click('#side-panel .kg-item[data-kind="fact"] .kg-ask[data-action="reject"]');
+        await page.fill('#side-panel .kg-form .kg-in', 'lien faux (recette)');
+        await page.click('#side-panel .kg-form button[type="submit"]');
+        assert(await until(async () => (await kgState(page)).facts === 0, 8000), 'rejet avec motif sans effet');
+        await page.click('#side-panel .kg-item[data-kind="conflict"] .kg-open-src');
+        assert(await until(async () => visible(page, '#kg-source-overlay .kgo-hit'), 6000), 'fenêtre de la source absente');
+        await page.keyboard.press('Escape');
+        assert(await until(async () => !(await visible(page, '#kg-source-overlay .kgo-box')), 3000) && (await kgState(page)).open, 'Échap : la fenêtre ne se ferme pas, ou le panneau se ferme');
+        const before = (await kgState(page)).band;
+        await page.click('#kg-band .kg-keep');
+        assert(await until(async () => (await kgState(page)).band < before, 8000), '« celle-ci vaut » du bandeau sans effet');
+        await page.click('#side-panel .kg-fix-src');
+        assert(await until(async () => /Corriger la source d’un fait de la mémoire/.test(await page.inputValue('#composer-input')), 4000), 'Corriger la source : message au chef non préparé');
+        await page.fill('#composer-input', '');
+        await page.click('#btn-kg');
+        await page.click('#side-panel [data-kg-tab="rules"]');
+        assert(await until(async () => /Liens validés par vous \(1\)/.test((await kgState(page)).text), 8000), 'Règles en vigueur : le lien validé manque');
+        await page.click('#side-panel [data-kg-tab="stats"]');
+        assert(await until(async () => (await page.locator('#side-panel .kg-stat').count()) > 0, 8000), 'Statistiques : aucune case');
+        await page.click('#side-panel .kg-stat');
+        assert(await until(async () => visible(page, '#side-panel .kg-stat-detail'), 6000), 'détail d’une case absent');
+        assert(await overflowX(page) <= 0, `débordement horizontal ${await overflowX(page)} px`);
+        await shot(page, 'kg-tab-desktop');
+        s = await kgState(page);
+        await page.click('#side-panel [data-kg-tab="review"]');
+        return `pill à chaud, 2 faits proposés (1 validé, 1 rejeté), source ouverte, contradiction tranchée depuis le bandeau, règles et statistiques`;
+      } finally {
+        FX.clearKg(fx);
+        await page.keyboard.press('Escape').catch(() => {});
+        await page.evaluate(() => { if (window.SidePanel?.isOpen()) window.SidePanel.close(); });
+        await until(async () => !(await kgState(page)).pill, 15_000);
+      }
+    });
     // 0.98.0 — user request (2026-10-14): « Dans RELEASE, les items doivent
     // etre regroupes par release, et chaque release est clickable et ouvrir une
     // fenetre qui montre les details de chaque items ».
@@ -1884,10 +1943,12 @@ export async function browserChecks(sb, t) {
     // puis « tous les pipelines », lisibles, boucles comprises, et le travail
     // images / vidéo / audio avec les models spécialisés et les outils locaux.
     const hasModels = async (pg) => (await pg.locator('#btn-models').count()) > 0;
-    // Pipelines phase 1: the generics « Opérations » and « Fichiers » come last (an older state of the code has 14 tabs).
-    const TABS = 'Développement,Discussion,Routage (chef),Incident,Recherche,Audit sécurité,Maintenance,Nouveau projet,Données,Rédaction,Compte rendu de réunion,Images,Vidéo,Audio,Opérations,Fichiers';
+    // Pipelines phase 1: the generics « Opérations » and « Fichiers » come last (an older state of the code has 14 tabs);
+    // knowledge graph phase 1 (0.131.0) adds « Mémoire (graphe) » after them (16 tabs before).
+    const TABS = 'Développement,Discussion,Routage (chef),Incident,Recherche,Audit sécurité,Maintenance,Nouveau projet,Données,Rédaction,Compte rendu de réunion,Images,Vidéo,Audio,Opérations,Fichiers,Mémoire (graphe)';
+    const TABS_16 = 'Développement,Discussion,Routage (chef),Incident,Recherche,Audit sécurité,Maintenance,Nouveau projet,Données,Rédaction,Compte rendu de réunion,Images,Vidéo,Audio,Opérations,Fichiers';
     const TABS_OLD = 'Développement,Discussion,Routage (chef),Incident,Recherche,Audit sécurité,Maintenance,Nouveau projet,Données,Rédaction,Compte rendu de réunion,Images,Vidéo,Audio';
-    await check(B, 'models-view', 'Models par tâche : 16 onglets de pipeline (14 avant les génériques), bandeau, légende, chaque étape a titre + quand/quoi + exemple + menu (variantes repliables), boucles et retours dessinés, étape optionnelle distincte, renvois, menus par capacité (outils locaux), conseils, choix enregistré puis relu après rechargement, historique', async () => {
+    await check(B, 'models-view', 'Models par tâche : 17 onglets de pipeline (16 avant la mémoire, 14 avant les génériques), bandeau, légende, chaque étape a titre + quand/quoi + exemple + menu (variantes repliables), boucles et retours dessinés, étape optionnelle distincte, renvois, menus par capacité (outils locaux), conseils, choix enregistré puis relu après rechargement, historique', async () => {
       if (!(await hasModels(page))) NA('vue absente de cet état du code');
       await setHash(page, '#/');
       await page.click('#btn-models');
@@ -1896,8 +1957,8 @@ export async function browserChecks(sb, t) {
       if (!(await page.locator('#models .mr-tab').count())) NA('structure en pipelines absente de cet état du code');
       assert(!(await visible(page, '#rail')) && !(await visible(page, '#conductor-view')), 'le fil ou le rail reste affiché');
       const tabs = await page.$$eval('#models .mr-tab', els => els.map(e => e.textContent.replace(/\d+\/\d+/, '').replace(/^\W+/u, '').trim()));
-      assert(tabs.length === 16 || tabs.length === 14, `${tabs.length} onglets : ${tabs.join(', ')}`);
-      assert(tabs.join(',') === TABS || tabs.join(',') === TABS_OLD, `onglets : ${tabs.join(',')}`);
+      assert(tabs.length === 17 || tabs.length === 16 || tabs.length === 14, `${tabs.length} onglets : ${tabs.join(', ')}`);
+      assert(tabs.join(',') === TABS || tabs.join(',') === TABS_16 || tabs.join(',') === TABS_OLD, `onglets : ${tabs.join(',')}`);
       assert(await page.locator('#models .mr-legend li').count() >= 7, 'légende incomplète');
       for (const sym of ['→', '↻', '↩', '⤳', '◇']) assert((await page.textContent('#models .mr-legend')).includes(sym), `légende sans ${sym}`);
       // Chaque onglet : bandeau, et chaque étape complète.
@@ -2122,7 +2183,7 @@ export async function browserChecks(sb, t) {
       assert(await until(async () => (await page.locator('#models .mr-tab').count()) > 0, 10_000), 'vue');
       if (!(await until(async () => (await page.locator('#models .mr-reco-box').count()) > 0, 6000))) NA('suggestions absentes de cet état du code');
       const box = await page.textContent('#models .mr-reco-box');
-      assert(/8 octobre 2026/.test(box) && /a8c5cc2/.test(box) && /(109 cases sur 109|122 cases sur 122|123 cases sur 123)/.test(box), `encadré : ${box.replace(/\s+/g, ' ').slice(0, 200)}`);
+      assert(/8 octobre 2026/.test(box) && /a8c5cc2/.test(box) && /(109 cases sur 109|122 cases sur 122|123 cases sur 123|125 cases sur 125)/.test(box), `encadré : ${box.replace(/\s+/g, ' ').slice(0, 200)}`);
       // Sur CHAQUE pipeline, chaque étape et chaque variante a son bloc de suggestion.
       const tabs = await page.$$eval('#models .mr-tab', ts => ts.map(t => t.dataset.pipeline));
       let seen = 0;
@@ -2134,7 +2195,7 @@ export async function browserChecks(sb, t) {
         assert(r.length && !bad.length, `${id} : bloc absent ou incomplet pour ${bad.join(', ')}`);
         seen += r.length;
       }
-      assert(seen === 109 || seen === 122 || seen === 123, `${seen} blocs au lieu de 123 (122 avant routage.chef, 109 avant les génériques)`);
+      assert(seen === 109 || seen === 122 || seen === 123 || seen === 125, `${seen} blocs au lieu de 125 (123 avant la mémoire, 122 avant routage.chef, 109 avant les génériques)`);
       await page.click('#models .mr-tab[data-pipeline="discussion"]');
       assert(await page.locator('#models .mr-panel .mr-reco-und').count() > 0, '« non tranché » non signalé (Discussion)');
       await page.click('#models .mr-tab[data-pipeline="dev"]');
@@ -2797,6 +2858,38 @@ export async function browserChecks(sb, t) {
       await m.click('#text-size [data-ts="0"]');
       assert(await rootPx(m) === 16, 'retour à 100 %');
     });
+    await check(B, 'kg-tab-mobile', 'Onglet « 🧠 Mémoire » (mobile 390 px) : panneau plein écran, revue lisible, boutons ≥ 44 px, validation possible, fenêtre de la source plein écran, aucun débordement', async () => {
+      const fxFile = path.join(sb.root, 'tests', 'kg-fixture.mjs');
+      if (!fs.existsSync(fxFile)) NA('onglet Mémoire absent de cet état du code');
+      const FX = await import(pathToFileURL(fxFile).href);
+      const fx = await FX.seedKg(sb.root);
+      if (!fx) NA('onglet Mémoire absent de cet état du code');
+      try {
+        fx.ui(true);
+        await setHash(m, '#/');
+        assert(await until(async () => (await kgState(m)).pill, 15_000), 'onglet Mémoire non annoncé (kg.ui on)');
+        assert(await until(async () => visible(m, '#sp-edge'), 6000), 'onglet du bord absent');
+        await m.click('#sp-edge');
+        await m.click('#side-panel [data-sp-tab="kg"]');
+        assert(await until(async () => { const s = await kgState(m); return s.open && s.facts === 2; }, 10_000), `revue mobile : ${JSON.stringify(await kgState(m))}`);
+        const minH = await m.$$eval('#side-panel .kg-item .kg-btn, #side-panel .kg-tab', bs => Math.min(...bs.filter(b => b.offsetParent).map(b => b.getBoundingClientRect().height)));
+        assert(minH >= 44, `bouton de ${minH}px`);
+        assert(await m.evaluate(() => document.documentElement.scrollWidth - window.innerWidth) <= 0, 'débordement horizontal');
+        await shot(m, 'kg-tab-mobile');
+        await m.click('#side-panel .kg-item[data-kind="fact"] .kg-act[data-action="validate"]');
+        assert(await until(async () => (await kgState(m)).facts === 1, 8000), 'validation mobile sans effet');
+        await m.click('#side-panel .kg-item[data-kind="conflict"] .kg-open-src');
+        assert(await until(async () => visible(m, '#kg-source-overlay .kgo-hit'), 6000), 'fenêtre de la source absente');
+        const box = await m.locator('#kg-source-overlay .kgo-box').boundingBox();
+        assert(box && box.width >= 389, `fenêtre de ${box && box.width}px`);
+        await m.click('#kg-source-overlay .kgo-close');
+        return `plein écran, ${minH}px min., validation et source`;
+      } finally {
+        FX.clearKg(fx);
+        await m.evaluate(() => { window.KgPanel?.closeSource(); if (window.SidePanel?.isOpen()) window.SidePanel.close(); });
+        await until(async () => !(await kgState(m)).pill, 15_000);
+      }
+    });
     await check(B, 'projets-mobile', 'Projets · mobile : une colonne, aucun défilement horizontal, cibles ≥ 44 px', async () => {
       if (!(await m.locator('#btn-projects').count())) NA('vue absente de cet état du code');
       await setHash(m, '#/projets');
@@ -2818,7 +2911,7 @@ export async function browserChecks(sb, t) {
       if (!(await hasModels(m))) NA('vue absente de cet état du code');
       await m.setViewportSize({ width: 390, height: 844 });
       await setHash(m, '#/models');
-      assert(await until(async () => [14, 16].includes(await m.locator('#models .mr-tab').count()), 10_000), 'onglets');
+      assert(await until(async () => [14, 16, 17].includes(await m.locator('#models .mr-tab').count()), 10_000), 'onglets');
       if (!(await until(async () => (await m.locator('#models .mr-reco-box').count()) > 0, 6000))) NA('suggestions absentes de cet état du code');
       await m.click('#models .mr-tab[data-pipeline="dev"]');
       await sleep(300);
@@ -2836,7 +2929,7 @@ export async function browserChecks(sb, t) {
       if (!(await hasModels(m))) NA('vue absente de cet état du code');
       await m.setViewportSize({ width: 390, height: 844 });
       await setHash(m, '#/models');
-      assert(await until(async () => [14, 16].includes(await m.locator('#models .mr-tab').count()) && (await m.locator('#models .mr-panel .mr-card').count()) > 0, 10_000), 'onglets ou cartes');
+      assert(await until(async () => [14, 16, 17].includes(await m.locator('#models .mr-tab').count()) && (await m.locator('#models .mr-panel .mr-card').count()) > 0, 10_000), 'onglets ou cartes');
       await m.click('#models .mr-tab[data-pipeline="dev"]');
       await sleep(300);
       const g = await m.evaluate(() => ({

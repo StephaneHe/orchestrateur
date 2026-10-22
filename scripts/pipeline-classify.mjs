@@ -36,7 +36,9 @@ const PROVIDER_OF = { anthropic: 'claude', openai: 'codex', nvidia: 'nvidia', op
 // `generic` only. Their rule is one of MEANING for the model (never keywords).
 export const GENERIC_PIPELINES = ['operations', 'fichiers'];
 export const GENERIC_MODES = { redaction: ['document'], discussion: ['verification'], recherche: ['interne'] };
-const CHOICES = PIPELINES.filter(p => p.id !== 'routage' && !GENERIC_PIPELINES.includes(p.id));
+// Never a destination of a request: the chef's Routage and the knowledge index's model cases (0.131.0).
+const NOT_ROUTED = new Set(['routage', 'kg']);
+const CHOICES = PIPELINES.filter(p => !NOT_ROUTED.has(p.id) && !GENERIC_PIPELINES.includes(p.id));
 export const GENERIC_RULE = 'Specialised pipelines first, then the generic ones, then discussion for a pure question. ' +
   'operations = running ONE or a few operations on the project or its environment, no code to write: git push, git tag, push a tag, restore files to the last commit, prepare the production jump (plan only), publish the APK on the downloads page, install an APK on the device, restart a declared service, run a declared script → operations, never maintenance (maintenance upkeeps code) nor dev. ' +
   `For operations, set "operations" to the ordered list of ALL the operations the task asks for — every one of them, e.g. publishing then installing is two — each {"id": one of ${OPERATION_IDS.join(', ')}, "params": the parameters the request gives (e.g. {"remote": "origin"}, {"tag": "v1.2.0"})}, and "autorisation" to the user's EXACT words that ask for or authorize them when the request quotes them. ` +
@@ -54,7 +56,7 @@ export function classifierChoices(root, { generic = false } = {}) {
   // Decision 7 (switch inertCleanup): non-executable pipelines and keyword attachments are not offered.
   try { custom = effectiveCustom(JSON.parse(fs.readFileSync(path.join(root, 'model-routing.json'), 'utf8'))) || null; } catch { /* no file */ }
   // Phase 1: the generic pipelines are offered only with the switch `generic` (off = exactly as before).
-  const keep = (p) => p.id !== 'routage' && (generic || !GENERIC_PIPELINES.includes(p.id));
+  const keep = (p) => !NOT_ROUTED.has(p.id) && (generic || !GENERIC_PIPELINES.includes(p.id));
   try { return applyCustom(custom).filter(keep); } catch { return CHOICES.filter(keep); }
 }
 

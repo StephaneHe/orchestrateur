@@ -1284,15 +1284,17 @@
     },
     {
       "id": "kg",
-      "label": "Index de connaissances (KG, phase 0 b, sans model)",
+      "label": "Index de connaissances (KG : phase 0 b sans model, phase 1 faits curés et onglet Mémoire)",
       "files": [
         "scripts/kg.mjs",
-        "tests/kg-corpus/**"
+        "tests/kg-corpus/**",
+        "tests/kg-fixture.mjs"
       ],
       "suites": [
         "_test_kg_core.mjs",
         "_test_kg_replay.mjs",
-        "_test_kg_queries.mjs"
+        "_test_kg_queries.mjs",
+        "_test_kg_facts.mjs"
       ],
       "uses": [
         {
@@ -1305,6 +1307,7 @@
           "perimeter": "dispatch",
           "suites": [
             "_test_kg_core.mjs",
+            "_test_kg_facts.mjs",
             "_test_kg_queries.mjs",
             "_test_kg_replay.mjs"
           ]
@@ -1313,6 +1316,7 @@
           "perimeter": "noyau",
           "suites": [
             "_test_kg_core.mjs",
+            "_test_kg_facts.mjs",
             "_test_kg_queries.mjs",
             "_test_kg_replay.mjs"
           ]
@@ -1321,6 +1325,7 @@
           "perimeter": "outillage",
           "suites": [
             "_test_kg_core.mjs",
+            "_test_kg_facts.mjs",
             "_test_kg_queries.mjs"
           ]
         },
@@ -1328,6 +1333,7 @@
           "perimeter": "panneaux",
           "suites": [
             "_test_kg_core.mjs",
+            "_test_kg_facts.mjs",
             "_test_kg_queries.mjs"
           ]
         },
@@ -1335,6 +1341,7 @@
           "perimeter": "pipelines",
           "suites": [
             "_test_kg_core.mjs",
+            "_test_kg_facts.mjs",
             "_test_kg_queries.mjs",
             "_test_kg_replay.mjs"
           ]
@@ -1343,6 +1350,7 @@
           "perimeter": "routage",
           "suites": [
             "_test_kg_core.mjs",
+            "_test_kg_facts.mjs",
             "_test_kg_queries.mjs",
             "_test_kg_replay.mjs"
           ]
@@ -1351,9 +1359,14 @@
           "perimeter": "serveur",
           "suites": [
             "_test_kg_core.mjs",
+            "_test_kg_facts.mjs",
             "_test_kg_queries.mjs"
           ]
         }
+      ],
+      "stages": [
+        "http",
+        "browser"
       ]
     }
   ]

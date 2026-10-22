@@ -1305,6 +1305,53 @@ async function apiChecks(sb) {
       return `omega : départ v1.0.0 (tag), puis ${d.counts.ready} entrées prêtes et ${d.counts.progress} en cours ; note sans l’en-cours`;
     } finally { g('tag', '-d', 'v1.0.0'); fs.rmSync(cl, { force: true }); }
   });
+  // 0.131.0 — knowledge graph phase 1, decision « vas y » (2026-10-22):
+  // « faits curés et onglet Mémoire », exit criterion « HTTP kg-review ».
+  await check(S, 'kg-review', 'Mémoire (graphe, phase 1) : interrupteur kg.ui coupé = aucune route (404) ; allumé, GET /api/kg/status, /review (faits proposés par le model avec leurs quatre questions, contradictions avec leurs deux sources), /rules, /stats, /source (seulement une source connue de l’index) ; POST /api/kg/decision (même origine) : révision attendue (409), idempotent par commandId, « celle-ci vaut » ; un fait proposé n’est jamais une règle avant validation', async () => {
+    const fxFile = path.join(sb.root, 'tests', 'kg-fixture.mjs');
+    if (!fs.existsSync(fxFile)) NA('mémoire (phase 1) absente de cet état du code');
+    const FX = await import(pathToFileURL(fxFile).href);
+    const fx = await FX.seedKg(sb.root);
+    if (!fx) NA('mémoire (phase 1) absente de cet état du code');
+    const post = (body, headers = {}) => fetch(sb.url + '/api/kg/decision', { method: 'POST', headers: { ...H, 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
+    try {
+      assert(fx.extracted.proposed === 2, `extraction du faux claude : ${JSON.stringify(fx.extracted)}`);
+      const off = await get('/api/kg/review');
+      assert(off.status === 404 && (await off.json()).disabled, `kg.ui coupé : HTTP ${off.status}`);
+      assert((await json('/api/config')).ui?.kgMemory === false, 'ui.kgMemory annoncé alors que coupé');
+      fx.ui(true);
+      assert((await json('/api/config')).ui?.kgMemory === true, 'ui.kgMemory absent une fois allumé');
+      const st = await json('/api/kg/status');
+      assert(st.switches.ui && st.index && st.review.facts === 2 && st.review.conflicts >= 1, `status : ${JSON.stringify(st.review)}`);
+      let rv = await json('/api/kg/review');
+      const fact = rv.items.find(i => i.kind === 'fact' && i.s === 'mem:feedback_boxapp_opus5');
+      assert(fact && fact.status === 'proposed' && fact.card.what && fact.card.why.includes('«') && fact.card.since && fact.card.where && fact.source.key, `fait proposé : ${JSON.stringify(fact)}`);
+      const conflict = rv.items.find(i => i.kind === 'conflict');
+      assert(conflict && conflict.sides.length === 2 && conflict.sides.every(s => s.ref && s.fact), 'contradiction sans ses deux sources');
+      let rules = await json('/api/kg/rules?projet=alpha');
+      assert(!JSON.stringify(rules.curated).includes('mem:feedback_boxapp_opus5'), 'un fait proposé figure dans les règles');
+      assert((await get('/api/kg/rules?projet=inconnu-zz')).status === 400, 'projet hors config accepté');
+      assert((await post({ id: fact.id, action: 'validate', rev: fact.rev, commandId: 'recette-kg-0001' }, { Origin: 'http://ailleurs.example' })).status === 403, 'autre origine acceptée');
+      assert((await post({ id: fact.id, action: 'validate', rev: fact.rev + 3, commandId: 'recette-kg-0002' })).status === 409, 'révision périmée acceptée');
+      const ok1 = await post({ id: fact.id, action: 'validate', rev: fact.rev, commandId: 'recette-kg-0003' });
+      assert(ok1.status === 200 && (await ok1.json()).ok, `validation : HTTP ${ok1.status}`);
+      const dup = await (await post({ id: fact.id, action: 'validate', rev: fact.rev, commandId: 'recette-kg-0003' })).json();
+      assert(dup.ok && dup.duplicate, 'même commandId : rejoué');
+      rules = await json('/api/kg/rules');
+      assert(rules.curated.some(f => f.s === 'mem:feedback_boxapp_opus5' && f.status === 'validated'), 'fait validé absent des règles');
+      const arb = await post({ id: conflict.id, action: 'arbitrate', keep: conflict.sides[0].fact, rev: conflict.rev, commandId: 'recette-kg-0004' });
+      assert(arb.status === 200, `« celle-ci vaut » : HTTP ${arb.status}`);
+      rv = await json('/api/kg/review');
+      assert(!rv.items.some(i => i.id === conflict.id || i.id === fact.id), 'tranché ou validé encore en revue');
+      const src = await json(`/api/kg/source?key=${encodeURIComponent(fact.source.key)}&line=${fact.source.line}`);
+      assert(src.ok && src.lines.some(l => l.n === fact.source.line), 'extrait de la source');
+      assert((await get('/api/kg/source?key=..%2F.env')).status === 400 && (await get('/api/kg/source?key=memory%3Achef%2Finconnu.md')).status === 404, 'source hors index servie');
+      const stats = await json('/api/kg/stats');
+      assert(Array.isArray(stats.cases) && stats.cases.length > 0, 'statistiques par case');
+      for (const method of ['PUT', 'DELETE']) assert((await fetch(sb.url + '/api/kg/review', { method, headers: H })).status === 404, `${method} /api/kg/review accepté`);
+      return `2 faits proposés par le faux claude, 1 validé (rev ${fact.rev}→${fact.rev + 1}), 1 contradiction tranchée ; ${stats.cases.length} cases en statistiques`;
+    } finally { FX.clearKg(fx); }
+  });
   // 0.100.0 — « Je parle de voir comment une requete utilisateur a ete decoupee
   // en taches atomiques, et voir le progres de ces taches, meme detachees ».
   await check(S, 'requests-map', 'Vue par requête : GET /api/requests et /api/requests/:run relient chaque requête au chef à toutes ses tâches atomiques (titre, musicien, « après », colonne) et donnent l’état de chacune là où elle est maintenant — terminée, détachée en cours, en attente, en file, renvoi au chef refusé, question, pipeline en pause avec sa progression — ; réveils exclus ; lecture seule', async () => {
@@ -1547,7 +1594,7 @@ async function apiChecks(sb) {
     const r = await post('/api/project/omega/park', { parked: true });
     assert(r.status === 404, `route /park encore servie (HTTP ${r.status})`);
   });
-  await check(S, 'model-routing', 'Models par tâche : 16 pipelines (boucles, retours, renvois, étapes faites par le programme), une case par étape et variante, migration de l\'ancien format, capacités média, outils locaux, choix validé, enregistré hors config.json, relu, historisé', async () => {
+  await check(S, 'model-routing', 'Models par tâche : 17 pipelines (boucles, retours, renvois, étapes faites par le programme), une case par étape et variante, migration de l\'ancien format, capacités média, outils locaux, choix validé, enregistré hors config.json, relu, historisé', async () => {
     const routingPath = path.join(sb.root, 'model-routing.json');
     // Ancien format (0.39.0) posé avant la première lecture : il doit être migré.
     fs.writeFileSync(routingPath, JSON.stringify({ version: 1, assignments: {
@@ -1560,8 +1607,9 @@ async function apiChecks(sb) {
     const v = await first.json();
     if (!Array.isArray(v.pipelines)) NA('structure en pipelines absente de cet état du code');
     const ids = v.pipelines.map(p => p.id).join(',');
-    // Pipelines phase 1: the generics « operations » and « fichiers » come last (an older state of the code has 14).
-    assert(ids === 'dev,discussion,routage,incident,recherche,audit,maintenance,nouveau,donnees,redaction,reunion,images,video,audio,operations,fichiers' || ids === 'dev,discussion,routage,incident,recherche,audit,maintenance,nouveau,donnees,redaction,reunion,images,video,audio', `pipelines : ${ids}`);
+    // Pipelines phase 1: the generics « operations » and « fichiers » come last (an older state of the code has 14);
+    // knowledge graph phase 1 (0.131.0) adds « kg » after them.
+    assert(ids === 'dev,discussion,routage,incident,recherche,audit,maintenance,nouveau,donnees,redaction,reunion,images,video,audio,operations,fichiers,kg' || ids === 'dev,discussion,routage,incident,recherche,audit,maintenance,nouveau,donnees,redaction,reunion,images,video,audio,operations,fichiers' || ids === 'dev,discussion,routage,incident,recherche,audit,maintenance,nouveau,donnees,redaction,reunion,images,video,audio', `pipelines : ${ids}`);
     const steps = (p) => p.flow.flatMap(n => (n.kind === 'loop' ? n.steps : [n]));
     for (const p of v.pipelines) {
       assert(p.purpose && p.when, `${p.id} : bandeau incomplet`);

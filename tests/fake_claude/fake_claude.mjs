@@ -209,7 +209,27 @@ async function run() {
     }
     return process.env.FAKE_CLAUDE_CHEF_V3 || 'Réponse du faux chef.\n\n```plan\n{}\n```';
   };
-  const fixedReply = isChefV3 ? chefV3Reply() : isAuto ? autoReply()
+  // Knowledge graph phase 1: model extraction ([KG_EXTRACT]) and suspect pairs ([KG_PAIR]).
+  // FAKE_CLAUDE_KG_FILE = JSON list of answers consumed one per call; FAKE_CLAUDE_KG = one
+  // answer for every call; FAKE_CLAUDE_KG_LOG counts the calls; FAKE_CLAUDE_KG_FAIL=1 dies
+  // without a result (quota, outage). Defaults: no fact, an unsure verdict.
+  const isKg = /^\[KG_(EXTRACT|PAIR)\]/.test(userText);
+  if (isKg && process.env.FAKE_CLAUDE_KG_LOG) fs.appendFileSync(process.env.FAKE_CLAUDE_KG_LOG, JSON.stringify({ kind: /^\[KG_PAIR\]/.test(userText) ? 'pair' : 'extract', model: askedModel, source: (/^SOURCE: (.*)$/m.exec(userText) || [])[1] || null, chars: userText.length }) + '\n');
+  if (isKg && process.env.FAKE_CLAUDE_KG_FAIL === '1') { process.stderr.write('API Error: usage limit reached\n'); process.exit(1); }
+  const kgReply = () => {
+    // FAKE_CLAUDE_KG_MAP='{"<substring of the SOURCE: or RULE A: line>": <answer>}': one answer per source.
+    try {
+      const head = (/^(?:SOURCE|RULE A): (.*)$/m.exec(userText) || [])[1] || '';
+      for (const [k, v] of Object.entries(JSON.parse(process.env.FAKE_CLAUDE_KG_MAP || '{}'))) if (head.includes(k)) return typeof v === 'string' ? v : JSON.stringify(v);
+    } catch { /* ignored */ }
+    const f = process.env.FAKE_CLAUDE_KG_FILE;
+    if (f) {
+      let list = []; try { list = JSON.parse(fs.readFileSync(f, 'utf8')); } catch {}
+      if (list.length) { const [head, ...rest] = list; fs.writeFileSync(f, JSON.stringify(rest)); return typeof head === 'string' ? head : JSON.stringify(head); }
+    }
+    return process.env.FAKE_CLAUDE_KG || (/^\[KG_PAIR\]/.test(userText) ? JSON.stringify({ verdict: 'incertain', reason: 'verdict du faux claude' }) : JSON.stringify({ facts: [] }));
+  };
+  const fixedReply = isKg ? kgReply() : isChefV3 ? chefV3Reply() : isAuto ? autoReply()
     : isReformulation
     ?(process.env.FAKE_CLAUDE_TRANSLATION || 'Réponse reformulée en français : la suite de tests passe, le travail est terminé et rien ne reste à faire pour cette demande.')
     : isClassify ? classifyReply()

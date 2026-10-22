@@ -17,6 +17,8 @@
 //                                                     sans projet : tous les projets ; avec : ce projet
 //   node scripts/pipeline-enforce.mjs kg [off|shadow|assist]
 //                                                     index de connaissances (KG phase 0 b) ; off = rien ne tourne
+//   node scripts/pipeline-enforce.mjs kg <build|extract|ui> on|off
+//                                                     KG phase 1 : reconstruction auto, extraction par model, onglet Mémoire
 //   node scripts/pipeline-enforce.mjs chef-shadow [on|off]
 //                                                     tour unique v3 du chef EN OMBRE (Routage v3 phase 2) :
 //                                                     à côté de chaque message, un plan sans aucun effet,
@@ -36,7 +38,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readEnforcement, writeEnforcement, ENGINE_PIPELINES } from './pipeline-engine.mjs';
 import { readTuning, applyTuningChange, describeTuning, readChefV3, writeChefV3 } from './pipeline-tuning.mjs';
-import { readKgSettings, writeKgSettings, MODES as KG_MODES } from './kg.mjs';
+import { readKgSettings, writeKgSettings, writeKgSwitch, KG_SWITCHES, MODES as KG_MODES } from './kg.mjs';
 
 
 const ROOT = process.env.DISPATCH_ROOT_FOR_TESTS ? path.resolve(process.env.DISPATCH_ROOT_FOR_TESTS) : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -73,8 +75,16 @@ if (cmd === 'tuning') {
 // kg (knowledge index, phase 0 b): off | shadow | assist, re-read at every call.
 // Phase 0 b injects nothing: shadow and assist only allow building and querying.
 if (cmd === 'kg') {
-  if (!target) { const k = readKgSettings(ROOT); console.log(`kg.mode = ${k.mode}${k.since ? ` depuis ${k.since} (${k.by})` : ''}`); process.exit(0); }
-  if (!KG_MODES.includes(target)) { console.error(`usage: node scripts/pipeline-enforce.mjs kg [${KG_MODES.join('|')}]`); process.exit(64); }
+  const kgLine = (k) => `kg.mode = ${k.mode}${k.since ? ` depuis ${k.since} (${k.by})` : ''} — build : ${k.build ? 'on' : 'off'}, extract : ${k.extract ? 'on' : 'off'}${k.cutoff ? ` (${k.cutoff.why})` : ''}, ui : ${k.ui ? 'on' : 'off'}`;
+  if (!target) { console.log(kgLine(readKgSettings(ROOT))); process.exit(0); }
+  // Phase 1: kg <build|extract|ui> on|off — one switch, effective only while the mode is not off.
+  if (KG_SWITCHES.includes(target)) {
+    const onOff = process.argv[4];
+    if (!['on', 'off'].includes(onOff)) { console.error(`usage: node scripts/pipeline-enforce.mjs kg ${target} on|off`); process.exit(64); }
+    try { console.log(kgLine(writeKgSwitch(ROOT, { key: target, on: onOff === 'on', by: `pipeline-enforce kg ${target} ${onOff}` }))); } catch (e) { console.error(e.message); process.exit(64); }
+    process.exit(0);
+  }
+  if (!KG_MODES.includes(target)) { console.error(`usage: node scripts/pipeline-enforce.mjs kg [${KG_MODES.join('|')}] | kg <${KG_SWITCHES.join('|')}> on|off`); process.exit(64); }
   const k = writeKgSettings(ROOT, { mode: target, by: `pipeline-enforce kg ${target}` });
   console.log(`kg.mode = ${k.mode}${k.mode === 'off' ? ' (index arrêté : rien ne tourne)' : ' (phase 0 b : construction et requêtes seulement, aucune injection)'}`);
   process.exit(0);

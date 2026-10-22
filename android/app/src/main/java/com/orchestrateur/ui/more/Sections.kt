@@ -24,7 +24,15 @@ import com.orchestrateur.ui.ops.AutoAnswerScreen
 import com.orchestrateur.ui.ops.PermissionRulesScreen
 import com.orchestrateur.ui.ops.PipelineRunsScreen
 import com.orchestrateur.ui.ops.RegressionsScreen
+import com.orchestrateur.data.getJson
+import com.orchestrateur.ui.common.orThrow
+import com.orchestrateur.ui.common.rememberLoad
 import com.orchestrateur.ui.panels.GitScreen
+import com.orchestrateur.ui.panels.KG_DISABLED_TEXT
+import com.orchestrateur.ui.panels.MemoryScreen
+import com.orchestrateur.ui.panels.kgMemoryEnabled
+import com.orchestrateur.ui.panels.parseKgStatus
+import com.orchestrateur.ui.panels.plusBadge
 import com.orchestrateur.ui.panels.ReleaseScreen
 import com.orchestrateur.ui.panels.RequestsScreen
 import com.orchestrateur.ui.panels.TodoScreen
@@ -45,6 +53,7 @@ enum class Section(val route: String, val icon: String, val label: String, val a
     GIT("git", "⎇", "Git", "Arbre git de chaque musicien (lecture seule)", "Panneaux"),
     RELEASE("release", "📰", "Release", "Ce qui est prêt, regroupé par release", "Panneaux"),
     REQUETES("requetes", "🧭", "Requêtes", "Découpage de chaque requête et progrès des tâches", "Panneaux"),
+    MEMOIRE("memoire", "🧠", "Mémoire", "Faits proposés à revoir, règles en vigueur, statistiques par case", "Panneaux"),
     MODELS("models", "⇄", "Models", "Model de chaque étape, suggestions, lacunes, clés, langues", "Pilotage"),
     AUTO("reponse-auto", "🤖", "Réponse automatique", "Décisions prises à votre place, arriéré, réglages", "Pilotage"),
     REGLES("autorisations", "🔐", "Autorisations permanentes", "Règles « toujours autoriser » par projet", "Pilotage"),
@@ -62,6 +71,7 @@ fun SectionScreen(s: Section) = when (s) {
     Section.GIT -> GitScreen()
     Section.RELEASE -> ReleaseScreen()
     Section.REQUETES -> RequestsScreen()
+    Section.MEMOIRE -> MemoryScreen()
     Section.MODELS -> ModelsScreen()
     Section.AUTO -> AutoAnswerScreen()
     Section.REGLES -> PermissionRulesScreen()
@@ -80,17 +90,24 @@ fun MoreScreen() {
         runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(env.api.baseUrl() + path))) }
             .onFailure { env.toast("impossible d’ouvrir $path") }
     }
+    // « 🧠 Mémoire » exists only with ui.kgMemory; its entry carries the open contradictions count.
+    val kgOn = rememberLoad { kgMemoryEnabled(env.api.getJson("/api/config").orThrow().json) }.value
+    val kgBadge = rememberLoad(kgOn, refreshMs = 60_000) {
+        if (kgOn != true) null else env.api.getJson("/api/kg/status").takeIf { it.ok }?.let { plusBadge(parseKgStatus(it.json)) }
+    }.value
     SectionScaffold("Plus", subtitle = "Orchestre ${BuildConfig.VERSION_NAME}") {
         LazyColumn(contentPadding = ListPadding) {
             Section.entries.groupBy { it.group }.forEach { (group, list) ->
                 item { SectionTitle(group) }
                 items(list) { s ->
-                    Card(onClick = { env.navigate(s.route) }) {
+                    val off = s == Section.MEMOIRE && kgOn != true
+                    Card(onClick = if (off) null else ({ env.navigate(s.route) })) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(s.icon, fontSize = 18.sp, modifier = Modifier.padding(end = 10.dp))
-                            Text(s.label, color = Palette.Fg0, fontSize = 15.sp)
+                            Text(s.label, color = if (off) Palette.Fg3 else Palette.Fg0, fontSize = 15.sp)
                         }
-                        Text(s.about, color = Palette.Fg2, fontSize = 12.sp)
+                        Text(if (off && kgOn == false) KG_DISABLED_TEXT else s.about, color = Palette.Fg2, fontSize = 12.sp)
+                        if (s == Section.MEMOIRE && kgBadge != null) Text(kgBadge, color = Palette.StInput, fontSize = 12.sp)
                     }
                 }
             }

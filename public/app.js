@@ -1198,7 +1198,7 @@ const App = {
         }
       }
       this.renderFleet(cfg.projects || []);
-      window.Projets?.applyUi(cfg.ui); window.Activite?.applyUi(cfg.ui); window.Tts?.applyUi(cfg.ui); window.Models?.applyUi(cfg.ui); window.SidePanel?.applyUi(cfg.ui);
+      window.Projets?.applyUi(cfg.ui); window.Activite?.applyUi(cfg.ui); window.Tts?.applyUi(cfg.ui); window.Models?.applyUi(cfg.ui); window.SidePanel?.applyUi(cfg.ui); window.KgPanel?.applyUi(cfg.ui);
     } catch (err) {
       console.error("[app] config fetch failed", err);
       $("#empty-hint").hidden = false;
@@ -1218,7 +1218,7 @@ const App = {
       if (!resp.ok) return;
       cfg = await resp.json();
     } catch { return; }
-    window.Projets?.applyUi(cfg.ui); window.Activite?.applyUi(cfg.ui); window.Tts?.applyUi(cfg.ui); window.Models?.applyUi(cfg.ui); window.SidePanel?.applyUi(cfg.ui);   // `ui` rechargé à chaud (config.json)
+    window.Projets?.applyUi(cfg.ui); window.Activite?.applyUi(cfg.ui); window.Tts?.applyUi(cfg.ui); window.Models?.applyUi(cfg.ui); window.SidePanel?.applyUi(cfg.ui); window.KgPanel?.applyUi(cfg.ui);   // `ui` rechargé à chaud (config.json)
     const projects = cfg.projects || [];
     const wanted = new Set(projects.map(p => p.name));
     let changed = false;
@@ -2365,7 +2365,7 @@ const App = {
     const input = $("#composer-input");
     if (!input || !text) return false;
     this.composer.target = this.composer.CONDUCTOR;
-    this.composer.answerFor = { name: ctx.project || "", question: ctx.title || "", todo: true, ...(ctx.discuss ? { discuss: true } : {}) };
+    this.composer.answerFor = { name: ctx.project || "", question: ctx.title || "", todo: true, ...(ctx.discuss ? { discuss: true } : {}), ...(ctx.kg ? { kg: true } : {}) };
     input.value = text;
     input.dispatchEvent(new Event("input"));
     input.focus();
@@ -2398,7 +2398,7 @@ const App = {
     if (!ctx) { el.hidden = true; el.innerHTML = ""; return; }
     el.hidden = false;
     el.innerHTML =
-      `<span class="cc-label">${ctx.todo && ctx.discuss ? "💬 Discussion (rien ne sera lancé) — item TODO de" : ctx.todo ? "Item TODO de" : ctx.about ? "Au chef, à propos de" : "Réponse via le chef pour"} ${esc(ctx.name)}${ctx.todo ? " — Entrée ou ➤ pour l’envoyer au chef" : ""}</span>` +
+      `<span class="cc-label">${ctx.kg ? "🧠 Corriger la source d’un fait de la mémoire — propriétaire :" : ctx.todo && ctx.discuss ? "💬 Discussion (rien ne sera lancé) — item TODO de" : ctx.todo ? "Item TODO de" : ctx.about ? "Au chef, à propos de" : "Réponse via le chef pour"} ${esc(ctx.name)}${ctx.todo ? " — Entrée ou ➤ pour l’envoyer au chef" : ""}</span>` +
       (ctx.question ? `<span class="cc-quote">« ${esc(ctx.question.slice(0, 160))} »</span>` : `<span class="cc-quote"></span>`) +
       `<button class="cc-close" aria-label="Retirer le contexte">✕</button>`;
     $(".cc-close", el).addEventListener("click", () => {
@@ -3476,7 +3476,7 @@ const App = {
       m.heldState = next.held;
       if (next.state !== m.state) m.setState(next.state);
     }
-    window.Projets?.applyUi(snap.ui); window.Activite?.applyUi(snap.ui); window.Tts?.applyUi(snap.ui); window.Models?.applyUi(snap.ui); window.SidePanel?.applyUi(snap.ui);
+    window.Projets?.applyUi(snap.ui); window.Activite?.applyUi(snap.ui); window.Tts?.applyUi(snap.ui); window.Models?.applyUi(snap.ui); window.SidePanel?.applyUi(snap.ui); window.KgPanel?.applyUi(snap.ui);
     window.Projets?.render();
     S?.renderRail();
     S?.renderAttention();

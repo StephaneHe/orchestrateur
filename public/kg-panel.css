@@ -1,0 +1,78 @@
+/* public/kg-panel.css — « 🧠 Mémoire » tab, its banner and its source window (0.131.0).
+   Font sizes in rem (0.34.0: they follow the text-size setting). */
+.kg-tabs { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+.kg-tab, .kg-btn {
+  font-family: var(--font-body); font-size: 0.75rem; cursor: pointer;
+  background: transparent; color: var(--fg-1); border: 1px solid var(--card-border); border-radius: 6px; padding: 0.2rem 0.6rem;
+}
+.kg-tab[aria-pressed="true"] { color: var(--fg-0); border-color: var(--st-live); background: rgba(45, 255, 122, 0.07); }
+.kg-primary { color: var(--st-live); border-color: rgba(45, 255, 122, 0.4); }
+.kg-n { color: var(--st-think); font-weight: 600; }
+.kg-body { display: flex; flex-direction: column; gap: 0.6rem; }
+.kg-empty { color: var(--fg-2); font-size: 0.8125rem; padding: 1rem 0; }
+.kg-notice { font-size: 0.75rem; color: var(--st-think); margin: 0; }
+.kg-statusline { font-size: 0.6875rem; color: var(--fg-2); margin: 0; }
+.kg-cut { color: var(--st-error, #ff5c5c); }
+.kg-group { display: flex; flex-direction: column; gap: 0.5rem; }
+.kg-group h4 { margin: 0.4rem 0 0; font-size: 0.8125rem; color: var(--fg-0); }
+.kg-item { border: 1px solid var(--card-border); border-radius: 6px; padding: 0.5rem 0.6rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.kg-item[data-kind="conflict"] { border-color: rgba(255, 92, 92, 0.45); }
+.kg-item[data-kind="pair"] { border-color: rgba(232, 161, 92, 0.45); }
+.kg-item-head { font-size: 0.75rem; color: var(--fg-1); }
+.kg-why, .kg-why-inline { font-size: 0.6875rem; color: var(--fg-2); margin: 0; }
+.kg-card { display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 0.6rem; margin: 0; font-size: 0.75rem; }
+.kg-card dt { color: var(--fg-3); }
+.kg-card dd { margin: 0; color: var(--fg-1); overflow-wrap: anywhere; }
+.kg-card .kg-what { color: var(--fg-0); font-weight: 600; }
+.kg-status { font-size: 0.625rem; border: 1px solid var(--card-border); border-radius: 4px; padding: 0 0.3rem; color: var(--fg-2); white-space: nowrap; }
+.kg-status[data-status="proposed"], .kg-status[data-status="to_review"] { color: var(--st-think); border-color: rgba(232, 161, 92, 0.45); }
+.kg-status[data-status="validated"], .kg-status[data-status="observed"] { color: var(--st-live); border-color: rgba(45, 255, 122, 0.4); }
+.kg-status[data-status="disputed"] { color: var(--st-error, #ff5c5c); }
+.kg-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+.kg-sides { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.kg-side { border-left: 3px solid var(--card-border); padding-left: 0.5rem; display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.75rem; }
+.kg-quote { margin: 0; font-size: 0.75rem; color: var(--fg-1); border-left: 2px solid var(--fg-3); padding-left: 0.4rem; overflow-wrap: anywhere; }
+.kg-ref, .kg-date { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--fg-3); overflow-wrap: anywhere; }
+.kg-form { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; font-size: 0.75rem; }
+.kg-in { font-family: var(--font-body); font-size: 0.75rem; background: var(--bg-0); color: var(--fg-0); border: 1px solid var(--card-border); border-radius: 4px; padding: 0.15rem 0.4rem; min-width: 12rem; }
+.kg-filters { display: flex; flex-wrap: wrap; gap: 0.6rem; font-size: 0.75rem; color: var(--fg-2); }
+.kg-filters select { font-family: var(--font-body); font-size: 0.75rem; max-width: 16rem; background: var(--bg-0); color: var(--fg-0); border: 1px solid var(--card-border); border-radius: 4px; }
+.kg-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.75rem; }
+.kg-chain summary { cursor: pointer; font-size: 0.6875rem; color: var(--fg-2); }
+.kg-chain ul { margin: 0.2rem 0 0 0.8rem; padding: 0; font-size: 0.6875rem; }
+.kg-cases { flex-direction: row; flex-wrap: wrap; }
+.kg-stat[aria-pressed="true"] { border-color: var(--st-live); color: var(--fg-0); }
+.kg-table { border-collapse: collapse; font-size: 0.6875rem; }
+.kg-table th, .kg-table td { border: 1px solid var(--card-border); padding: 0.15rem 0.4rem; text-align: left; }
+
+/* Banner in the notification dock */
+.nd-body > .kg-band { margin: 0; border: 1px solid rgba(255, 92, 92, 0.45); border-radius: 6px; padding: 0.4rem 0.6rem; display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.75rem; }
+.kg-band[hidden] { display: none !important; }
+.kgb-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.kgb-item { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+.kgb-what { color: var(--fg-0); font-weight: 600; }
+.kgb-side { display: inline-flex; gap: 0.3rem; align-items: center; flex-wrap: wrap; }
+
+/* Source window */
+#kg-source-overlay { position: fixed; inset: 0; z-index: 260; }
+#kg-source-overlay[hidden] { display: none; }
+.kgo-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.55); }
+.kgo-box {
+  position: absolute; left: 50%; top: 8vh; transform: translateX(-50%); width: min(52rem, 94vw); max-height: 84vh; overflow: auto;
+  background: var(--bg-1); color: var(--fg-1); border: 1px solid var(--card-border); border-radius: 8px; padding: 0.8rem 1rem;
+}
+.kgo-head { display: flex; align-items: center; gap: 0.6rem; }
+.kgo-title { flex: 1 1 auto; margin: 0; font-size: 0.9375rem; color: var(--fg-0); overflow-wrap: anywhere; }
+.kgo-close { cursor: pointer; background: transparent; color: var(--fg-1); border: 1px solid var(--card-border); border-radius: 6px; font-size: 0.875rem; padding: 0.1rem 0.5rem; }
+.kgo-meta { font-size: 0.75rem; color: var(--fg-2); margin: 0.4rem 0 0.6rem; }
+.kgo-lines { font-family: var(--font-mono); font-size: 0.6875rem; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+.kgo-line { display: block; }
+.kgo-hit { background: rgba(232, 161, 92, 0.18); }
+.kgo-n { display: inline-block; min-width: 3rem; color: var(--fg-3); }
+
+@media (max-width: 767.98px) {
+  .kgo-box { inset: 0; left: 0; top: 0; transform: none; width: 100vw; max-height: none; height: 100%; border-radius: 0; }
+  .kg-tab, .kg-btn, .kgo-close, .kg-in, .kg-filters select { min-height: 44px; }
+  .kg-card { grid-template-columns: 1fr; }
+  .kg-in { min-width: 0; flex: 1 1 100%; }
+}

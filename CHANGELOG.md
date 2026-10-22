@@ -11,6 +11,82 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.131.0] - 2026-10-22
+
+Knowledge graph, **phase 1 « faits curés et onglet Mémoire »** (user decision
+of 2026-10-22, « vas y »; `docs/KG-SYNTHESE.md` §4 phase 1 and §6, decisions
+8, 9 and 15 of 2026-10-20). Everything new sits behind its own switch, all
+off by default: `kg.build`, `kg.extract`, `kg.ui` (effective only while
+`kg.mode` is `shadow` or `assist`). Off = exactly 0.130.0. Still **no
+injection** into any turn: nothing reads the index while dispatching.
+
+### Added
+- (server) Curated layer `logs/kg/facts.jsonl`: an append-only event log
+  written by `scripts/kg.mjs` only, under a lock (`withFactsLock`): model
+  proposals (always `proposed`), re-extractions (`seen`), suspect pairs judged
+  by a model, user decisions (`validate`, `reject` with a reason, `correct`,
+  `expire` at a date, `arbitrate` « celle-ci vaut »), automatic cut-offs. A
+  decision is idempotent by `commandId` and refused (409) when the item moved
+  since it was read; it is laid over the derived index at load and survives
+  every rebuild. `logs/kg/review.jsonl` records entries into and out of the
+  review queue; `logs/kg/backup/` keeps a daily copy of `facts.jsonl` (30
+  days), the only data that cannot be rebuilt.
+- (server) Model extraction (`kg.mjs extract`, case `kg.extraire`, default
+  `claude-sonnet-5-5`, decision 8): memory bodies, `*-SYNTHESE.md` sections
+  and the TODO, secrets masked BEFORE the model; the code gives the closed
+  list of ids and the synthesis' predicates (scope, motive, exception, possible
+  cause, replacement said in prose: `applies_to`, `exception_to`, `supersedes`,
+  `motivated_by`, `possible_cause_of`); a fact is kept only if its exact quote
+  (≤ 200 characters) is found again in the source; `applies_to` must target a
+  project, a case, a component or the fleet (never a model or a file); a
+  replacement the code already reads the other way round is refused; an
+  unchanged source is never re-read; a failed call suspends the batch, no
+  hidden fallback; at most 30 calls a day by default. Real bench on the
+  anonymised corpus (claude-sonnet-5-5, 7 calls, 48 s): 7 facts proposed, 0
+  quote lost; the one misreading found (a replacement read backwards) is now
+  refused by the code.
+- (server) Automatic cut-off: more than one false fact (rejected or corrected)
+  among the last 30 model facts judged by the user (« ≤ 5 % de faux sur 30
+  faits ») switches `kg.extract` off by itself and says why; re-enabling it
+  starts a new window.
+- (server) Suspect pairs (`kg.mjs pairs`, case `kg.juger`): the code picks two
+  active rules governing the same target in overlapping scopes, not already
+  linked; the model judges (contradiction / compatible / incertain); the user
+  confirms, then « celle-ci vaut ».
+- (server) `injectable()`: a `proposed` fact is never stated as a rule — rules,
+  cards and the coming injections only use facts read by the code or
+  validated by the user.
+- (server) Routes `GET /api/kg/status|review|rules|stats|source` and
+  `POST /api/kg/decision` (same origin). The server never loads `kg.mjs`: it
+  runs it as a child process. `kg.ui` off ⇒ 404 « désactivé ». Sweep every
+  5 min (`kg.mjs sweep`): rebuild when a source changed (`kg.build`), daily
+  backup, modified memories at once and the whole corpus nightly then the
+  pairs (`kg.extract`). `ui.kgMemory` in `/api/config` and `/api/pupitre`.
+- (server) « 🧠 Mémoire » tab of the side panel (desktop and mobile,
+  `public/kg-panel.js`): Revue (proposed facts with the four questions — what
+  we know, why, since when, where it applies — Valider, Corriger…, Périmer à
+  la date…, Rejeter…, Ouvrir la source, Corriger la source as a message to the
+  chef for the owner, never a silent rewrite), Règles en vigueur by project
+  and case with the supersedes chain, Statistiques by case; banner « N
+  contradictions entre règles » in the notification dock with « celle-ci
+  vaut ». It appears and disappears with `kg.ui`, without reload.
+- (server) Models page: pipeline « 🧠 Mémoire (graphe) » with the cases
+  `kg.extraire` and `kg.juger` (never a destination of a request).
+- (server) `pipeline-enforce.mjs kg <build|extract|ui> on|off`; `kg off` and
+  `off --all` clear every switch. `kg.mjs switch|status|review|rules|stats|
+  source|decide|extract|pairs|sweep|backup`.
+- (server) `scripts/atomic-file.mjs`: `appendLines`, `withExclusiveLock`,
+  `removeFile` (kg.mjs calls them only on paths checked under `logs/kg`).
+- (android) « 🧠 Mémoire » screen (app 1.1.0): see `docs/ANDROID-PARITY.md`.
+- Tests: `_test_kg_facts.mjs` (88 checks), HTTP `kg-review`, browser `kg-tab`
+  and `kg-tab-mobile`; fake claude `[KG_EXTRACT]` / `[KG_PAIR]`
+  (`FAKE_CLAUDE_KG`, `FAKE_CLAUDE_KG_MAP`, `FAKE_CLAUDE_KG_FILE`,
+  `FAKE_CLAUDE_KG_FAIL`, `FAKE_CLAUDE_KG_LOG`).
+
+### Changed
+- (server) Seventeen pipelines on the Models page (`kg` added, excluded from
+  classification like `routage`); 125 cases with a suggestion.
+
 ## [0.130.0] - 2026-10-22
 
 Routage v3, **phase 2 « tour unique v3 », in SHADOW mode** (user decision of
