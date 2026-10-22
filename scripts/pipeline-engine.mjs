@@ -1804,9 +1804,29 @@ const CODE_STEPS = {
           ...(w.reprise ? { reprise: w.reprise } : {}), ...(w.sessionNeuve === true ? { sessionNeuve: true } : {}), ...(w.memeTache === true ? { memeTache: true } : {}),
           after: { projet: w.after, offset: dep ? dep.offset : logOffset(logsDir, w.after), key: taskKey(depTask.demande), hash: textHash(depTask.demande), since: dep?.at || new Date().toISOString() } };
       });
+      // Requests registry (Routage v3 phase 2, the known limit of phase 1): each
+      // waiter is a task of the chef turn's request from now on, launched later
+      // under its own --task-id by the release.
+      const rid = /^r-\d{8}T\d{6}-[0-9a-f]{6}$/.test(process.env.ORCH_REQUEST_ID || '') ? process.env.ORCH_REQUEST_ID : null;
+      let Req = null;
+      if (rid) { try { Req = await import('./requests.mjs'); if (!Req.readRequest(logsDir, rid)) Req = null; } catch { Req = null; } }
+      if (Req) {
+        const conductor = readConfig(root).conductor || 'chef';
+        for (const e of entries) {
+          try {
+            const t = Req.addTask(logsDir, rid, { projet: e.projet, demande: e.demande, titre: e.titre || null, state: 'en_attente_de', waitsFor: { projet: e.after.projet },
+              launch: { callback: conductor, source: conductor, pipeline: e.served ? e.pipeline : null, pipelineMode: e.mode || null, horsPipeline: e.horsPipeline || null, newSession: e.sessionNeuve === true, ...(e.reprise ? { reprise: e.reprise } : {}) } });
+            Object.assign(e, { request: rid, taskId: t.id });
+          } catch { /* the registry never blocks the Routage */ }
+        }
+      }
       const res = addPending(logsDir, entries);
       queued = res.added;
       duplicates = res.duplicates;
+      if (Req) for (const d of duplicates) {
+        const e = entries.find(x => x.run === d.run && x.n === d.n);
+        if (e?.taskId) { try { const c = Req.cmdCancel({ logsDir, id: e.taskId, by: 'code' }); void c; } catch {} }
+      }
     }
     // The chef's own actions (0.70.0): run by the code, never sent to a musician.
     const tj = parseJsonArtefact(readArtefact(ctx, 'taches.json') || '') || {};

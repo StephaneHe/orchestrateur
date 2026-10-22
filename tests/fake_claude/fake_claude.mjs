@@ -196,7 +196,20 @@ async function run() {
     });
   };
   const isAuto = /^\[AUTO_(ANSWER|VERIFY)\]/.test(userText);
-  const fixedReply = isAuto ? autoReply()
+  // Routage v3 phase 2: the chef's single turn ([CHEF_V3]). FAKE_CLAUDE_CHEF_V3_FILE
+  // = a JSON list of answers, consumed one per call (a retry takes the next one);
+  // FAKE_CLAUDE_CHEF_V3 = one answer for every call; FAKE_CLAUDE_CHEF_V3_LOG counts the calls.
+  const isChefV3 = /^\[CHEF_V3\]/.test(userText);
+  if (isChefV3 && process.env.FAKE_CLAUDE_CHEF_V3_LOG) fs.appendFileSync(process.env.FAKE_CLAUDE_CHEF_V3_LOG, JSON.stringify({ model: askedModel, retry: /CORRECTION DU PLAN/.test(userText), chars: userText.length }) + '\n');
+  const chefV3Reply = () => {
+    const f = process.env.FAKE_CLAUDE_CHEF_V3_FILE;
+    if (f) {
+      let list = []; try { list = JSON.parse(fs.readFileSync(f, 'utf8')); } catch {}
+      if (list.length) { const [head, ...rest] = list; fs.writeFileSync(f, JSON.stringify(rest)); return typeof head === 'string' ? head : JSON.stringify(head); }
+    }
+    return process.env.FAKE_CLAUDE_CHEF_V3 || 'Réponse du faux chef.\n\n```plan\n{}\n```';
+  };
+  const fixedReply = isChefV3 ? chefV3Reply() : isAuto ? autoReply()
     : isReformulation
     ?(process.env.FAKE_CLAUDE_TRANSLATION || 'Réponse reformulée en français : la suite de tests passe, le travail est terminé et rien ne reste à faire pour cette demande.')
     : isClassify ? classifyReply()

@@ -237,7 +237,7 @@ export const OPERATIONS = {
     label: 'publier le dernier APK du projet sur /downloads (copy-build.mjs)', irreversible: false,
     params: {},
     prepare(ctx) {
-      const script = path.join(ctx.root, 'scripts', 'copy-build.mjs');
+      const script = path.join(ctx.scriptsDir || path.join(ctx.root, 'scripts'), 'copy-build.mjs');
       if (!fs.existsSync(script)) return { ok: false, why: 'scripts/copy-build.mjs absent de l’orchestrateur' };
       const dir = path.join(ctx.root, 'builds', ctx.project);
       const stamped = (() => { try { return fs.readdirSync(dir).filter(f => /^\d{4}-.*\.apk$/.test(f)); } catch { return []; } })();
@@ -320,7 +320,172 @@ export const OPERATIONS = {
     },
   },
 };
-export const OPERATION_IDS = Object.keys(OPERATIONS);
+
+// ---------------------------------------------------------------------------
+// Typed actions of the chef (Routage v3, phase 2; ROUTAGE-SYNTHESE §3.2,
+// decision 8 of 2026-10-19). Same shape as above, `scope: 'chef'`: they act on
+// the orchestration (a run, a turn, a question, the server, the chef's TODO),
+// never on a project's code, so the `operations` pipeline of a musician never
+// offers them (OPERATION_IDS keeps the project scope). ctx for them:
+// { root (orchestrator), logsDir, project (target), config, exec, env, probe }.
+// Every postcondition re-reads the fact (run.json, the .pid, the log, the
+// TODO list, /api/version): a return code alone is never « done ».
+// ---------------------------------------------------------------------------
+const RUN_ID_RE = /^p-\d{8}T\d{6}-[0-9a-f]{6}$/;
+const RUN_TERMINAL = new Set(['done', 'abandoned', 'failed', 'interrupted']);
+const PROJECT_RE = /^[A-Za-z0-9._-]{1,64}$/;
+const readJsonFile = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
+const logsOf = (ctx) => ctx.logsDir || path.join(ctx.root, 'logs');
+// scriptsDir: the orchestrator's scripts when the data root is another one (tests).
+const script = (ctx, name) => path.join(ctx.scriptsDir || path.join(ctx.root, 'scripts'), name);
+const conductorOf = (ctx) => ctx.config?.conductor || 'chef';
+const knownProject = (ctx, p) => (ctx.config?.projects || []).find(x => x?.name === p) || null;
+const alivePid = (pid) => { if (!Number.isInteger(pid) || pid <= 0) return false; try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+function pidOf(ctx, project) {
+  try { const n = Number(fs.readFileSync(path.join(logsOf(ctx), `${project}.pid`), 'utf8').trim()); return Number.isInteger(n) && n > 0 ? n : null; } catch { return null; }
+}
+/** Open question of a musician: its last turn ended on NEEDS_USER_INPUT, not acknowledged since. */
+export function openQuestion(logsDir, project) {
+  let text = '';
+  try {
+    const f = path.join(logsDir, `${project}.jsonl`);
+    const size = fs.statSync(f).size, from = Math.max(0, size - 2 * 1024 * 1024);
+    const fd = fs.openSync(f, 'r'); const buf = Buffer.alloc(size - from); fs.readSync(fd, buf, 0, buf.length, from); fs.closeSync(fd);
+    text = buf.toString('utf8');
+  } catch { return null; }
+  let q = null;
+  for (const l of text.split('\n')) {
+    if (!l.includes('"type"')) continue;
+    let e; try { e = JSON.parse(l); } catch { continue; }
+    if (e.type === 'user_prompt' && !e.source) q = null;
+    else if (e.type === 'system' && e.subtype === 'init') q = null;
+    else if (e.type === 'notification' && e.subtype === 'question_resolved') q = null;
+    else if (e.type === 'result' && !(e.num_turns === 0 && e.duration_api_ms === 0 && !e.synthetic)) {
+      const m = /(^|\n)\s*NEEDS_USER_INPUT\s*:\s*(.+)/.exec(String(e.result || ''));
+      q = m && !e.is_error ? m[2].trim().slice(0, 600) : null;
+    }
+  }
+  return q;
+}
+async function serverVersion(ctx) {
+  const port = Number(ctx.port || ctx.env?.ORCH_PORT || 7777);
+  const probe = ctx.probe || httpProbe;
+  const r = await probe(`http://127.0.0.1:${port}/api/version`, 5000);
+  if (!r.ok || r.status !== 200) return { ok: false, why: r.ok ? `HTTP ${r.status}` : r.why, port };
+  let j = null; try { j = JSON.parse(r.body); } catch {}
+  return { ok: !!j, j, port, why: j ? null : 'réponse illisible' };
+}
+/** The chef's TODO_LIST.md (conductor's folder), and its open items by title. */
+function chefTodo(ctx) {
+  const chef = knownProject(ctx, conductorOf(ctx));
+  return chef?.path ? path.join(chef.path, 'TODO_LIST.md') : null;
+}
+const normTitle = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+/** The chef's items, read back by the list's own tool (`todo.mjs list --json`), never parsed here. */
+function todoTitles(ctx) {
+  const r = run(ctx, [bin(ctx, 'node'), script(ctx, 'todo.mjs'), 'list', '--json', '--project', conductorOf(ctx)], { timeoutMs: 60_000 });
+  let items = []; try { items = JSON.parse(r.out); } catch { return []; }
+  return (Array.isArray(items) ? items : []).map(i => ({ open: i.status !== 'done', title: [i.title, i.detailFull || i.detail].filter(Boolean).join(' → ') }));
+}
+
+export const CHEF_OPERATIONS = {
+  cancel_run: {
+    label: 'clore une exécution de pipeline en pause (close-run.mjs : abandonnée, rien n’est annulé dans le projet)', irreversible: false, scope: 'chef', target: 'run',
+    params: { run: 'identifiant p-… de l’exécution (obligatoire)', raison: 'motif de la clôture' },
+    prepare(ctx, p) {
+      if (!RUN_ID_RE.test(String(p.run || ''))) return { ok: false, why: `identifiant d’exécution invalide « ${p.run ?? ''} »` };
+      const st = readJsonFile(path.join(logsOf(ctx), 'runs', p.run, 'run.json'));
+      if (!st) return { ok: false, why: `exécution ${p.run} introuvable (logs/runs/${p.run}/run.json)` };
+      const expect = { run: p.run };
+      if (RUN_TERMINAL.has(st.status)) return { ok: true, already: true, expect, detail: `${p.run} est déjà ${st.status}` };
+      if (st.status === 'running' && alivePid(Number(st.pid))) return { ok: false, why: `${p.run} tourne encore (pid ${st.pid}) : rien n’est clos pendant un tour` };
+      if (Number(st.lane?.k ?? st.lane) >= 1) return { ok: false, why: `${p.run} tourne dans le couloir ${st.lane?.k ?? st.lane} : répondre « abandonner » avec --lane` };
+      const reason = String(p.raison || 'clos par le chef').replace(/\s+/g, ' ').slice(0, 300);
+      return { ok: true, argv: [bin(ctx, 'node'), script(ctx, 'close-run.mjs'), p.run, '--reason', reason, '--by', 'chef'], expect, detail: `${p.run} (${st.pipeline || '?'}, ${st.status})` };
+    },
+    verify(ctx, p, e) {
+      const st = readJsonFile(path.join(logsOf(ctx), 'runs', e.run, 'run.json'));
+      return st && RUN_TERMINAL.has(st.status) ? { ok: true, observed: `run.json : ${e.run} ${st.status}` }
+        : { ok: false, observed: `run.json : ${e.run} ${st?.status ?? 'illisible'}`, why: 'l’exécution n’est pas terminée' };
+    },
+  },
+  stop_turn: {
+    label: 'arrêter le tour en cours d’un musicien (kill-stalled.mjs, jamais --force)', irreversible: true, scope: 'chef', target: 'project',
+    params: { project: 'musicien (obligatoire)', raison: 'motif (obligatoire)' },
+    prepare(ctx, p) {
+      if (!PROJECT_RE.test(String(p.project || '')) || !knownProject(ctx, p.project)) return { ok: false, why: `projet inconnu « ${p.project ?? ''} »` };
+      if (p.project === conductorOf(ctx)) return { ok: false, why: 'le chef n’arrête pas son propre tour' };
+      if (!(typeof p.raison === 'string' && p.raison.trim().length >= 4)) return { ok: false, why: '« raison » obligatoire' };
+      const pid = pidOf(ctx, p.project);
+      const expect = { project: p.project, pid };
+      if (!alivePid(pid)) return { ok: true, already: true, expect, detail: `${p.project} n’a aucun tour vivant` };
+      return { ok: true, argv: [bin(ctx, 'node'), script(ctx, 'kill-stalled.mjs'), p.project, '--by', 'chef', '--reason', p.raison.replace(/\s+/g, ' ').slice(0, 300)], expect, detail: `${p.project} (pid ${pid})` };
+    },
+    async verify(ctx, p, e) {
+      for (let i = 0; i < 20 && alivePid(e.pid); i++) await new Promise(r => setTimeout(r, 250));
+      return !alivePid(e.pid) ? { ok: true, observed: `pid ${e.pid ?? '—'} de ${e.project} : mort` } : { ok: false, observed: `pid ${e.pid} de ${e.project} : vivant`, why: 'le tour tourne encore (une autorisation en attente le protège : kill-stalled refuse sans --force)' };
+    },
+  },
+  resolve_question: {
+    label: 'marquer comme répondue la question ouverte d’un musicien (resolve-question.mjs, aucun tour relancé)', irreversible: false, scope: 'chef', target: 'project',
+    params: { project: 'musicien (obligatoire)', note: 'note jointe' },
+    prepare(ctx, p) {
+      if (!PROJECT_RE.test(String(p.project || '')) || !knownProject(ctx, p.project)) return { ok: false, why: `projet inconnu « ${p.project ?? ''} »` };
+      const q = openQuestion(logsOf(ctx), p.project);
+      const expect = { project: p.project };
+      if (!q) return { ok: true, already: true, expect, detail: `${p.project} n’a pas de question ouverte` };
+      return { ok: true, argv: [bin(ctx, 'node'), script(ctx, 'resolve-question.mjs'), p.project, ...(p.note ? ['--note', String(p.note).replace(/\s+/g, ' ').slice(0, 300)] : [])], expect, detail: `${p.project} : « ${q.slice(0, 80)} »` };
+    },
+    verify(ctx, p, e) {
+      const q = openQuestion(logsOf(ctx), e.project);
+      return !q ? { ok: true, observed: `${e.project} : plus de question ouverte dans son journal` } : { ok: false, observed: `${e.project} : question toujours ouverte`, why: 'la question n’est pas acquittée' };
+    },
+  },
+  restart: {
+    label: 'redémarrer le serveur de l’orchestrateur (restart-orchestrateur.mjs, après la fin du tour du chef)', irreversible: true, scope: 'chef', target: null, deferred: true,
+    params: { raison: 'motif' },
+    async prepare(ctx) {
+      const v = await serverVersion(ctx);
+      if (!v.ok) return { ok: false, why: `serveur injoignable avant le redémarrage (${v.why})` };
+      if (!Number.isInteger(v.j.pid)) return { ok: false, why: 'postcondition non vérifiable : /api/version ne donne pas le pid du serveur (serveur antérieur à 0.130.0)' };
+      return { ok: true, argv: [bin(ctx, 'node'), script(ctx, 'restart-orchestrateur.mjs')], expect: { pid: v.j.pid, port: v.port }, detail: `serveur pid ${v.j.pid}, ${v.j.version}` };
+    },
+    async verify(ctx, p, e) {
+      const until = Date.now() + (ctx.restartWaitMs ?? 120_000);
+      let last = null;
+      for (;;) {
+        last = await serverVersion({ ...ctx, port: e.port });
+        if (last.ok && Number.isInteger(last.j.pid) && last.j.pid !== e.pid) return { ok: true, observed: `/api/version répond : pid ${last.j.pid} (avant ${e.pid}), ${last.j.version}` };
+        if (Date.now() > until) return { ok: false, observed: last.ok ? `/api/version : même pid ${last.j.pid}` : `/api/version : ${last.why}`, why: 'le serveur n’a pas redémarré (même pid ou injoignable)' };
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    },
+  },
+  todo_add: {
+    label: 'ajouter un item à la TODO du chef (todo.mjs add)', irreversible: false, scope: 'chef', target: null,
+    params: { titre: 'titre de l’item (obligatoire)', type: 'projet|fonctionnalite|correction|autre' },
+    prepare(ctx, p) {
+      const titre = String(p.titre || '').replace(/\s+/g, ' ').trim();
+      if (titre.length < 3 || titre.length > 400) return { ok: false, why: '« titre » : 3 à 400 caractères' };
+      if (p.type && !['projet', 'fonctionnalite', 'correction', 'autre'].includes(p.type)) return { ok: false, why: `type inconnu « ${p.type} »` };
+      const file = chefTodo(ctx);
+      if (!file) return { ok: false, why: `dossier du chef (${conductorOf(ctx)}) absent de config.json` };
+      const expect = { file, titre };
+      if (todoTitles(ctx).some(i => i.open && normTitle(i.title).includes(normTitle(titre)))) return { ok: true, already: true, expect, detail: 'item déjà ouvert dans la TODO du chef' };
+      return { ok: true, argv: [bin(ctx, 'node'), script(ctx, 'todo.mjs'), 'add', ...(p.type ? ['--type', p.type] : []), '--project', conductorOf(ctx), titre], expect, detail: `« ${titre.slice(0, 80)} »` };
+    },
+    verify(ctx, p, e) {
+      const hit = todoTitles(ctx).find(i => i.open && normTitle(i.title).includes(normTitle(e.titre)));
+      return hit ? { ok: true, observed: `TODO du chef relue : « ${hit.title.slice(0, 80)} »` } : { ok: false, observed: 'item absent de la TODO du chef relue', why: 'l’item n’a pas été ajouté' };
+    },
+  },
+};
+// copy_build serves both scopes: for the chef, ctx.project is the target.
+export const CHEF_OPERATION_IDS = [...Object.keys(CHEF_OPERATIONS), 'copy_build'];
+for (const [id, def] of Object.entries(CHEF_OPERATIONS)) OPERATIONS[id] = def;
+export const CHEF_ACTION_TARGET = { ...Object.fromEntries(Object.entries(CHEF_OPERATIONS).map(([id, d]) => [id, d.target])), copy_build: 'project' };
+/** Project-scope operations only (what a musician's `operations` pipeline may run). */
+export const OPERATION_IDS = Object.keys(OPERATIONS).filter(id => OPERATIONS[id].scope !== 'chef');
 
 export function isIrreversible(ctx, op) {
   const def = OPERATIONS[op.id];
@@ -328,6 +493,16 @@ export function isIrreversible(ctx, op) {
 }
 
 /** The registry as a closed list for a prompt (one line per operation). */
+/** The chef's typed actions as a closed list for its prompt (Routage v3). */
+export function chefActionsCatalogText() {
+  return CHEF_OPERATION_IDS.map(id => {
+    const d = OPERATIONS[id];
+    const t = CHEF_ACTION_TARGET[id];
+    const ps = Object.entries(d.params).map(([k, v]) => `${k} : ${v}`).join(' ; ');
+    return `- ${id} — ${d.label}${t ? ` (« cible » : ${t === 'run' ? 'l’exécution p-…' : 'le projet'})` : ''}${ps ? ` (paramètres : ${ps})` : ''}`;
+  }).join('\n');
+}
+
 export function operationsCatalogText() {
   return OPERATION_IDS.map(id => {
     const d = OPERATIONS[id];
@@ -347,7 +522,7 @@ export function parseOperations(json) {
   const ops = [];
   for (const [i, o] of list.entries()) {
     const n = `opération ${i + 1}`;
-    const def = OPERATIONS[o?.id];
+    const def = OPERATION_IDS.includes(o?.id) ? OPERATIONS[o.id] : null;
     if (!def) return { ok: false, why: `${n} : « ${o?.id ?? o} » n’est pas une opération connue (liste : ${OPERATION_IDS.join(', ')})` };
     const params = o.params && typeof o.params === 'object' ? o.params : {};
     const bad = Object.keys(params).filter(k => !(k in def.params));
@@ -368,7 +543,7 @@ export async function runOperation(ctx, op) {
   const base = { id: op.id, params: op.params || {} };
   if (!def) return { ...base, ok: false, ms: 0, why: `opération inconnue « ${op.id} »`, observed: '—' };
   let prep;
-  try { prep = def.prepare(ctx, op.params || {}); } catch (e) { prep = { ok: false, why: `erreur de préparation : ${e.message}` }; }
+  try { prep = await def.prepare(ctx, op.params || {}); } catch (e) { prep = { ok: false, why: `erreur de préparation : ${e.message}` }; }
   if (!prep.ok) return { ...base, ok: false, stage: 'precondition', ms: Date.now() - t0, why: prep.why, observed: prep.why };
   if (prep.already) {
     const v = await def.verify(ctx, op.params || {}, prep.expect, { code: 0, out: '' });

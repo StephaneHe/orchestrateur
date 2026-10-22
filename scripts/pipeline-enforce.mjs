@@ -17,6 +17,11 @@
 //                                                     sans projet : tous les projets ; avec : ce projet
 //   node scripts/pipeline-enforce.mjs kg [off|shadow|assist]
 //                                                     index de connaissances (KG phase 0 b) ; off = rien ne tourne
+//   node scripts/pipeline-enforce.mjs chef-shadow [on|off]
+//                                                     tour unique v3 du chef EN OMBRE (Routage v3 phase 2) :
+//                                                     à côté de chaque message, un plan sans aucun effet,
+//                                                     journal logs/chef-shadow/ ; le chef réel ne change pas
+//   node scripts/pipeline-enforce.mjs chef-mode       mode du chef : off | routage (« v3 » : phase 4, bascule)
 //
 // Écrit model-routing.json → enforcement (temp + rename, historique), relu à
 // chaque dispatch : aucun redémarrage. Les cases (models) ne sont pas touchées.
@@ -30,8 +35,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readEnforcement, writeEnforcement, ENGINE_PIPELINES } from './pipeline-engine.mjs';
-import { readTuning, applyTuningChange, describeTuning } from './pipeline-tuning.mjs';
+import { readTuning, applyTuningChange, describeTuning, readChefV3, writeChefV3 } from './pipeline-tuning.mjs';
 import { readKgSettings, writeKgSettings, MODES as KG_MODES } from './kg.mjs';
+
 
 const ROOT = process.env.DISPATCH_ROOT_FOR_TESTS ? path.resolve(process.env.DISPATCH_ROOT_FOR_TESTS) : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const [cmd, target] = process.argv.slice(2);
@@ -73,6 +79,23 @@ if (cmd === 'kg') {
   console.log(`kg.mode = ${k.mode}${k.mode === 'off' ? ' (index arrêté : rien ne tourne)' : ' (phase 0 b : construction et requêtes seulement, aucune injection)'}`);
   process.exit(0);
 }
+// chef-shadow (Routage v3, phase 2): the chef's single turn in shadow, without any effect.
+if (cmd === 'chef-shadow') {
+  if (!target) { const c = readChefV3(ROOT); console.log(`chefV3.shadow = ${c.shadow ? 'on' : 'off'}${c.since ? ` depuis ${c.since} (${c.by})` : ''}`); process.exit(0); }
+  if (!['on', 'off'].includes(target)) { console.error('usage: node scripts/pipeline-enforce.mjs chef-shadow [on|off]'); process.exit(64); }
+  const c = writeChefV3(ROOT, { shadow: target === 'on', by: `pipeline-enforce chef-shadow ${target}` });
+  console.log(`chefV3.shadow = ${c.shadow ? 'on (à chaque message de l’utilisateur au chef : plan en ombre, aucun effet ; journal logs/chef-shadow/, node scripts/chef-turn.mjs list)' : 'off (rien ne tourne en ombre)'}`);
+  process.exit(0);
+}
+// chef-mode (ROUTAGE-SYNTHESE §3.9): « off » = ordinary chef turns, « routage » = the Routage pipeline.
+// « v3 » is the switch-over of phase 4 (a user decision): refused here.
+if (cmd === 'chef-mode') {
+  if (!target) { console.log(`chefMode = ${cur.chef ? 'routage' : 'off'} — ombre v3 : ${readChefV3(ROOT).shadow ? 'on' : 'off'}`); process.exit(0); }
+  if (target === 'v3') { console.error('chefMode v3 : bascule de la phase 4 (décision de l’utilisateur) — pas encore disponible ; l’ombre : chef-shadow on'); process.exit(64); }
+  if (!['off', 'routage'].includes(target)) { console.error('usage: node scripts/pipeline-enforce.mjs chef-mode [off|routage]'); process.exit(64); }
+  show(writeEnforcement(ROOT, { projects: cur.projects, terminal: cur.terminal, chef: target === 'routage', pipelines: cur.pipelines.length ? cur.pipelines : ENGINE_PIPELINES, by: `pipeline-enforce chef-mode ${target}` }));
+  process.exit(0);
+}
 if (!['on', 'off'].includes(cmd) || !target) {
   console.error('usage: node scripts/pipeline-enforce.mjs [status] | on <projet> | off <projet> | on|off --terminal | on|off --chef | pipelines <liste|all> | off --all');
   process.exit(64);
@@ -91,3 +114,4 @@ else {
 const tuning = cmd === 'off' && target === '--all' ? {} : undefined;
 show(writeEnforcement(ROOT, { projects, terminal, chef, pipelines: cur.pipelines.length ? cur.pipelines : ENGINE_PIPELINES, tuning, by: `pipeline-enforce ${cmd} ${target}` }));
 if (cmd === 'off' && target === '--all' && readKgSettings(ROOT).mode !== 'off') writeKgSettings(ROOT, { mode: 'off', by: 'pipeline-enforce off --all' });
+if (cmd === 'off' && target === '--all' && readChefV3(ROOT).shadow) writeChefV3(ROOT, { shadow: false, by: 'pipeline-enforce off --all' });

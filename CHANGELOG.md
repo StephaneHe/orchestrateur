@@ -11,6 +11,79 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.130.0] - 2026-10-22
+
+Routage v3, **phase 2 « tour unique v3 », in SHADOW mode** (user decision of
+2026-10-22, « vas y »; `docs/ROUTAGE-SYNTHESE.md` §3.9, the repair table §3.3,
+decisions 2, 3 and 8 of 2026-10-19). Nothing changes for the real chef:
+`chefMode` stays `off` in production, the shadow is off by default, and when
+on it has no effect but its own journal.
+
+### Added
+- (server) `scripts/chef-turn.mjs`: the chef's single turn. Direct paths by
+  the code, 0 model call (`TODO:`, `/chef-discussion`, a bare menu word with
+  the run cited or the only paused run, `/abandonne p-…`); otherwise a compact
+  context written by the code (closed project list, the Routage context:
+  last answer and questions, musicians' questions, TODO « EN ATTENTE »,
+  waiting tasks, paused runs; open requests of the registry; queues; recent
+  conversation, nothing cut in silence) and ONE call of the case
+  `routage.chef` (empty: `claude-sonnet-5-5`, decision 2), through stdin
+  (stream-json) so a long context never hits the command-line cap; the
+  ```plan block extracted and repaired, ONE retry only; then each task
+  classified on its own, all in parallel (decision 3), without writing the
+  classify log; a block of facts written by the code (« Serait lancé »,
+  « Attendrait », « À traiter »). Infrastructure failures park the turn with
+  the §3.7 message: OAuth and limit without a retry, a provider refusal with
+  one retry in a fresh session, an exit without result retried after 30 s
+  and 2 min.
+- (server) `scripts/plan-repair.mjs`: the table §3.3 — « la forme toujours,
+  le sens jamais ». Fallback title and « (2) », project matched case- and
+  accent-insensitively when unique (else one grouped question with the 3
+  closest), waves of 6, `hors_pipeline` without the user's words launched in
+  a pipeline with a note, explicit resumes only (a run not paused is said and
+  refused, an orphaned one reclaimed), duplicates dropped and said. A
+  dependency out of bounds or a cycle, a task addressed to the chef, an
+  unknown action or a missing parameter ask for one targeted retry, then the
+  task is « à traiter » with its dependency KEPT and the independent tasks go.
+- (server) Typed actions of the chef in the ONE registry
+  `scripts/typed-operations.mjs` (`scope: 'chef'`): `cancel_run` (close-run,
+  the run is terminal), `stop_turn` (kill-stalled, never `--force`, the PID is
+  dead), `resolve_question` (no open question left in the log), `restart`
+  (deferred; another pid answers `/api/version`), `todo_add` (the item read
+  back by `todo.mjs list --json`), and `copy_build` shared. The musicians'
+  `operations` pipeline never offers them (`OPERATION_IDS` unchanged).
+- (server) Shadow mode: `node scripts/pipeline-enforce.mjs chef-shadow on|off`
+  (`model-routing.json` → `chefV3`, re-read at each chef turn, cut by
+  `off --all`). For each new message of the user to the chef, `dispatch.mjs`
+  starts `chef-turn.mjs shadow` DETACHED; it writes only `logs/chef-shadow/`
+  (`<id>.json`, `journal.ndjson`): no dispatch, no pending entry, no task in
+  the registry, no classify log, no session. `node scripts/chef-turn.mjs list
+  | show <id>`. `pipeline-enforce.mjs chef-mode` shows `off|routage`; `v3`
+  is refused (switch-over of phase 4, a user decision).
+- (server) Models page: case `routage.chef` (« Tour unique du chef (Routage
+  v3) »), suggestion `claude-sonnet-5-5` (decision 2).
+- Real corpus `tests/routage-corpus/` (anonymised): the 45 refused Découper
+  attempts, the 5 hand-offs refused with exit 65, 3 infrastructure failures,
+  the 5 resumes by citation and the inverted order of
+  `p-20261019T181739-7e7851`, each with the v3 plan and what the code must
+  show. `node scripts/chef-turn.mjs corpus [--live]` replays it (by the code,
+  or against the real model as a bench).
+- Suites `_test_plan_repair.mjs`, `_test_chef_turn_calls.mjs`,
+  `_test_routage_corpus.mjs`, `_test_chef_typed_actions.mjs`,
+  `_test_requests_pending_link.mjs`; perimeter `routage`.
+
+### Fixed
+- (server) Known limit of phase 1: a Routage task released later by
+  `routage-pending` is now a task of its ORIGINAL request — registered as
+  `en_attente_de` when the Routage decides it, launched with its `--task-id`
+  at release, followed to its result. While it waits the request is
+  `suivie`; a blocked entry ⇒ `à_traiter`; an entry dropped ⇒ `annulée`;
+  `requests.mjs cancel` drops the pending entry too.
+
+### Changed
+- (server) `GET /api/version` also returns the server `pid` (postcondition of
+  `restart`); a server restart is needed for it, nothing else depends on it.
+
 ## [0.129.0] - 2026-10-21
 
 Pipelines redesign, **phase 1 « génériques »** (user decision of 2026-10-21,

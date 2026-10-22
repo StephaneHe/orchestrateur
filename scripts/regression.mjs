@@ -302,6 +302,13 @@ async function apiChecks(sb) {
     assert(v.version === pkgVersion, `${v.version} ≠ ${pkgVersion}`);
     return `v${v.version}`;
   });
+  // 0.130.0 — Routage v3 phase 2: the postcondition of the chef's `restart` is « another pid answers ».
+  await check(S, 'version-pid', '/api/version donne le pid du serveur (postcondition de l’action typée « restart » du chef)', async () => {
+    if (!/pid: process\.pid/.test(fs.readFileSync(path.join(sb.root, 'server.js'), 'utf8'))) NA('pid absent de /api/version dans cet état du code');
+    const v = await json('/api/version');
+    assert(Number.isInteger(v.pid) && v.pid > 0 && v.pid !== process.pid, `pid ${v.pid}`);
+    return `pid ${v.pid}`;
+  });
   // 0.75.0 — TODO lists of the musicians, read-only (side panel).
   await check(S, 'todo-api', 'TODO des musiciens : GET /api/todo lit le disque (projets de config.json seulement), non faits puis faits, chacun du plus récent au plus ancien, nom du musicien sur les faits ; aucune route d’écriture ; un item coché par todo.mjs pendant un tour apparaît avec son nom', async () => {
     if (!fs.existsSync(path.join(sb.root, 'scripts', 'todo-core.mjs'))) NA('TODO absente de cet état du code');

@@ -215,6 +215,21 @@
     "discussion.comprendre": "discussion",
     "discussion.rechercher": "recherche",
     "discussion.repondre": "discussion",
+    "routage.chef": {
+      "step": "routage",
+      "principal": {
+        "provider": "anthropic",
+        "model": "claude-sonnet-5-5",
+        "note": "décision 2 de l'utilisateur (2026-10-19) : tour unique du chef, Routage v3"
+      },
+      "alternatives": [
+        {
+          "provider": "anthropic",
+          "model": "claude-opus-5-5",
+          "note": "meilleure compréhension, ≤ 60 s visés au lieu de ≤ 45 s"
+        }
+      ]
+    },
     "routage.lire": "routage",
     "routage.classifier": "routage",
     "routage.decomposer": "routage",

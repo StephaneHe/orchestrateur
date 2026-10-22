@@ -337,6 +337,19 @@ Total ≈ **11,5 jours**, hors observation.
 avec les phases 2 et 3 ; d'ici là, la sortie par le chat passe par le chef, qui
 lance la commande (décision 8).
 
+**Phase 2 livrée en 0.130.0, en mode ombre** (décision « vas y » du
+2026-10-22) : `scripts/chef-turn.mjs` (contexte compact, un appel, extraction
+du plan, un seul nouvel essai, classement en parallèle), `scripts/plan-repair.mjs`
+(table 3.3), actions typées du chef ajoutées au registre unique
+`scripts/typed-operations.mjs`, case `routage.chef` (claude-sonnet-5-5), corpus
+`tests/routage-corpus/` (59 cas réels). L'ombre s'allume par
+`node scripts/pipeline-enforce.mjs chef-shadow on` et n'écrit que
+`logs/chef-shadow/` ; `chefMode` reste `off`. La limite de la phase 1 (tâche
+libérée plus tard non rattachée à sa demande) est levée. Écart assumé et dit :
+en ombre, le tour n'utilise pas la session du chef (`--resume`), qui appartient
+au vrai chef ; la conversation récente est dans le contexte compact. Le
+`--resume` de la session du chef viendra avec la bascule (phase 4).
+
 ### 3.10 Tests
 
 - **Rejouer les vrais cas refusés de la prod** **[F, A]** : corpus anonymisé

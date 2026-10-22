@@ -2288,6 +2288,50 @@ rien changer à son comportement : le registre n'est qu'écrit et lu ; retirer
   `dispatch.mjs` est actif tout de suite.
 - Recette : `_test_requests_registry.mjs` (périmètre `routage`).
 
+## Routage v3, phase 2 : tour unique du chef, en OMBRE (0.130.0)
+
+Décision « vas y » (2026-10-22) ; `docs/ROUTAGE-SYNTHESE.md` §3.9, table §3.3,
+décisions 2 (claude-sonnet-5-5, case `routage.chef`), 3 (classement par tâche,
+en parallèle) et 8 (actions typées). **Le chef réel ne change pas** :
+`chefMode` reste `off` en prod ; la bascule (`v3`) est la phase 4, décision de
+l'utilisateur (`pipeline-enforce.mjs chef-mode v3` refuse, 64).
+
+- `scripts/chef-turn.mjs` (`runChefTurn`) : chemins directs par le code, 0 appel
+  (`directPath` : `TODO:`, `/chef-discussion`, mot de menu seul avec l'exécution
+  citée ou la seule en pause, `/abandonne p-…`) ; sinon contexte compact
+  (`compactContext` : projets, `routingContext`, demandes ouvertes du registre,
+  files, conversation sans coupe silencieuse), UN appel (stdin stream-json, sans
+  outil d'écriture, dossier temporaire), bloc ```plan obligatoire (`{}` = rien),
+  UN nouvel essai, classement de chaque tâche en parallèle (`classifyItems`,
+  `logsDir: null` : aucun journal de classement), bloc de faits écrit par le
+  code. Pannes (§3.7) : OAuth et limite garées sans essai, refus = un essai en
+  session neuve, sortie sans résultat = essais à 30 s et 2 min.
+- `scripts/plan-repair.mjs` (`extractPlan`, `repairPlan`) : la table §3.3. Une
+  contrainte n'est **jamais** retirée (une dépendance fausse reste, la tâche
+  passe `à_traiter`) ; reprise seulement par `reprises[]`.
+- Actions typées du chef : entrées `scope: 'chef'` du registre UNIQUE
+  `scripts/typed-operations.mjs` (`CHEF_OPERATIONS`, `CHEF_OPERATION_IDS`) :
+  `cancel_run`, `stop_turn`, `resolve_question`, `restart` (différé ; pid de
+  `/api/version`), `todo_add`, `copy_build` partagée. `OPERATION_IDS` (pipeline
+  Opérations d'un musicien) ne les contient jamais. **Ne pas créer de seconde
+  liste.**
+- **Ombre** : `node scripts/pipeline-enforce.mjs chef-shadow on|off`
+  (`model-routing.json` → `chefV3`, `pipeline-tuning.mjs`, relu à chaque tour
+  du chef ; `off --all` la coupe). À chaque nouveau message de l'utilisateur au
+  chef, `dispatch.mjs` lance `chef-turn.mjs shadow` détaché ; il n'écrit que
+  `logs/chef-shadow/` (`<id>.json`, `journal.ndjson`). Lecture :
+  `node scripts/chef-turn.mjs list | show <id>`. Aucun redémarrage nécessaire.
+- Corpus réel anonymisé `tests/routage-corpus/` (59 cas) :
+  `node scripts/chef-turn.mjs corpus [--live]` (`--live` = banc contre le vrai
+  model, hors non-régression).
+- Limite de la phase 1 levée : une tâche « apres » du Routage est une tâche de
+  la demande d'origine dès sa décision (`en_attente_de`, `waitsFor`), lancée à
+  la libération avec son `--task-id` (`markReleased` avant la réécriture du
+  fichier d'attente).
+- Recettes : `_test_plan_repair.mjs`, `_test_chef_turn_calls.mjs`,
+  `_test_routage_corpus.mjs`, `_test_chef_typed_actions.mjs`,
+  `_test_requests_pending_link.mjs` (périmètre `routage`).
+
 ## Routage : renvoi au chef, qui agit lui-même (0.88.0)
 
 Demande utilisateur (2026-10-14) : « IL faut que le routage puisse renvoyer au

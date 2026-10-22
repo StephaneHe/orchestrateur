@@ -32,7 +32,7 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { writeFileAtomic } from './atomic-file.mjs';
-import { dependencyResult } from './routage-pending.mjs';
+import { dependencyResult, readPending, dropPending } from './routage-pending.mjs';
 import { infraFailure } from './model-backoff.mjs';
 
 export const REQUESTS_DIR = 'requests';
@@ -210,17 +210,37 @@ export function finishTurn(logsDir, id, { turn, result = null, code = 0, infra =
 }
 
 /** Registers a task (a dispatch launched from the chef turn, or by a command). */
-export function addTask(logsDir, id, { projet, demande, titre = null, launch = {}, state = 'lancée', after = null, now = Date.now() }) {
+export function addTask(logsDir, id, { projet, demande, titre = null, launch = {}, state = 'lancée', after = null, waitsFor = null, now = Date.now() }) {
   let task = null;
   updateRequest(logsDir, id, (r) => {
     const n = r.tasks.reduce((m, t) => Math.max(m, t.n), 0) + 1;
     task = { n, id: taskIdOf(id, n), attempt: 1, projet, titre: titre || String(demande || '').replace(/\s+/g, ' ').trim().slice(0, 80), demande: String(demande || ''),
-      launch, state, after, launchedAt: state === 'lancée' ? nowIso(now) : null, ack: null, history: [{ at: nowIso(now), from: null, to: state, why: null }] };
+      launch, state, after, ...(waitsFor ? { waitsFor } : {}), launchedAt: state === 'lancée' ? nowIso(now) : null, ack: null, history: [{ at: nowIso(now), from: null, to: state, why: waitsFor ? `attend la fin d’une tâche de ${waitsFor.projet || '?'} (attente du Routage)` : null }] };
     r.tasks.push(task);
     r.lastActivityAt = nowIso(now);
     setState(r, deriveState(r), null, 'code', now);
   }, { now });
   return task;
+}
+
+/**
+ * Phase 1's known limit, closed in phase 2: a Routage task that waits for
+ * another one (routage-pending.json) is registered in its request as soon as
+ * it is decided (`en_attente_de`, `waitsFor`), and its release launches it
+ * with its `--task-id` (routage-pending.mjs). Marked here BEFORE the pending
+ * file is rewritten, so the sweep never mistakes a released task for a dropped one.
+ */
+export function markReleased(logsDir, taskId, { now = Date.now() } = {}) {
+  const p = parseTaskId(taskId);
+  if (!p || !readRequest(logsDir, p.request)) return null;
+  return updateRequest(logsDir, p.request, (r) => {
+    const t = r.tasks.find(x => x.n === p.n);
+    if (!t || t.state !== 'en_attente_de') return;
+    t.releasedAt = nowIso(now); t.launchedAt = nowIso(now);
+    setTaskState(t, 'lancée', 'libérée : la tâche attendue a fini', now);
+    r.lastActivityAt = nowIso(now);
+    setState(r, deriveState(r), null, 'code', now);
+  }, { now });
 }
 
 /** The task of a request matching a task id (any attempt). */
@@ -326,6 +346,7 @@ export function turnResult(logFile, turn, offset = null) {
  */
 export function reconcile({ root, logsDir = path.join(root, 'logs'), now = Date.now(), launch = launchTaskProcess, dryRun = false, staleMs = STALE_MS, alive = pidAlive }) {
   const out = { changed: [], launched: [], stale: [] };
+  let pendingNow = null;
   for (const r0 of listRequests(logsDir)) {
     if (TERMINAL.has(r0.state)) continue;
     const toLaunch = [];
@@ -350,6 +371,12 @@ export function reconcile({ root, logsDir = path.join(root, 'logs'), now = Date.
       for (const t of r.tasks) {
         if (TASK_TERMINAL.has(t.state)) continue;
         const tid = taskIdOf(r.id, t.n, t.attempt || 1);
+        if (t.state === 'en_attente_de' && t.waitsFor && !t.after) {
+          const entry = (pendingNow ||= readPending(logsDir)).find(e => e.taskId === taskIdOf(r.id, t.n, t.attempt || 1));
+          if (!entry) { setTaskState(t, 'annulée', 'retirée de l’attente du Routage sans être libérée (routage-pending drop)', now); }
+          else if (entry.blocked && !t.error) { t.error = { code: 'prédécesseur', why: `la tâche attendue (${entry.after?.projet || '?'}) a échoué ou a été close sans livraison : non relancée`, at: nowIso(now) }; t.actions = [`node scripts/routage-pending.mjs release ${entry.id} --force`, `node scripts/routage-pending.mjs drop ${entry.id}`]; setTaskState(t, 'à_traiter', t.error.why, now); }
+          continue;
+        }
         if (t.state === 'en_attente_de' && t.after) {
           const dep = parseTaskId(t.after);
           const pre = dep && dep.request === r.id ? r.tasks.find(x => x.n === dep.n) : null;
@@ -510,6 +537,11 @@ export function cmdCancel({ logsDir, id, by = 'utilisateur', now = Date.now() })
   const t = r && findTask(r, id);
   if (!t) return refuse(64, `tâche inconnue : ${id}`);
   if (TASK_TERMINAL.has(t.state)) return refuse(2, `${r.id}#${t.n} est déjà ${t.state}`);
+  if (t.waitsFor && t.state === 'en_attente_de') {
+    const tid = taskIdOf(r.id, t.n, t.attempt || 1);
+    const ids = readPending(logsDir).filter(e => e.taskId === tid).map(e => e.id);
+    if (ids.length) dropPending(logsDir, { ids });
+  }
   if (t.state === 'en_cours' || t.state === 'en_file') return refuse(3, `${r.id}#${t.n} est ${t.state === 'en_file' ? 'en file' : 'en cours'} : la retirer de la file (node scripts/queue.mjs) ou arrêter le tour (kill-stalled.mjs ${t.projet} --by ${by}) d’abord — rien n’est annulé à l’aveugle`);
   const u = updateRequest(logsDir, r.id, (x) => { const y = x.tasks.find(z => z.n === t.n); setTaskState(y, 'annulée', `annulée par ${by}`, now); for (const z of x.tasks) if (z.state === 'en_attente_de' && parseTaskId(z.after)?.n === t.n) { z.error = { code: 'prédécesseur', why: `${x.id}#${t.n} annulée`, at: nowIso(now) }; setTaskState(z, 'à_traiter', z.error.why, now); } setState(x, deriveState(x), `${x.id}#${t.n} annulée`, by, now); }, { now });
   return { ok: true, code: 0, text: `${r.id}#${t.n} annulée → demande ${u.state}`, request: u };

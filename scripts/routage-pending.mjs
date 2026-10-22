@@ -46,6 +46,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { markReleased, failTask } from './requests.mjs';
 import { fileURLToPath } from 'node:url';
 
 export const PENDING_FILE = 'routage-pending.json';
@@ -386,6 +387,9 @@ export function launchTask(root, t, dispatchScript, { released = false } = {}) {
   // demand. dispatch.mjs carries it into the queue entry when the musician is
   // busy, and ignores it (saying so) with codex or inside a pipeline run.
   if (t.sessionNeuve === true) args.push('--new-session');
+  // Requests registry (Routage v3 phase 2): a released waiter is launched as the
+  // task its request registered when the Routage decided it.
+  if (released && t.taskId) args.push('--task-id', t.taskId);
   // Calibrated context (0.99.0): the Routage says this task continues the
   // musician's current task, so its session is resumed (otherwise fresh).
   else if (t.memeTache === true) args.push('--meme-tache');
@@ -444,6 +448,9 @@ export function releaseReady({ root, logsDir = path.join(root, 'logs'), dispatch
       ks.forEach(k => keys.set(k, id));
       ready.push({ ...t, id });
     }
+    // Registered tasks (requests.mjs, phase 2) are marked released BEFORE the
+    // pending file is rewritten: the sweep never sees them gone and not released.
+    for (const t of ready) if (t.taskId) { try { markReleased(logsDir, t.taskId); } catch { /* never blocks a release */ } }
     writePending(logsDir, keep);
     if (twins.length) {
       const at = new Date().toISOString();
@@ -456,7 +463,10 @@ export function releaseReady({ root, logsDir = path.join(root, 'logs'), dispatch
     // is not paused any more, and the engine would refuse it anyway. Only the
     // explicit field resumes (phase 0 c): a run cited in the text is a reference.
     const reprise = detectReprise(logsDir, t);
-    if (t.reprise && !reprise) return { id: t.id, label: pendingLabel(t).text, projet: t.projet, skipped: `exécution ${t.reprise} plus en pause : rien relancé` };
+    if (t.reprise && !reprise) {
+      if (t.taskId) { try { failTask(logsDir, t.taskId, { code: 'reprise', why: `exécution ${t.reprise} plus en pause : rien relancé` }); } catch {} }
+      return { id: t.id, label: pendingLabel(t).text, projet: t.projet, skipped: `exécution ${t.reprise} plus en pause : rien relancé` };
+    }
     return { id: t.id, run: t.run || null, n: t.n ?? null, label: pendingLabel(t).text, ...launch(root, { ...t, reprise }, dispatchScript, { released: true }), after: t.after?.projet };
   });
   // A released task leaves the pending file: its launch (log offset, text

@@ -2645,7 +2645,9 @@ function restartInfo() {
   return { version: PKG_VERSION, repoVersion: repo, restartRequired: !!repo && repo !== PKG_VERSION };
 }
 app.get('/api/version', (req, res) => {
-  res.json(restartInfo());
+  // pid (0.130.0): the postcondition of the chef's typed action `restart` is
+  // « another process answers » (scripts/typed-operations.mjs).
+  res.json({ ...restartInfo(), pid: process.pid });
 });
 
 app.get('/api/config', (req, res) => {

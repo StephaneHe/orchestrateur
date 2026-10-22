@@ -1,0 +1,2167 @@
+{
+ "about": "Real refused cases of the production Routage (logs and artefacts read read-only on 2026-10-22), anonymised for this public repository: project names replaced, texts abridged, URLs replaced by example.org, no mail nor secret. Each case: the message, the v3 plan the single chef turn writes for it (the old plan converted: chef work becomes a typed action, an explicit resume or work done in the turn), and what the code must show (docs/ROUTAGE-SYNTHESE.md §3.10).",
+ "projects": [
+  "chef",
+  "projet-a",
+  "projet-b",
+  "projet-c",
+  "projet-d",
+  "projet-e",
+  "projet-f",
+  "projet-g",
+  "projet-h",
+  "orchestrateur",
+  "orchestrateur-dev",
+  "projet-i",
+  "projet-j",
+  "projet-k",
+  "projet-l",
+  "projet-m",
+  "projet-n",
+  "projet-o",
+  "projet-p",
+  "projet-q",
+  "projet-r",
+  "projet-radio",
+  "projet-s",
+  "projet-panier",
+  "projet-t",
+  "projet-u",
+  "projet-video",
+  "projet-v",
+  "projet-w",
+  "projet-x",
+  "projet-y",
+  "projet-z",
+  "projet-{",
+  "projet-|",
+  "projet-}",
+  "pipelineLab",
+  "projet-reunion"
+ ],
+ "cases": [
+  {
+   "id": "refus-6fb43a",
+   "kind": "refus",
+   "run": "p-20261009T113003-6fb43a",
+   "why": "taches.json : 17 tâches (au plus 6 par message : découper)",
+   "planSource": "taches.json final (essai refusé non relu)",
+   "message": "1 et 2 : oui. projet-p : rappelles moi les choix",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "projet-o",
+      "titre": "",
+      "demande": "Contexte : l'orchestrateur (v0.56.0, phase 7 « tout en pipeline ») a mis 20 projets sur 33 en service ; ce projet est resté HORS SERVICE parce que sa suite de tests est ROUGE pour une raison d'environnement : dépendances Python manquantes. L'utilisateur a validé le chantier « réparer les suites rouges et doter de tests les projets qui n'en ont pas, puis les mettre en service ». Demande : rends la suite de tests verte en réparant l'environnement (installe les dépendances manquantes, de préférence dans un venv local au projet ; complète requirements.txt / pyproject si une dépendance y manque). […]",
+      "pipeline": "dev",
+      "mode": "leger"
+     },
+     {
+      "ref": "t2",
+      "projet": "projet-h",
+      "titre": "",
+      "demande": "Contexte : l'orchestrateur (v0.56.0, phase 7 « tout en pipeline ») a mis 20 projets sur 33 en service ; ce projet est resté HORS SERVICE parce que sa suite de tests est ROUGE pour une raison d'environnement : better-sqlite3 doit être recompilé (module natif incompatible avec le Node actuel). L'utilisateur a validé le chantier « réparer les suites rouges et doter de tests les projets qui n'en ont pas, puis les mettre en service ». Demande : rends la suite de tests verte en réparant l'environnement (npm rebuild better-sqlite3, ou version avec prebuild compatible ; docs/windows-migration.md […]",
+      "pipeline": "dev",
+      "mode": "leger"
+     },
+     {
+      "ref": "t3",
+      "projet": "projet-j",
+      "titre": "",
+      "demande": "Contexte : l'orchestrateur (v0.56.0, phase 7 « tout en pipeline ») a mis 20 projets sur 33 en service ; ce projet est resté HORS SERVICE parce que sa suite de tests est ROUGE pour une raison d'environnement : jest est absent. L'utilisateur a validé le chantier « réparer les suites rouges et doter de tests les projets qui n'en ont pas, puis les mettre en service ». Demande : rends la suite de tests verte en réparant l'environnement (jest en devDependency s'il manque au package.json, npm install, script \"test\" correct). Ne modifie pas le comportement du code pour faire passer les tests ; […]",
+      "pipeline": "dev",
+      "mode": "leger"
+     },
+     {
+      "ref": "t4",
+      "projet": "projet-radio",
+      "titre": "",
+      "demande": "L'utilisateur a validé (2026-10-09) la création du registre des exigences utilisateur docs/USER_REQUIREMENTS.md, qui manque dans ce projet. Règle du fleet : toute demande de l'utilisateur sur une fonctionnalité devient un test de non-régression permanent, ajouté à la suite rejouée à chaque évolution, et tracé par une ligne dans docs/USER_REQUIREMENTS.md (date, demande verbatim, test associé). Demande : crée docs/USER_REQUIREMENTS.md (en français, car il cite les demandes de l'utilisateur mot pour mot) avec un en-tête expliquant la règle et un tableau Date | Demande (verbatim) | Test associé. […]",
+      "pipeline": "redaction",
+      "mode": "leger"
+     },
+     {
+      "ref": "t5",
+      "projet": "projet-x",
+      "titre": "",
+      "demande": "L'utilisateur a validé (2026-10-09) la création du registre des exigences utilisateur docs/USER_REQUIREMENTS.md, qui manque dans ce projet (tu avais toi-même proposé cette création à la fin de ton dernier tour : c'est accepté). Règle du fleet : toute demande de l'utilisateur sur une fonctionnalité devient un test de non-régression permanent, ajouté à la suite rejouée à chaque évolution, et tracé par une ligne dans docs/USER_REQUIREMENTS.md (date, demande verbatim, test associé). Demande : crée docs/USER_REQUIREMENTS.md (en français, car il cite les demandes de l'utilisateur mot pour mot) avec […]",
+      "pipeline": "redaction",
+      "mode": "leger"
+     },
+     {
+      "ref": "t6",
+      "projet": "projet-p",
+      "titre": "",
+      "demande": "À la fin de ton dernier tour, tu as proposé à l'utilisateur plusieurs options, en concluant : « Si vous confirmez l'une de ces options, elle deviendra une tâche, avec le bump de version, l'entrée CHANGELOG et le test associés. » L'utilisateur demande : « projet-p : rappelles moi les choix ». Restitue clairement, en français, la liste numérotée des options que tu as proposées (pour chacune : ce qu'elle ferait, effort/impact, ta recommandation), telles que dans ton dernier tour. Lecture seule : ne réalise aucune option, ne modifie aucun fichier ; l'utilisateur choisira ensuite.",
+      "pipeline": "discussion",
+      "mode": "leger"
+     }
+    ]
+   },
+   "runs": {},
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-22e10e",
+   "kind": "refus",
+   "run": "p-20261009T155431-22e10e",
+   "why": "taches.json : tâche 1 : « apres » doit désigner une tâche précédente (1 à 0)",
+   "planSource": "essai refusé",
+   "message": "J'ai repondu aux questions via le chef. Les panneaux A Examiner sont toujours affiches. Quand je click sur Repondu ca me met que j'ai deja repondu et que le musicien tourne",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "apres": [
+       "t0"
+      ],
+      "projet": "orchestrateur",
+      "titre": "",
+      "demande": "Bug signalé par l'utilisateur le 2026-10-09 sur le dashboard, panneau « À examiner ». Message verbatim : « J'ai repondu aux questions via le chef. Les panneaux A Examiner sont toujours affiches. Quand je click sur Repondu ca me met que j'ai deja repondu et que le musicien tourne ».\n\nContexte : l'utilisateur a répondu via le chef (barre du bas, réponses de la forme « Réponse pour <projet> à sa question « … » : … ») aux questions/pauses de pipeline de plusieurs musiciens :\n- projet-panier : pause de pipeline (« répondez continuer ou abandonner… tests échouent déjà ») — réponse « Repares le code […]",
+      "pipeline": "incident",
+      "mode": "leger"
+     }
+    ]
+   },
+   "runs": {
+    "p-20261009T123458-2a1135": {
+     "status": "paused",
+     "project": "orchestrateur"
+    },
+    "p-20261009T123458-82d93b": {
+     "status": "paused",
+     "project": "orchestrateur"
+    }
+   },
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "retry": true,
+    "resumes": []
+   },
+   "retryPlan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "orchestrateur",
+      "titre": "",
+      "demande": "Bug signalé par l'utilisateur le 2026-10-09 sur le dashboard, panneau « À examiner ». Message verbatim : « J'ai repondu aux questions via le chef. Les panneaux A Examiner sont toujours affiches. Quand je click sur Repondu ca me met que j'ai deja repondu et que le musicien tourne ».\n\nContexte : l'utilisateur a répondu via le chef (barre du bas, réponses de la forme « Réponse pour <projet> à sa question « … » : … ») aux questions/pauses de pipeline de plusieurs musiciens :\n- projet-panier : pause de pipeline (« répondez continuer ou abandonner… tests échouent déjà ») — réponse « Repares le code […]",
+      "pipeline": "incident",
+      "mode": "leger"
+     }
+    ]
+   }
+  },
+  {
+   "id": "refus-80eaf2",
+   "kind": "refus",
+   "run": "p-20261009T191151-80eaf2",
+   "why": "taches.json : tâche 1 : « apres » doit désigner une tâche précédente (1 à 0)",
+   "planSource": "essai refusé",
+   "message": "projet-panier affiche qu'il attend une reponse deja donnee, n'est-ce pas ? Tout comme projet-radio ? \nAlors qu'ils attendent la fin du fix du pipeline de l'orchestrateur, qui lui affiche Pret, mais pas actif. Regarde pourquoi, et pourquoi rien n'avance, et ce qu'il faut corriger pour ne pas rester bloquer alors qu'il reste du travail. Peut-etre faut-il rendre plus de decisions a sonnet, voir opus, et non plus haiku ?",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "apres": [
+       "t0"
+      ],
+      "projet": "orchestrateur",
+      "titre": "",
+      "demande": "Diagnostic en lecture seule (ne modifie rien, ne redémarre rien, ne relance aucun musicien). Message de l'utilisateur, verbatim : « projet-panier affiche qu'il attend une reponse deja donnee, n'est-ce pas ? Tout comme projet-radio ? Alors qu'ils attendent la fin du fix du pipeline de l'orchestrateur, qui lui affiche Pret, mais pas actif. Regarde pourquoi, et pourquoi rien n'avance, et ce qu'il faut corriger pour ne pas rester bloquer alors qu'il reste du travail. Peut-etre faut-il rendre plus de decisions a sonnet, voir opus, et non plus haiku ? »\n\nContexte connu :\n- projet-panier a une […]",
+      "pipeline": "discussion",
+      "mode": "leger"
+     }
+    ]
+   },
+   "runs": {
+    "p-20261009T123458-2a1135": {
+     "status": "paused",
+     "project": "orchestrateur"
+    },
+    "p-20261009T155209-3b50dc": {
+     "status": "paused",
+     "project": "orchestrateur"
+    },
+    "p-20261009T123458-82d93b": {
+     "status": "paused",
+     "project": "orchestrateur"
+    }
+   },
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "retry": true,
+    "resumes": []
+   },
+   "retryPlan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "orchestrateur",
+      "titre": "",
+      "demande": "Diagnostic en lecture seule (ne modifie rien, ne redémarre rien, ne relance aucun musicien). Message de l'utilisateur, verbatim : « projet-panier affiche qu'il attend une reponse deja donnee, n'est-ce pas ? Tout comme projet-radio ? Alors qu'ils attendent la fin du fix du pipeline de l'orchestrateur, qui lui affiche Pret, mais pas actif. Regarde pourquoi, et pourquoi rien n'avance, et ce qu'il faut corriger pour ne pas rester bloquer alors qu'il reste du travail. Peut-etre faut-il rendre plus de decisions a sonnet, voir opus, et non plus haiku ? »\n\nContexte connu :\n- projet-panier a une […]",
+      "pipeline": "discussion",
+      "mode": "leger"
+     }
+    ]
+   }
+  },
+  {
+   "id": "refus-385a6e",
+   "kind": "refus",
+   "run": "p-20261009T194110-385a6e",
+   "why": "taches.json : tâche 1 : le chef ne se délègue pas de tâche",
+   "planSource": "essai refusé",
+   "message": "Je réponds à ton message précédent :\n> Oui, c'est exact : les deux choses se passent en même temps, mais elles sont **indépendantes**.\n> \n> **1. orchestrateur travaille.** Il exécute un tour ordinaire : le correctif du mécanisme de reprise. `fleet-status` le montre actif à l'instant (LIVE, process vivant). Il ne m'attend pas, et je ne l'attends pas.\n> \n> **2. Le chef (moi) est en pause, sur votre demande précédente** « Protection puis redémarrage. Attention orchestrateur est \"en cours\" » (exécution `p-20261009T193025-d2f51b`).\n> - Chaque message que je reçois passe par plusieurs étapes : lire, classifier, **décomposer**, affecter, dispatcher, rapporter. « Décomposer », c'est découper votre demande en tâches, une par projet.\n> - Les deux premières étapes ont réussi. L'étape « décomposer » (case `routage.decomposer`, model `claude-opus-5-5`) a échoué deux fois.\n> - Ce n'est **pas** que je […]",
+   "plan": {
+    "reprises": [
+     {
+      "ref": "t1",
+      "run": "p-20261009T193025-d2f51b",
+      "message": "Reprendre l'exécution de Routage en pause p-20261009T193025-d2f51b avec la réponse « continuer » de l'utilisateur. Question posée : « chef en pause — répondez « continuer », « simplifier », « changer […]"
+     }
+    ]
+   },
+   "runs": {
+    "p-20261009T193025-d2f51b": {
+     "status": "paused",
+     "project": "chef"
+    }
+   },
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": [
+     "p-20261009T193025-d2f51b"
+    ]
+   }
+  },
+  {
+   "id": "refus-9972bc",
+   "kind": "refus",
+   "run": "p-20261009T211219-9972bc",
+   "why": "taches.json : aucune tâche",
+   "planSource": "essai refusé",
+   "message": "je suis temporairement sur l'App et je ne peux pas tout lire. proposes tu de redémarrer ? je vois qu'il y a 1 question mais je ne peux pas la lire.",
+   "plan": {},
+   "runs": {},
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-56bdf1",
+   "kind": "refus",
+   "run": "p-20261009T222017-56bdf1",
+   "why": "taches.json : aucune tâche",
+   "planSource": "essai refusé",
+   "message": "J'ai change, verifie",
+   "plan": {},
+   "runs": {},
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-ba5287",
+   "kind": "refus",
+   "run": "p-20261009T223520-ba5287",
+   "why": "taches.json : aucune tâche",
+   "planSource": "essai refusé",
+   "message": "\"Explicite\" etait une demande. Je veux que tu expliques plus",
+   "plan": {},
+   "runs": {},
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-64976e",
+   "kind": "refus",
+   "run": "p-20261009T230229-64976e",
+   "why": "taches.json : aucune tâche",
+   "planSource": "essai refusé",
+   "message": "Je vais me coucher, continue jusqu'a ce que tu ne puisses plus, puis redemarre. Si tu peux, fais des tests apres le redemarrage pour etre sur que tout va bien. Puis repends",
+   "plan": {},
+   "runs": {},
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-06522f",
+   "kind": "refus",
+   "run": "p-20261010T090927-06522f",
+   "why": "taches.json : aucune tâche",
+   "planSource": "essai refusé",
+   "message": "Je réponds à ton message précédent :\n> # Oui, ça peut arriver à n'importe quel musicien : j'ai demandé une proposition à orchestrateur\n> \n> ## Réponse courte\n> \n> **Oui.** Un pipeline organise les étapes **à l'intérieur** d'une tâche. Le passage d'une tâche à la suivante n'en fait pas partie, et ce passage est le même pour tout le fleet, en pipeline ou non :\n> - la file ;\n> - la détection de doublon de `dispatch.mjs` ;\n> - l'option « après » ;\n> - ma relance quand je suis réveillé.\n> \n> La tâche 4 de « c+d » a pu se perdre là. N'importe quelle tâche enchaînée sur n'importe quel musicien peut se perdre de la même façon. Les deux tours lancés en même temps sur un même dépôt viennent aussi de ce mécanisme commun (`--queue-if-busy` / `--no-queue-if-busy`, contrôle du `.pid`). C'est donc un risque pour toute la flotte.\n> \n> ## Ce que j'ai lancé\n> \n> | Projet | Pipeline | Model | Lancement | […]",
+   "plan": {},
+   "runs": {},
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-6e8112",
+   "kind": "refus",
+   "run": "p-20261010T193119-6e8112",
+   "why": "taches.json : aucune tâche",
+   "planSource": "essai refusé",
+   "message": "Une fois dev fini, redemarre la prod",
+   "plan": {},
+   "runs": {},
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-08c2d3",
+   "kind": "refus",
+   "run": "p-20261010T193435-08c2d3",
+   "why": "taches.json : aucune tâche",
+   "planSource": "essai refusé",
+   "message": "Ne fais rien d'autre que relancer le serveur prod une fois dev fini. C'est tout",
+   "plan": {},
+   "runs": {},
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-616091",
+   "kind": "refus",
+   "run": "p-20261010T200454-616091",
+   "why": "taches.json : aucune tâche",
+   "planSource": "essai refusé",
+   "message": "A par toi, aucun musicien n'est actif (ils sont en attente d'une reponse). Si tu es ok, redemarre la prod",
+   "plan": {},
+   "runs": {},
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-8b2b1c",
+   "kind": "refus",
+   "run": "p-20261010T200830-8b2b1c",
+   "why": "taches.json : aucune tâche",
+   "planSource": "essai refusé",
+   "message": "vas y",
+   "plan": {},
+   "runs": {},
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-fd7fb6",
+   "kind": "refus",
+   "run": "p-20261010T203520-fd7fb6",
+   "why": "taches.json : aucune tâche",
+   "planSource": "essai refusé",
+   "message": "1. on garde la copie de orchestrateur-dev comme référenc\n2. non\n3. fais moi une page web externe temporaire pour expliquer clairement les correctifs proposer n 7 et 9",
+   "plan": {},
+   "runs": {},
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-8c1993",
+   "kind": "refus",
+   "run": "p-20261011T082353-8c1993",
+   "why": "taches.json : aucune tâche",
+   "planSource": "essai refusé",
+   "message": "Quand la modification des tests est finie, on fait un point, et on voit si on passe en prod",
+   "plan": {},
+   "runs": {},
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-1fb969",
+   "kind": "refus",
+   "run": "p-20261012T065613-1fb969",
+   "why": "taches.json : aucune tâche",
+   "planSource": "essai refusé",
+   "message": "[REPRISE] Ton tour précédent a été perdu (processus perdu) ; vérifie l'état réel avant d'agir.\n\nRéponse pour orchestrateur-dev à sa question « bash · rm -rf .regress/bench-fixture && mkdir -p .regress/bench-fixture/test && cd .reg » : Tu ne m'as pas dit quels elements existent",
+   "plan": {},
+   "runs": {},
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-07169b",
+   "kind": "refus",
+   "run": "p-20261012T081436-07169b",
+   "why": "taches.json : aucune tâche",
+   "planSource": "essai refusé",
+   "message": "Demandes une relecture factuelle et generale du document a openai 6 astra. Il a aussi des informations sur moi et pourra completer / modifier le document\nQuel est le probleme avec projet-radio ? Je ne veux pas de developpement pour le moment, je ne souhaite que le document.\nPartie 1: tu rediges\nPublic visé : document prealable a un entretien\nAucune autre action non liee au document pour le moment",
+   "plan": {},
+   "runs": {},
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-dbb1c5",
+   "kind": "refus",
+   "run": "p-20261012T082133-dbb1c5",
+   "why": "taches.json : aucune tâche",
+   "planSource": "essai refusé",
+   "message": "Pour le document projet-radio, fais le toi-meme, sans passer par le musicien, et note ce probleme pour qu'on le resolve ulterieurement",
+   "plan": {},
+   "runs": {},
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-8ec7b2",
+   "kind": "refus",
+   "run": "p-20261012T085303-8ec7b2",
+   "why": "taches.json : aucune tâche",
+   "planSource": "essai refusé",
+   "message": "Reponse de openai 6 astra : \nJ’ai retrouvé suffisamment d’éléments pour rédiger une section factuelle. **Les essais sur Ascend, l’autotuning Triton et plusieurs mesures sont documentés. En revanche, les gains de −26 % et ×445 ne sont pas suffisamment étayés pour figurer dans la section anglaise.**\n\nIci, **« sûr » signifie attesté par tes messages, du code partagé ou des sorties d’exécution retrouvées**, sans signifier que j’ai reproduit les expériences. « Probable » désigne un élément présent en mémoire mais insuffisamment documenté ; « incertain », une proposition, une interprétation ou un résultat non confirmé. Les dates correspondent aux échanges retrouvés, pas nécessairement au début des travaux.\n\n**1. Voici les faits disponibles, avec leur provenance.**\n\n| Fait | Source | Certitude |\n|---|---|---|\n| Ta mission initiale était orientée DevOps ; on t’a ensuite demandé de travailler […]",
+   "plan": {},
+   "runs": {},
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-0fbc82",
+   "kind": "refus",
+   "run": "p-20261012T085907-0fbc82",
+   "why": "taches.json : aucune tâche",
+   "planSource": "essai refusé",
+   "message": "Je réponds à ton message précédent :\n> ⏸ **chef — travail en pause, votre décision est attendue.**\n> \n> **Ce qui s'est passé** : l’étape « callback » a été refusée 2 fois par les vérifications automatiques de l’orchestrateur. Dernière raison : API Error: Sonnet 5.5 can't help with this. Start a new session to continue..\n> \n> **Où en est le travail** : étapes terminées : lire en profondeur, relancer les tâches en attente.\n> \n> **Vos choix** (répondez simplement par le mot entre guillemets) :\n> - « **continuer** » : je refais 2 essais de cette étape.\n> - « **simplifier** » : j’arrête cette exécution sans rien livrer. Le travail déjà fait reste dans le projet (non enregistré dans git) ; vous m’envoyez ensuite une demande plus petite pour la suite.\n> - « **changer le model** » : choisissez un autre model pour l’étape « callback » dans la page Models (case « routage.callback »), puis […]",
+   "plan": {},
+   "runs": {},
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-104e01",
+   "kind": "refus",
+   "run": "p-20261012T090302-104e01",
+   "why": "taches.json : tâche 2 : le chef ne se délègue pas de tâche",
+   "planSource": "essai refusé",
+   "message": "Je réponds à ton message précédent :\n> Pardon, ma pause a recopié un message d'erreur sans l'expliquer.\n> \n> **Ce que dit ce message.** Il ne vient pas d'un musicien ni de votre travail.\n> - J'ai été réveillé pour vous faire le point sur la relecture de la section « Research: PyTorch & autotuning ». Cette relecture, faite par `orchestrateur`, est **terminée et bien arrivée** (1m39).\n> - Pour rédiger ce point, l'orchestrateur appelle un model : Sonnet 5.5, réglé dans la case `routage.callback` de la page Models.\n> - Ce model a refusé de répondre deux fois, avec le texte « API Error: Sonnet 5.5 can't help with this… ». C'est un refus renvoyé par le service du model lui-même.\n> - Après deux refus, l'orchestrateur a mis mon tour en pause (exécution p-20261012T085659-061170).\n> - **Rien n'est perdu ni cassé.** Il manque seulement mon résumé de ce réveil.\n> \n> **Ce que j'ai lancé pour en […]",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "orchestrateur",
+      "titre": "",
+      "demande": "Changer le model affecté à la case `routage.callback` de la page Models : remplacer `claude-sonnet-5-5` par `claude-opus-5-5` (Opus 5.5), par le mécanisme normal de la page Models (son API/son fichier de réglages, comme le ferait l'utilisateur depuis l'UI). Ne touche à aucune autre case. Contexte : l'étape Callback de l'exécution chef p-20261012T085659-061170 a été refusée deux fois par l'API (« API Error: Sonnet 5.5 can't help with this… », politique d'usage, sujet PyTorch/autotuning NPU). Le chef avait demandé à l'utilisateur : « chef en pause (p-20261012T085659-061170) — répondez « […]",
+      "pipeline": "dev",
+      "mode": "leger"
+     }
+    ],
+    "reprises": [
+     {
+      "ref": "t2",
+      "apres": [
+       "t1"
+      ],
+      "run": "p-20261012T085659-061170",
+      "message": "Reprendre l'exécution en pause p-20261012T085659-061170 (routage callback, refusée deux fois par Sonnet 5.5) avec la réponse « continuer », maintenant que la case `routage.callback` est passée à Opus […]"
+     }
+    ]
+   },
+   "runs": {
+    "p-20261012T085659-061170": {
+     "status": "paused",
+     "project": "chef"
+    }
+   },
+   "expect": {
+    "order": [
+     [
+      "t1",
+      "t2"
+     ]
+    ],
+    "toTreat": 0,
+    "resumes": [
+     "p-20261012T085659-061170"
+    ]
+   }
+  },
+  {
+   "id": "refus-b696ce",
+   "kind": "refus",
+   "run": "p-20261012T121417-b696ce",
+   "why": "taches.json : tâche 1 : le chef ne se délègue pas de tâche",
+   "planSource": "essai refusé",
+   "message": "reprends\\",
+   "plan": {
+    "reprises": [
+     {
+      "ref": "t1",
+      "run": "p-20261012T102220-3a6fde",
+      "message": "Réponse de l'utilisateur à la pause de l'exécution p-20261012T102220-3a6fde (étape « callback » du routage chef, model claude-opus-5-5 indisponible pour limite de session jusqu'à 2026-10-12T11:50Z, […]"
+     }
+    ]
+   },
+   "runs": {
+    "p-20261012T102220-3a6fde": {
+     "status": "paused",
+     "project": "chef"
+    }
+   },
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": [
+     "p-20261012T102220-3a6fde"
+    ]
+   }
+  },
+  {
+   "id": "refus-ebf448",
+   "kind": "refus",
+   "run": "p-20261013T124219-ebf448",
+   "why": "taches.json : tâche 2 : projet inconnu « projet-divers »",
+   "planSource": "essai refusé",
+   "message": "Créé un musicien \"projet-divers\", et fais le faire le transcript et la traduction. Puis affiches moi le réultat sur une page web que je peux consulter depuis tailscale",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "orchestrateur",
+      "titre": "",
+      "demande": "Contexte (tu ne vois pas la conversation) : l'utilisateur a décidé de créer un nouveau musicien générique nommé « projet-divers », pour les tâches qui ne relèvent d'aucun projet existant. Sa réponse verbatim : « Créé un musicien \"projet-divers\" ». Tâche : crée ce projet avec le scaffolder déterministe du fleet : `node I:\\orchestrateur\\scripts\\new-project.mjs projet-divers` (chemin I:\\Dev\\projet-divers, sans `--model`, il hérite du défaut ; outils par défaut, web et lecture inclus). Vérifie ensuite que le projet est prêt à tourner :\n- l'entrée « projet-divers » existe dans config.json, ajoutée […]"
+     },
+     {
+      "ref": "t2",
+      "apres": [
+       "t1"
+      ],
+      "projet": "projet-divers",
+      "titre": "",
+      "demande": "Contexte (tu ne vois pas la conversation) : tu es « projet-divers », un nouveau musicien générique du fleet, pour les tâches hors projet. Le 2026-10-13, l'utilisateur a demandé : « Récupères le transcript de cette video en hébreu et traduis en anglais », pour la vidéo Instagram https://www.example.org/x Le chef lui a demandé : « Le musicien récupère seulement l'hébreu, ou il traduit aussi en anglais ? ». Il a répondu : « fais le faire le transcript et la traduction ».\n\nTâche :\n1. Récupère l'audio ou la vidéo du post, par exemple avec yt-dlp. Si Instagram exige une connexion ou bloque le […]"
+     },
+     {
+      "ref": "t3",
+      "apres": [
+       "t2"
+      ],
+      "projet": "projet-divers",
+      "titre": "",
+      "demande": "Contexte (tu ne vois pas la conversation) : tu as produit, dans ce projet (I:\\Dev\\projet-divers), le transcript hébreu et la traduction anglaise de la vidéo Instagram https://www.example.org/x (voir outputs/ et ton CHANGELOG). L'utilisateur demande verbatim : « Puis affiches moi le réultat sur une page web que je peux consulter depuis tailscale ».\n\nTâche : crée un petit serveur web statique (Node, sans framework lourd) dans ce projet. Il doit servir :\n- une page qui affiche, pour la vidéo, le lien source, le transcript hébreu (RTL, dir=\"rtl\") et la traduction anglaise côte à côte ou segment […]"
+     }
+    ]
+   },
+   "runs": {},
+   "expect": {
+    "order": [
+     [
+      "t1",
+      "t2"
+     ],
+     [
+      "t2",
+      "t3"
+     ]
+    ],
+    "toTreat": 2,
+    "question": true,
+    "resumes": []
+   },
+   "projects": [
+    "chef",
+    "projet-a",
+    "projet-b",
+    "projet-c",
+    "projet-d",
+    "projet-e",
+    "projet-f",
+    "projet-g",
+    "projet-h",
+    "orchestrateur",
+    "orchestrateur-dev",
+    "projet-i",
+    "projet-j",
+    "projet-k",
+    "projet-l",
+    "projet-m",
+    "projet-n",
+    "projet-o",
+    "projet-p",
+    "projet-q",
+    "projet-r",
+    "projet-radio",
+    "projet-s",
+    "projet-panier",
+    "projet-t",
+    "projet-u",
+    "projet-video",
+    "projet-v",
+    "projet-w",
+    "projet-x",
+    "projet-y",
+    "projet-z",
+    "projet-{",
+    "projet-|",
+    "projet-}",
+    "pipelineLab",
+    "projet-reunion"
+   ]
+  },
+  {
+   "id": "refus-f29b0e",
+   "kind": "refus",
+   "run": "p-20261013T202938-f29b0e",
+   "why": "taches.json : 7 tâches (au plus 6 par message : découper)",
+   "planSource": "essai refusé",
+   "message": "Dans ma requete, si je commence par TODO: , alors ce qui suit doit etre ajoute dans la todo list. Ce doit etre une fonctionalite codee dans le routeur.\nSi tu as toujours besoin d'une Autorisation Monitor, fais la maintenant.\nRejet d'un item :  le rejet est marqué dans le TODO_LIST.md du musicien. Dans l'UI passe le dans la liste des \"faits\" mais barre, avec  une marque « rejeté (date) par l'utilisateur »\nL'accord POST couvre toutes les requetes necessaires a cette fonctionalite. L'interdication peut donc finalement etre entierement levee.\nTu peux recommencer une session pour les requetes qui viennent.\nTODO : Il faut mettre en place l'utilisation de quelque chose de  physique (un fichier, une liste quelque part) ou que git soit prevenu beaucoup plus tot de la creation des versions, pour empecher que deux fonctionnalites se disputent des numero de version.\nTODO : Il faut qu'on mette en […]",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "orchestrateur-dev",
+      "titre": "",
+      "demande": "Contexte (tu ne vois pas la conversation). L'utilisateur a demandé une session neuve pour ce travail (l'ancienne dépassait 221 $ et a échoué sur « Prompt is too long »). Demande verbatim de l'utilisateur (2026-10-13) : « Dans ma requete, si je commence par TODO: , alors ce qui suit doit etre ajoute dans la todo list. Ce doit etre une fonctionalite codee dans le routeur. » À faire : dans le routeur de l'orchestrateur (pipeline Routage du chef / entrée des messages), quand un message de l'utilisateur commence par « TODO: » (tolérer « TODO : » et la casse), chaque ligne ainsi préfixée est […]"
+     },
+     {
+      "ref": "t2",
+      "apres": [
+       "t1"
+      ],
+      "projet": "orchestrateur-dev",
+      "titre": "",
+      "demande": "Contexte (tu ne vois pas la conversation). Session neuve demandée par l'utilisateur. Partie 3/5 du panneau TODO : rejet d'un item. Tu avais posé la question : « Rejet d'un item : il attend ton choix entre A et B. - A : le rejet est marqué dans le TODO_LIST.md du musicien. C'est l'option que je recommande. - B : le rejet reste seulement dans le dashboard. » Réponse verbatim de l'utilisateur (2026-10-13) : « Rejet d'un item :  le rejet est marqué dans le TODO_LIST.md du musicien. Dans l'UI passe le dans la liste des \"faits\" mais barre, avec  une marque « rejeté (date) par l'utilisateur » ». […]"
+     },
+     {
+      "ref": "t3",
+      "apres": [
+       "t2"
+      ],
+      "projet": "orchestrateur-dev",
+      "titre": "",
+      "demande": "Contexte (tu ne vois pas la conversation). Session neuve demandée par l'utilisateur. Depuis la 0.75.0, le test _test_todo.mjs interdit au panneau TODO (todo-panel.js) d'envoyer des requêtes POST ; la 0.83.0 l'a seulement élargi pour l'ordre, sur l'accord « J'autorise l'envoie de POST à partir de todo-panel.js ». Le chef avait demandé : « Accord POST : couvre-t-il aussi le rejet ? ». Réponse verbatim de l'utilisateur (2026-10-13) : « L'accord POST couvre toutes les requetes necessaires a cette fonctionalite. L'interdication peut donc finalement etre entierement levee. » À faire : lever […]"
+     },
+     {
+      "ref": "t4",
+      "apres": [
+       "t3"
+      ],
+      "projet": "orchestrateur-dev",
+      "titre": "",
+      "demande": "Contexte (tu ne vois pas la conversation). Inscris dans ton TODO_LIST.md (la todo list affichée dans le panneau TODO), sans les réaliser maintenant, ces quatre demandes de l'utilisateur (2026-10-13), chacune datée et recopiée verbatim : (1) « Il faut mettre en place l'utilisation de quelque chose de  physique (un fichier, une liste quelque part) ou que git soit prevenu beaucoup plus tot de la creation des versions, pour empecher que deux fonctionnalites se disputent des numero de version. » (2) « Il faut qu'on mette en place une gestion plus fine des contextes : a chaque requete, il faut que […]"
+     },
+     {
+      "ref": "t5",
+      "apres": [
+       "t4"
+      ],
+      "projet": "orchestrateur-dev",
+      "titre": "",
+      "demande": "Contexte (tu ne vois pas la conversation). L'utilisateur demande (2026-10-13), verbatim : « Une fois les actions non marquees TODO (qui doivent etre ajoutees a la todo list) faites, il faut un test complet et une mise a jour de la prod, puis relance du seveur. Ca vaut autorisation ». À faire ici : uniquement le TEST COMPLET. Lance la non-régression COMPLÈTE (toutes les suites, étapes HTTP et navigateur) sur le dernier tag livré (celui qui inclut le préfixe TODO:, le rejet d'item et la levée de l'interdiction POST), sur exactement l'arbre de ce tag, de façon à produire le rapport complet vert […]"
+     },
+     {
+      "ref": "t6",
+      "apres": [
+       "t5"
+      ],
+      "projet": "orchestrateur-dev",
+      "titre": "",
+      "demande": "Contexte (tu ne vois pas la conversation). L'utilisateur a autorisé explicitement la mise en prod (2026-10-13), verbatim : « il faut un test complet et une mise a jour de la prod, puis relance du seveur. Ca vaut autorisation ». Le test complet vient d'être fait sur le dernier tag. À faire : la mise en prod seulement. Lance `node scripts/prod-jump.mjs --tag <dernier tag vX.Y.Z> --prod I:\\orchestrateur` (plan), vérifie le plan, puis avec `--apply`. Cela fait passer la prod des versions 0.79.x à la dernière (0.80.0 à 0.83.0 et suivantes). En cas de refus du script (rapport complet absent, prod […]"
+     },
+     {
+      "ref": "t7",
+      "apres": [
+       "t6"
+      ],
+      "projet": "orchestrateur",
+      "titre": "",
+      "demande": "Contexte (tu ne vois pas la conversation). orchestrateur-dev vient de faire la mise en prod (scripts/prod-jump.mjs --apply) vers I:\\orchestrateur, autorisée par l'utilisateur (2026-10-13). Comme l'exige docs/DEV-PROD.md après --apply : lance la non-régression COMPLÈTE dans la production (I:\\orchestrateur) et rapporte le nombre exact de tests passés/échoués, les KO et la version présente dans package.json. Ne modifie aucun code, ne redémarre PAS le serveur (le chef le fera ensuite avec restart-orchestrateur.mjs), jamais de push."
+     }
+    ]
+   },
+   "runs": {},
+   "expect": {
+    "order": [
+     [
+      "t1",
+      "t2"
+     ],
+     [
+      "t2",
+      "t3"
+     ],
+     [
+      "t3",
+      "t4"
+     ],
+     [
+      "t4",
+      "t5"
+     ],
+     [
+      "t5",
+      "t6"
+     ],
+     [
+      "t6",
+      "t7"
+     ]
+    ],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-2601c2",
+   "kind": "refus",
+   "run": "p-20261014T044834-2601c2",
+   "why": "taches.json : tâche 1 : le chef ne se délègue pas de tâche",
+   "planSource": "essai refusé",
+   "message": "J'ai relance une authentification, tu peux continuer.\n\n[Routeur] 📝 Ajouté à la TODO list (chef/TODO_LIST.md) par le routeur :\n- gerer automatiquement les authentifications regulieres (t-47ce74)",
+   "plan": {
+    "reprises": [
+     {
+      "ref": "t1",
+      "run": "p-20261014T044705-556920",
+      "message": "Reprendre l'exécution de pipeline en pause p-20261014T044705-556920 avec la réponse « continuer ». L'utilisateur a refait l'authentification OAuth (cause des 2 refus de l'étape « lire en profondeur » […]"
+     }
+    ]
+   },
+   "runs": {
+    "p-20261014T044705-556920": {
+     "status": "paused",
+     "project": "chef"
+    }
+   },
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": [
+     "p-20261014T044705-556920"
+    ]
+   }
+  },
+  {
+   "id": "refus-f73a62",
+   "kind": "refus",
+   "run": "p-20261014T070908-f73a62",
+   "why": "taches.json : tâche 3 : le chef ne se délègue pas de tâche",
+   "planSource": "essai refusé",
+   "message": "Tu me dis qu'il y a des taches a relancer. Pourquoi je ne les vois nulle part ? Ce sont des taches en queue ? Pourtant je vois de queue dans aucun musicien.\n\n\nLe port 7778 sert uniquement aux tests, si tu as besoin de l'arreter / le redemarrer, fais le\n\nSi certaines executions n'ont plus d'interet, supprimes les. Encore une fois, je devrais voir ces taches quelque part. Est-ce qu'il faut creer une nouvelle visualisation qui trace le parcours d'un process ? Ou ca peut s'integrer dans l'existant ?\n\n[Routeur] 📝 Ajouté à la TODO list (chef/TODO_LIST.md) par le routeur :\n- chaque mise en prod doit etre accompagnee d'une release note. Verifie comment sont stockees les releases notes dans un projet professionel. Applique le principe. (t-e25155)",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "orchestrateur-dev",
+      "titre": "Arrêter l'ancien server.js du port 7778",
+      "demande": "Contexte (tu ne vois pas la conversation) : un ancien `server.js` lancé le 2026-10-13 vers 11:57 (PID 129740) écoute toujours sur le port 7778, le port de test de la dev. L'utilisateur a répondu (2026-10-14), verbatim : « Le port 7778 sert uniquement aux tests, si tu as besoin de l'arreter / le redemarrer, fais le ». Demande : vérifie avec netstat quel PID tient le port 7778 et que c'est bien un `server.js` lancé depuis I:\\Dev\\orchestrateur-dev (pas le 7777 de prod, jamais le 7777). Arrête-le proprement (arbre de process de ce PID seulement), puis confirme que le port 7778 est libre. Ne le […]"
+     },
+     {
+      "ref": "t2",
+      "projet": "orchestrateur-dev",
+      "titre": "Où voir tâches en attente et exécutions en pause",
+      "demande": "Contexte (tu ne vois pas la conversation) : le chef a annoncé à l'utilisateur des « tâches à relancer » sur orchestrateur-dev (661b6933, 37acd5c5, 4df9337e, et 5383dd61 bloquée). Ce sont des tâches en attente du Routage (logs/routage-pending.json, visibles seulement via `node scripts/routage-pending.mjs list` et l'alerte « ⏳ n tâche(s) du Routage en attente depuis plus de 120 min »), et non des éléments de la file d'un musicien. Il y a aussi des exécutions de pipeline en pause (ex. p-20261014T044705-556920, p-20261012T102220-3a6fde, p-20261012T085659-061170, p-20261009T193025-d2f51b côté chef […]"
+     }
+    ],
+    "actions": [
+     {
+      "ref": "t3",
+      "action": "cancel_run",
+      "raison": "Abandonner les exécutions en pause obsolètes",
+      "cible": "p-20261014T044705-556920"
+     }
+    ]
+   },
+   "runs": {
+    "p-20261014T044705-556920": {
+     "status": "paused",
+     "project": "chef"
+    },
+    "p-20261012T102220-3a6fde": {
+     "status": "paused",
+     "project": "orchestrateur-dev"
+    },
+    "p-20261012T085659-061170": {
+     "status": "paused",
+     "project": "orchestrateur-dev"
+    },
+    "p-20261009T193025-d2f51b": {
+     "status": "paused",
+     "project": "orchestrateur-dev"
+    },
+    "p-20261009T193934-083679": {
+     "status": "paused",
+     "project": "orchestrateur-dev"
+    },
+    "p-20261009T123458-2a1135": {
+     "status": "paused",
+     "project": "orchestrateur-dev"
+    }
+   },
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "cancelRun": [
+     "p-20261014T044705-556920"
+    ],
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-24a1d7",
+   "kind": "refus",
+   "run": "p-20261014T145525-24a1d7",
+   "why": "taches.json : tâche 2 : « renvoi_chef » ne peut pas attendre une autre tâche (« apres ») : le chef agit à la fin de ce tour",
+   "planSource": "essai refusé",
+   "message": "lance le passage en prod et le redemarrage",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "orchestrateur-dev",
+      "titre": "mise en prod 0.96.0 + 0.97.0 (sans redémarrage)",
+      "demande": "Mise en prod de l'orchestrateur : passer 0.96.0 et 0.97.0 ensemble de la branche `dev` (I:\\Dev\\orchestrateur-dev, commit 458e33c, v0.97.0) vers la prod I:\\orchestrateur (branche master, actuellement en 0.95.0, commit 9d3b678). Contexte (tu ne vois pas la conversation) : le chef a demandé « Voulez-vous que je passe maintenant 0.96.0 et 0.97.0 ensemble en prod, puis que je redémarre le serveur une seule fois ? » ; l'utilisateur a répondu « lance le passage en prod et le redemarrage ». Contenu : 0.96.0 (commit ebc7f7f, tag v0.96.0 — envoi d'une TODO au chef pour en discuter) et 0.97.0 (commit […]"
+     }
+    ],
+    "actions": [
+     {
+      "ref": "t2",
+      "apres": [
+       "t1"
+      ],
+      "action": "restart",
+      "raison": "redémarrage 7777 après la mise en prod"
+     }
+    ]
+   },
+   "runs": {},
+   "expect": {
+    "order": [
+     [
+      "t1",
+      "t2"
+     ]
+    ],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-996bab",
+   "kind": "refus",
+   "run": "p-20261014T181424-996bab",
+   "why": "taches.json : tâche 3 : « renvoi_chef » ne peut pas attendre une autre tâche (« apres ») : le chef agit à la fin de ce tour",
+   "planSource": "essai refusé",
+   "message": "1 ET 2: oui\nVerfie qu'auncune autre tache ne fera de test complet",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t2",
+      "projet": "orchestrateur-dev",
+      "titre": "mise en prod de la 0.98.0",
+      "demande": "Mise en prod de la 0.98.0 (accord de l'utilisateur du 2026-10-14 : « oui »). Contexte : la 0.98.0 (onglet « 📰 Release » regroupé par release : bloc « ⏳ En cours » puis un bloc par release, en-têtes cliquables ouvrant une fenêtre détaillée) est livrée sur la branche `dev` (commit `3caaaca`, tag `v0.98.0`, tag de retour `pre-release-groups-v0.97.0`) ; la prod est en 0.97.0 ; rien n'a été poussé. Fais le passage en prod selon la procédure habituelle du projet, avec cette fois une non-régression COMPLÈTE (justifiée car c'est la mise en prod ; en dev, la règle est désormais la non-régression […]"
+     }
+    ],
+    "actions": [
+     {
+      "ref": "t3",
+      "apres": [
+       "t2"
+      ],
+      "action": "restart",
+      "raison": "redémarrage serveur après la prod 0.98.0"
+     }
+    ]
+   },
+   "runs": {},
+   "expect": {
+    "order": [
+     [
+      "t2",
+      "t3"
+     ]
+    ],
+    "toTreat": 0,
+    "resumes": []
+   },
+   "chefInTurn": [
+    {
+     "ref": "t1",
+     "what": "règle : non-régression ciblée en dev"
+    },
+    {
+     "ref": "t4",
+     "what": "contrôle : aucune autre tâche en test complet"
+    }
+   ]
+  },
+  {
+   "id": "refus-22be72",
+   "kind": "refus",
+   "run": "p-20261014T193744-22be72",
+   "why": "taches.json : tâche 2 : « renvoi_chef » ne peut pas attendre une autre tâche (« apres ») : le chef agit à la fin de ce tour",
+   "planSource": "essai refusé",
+   "message": "Quand tu as fini les taches, du passes en prod, avec tests complets. Ne me pose pas de question, je vais me coucher. Il faut que le serveur ai redemarre avec la nouvelle version a mon reveil",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "orchestrateur-dev",
+      "titre": "mise en prod de la dernière version dev",
+      "demande": "Mise en prod de l'orchestrateur (accord explicite de l'utilisateur du 2026-10-14, verbatim : « Quand tu as fini les taches, du passes en prod, avec tests complets. Ne me pose pas de question, je vais me coucher. Il faut que le serveur ai redemarre avec la nouvelle version a mon reveil »). Contexte (tu ne vois pas la conversation) : la prod (`I:\\orchestrateur`, branche master) est en 0.98.0 (`3caaaca`). La branche `dev` contient au moins la 0.99.0 (commit `28cbfe9`, tag `v0.99.0`, item t-182fa2 « contexte calibré par requête », `scripts/context-policy.mjs`, `_test_context_calibration.mjs`), et […]"
+     }
+    ],
+    "actions": [
+     {
+      "ref": "t2",
+      "apres": [
+       "t1"
+      ],
+      "action": "restart",
+      "raison": "redémarrage serveur après la mise en prod"
+     }
+    ]
+   },
+   "runs": {},
+   "expect": {
+    "order": [
+     [
+      "t1",
+      "t2"
+     ]
+    ],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-5e9386",
+   "kind": "refus",
+   "run": "p-20261015T085122-5e9386",
+   "why": "taches.json : tâche 3 : « renvoi_chef » ne peut pas attendre une autre tâche (« apres ») : le chef agit à la fin de ce tour",
+   "planSource": "essai refusé",
+   "message": "On ne rajoute plus de tache. Une fois que tout est termine, et seulement la, on lance un test de non regression global, puis on met en prod.\nUne fois fait, on travaille pour que l'orchestrateur passe en pipeline",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "orchestrateur-dev",
+      "titre": "non-régression COMPLÈTE avant prod",
+      "demande": "Non-régression COMPLÈTE avant la mise en prod (aucune nouvelle fonctionnalité). Contexte (tu ne vois pas la conversation) : l'utilisateur a dit, verbatim, le 2026-10-15 : « On ne rajoute plus de tache. Une fois que tout est termine, et seulement la, on lance un test de non regression global, puis on met en prod. Une fois fait, on travaille pour que l'orchestrateur passe en pipeline ». Le périmètre est gelé : tu ne commences aucun nouveau chantier. Précondition : tout ton travail en cours est terminé et livré (implémentation du parallélisme des tâches d'un même musicien — « lanes » —, […]"
+     },
+     {
+      "ref": "t2",
+      "apres": [
+       "t1"
+      ],
+      "projet": "orchestrateur-dev",
+      "titre": "bond de prod (prod-jump --apply)",
+      "demande": "Bond de production de l'orchestrateur, décidé par l'utilisateur (verbatim, 2026-10-15 : « Une fois que tout est termine, et seulement la, on lance un test de non regression global, puis on met en prod »). Précondition stricte : la non-régression COMPLÈTE sur le tag vX.Y.Z de la dernière version livrée est verte (rapport full sur l'arbre du tag, `node scripts/delivery-gate.mjs prod-check vX.Y.Z` OK). Si elle ne l'est pas, ou si la prod I:\\orchestrateur est modifiée, ou si un tour tourne en prod, ne fais rien et rapporte pourquoi. Sinon : `node scripts/prod-jump.mjs --tag vX.Y.Z --prod […]"
+     },
+     {
+      "ref": "t4",
+      "apres": [
+       "t3"
+      ],
+      "projet": "orchestrateur-dev",
+      "titre": "orchestrateur en pipeline obligatoire",
+      "demande": "Faire passer l'orchestrateur lui-même en pipeline obligatoire. Contexte (tu ne vois pas la conversation) : l'utilisateur a dit, verbatim, le 2026-10-15 : « Une fois fait, on travaille pour que l'orchestrateur passe en pipeline ». Aujourd'hui le projet `orchestrateur` (et sa dev `orchestrateur-dev`) fait partie des projets exclus de la mise en service des pipelines (voir `node scripts/pipeline-enforce.mjs` et logs/pipeline-onboarding.md) : ses tours sont ordinaires. Objectif : lever cette exclusion pour que les tours sur l'orchestrateur passent par les pipelines (discussion, dev léger/complet, […]"
+     }
+    ],
+    "actions": [
+     {
+      "ref": "t3",
+      "apres": [
+       "t2"
+      ],
+      "action": "restart",
+      "raison": "redémarrage serveur après le bond"
+     }
+    ]
+   },
+   "runs": {},
+   "expect": {
+    "order": [
+     [
+      "t1",
+      "t2"
+     ],
+     [
+      "t3",
+      "t4"
+     ],
+     [
+      "t2",
+      "t3"
+     ]
+    ],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-f9a1a7",
+   "kind": "refus",
+   "run": "p-20261015T110935-f9a1a7",
+   "why": "taches.json : tâche 5 : « renvoi_chef » ne peut pas attendre une autre tâche (« apres ») : le chef agit à la fin de ce tour",
+   "planSource": "essai refusé",
+   "message": "Q1: defaut a 2, et on monitore pour verifier si on peut passer a 3. Le monitoring n'est pas a faire maintenant, mets dans une TODO\nCorrection du panneau REQUÊTES : il faut que je puisse voir le schema des taches en cours les unes reliees aux autres, avec clairement (code couleur ?) indiquees celles qui sont finies, celle(s) en cours, et celles en attente. On peut imaginer un overlay qui s'ouvre sur un click, le panel lateral etant trop petit pour ca. => A mettre en TODO\nFais en sorte qu'a la fin du test complet, le serveur redemarre. Plus de question a ce sujet.\nOn ne travaille plus sur le portfolio\nMets le passage de l'orchestrateur en pipeline dans une TODO, et supprime des autres listes d'attentes. Arretes le tout de suite",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "orchestrateur-dev",
+      "titre": "Q1 : maxParallel par défaut à 2",
+      "demande": "Q1 : maxParallel par défaut passe de 1 à 2 (décision de l'utilisateur sur ta conception « tâches parallèles d'un même musicien », docs/PLAN-parallel-tasks-same-musician.md §6). Contexte (tu ne vois pas la conversation) : tu as recommandé 1 par défaut et listé les risques de 4 (limite de poste, garde mémoire, ressources du Routage pas encore livrées). Question posée : « La question 1 reste à toi : 1 par défaut, ou 2 ? ». Réponse verbatim de l'utilisateur : « Q1: defaut a 2, et on monitore pour verifier si on peut passer a 3. Le monitoring n'est pas a faire maintenant, mets dans une TODO ». À […]",
+      "meme_tache": true
+     },
+     {
+      "ref": "t2",
+      "apres": [
+       "t1"
+      ],
+      "projet": "orchestrateur-dev",
+      "titre": "Tag, non-régression complète puis bond de prod",
+      "demande": "Mise en prod de la version qui intègre les décisions Q1 (maxParallel = 2 par défaut, tâche précédente), Q4 et Q5 (tâche que tu traitais juste avant). Contexte (tu ne vois pas la conversation) : tu avais demandé « Je pose le tag v0.101.1 (comportements provisoires pour Q1, Q4 et Q5) et je lance la non-régression complète dessus, puis le bond si tout est vert ? ». Q1, Q4 et Q5 sont maintenant tranchées. Réponse verbatim de l'utilisateur sur la suite : « Fais en sorte qu'a la fin du test complet, le serveur redemarre. Plus de question a ce sujet. » À faire, sans redemander : pose le tag vX.Y.Z […]",
+      "meme_tache": true
+     },
+     {
+      "ref": "t3",
+      "projet": "orchestrateur-dev",
+      "titre": "TODO : suivi 2→3, schéma des requêtes, pipeline",
+      "demande": "Notes de TODO seulement, aucun développement (décisions de l'utilisateur du 2026-10-15). Dans ton TODO_LIST.md (horodaté, ne jamais effacer d'entrée) : (1) ajoute « Monitoring de maxParallel = 2 pour juger d'un passage à 3 » — verbatim : « on monitore pour verifier si on peut passer a 3. Le monitoring n'est pas a faire maintenant, mets dans une TODO » ; (2) ajoute la fonctionnalité du panneau REQUÊTES — verbatim : « il faut que je puisse voir le schema des taches en cours les unes reliees aux autres, avec clairement (code couleur ?) indiquees celles qui sont finies, celle(s) en cours, et […]"
+     }
+    ],
+    "actions": [
+     {
+      "ref": "t5",
+      "apres": [
+       "t2"
+      ],
+      "action": "restart",
+      "raison": "Chef : redémarrer le serveur après le bond"
+     }
+    ]
+   },
+   "runs": {},
+   "expect": {
+    "order": [
+     [
+      "t1",
+      "t2"
+     ],
+     [
+      "t2",
+      "t5"
+     ]
+    ],
+    "toTreat": 0,
+    "resumes": []
+   },
+   "chefInTurn": [
+    {
+     "ref": "t4",
+     "what": "Chef : retirer les tâches portfolio et ranger la TODO"
+    }
+   ]
+  },
+  {
+   "id": "refus-127cd3",
+   "kind": "refus",
+   "run": "p-20261015T143258-127cd3",
+   "why": "taches.json : tâche 2 : « renvoi_chef » ne peut pas attendre une autre tâche (« apres ») : le chef agit à la fin de ce tour",
+   "planSource": "essai refusé",
+   "message": "il faut évidemment mettre à jour avant de redémarrer",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "orchestrateur-dev",
+      "titre": "prod : bond en v0.104.1 (tag + complète --ref)",
+      "demande": "Mise à jour de la prod (I:\\orchestrateur, actuellement en 0.100.0) vers la v0.104.1, AVANT le redémarrage du serveur. Contexte (tu ne vois pas la conversation) : tu as livré la v0.104.1 en commit local e5a0309 (tag de retour pre-stale-tests-fix-v0.104.0), et la complète est verte : 250 OK, 0 KO, 2 NA, « LIVRAISON : AUTORISÉE » (rapport .regress/report-v0.104.1-b.json). Tu avais indiqué que, pour mettre à jour la prod, il faut un tag v0.104.1 sur e5a0309 puis la complète --ref v0.104.1, exigée par prod-jump. Le chef t'a demandé : « une fois la complète verte, tu veux seulement le redémarrage, […]",
+      "meme_tache": true
+     }
+    ],
+    "actions": [
+     {
+      "ref": "t2",
+      "apres": [
+       "t1"
+      ],
+      "action": "restart",
+      "raison": "redémarrage serveur après bond prod v0.104.1"
+     }
+    ]
+   },
+   "runs": {},
+   "expect": {
+    "order": [
+     [
+      "t1",
+      "t2"
+     ]
+    ],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-da95c0",
+   "kind": "refus",
+   "run": "p-20261015T210716-da95c0",
+   "why": "taches.json : tâche 2 : « apres » ne peut pas désigner une tâche renvoyée au chef (elle part à la fin de ce tour)",
+   "planSource": "taches.json final (essai refusé non relu)",
+   "message": "Laisses courrir on finit les taches qui existent et on passe orchestrateur-dev en pipeline juste apres. Puis tests de regression et mise a jour",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "orchestrateur-dev",
+      "titre": "mise en service pipeline d'orchestrateur-dev",
+      "demande": "Mise en service des pipelines pour orchestrateur-dev (aujourd'hui hors service : ses tours partent sans pipeline). Demande de l'utilisateur (2026-10-15) : « Laisses courrir on finit les taches qui existent et on passe orchestrateur-dev en pipeline juste apres. Puis tests de regression et mise a jour ». PRÉCONDITION, à vérifier avant toute modification : les tâches existantes d'orchestrateur-dev doivent être finies, à savoir « sorties en HTML : consigne ajoutée par le code », « client web : afficher les sorties HTML assainies », « tests de non-régression ciblés par périmètre » et 0ee08d2e « […]"
+     },
+     {
+      "ref": "t2",
+      "apres": [
+       "t1"
+      ],
+      "projet": "orchestrateur-dev",
+      "titre": "tests de régression après passage en pipeline",
+      "demande": "Tests de régression d'orchestrateur-dev, après sa mise en service en pipeline. Demande de l'utilisateur (2026-10-15) : « Puis tests de regression et mise a jour ». Lance la non-régression prévue avant une mise en prod : le script ciblé par périmètre s'il a été livré, sinon la suite complète (précise lequel). Elle porte sur tout ce qui a changé depuis la version en prod (0.104.1), y compris « sorties en HTML : consigne ajoutée par le code », « client web : afficher les sorties HTML assainies », « tests de non-régression ciblés par périmètre » et « identifiants cliquables : overlay explicatif […]"
+     },
+     {
+      "ref": "t3",
+      "apres": [
+       "t2"
+      ],
+      "projet": "orchestrateur-dev",
+      "titre": "mise à jour de la prod orchestrateur",
+      "demande": "Mise à jour de la prod de l'orchestrateur (I:/orchestrateur, aujourd'hui en 0.104.1) avec les livraisons d'orchestrateur-dev, selon la procédure habituelle (comme pour la 0.104.1), et seulement si les tests de régression précédents sont verts. Demande de l'utilisateur (2026-10-15) : « Puis tests de regression et mise a jour ». Pose un tag de retour avant, mets à jour la version et le CHANGELOG, et documente le rollback. Ne redémarre PAS le serveur et ne pousse rien : le chef redémarre lui-même avec restart-orchestrateur.mjs après ton rapport. Si les tests étaient rouges, n'applique rien et […]"
+     }
+    ]
+   },
+   "runs": {},
+   "expect": {
+    "order": [
+     [
+      "t1",
+      "t2"
+     ],
+     [
+      "t2",
+      "t3"
+     ]
+    ],
+    "toTreat": 0,
+    "resumes": []
+   },
+   "chefInTurn": [
+    {
+     "ref": "t4",
+     "what": "ordre de file : 0ee08d2e avant la mise en service"
+    }
+   ]
+  },
+  {
+   "id": "refus-a0106b",
+   "kind": "refus",
+   "run": "p-20261016T043850-a0106b",
+   "why": "taches.json : tâche 2 : « renvoi_chef » ne peut pas attendre une autre tâche (« apres ») : le chef agit à la fin de ce tour",
+   "planSource": "essai refusé",
+   "message": "go 0.107.0",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "orchestrateur-dev",
+      "titre": "prod : appliquer le bond en 0.107.0",
+      "demande": "Passage en prod de v0.107.0 : l'utilisateur a donné son feu vert (« go 0.107.0 »). Contexte (tu ne vois pas la conversation) : à ton tour précédent, tu as vérifié que le rapport I:\\Dev\\orchestrateur-dev\\.regress\\report-idrefs3.json est une non-régression COMPLÈTE (256 OK, 0 KO, 2 NA attendus) sur l'arbre exact de 80fff4b (v0.107.0). Tu as posé le tag local annoté v0.107.0 sur 80fff4b, et `prod-jump --tag v0.107.0 --prod I:\\orchestrateur --from I:\\Dev\\orchestrateur-dev` a répondu « non-régression COMPLÈTE verte — mise en prod possible » (exit 0). Question posée à l'utilisateur : « go 0.107.0 » […]",
+      "meme_tache": true
+     }
+    ],
+    "actions": [
+     {
+      "ref": "t2",
+      "apres": [
+       "t1"
+      ],
+      "action": "restart",
+      "raison": "redémarrer le serveur après le bond 0.107.0"
+     }
+    ]
+   },
+   "runs": {},
+   "expect": {
+    "order": [
+     [
+      "t1",
+      "t2"
+     ]
+    ],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-38dedf",
+   "kind": "refus",
+   "run": "p-20261016T080754-38dedf",
+   "why": "taches.json : tâche 2 : le chef ne se délègue pas de tâche (s’il doit agir lui-même : « renvoi_chef »)",
+   "planSource": "essai refusé",
+   "message": "Il faut créer un musicien projet-reunion. Quels formats audio ou video acceptes-tu ? J'ai un mkv que je souhaite joindre à ce chat, mais tu ne l'acceptes pas",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "orchestrateur",
+      "titre": "pièces jointes : formats audio/vidéo, .mkv refusé",
+      "demande": "Pièces jointes du chat (composer du dashboard et de l'app) : l'utilisateur demande verbatim « Quels formats audio ou video acceptes-tu ? J'ai un mkv que je souhaite joindre à ce chat, mais tu ne l'acceptes pas ». Vérifie dans le code (client et serveur : attribut accept de l'input fichier, filtre MIME/extensions, limite de taille, route d'upload des attachments) la liste exacte des formats audio et vidéo acceptés aujourd'hui, et pourquoi un fichier .mkv (video/x-matroska) est refusé, en citant fichier:ligne. Réponds à l'utilisateur avec cette liste et la cause du refus, puis indique ce qu'il […]"
+     }
+    ],
+    "question": "L'utilisateur demande verbatim « Il faut créer un musicien projet-reunion ». Aucun projet projet-reunion n'existe (ni dans config.json ni dans I:\\Dev). Avant de créer le projet (dossier I:\\Dev\\projet-reunion, pipeline nouveau, version 1.0.0, CHANGELOG), il faut savoir : quel est le but d'projet-reunion, quel type de projet (web, Android, Python, outil audio/vidéo…), s'il part d'un dépôt existant, et si le fichier .mkv qu'il veut joindre est destiné à projet-reunion."
+   },
+   "runs": {},
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-e75edf",
+   "kind": "refus",
+   "run": "p-20261016T102815-e75edf",
+   "why": "taches.json : tâche 2 : « renvoi_chef » ne peut pas attendre une autre tâche (« apres ») : le chef agit à la fin de ce tour",
+   "planSource": "essai refusé",
+   "message": "Redémarre quand tu peux.\nIl faut installer le pre-hook (rappelles moi ce que c'est )\nPas de non regression complete",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "orchestrateur",
+      "titre": "hook pre-commit : installer le garde-fou",
+      "demande": "Hook pre-commit du garde-fou de livraison (orchestrateur v0.108.0) : installe-le dans ce clone. Contexte (tu ne vois pas la conversation) : le chef a signalé que `.git/hooks/pre-commit` est absent du clone de l'orchestrateur, donc aucun commit n'y est vérifié automatiquement par `scripts/delivery-gate.mjs` (le dernier commit s'est appuyé sur un rapport vert). Question posée à l'utilisateur : « Le musicien installe-t-il le hook pre-commit ? » — réponse : « Il faut installer le pre-hook ». À faire : 1) lancer `node scripts/delivery-gate.mjs install-hook` ; 2) vérifier que […]"
+     }
+    ],
+    "actions": [
+     {
+      "ref": "t2",
+      "apres": [
+       "t1"
+      ],
+      "action": "restart",
+      "raison": "redémarrage serveur v0.108.0 dès que libre"
+     }
+    ]
+   },
+   "runs": {},
+   "expect": {
+    "order": [
+     [
+      "t1",
+      "t2"
+     ]
+    ],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-3b9838",
+   "kind": "refus",
+   "run": "p-20261016T164356-3b9838",
+   "why": "taches.json : tâche 2 : « apres » ne peut pas désigner une tâche renvoyée au chef (elle part à la fin de ce tour)",
+   "planSource": "essai refusé",
+   "message": "Commences par kill la tâche en cours sur projet-video, lances la modification de la video (donc il ne faut pas la perdre en killant la première tâche), puis recrée la tâche en précisant que la video est déjà téléchargée.\nMets P9 dans la TODO list en l'expliquant correctement",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t2",
+      "apres": [
+       "t1"
+      ],
+      "projet": "projet-video",
+      "titre": "Remux faststart de la vidéo xbni8ci",
+      "demande": "Remux faststart (moov au début) du fichier vidéo déjà téléchargé « I Got Three Girlfriends From the System.mp4 » (racine de I:\\Dev\\projet-video, 266 703 188 octets, vidéo Dailymotion xbni8ci, ignorée par git). Contexte (tu ne vois pas la conversation) : l'exécution précédente p-20261016T155123-18ff0c a ajouté ce film à la page Séance (player.html, version 1.14.0) mais n'a pas pu livrer l'item « Le fichier est lisible en streaming depuis la page : les métadonnées MP4 (moov) sont placées avant les données (lecture possible sans tout télécharger) » ; elle a été close. Demande de l'utilisateur, […]",
+      "session_neuve": true
+     },
+     {
+      "ref": "t3",
+      "apres": [
+       "t2"
+      ],
+      "projet": "projet-video",
+      "titre": "Recréer la tâche xbni8ci (vidéo déjà téléchargée)",
+      "demande": "Vidéo déjà téléchargée — ne PAS la retélécharger : terminer l'ajout de la vidéo Dailymotion xbni8ci (https://www.example.org/x) à la page web « Séance » (la liste des séances, player.html). Le fichier est déjà sur disque : I:\\Dev\\projet-video\\I Got Three Girlfriends From the System.mp4 (remuxé en faststart par la tâche précédente). Contexte (tu ne vois pas la conversation) : demande d'origine de l'utilisateur, verbatim : « https://www.example.org/x récupère cette vidéo et mets la dans la queue », précisée par « projet-video, et la queue correspond à la page web la Scéance ». Une première […]",
+      "session_neuve": true
+     }
+    ],
+    "actions": [
+     {
+      "ref": "t4",
+      "action": "todo_add",
+      "titre": "TODO chef : inscrire l'item P9 (pipeline en couloir)"
+     },
+     {
+      "ref": "a2",
+      "action": "resolve_question",
+      "cible": "projet-video",
+      "note": "répondu via le chef : « simplifier » — exécution p-20261016T155123-18ff0c close à la demande de l'utilisateur, remux […]"
+     }
+    ],
+    "reprises": [
+     {
+      "ref": "t1",
+      "run": "p-20261016T155123-18ff0c",
+      "message": "simplifier"
+     }
+    ]
+   },
+   "runs": {
+    "p-20261016T155123-18ff0c": {
+     "status": "paused",
+     "project": "projet-video"
+    }
+   },
+   "expect": {
+    "order": [
+     [
+      "t1",
+      "t2"
+     ],
+     [
+      "t2",
+      "t3"
+     ]
+    ],
+    "toTreat": 0,
+    "resumes": [
+     "p-20261016T155123-18ff0c"
+    ]
+   }
+  },
+  {
+   "id": "refus-c012a2",
+   "kind": "refus",
+   "run": "p-20261017T084436-c012a2",
+   "why": "taches.json : tâche 2 : « apres » ne peut pas désigner une tâche renvoyée au chef (elle part à la fin de ce tour)",
+   "planSource": "essai refusé",
+   "message": "relances lz rédaction du mail pour le destinataire. ne poses pas de question, fais le, tel que décrit dans les derniers messages",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t2",
+      "apres": [
+       "t1"
+      ],
+      "projet": "projet-reunion",
+      "titre": "rédiger le brouillon du mail à le destinataire (réunion 16/10)",
+      "demande": "Rédaction du brouillon de mail à le destinataire sur la réunion d'une heure du matin du 16 octobre 2026 (nouvelle exécution de RÉDACTION, pas de rangement : ne supprime, ne déplace et ne renomme aucun fichier). Demande d'origine de l'utilisateur, verbatim : « Mail à le destinataire (destinataire unique) sur la réunion d'une heure de ce matin (16 octobre 2026). Rédige un brouillon de mail, en français, adressé uniquement à le destinataire. Le mail doit : 1) expliquer qu'il y a eu une réunion d'une heure ce matin ; 2) lister les participants ; 3) donner les grands titres de ce qui a été […]"
+     }
+    ],
+    "actions": [
+     {
+      "ref": "t1",
+      "action": "cancel_run",
+      "raison": "clore la pause p-20261016T155415-e67865 (rangement)",
+      "cible": "p-20261016T155415-e67865"
+     }
+    ]
+   },
+   "runs": {
+    "p-20261016T155415-e67865": {
+     "status": "paused",
+     "project": "projet-reunion"
+    }
+   },
+   "expect": {
+    "order": [
+     [
+      "t1",
+      "t2"
+     ]
+    ],
+    "toTreat": 0,
+    "cancelRun": [
+     "p-20261016T155415-e67865"
+    ],
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-234c79",
+   "kind": "refus",
+   "run": "p-20261018T090045-234c79",
+   "why": "taches.json : tâche 2 : « apres » ne peut pas désigner une tâche renvoyée au chef (elle part à la fin de ce tour)",
+   "planSource": "essai refusé",
+   "message": "À propos de projet-video : toujours bloque",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t2",
+      "apres": [
+       "t1"
+      ],
+      "projet": "projet-video",
+      "titre": "page Séance : MP4 xbni8ci lisible en streaming",
+      "demande": "Page Séance (player.html) : rendre la vidéo Dailymotion xbni8ci (https://www.example.org/x), déjà récupérée et ajoutée à la liste des séances, lisible en streaming depuis la page, c'est-à-dire avec les métadonnées MP4 (atome moov) placées avant les données (faststart), pour que la lecture démarre sans tout télécharger. Contexte (tu ne vois pas la conversation) : c'était le seul item non livré de l'exécution p-20261016T155123-18ff0c, close sans lui car son travail mis de côté (aside-item-0.patch, aside-item-6.patch) était périmé et en conflit avec ce qui a été livré depuis (v1.14.0, 7 items […]"
+     },
+     {
+      "ref": "t3",
+      "projet": "orchestrateur",
+      "titre": "bug : pause aside_conflict qui reboucle",
+      "demande": "Bug du moteur de pipeline : une exécution en pause « aside_conflict » ne peut pas être débloquée. Cas réel : exécution p-20261016T155123-18ff0c du projet projet-video (I:\\orchestrateur\\logs\\runs\\p-20261016T155123-18ff0c\\run.json, pausedLimit = aside_conflict). Le travail mis de côté aside-item-0.patch (groupe 0, « travail d’avant la montée en complet ») ne s'applique plus sur le travail livré depuis (conflit sur CHANGELOG.md notamment). Constats : (1) la réponse « simplifier » donnée plus tôt par l'utilisateur n'a pas clos l'exécution ; (2) la reprise « continuer » du 2026-10-16 est repartie […]"
+     }
+    ],
+    "reprises": [
+     {
+      "ref": "t1",
+      "run": "p-20261016T155123-18ff0c",
+      "message": "simplifier"
+     }
+    ]
+   },
+   "runs": {
+    "p-20261016T155123-18ff0c": {
+     "status": "paused",
+     "project": "projet-video"
+    }
+   },
+   "expect": {
+    "order": [
+     [
+      "t1",
+      "t2"
+     ]
+    ],
+    "toTreat": 0,
+    "resumes": [
+     "p-20261016T155123-18ff0c"
+    ]
+   }
+  },
+  {
+   "id": "refus-ce3136",
+   "kind": "refus",
+   "run": "p-20261018T101119-ce3136",
+   "why": "taches.json : tâche 1 : l'exécution p-20261018T091024-0e199e n'est pas une exécution en pause de projet-video",
+   "planSource": "essai refusé",
+   "message": "relance p-20261018T091024-0e199e",
+   "plan": {
+    "reprises": [
+     {
+      "ref": "t1",
+      "run": "p-20261018T091024-0e199e",
+      "message": "Reprise de l'exécution de pipeline p-20261018T091024-0e199e (projet-video, dev complet), arrêtée par la supervision à 09:57 UTC alors qu'elle était gelée. Décision de l'utilisateur : option 1 (« […]"
+     }
+    ]
+   },
+   "runs": {
+    "p-20261018T091024-0e199e": {
+     "status": "running",
+     "alive": false,
+     "project": "projet-video"
+    }
+   },
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": [
+     "p-20261018T091024-0e199e"
+    ]
+   }
+  },
+  {
+   "id": "refus-a86bfa",
+   "kind": "refus",
+   "run": "p-20261019T142547-a86bfa",
+   "why": "taches.json : tâche 2 : « renvoi_chef » ne peut pas attendre une autre tâche (« apres ») : le chef agit à la fin de ce tour",
+   "planSource": "essai refusé",
+   "message": "oui, adapte les trois tests",
+   "plan": {
+    "reprises": [
+     {
+      "ref": "t1",
+      "run": "p-20261018T154104-6cfbe8",
+      "message": "Accord de l'utilisateur pour adapter les trois tests d'exigence figés, puis reprendre la livraison du tri des vidéos (la plus récente en haut). Contexte : l'exécution p-20261018T154104-6cfbe8 était […]"
+     }
+    ]
+   },
+   "runs": {
+    "p-20261018T154104-6cfbe8": {
+     "status": "paused",
+     "project": "projet-video"
+    }
+   },
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": [
+     "p-20261018T154104-6cfbe8"
+    ]
+   },
+   "chefInTurn": [
+    {
+     "ref": "t2",
+     "what": "doublon en attente b3b6264e : vérifier/retirer",
+     "at": "réveil"
+    }
+   ]
+  },
+  {
+   "id": "refus-af4324",
+   "kind": "refus",
+   "run": "p-20261019T151215-af4324",
+   "why": "taches.json : tâche 2 : « renvoi_chef » ne peut pas attendre une autre tâche (« apres ») : le chef agit à la fin de ce tour",
+   "planSource": "essai refusé",
+   "message": "projet-video, corriges les tests qui font que ca bloque, ils ne sont pas corrects manifestement.",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "orchestrateur",
+      "titre": "présenter : contrôles contradictoires (Données)",
+      "demande": "Corriger la contradiction entre deux contrôles automatiques de l'étape « présenter » du pipeline Données (donnees), qui bloque l'exécution p-20261019T150341-318fcf de projet-video (en pause, pausedLimit « criteria », voir I:\\orchestrateur\\logs\\runs\\p-20261019T150341-318fcf\\run.json, étapes 04-presenter et 05-presenter). Constat : 1er essai refusé avec why = « aucune modification — s'il n'y a rien à faire, écris « PRESENTATION_SEULE » dans l'artefact » ; 2e essai, le musicien a écrit exactement « PRESENTATION_SEULE » dans presentation.md, refusé avec why = « presentation.md : sections […]"
+     }
+    ],
+    "actions": [
+     {
+      "ref": "r0",
+      "action": "restart",
+      "raison": "redémarrage avant la reprise",
+      "apres": [
+       "t1"
+      ]
+     }
+    ],
+    "reprises": [
+     {
+      "ref": "t2",
+      "apres": [
+       "r0"
+      ],
+      "run": "p-20261019T150341-318fcf",
+      "message": "Après la livraison de la correction par orchestrateur (tâche 1) : si elle exige un redémarrage du serveur, lancer restart-orchestrateur (aucun musicien LIVE), puis reprendre l'exécution en pause de […]"
+     }
+    ]
+   },
+   "runs": {
+    "p-20261019T150341-318fcf": {
+     "status": "paused",
+     "project": "projet-video"
+    }
+   },
+   "expect": {
+    "order": [
+     [
+      "r0",
+      "t2"
+     ]
+    ],
+    "toTreat": 0,
+    "resumes": [
+     "p-20261019T150341-318fcf"
+    ]
+   }
+  },
+  {
+   "id": "refus-4d7b7f",
+   "kind": "refus",
+   "run": "p-20261019T165050-4d7b7f",
+   "why": "taches.json : tâche 4 : « apres » ne peut pas désigner une tâche renvoyée au chef (elle part à la fin de ce tour)",
+   "planSource": "essai refusé",
+   "message": "sors projet-video des pipelines et ne fais plus de tests de non régression pour ce projet",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t4",
+      "projet": "projet-video",
+      "titre": "ajout des 5 vidéos, sans test de non-régression",
+      "demande": "Ajouter au lecteur les 5 vidéos YouTube G14OnR5iqpw, GwD-IMsNEKY, H9MGdaR7cKo, IbKU1kzl5Ys et EsVgd5KNMb8 (item h-74bad48e38 de TODO_LIST.md, ligne 6). Contexte (tu ne vois pas la conversation) : une première tentative en pipeline (exécution p-20261019T163311-e4336f) a été abandonnée parce que le code ne faisait pas passer le test imposé après 3 essais ; ses modifications peuvent rester dans l'arbre de travail : commence par git status et git diff, et reprends ou nettoie ce travail. Consigne de l'utilisateur (verbatim) : « sors projet-video des pipelines et ne fais plus de tests de non […]",
+      "session_neuve": true
+     }
+    ],
+    "actions": [
+     {
+      "ref": "t2",
+      "action": "cancel_run",
+      "raison": "clore l'exécution en pause e4336f",
+      "cible": "p-20261019T163311-e4336f"
+     },
+     {
+      "ref": "t3",
+      "action": "todo_add",
+      "titre": "noter la dispense de non-régression projet-video"
+     },
+     {
+      "ref": "a3",
+      "action": "resolve_question",
+      "cible": "projet-video",
+      "note": "répondu via le chef : projet-video sort des pipelines, plus de tests de non-régression ; l'exécution […]"
+     }
+    ]
+   },
+   "runs": {
+    "p-20261019T163311-e4336f": {
+     "status": "paused",
+     "project": "projet-video"
+    }
+   },
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "cancelRun": [
+     "p-20261019T163311-e4336f"
+    ],
+    "resumes": []
+   },
+   "chefInTurn": [
+    {
+     "ref": "t1",
+     "what": "sortie de projet-video des pipelines"
+    }
+   ]
+  },
+  {
+   "id": "refus-7e7851",
+   "kind": "refus",
+   "run": "p-20261019T181739-7e7851",
+   "why": "taches.json : tâche 2 : « renvoi_chef » ne peut pas attendre une autre tâche (« apres ») : le chef agit à la fin de ce tour",
+   "planSource": "essai refusé",
+   "message": "Reprise de pause : le message joint à « continuer » est perdu : mettre en TODO avec les details, puis oublie\nDe quels paragraphes parles-tu dans ces phrases :\ninverser le §1 : oui ou non ?\nsupprimer le §3 sous condition : oui ou non ?",
+   "plan": {
+    "actions": [
+     {
+      "ref": "t1",
+      "action": "todo_add",
+      "titre": "TODO : noter la reprise de pause mise de côté"
+     },
+     {
+      "ref": "t2",
+      "apres": [
+       "t1"
+      ],
+      "action": "cancel_run",
+      "raison": "abandonner l'exécution en pause 44d707",
+      "cible": "p-20261019T144511-44d707"
+     }
+    ]
+   },
+   "runs": {
+    "p-20261019T144511-44d707": {
+     "status": "paused",
+     "project": "orchestrateur-dev"
+    }
+   },
+   "expect": {
+    "order": [
+     [
+      "t1",
+      "t2"
+     ]
+    ],
+    "toTreat": 0,
+    "cancelRun": [
+     "p-20261019T144511-44d707"
+    ],
+    "resumes": []
+   }
+  },
+  {
+   "id": "refus-d0171a",
+   "kind": "refus",
+   "run": "p-20261019T182500-d0171a",
+   "why": "taches.json : tâche 2 : « renvoi_chef » ne peut pas attendre une autre tâche (« apres ») : le chef agit à la fin de ce tour",
+   "planSource": "essai refusé",
+   "message": "Je ne veux aucun des 3 par le pipleine",
+   "plan": {},
+   "runs": {},
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": []
+   },
+   "chefInTurn": [
+    {
+     "ref": "t1",
+     "what": "retrait des pipelines : orchestrateur-dev"
+    },
+    {
+     "ref": "t2",
+     "what": "retrait des pipelines : Routage du chef"
+    }
+   ]
+  },
+  {
+   "id": "renvoi65-996bab",
+   "kind": "renvoi-65",
+   "run": "p-20261014T181424-996bab",
+   "why": "tâche renvoyée au chef refusée en sortie 65 (P0-B, chef → chef)",
+   "message": "1 ET 2: oui\nVerfie qu'auncune autre tache ne fera de test complet",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t2",
+      "projet": "orchestrateur-dev",
+      "titre": "mise en prod de la 0.98.0",
+      "demande": "Mise en prod de la 0.98.0 (accord de l'utilisateur du 2026-10-14 : « oui »). Contexte : la 0.98.0 (onglet « 📰 Release » regroupé par release : bloc « ⏳ En cours » puis un bloc par release, en-têtes cliquables ouvrant une fenêtre détaillée) est livrée sur la branche `dev` (commit `3caaaca`, tag `v0.98.0`, tag de retour `pre-release-groups-v0.97.0`) ; la prod est en 0.97.0 ; rien n'a été poussé. Fais le passage en prod selon la procédure habituelle du projet, avec cette fois une non-régression COMPLÈTE (justifiée car c'est la mise en prod ; en dev, la règle est désormais la non-régression […]"
+     }
+    ],
+    "actions": [
+     {
+      "ref": "t3",
+      "action": "restart",
+      "raison": "contrôle : aucune autre tâche en test complet"
+     }
+    ]
+   },
+   "runs": {},
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": []
+   },
+   "chefInTurn": [
+    {
+     "ref": "t1",
+     "what": "règle : non-régression ciblée en dev"
+    }
+   ]
+  },
+  {
+   "id": "renvoi65-22be72",
+   "kind": "renvoi-65",
+   "run": "p-20261014T193744-22be72",
+   "why": "tâche renvoyée au chef refusée en sortie 65 (P0-B, chef → chef)",
+   "message": "Quand tu as fini les taches, du passes en prod, avec tests complets. Ne me pose pas de question, je vais me coucher. Il faut que le serveur ai redemarre avec la nouvelle version a mon reveil",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "orchestrateur-dev",
+      "titre": "mise en prod de la dernière version dev",
+      "demande": "Mise en prod de l'orchestrateur (accord explicite de l'utilisateur du 2026-10-14, verbatim : « Quand tu as fini les taches, du passes en prod, avec tests complets. Ne me pose pas de question, je vais me coucher. Il faut que le serveur ai redemarre avec la nouvelle version a mon reveil »). Contexte (tu ne vois pas la conversation) : la prod (`I:\\orchestrateur`, branche master) est en 0.98.0 (`3caaaca`). La branche `dev` contient au moins la 0.99.0 (commit `28cbfe9`, tag `v0.99.0`, item t-182fa2 « contexte calibré par requête », `scripts/context-policy.mjs`, `_test_context_calibration.mjs`), et […]"
+     }
+    ],
+    "actions": [
+     {
+      "ref": "t2",
+      "action": "restart",
+      "raison": "redémarrage serveur au retour de la mise en prod"
+     }
+    ]
+   },
+   "runs": {},
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "renvoi65-dc447d",
+   "kind": "renvoi-65",
+   "run": "p-20261015T072034-dc447d",
+   "why": "tâche renvoyée au chef refusée en sortie 65 (P0-B, chef → chef)",
+   "message": "Veux-tu relire le document de conception avant le démarrage de 844e55a2 « parallèle même musicien : implémentation » \n=> fais moi un resume bref et clair de ce qu'il compte faire",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "orchestrateur-dev",
+      "titre": "résumé du document de conception « parallèle même musicien »",
+      "demande": "Résumé bref et clair, en français, du document de conception « parallélisme des tâches d'un même musicien » que tu as produit (ou que tu es en train de produire) dans docs/ (tâche « parallèle même musicien : conception isolation git »). LECTURE SEULE : ne modifie aucun fichier, ne commite rien, ne lance aucune implémentation. Contexte (tu ne vois pas la conversation) : le chef a demandé à l'utilisateur « Veux-tu relire le document de conception avant le démarrage de 844e55a2 « parallèle même musicien : implémentation » ? » ; l'utilisateur a répondu : « Veux-tu relire le document de conception […]"
+     }
+    ]
+   },
+   "runs": {},
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": []
+   },
+   "chefInTurn": [
+    {
+     "ref": "t2",
+     "what": "retenir 844e55a2 jusqu'à validation"
+    }
+   ]
+  },
+  {
+   "id": "renvoi65-5371e8",
+   "kind": "renvoi-65",
+   "run": "p-20261015T085629-5371e8",
+   "why": "tâche renvoyée au chef refusée en sortie 65 (P0-B, chef → chef)",
+   "message": ". Le code n'attend pas le redémarrage du serveur pour lancer la tâche 3 => Il faut absoluement que le serveur redemarre avant le passage a l'etape suivante une fois la laj faite",
+   "plan": {
+    "actions": [
+     {
+      "ref": "t1",
+      "action": "restart",
+      "raison": "retenir e563aacb jusqu'au redémarrage post-prod"
+     }
+    ]
+   },
+   "runs": {},
+   "expect": {
+    "order": [],
+    "toTreat": 0,
+    "resumes": []
+   }
+  },
+  {
+   "id": "renvoi65-f9a1a7",
+   "kind": "renvoi-65",
+   "run": "p-20261015T110935-f9a1a7",
+   "why": "tâche renvoyée au chef refusée en sortie 65 (P0-B, chef → chef)",
+   "message": "Q1: defaut a 2, et on monitore pour verifier si on peut passer a 3. Le monitoring n'est pas a faire maintenant, mets dans une TODO\nCorrection du panneau REQUÊTES : il faut que je puisse voir le schema des taches en cours les unes reliees aux autres, avec clairement (code couleur ?) indiquees celles qui sont finies, celle(s) en cours, et celles en attente. On peut imaginer un overlay qui s'ouvre sur un click, le panel lateral etant trop petit pour ca. => A mettre en TODO\nFais en sorte qu'a la fin du test complet, le serveur redemarre. Plus de question a ce sujet.\nOn ne travaille plus sur le portfolio\nMets le passage de l'orchestrateur en pipeline dans une TODO, et supprime des autres listes d'attentes. Arretes le tout de suite",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "orchestrateur-dev",
+      "titre": "Q1 : maxParallel par défaut à 2",
+      "demande": "Q1 : maxParallel par défaut passe de 1 à 2 (décision de l'utilisateur sur ta conception « tâches parallèles d'un même musicien », docs/PLAN-parallel-tasks-same-musician.md §6). Contexte (tu ne vois pas la conversation) : tu as recommandé 1 par défaut et listé les risques de 4 (limite de poste, garde mémoire, ressources du Routage pas encore livrées). Question posée : « La question 1 reste à toi : 1 par défaut, ou 2 ? ». Réponse verbatim de l'utilisateur : « Q1: defaut a 2, et on monitore pour verifier si on peut passer a 3. Le monitoring n'est pas a faire maintenant, mets dans une TODO ». À […]",
+      "meme_tache": true
+     },
+     {
+      "ref": "t2",
+      "apres": [
+       "t1"
+      ],
+      "projet": "orchestrateur-dev",
+      "titre": "Tag, non-régression complète puis bond de prod",
+      "demande": "Mise en prod de la version qui intègre les décisions Q1 (maxParallel = 2 par défaut, tâche précédente), Q4 et Q5 (tâche que tu traitais juste avant). Contexte (tu ne vois pas la conversation) : tu avais demandé « Je pose le tag v0.101.1 (comportements provisoires pour Q1, Q4 et Q5) et je lance la non-régression complète dessus, puis le bond si tout est vert ? ». Q1, Q4 et Q5 sont maintenant tranchées. Réponse verbatim de l'utilisateur sur la suite : « Fais en sorte qu'a la fin du test complet, le serveur redemarre. Plus de question a ce sujet. » À faire, sans redemander : pose le tag vX.Y.Z […]",
+      "meme_tache": true
+     },
+     {
+      "ref": "t3",
+      "projet": "orchestrateur-dev",
+      "titre": "TODO : suivi 2→3, schéma des requêtes, pipeline",
+      "demande": "Notes de TODO seulement, aucun développement (décisions de l'utilisateur du 2026-10-15). Dans ton TODO_LIST.md (horodaté, ne jamais effacer d'entrée) : (1) ajoute « Monitoring de maxParallel = 2 pour juger d'un passage à 3 » — verbatim : « on monitore pour verifier si on peut passer a 3. Le monitoring n'est pas a faire maintenant, mets dans une TODO » ; (2) ajoute la fonctionnalité du panneau REQUÊTES — verbatim : « il faut que je puisse voir le schema des taches en cours les unes reliees aux autres, avec clairement (code couleur ?) indiquees celles qui sont finies, celle(s) en cours, et […]"
+     }
+    ]
+   },
+   "runs": {},
+   "expect": {
+    "order": [
+     [
+      "t1",
+      "t2"
+     ]
+    ],
+    "toTreat": 0,
+    "resumes": []
+   },
+   "chefInTurn": [
+    {
+     "ref": "t4",
+     "what": "Chef : retirer les tâches portfolio et ranger la TODO"
+    }
+   ]
+  },
+  {
+   "id": "infra-refusal",
+   "kind": "infra",
+   "run": "p-20261012T085659-061170",
+   "why": "API Error: Sonnet 5.5 can't help with this. Start a new session to continue.",
+   "message": "[CALLBACK_WAKE lot=1 gen=1]\nLes résultats que tu attendais sont arrivés. Fais le point à l'utilisateur (2–5 puces par musicien, ce qu'il a EFFECTIVEMENT fait ; restitue verbatim toute question).\nNe redispatche QUE si c'était prévu dans la demande initiale ; sinon termine ton tour.\n\n— orchestrateur ✓ 1m39 · $537.12\n  **4. Décisions qui vous reviennent.** La question du chef sur un second avis indépendant pour chaque section avant l'assemblage reste ouverte, de même que l'emplacement du document assemblé. Le chef a reçu cette relecture.",
+   "infra": {
+    "result": {
+     "type": "result",
+     "subtype": "success",
+     "is_error": true,
+     "stop_reason": "refusal",
+     "result": "API Error: Sonnet 5.5 can't help with this. Start a new session to continue.\n\nLearn more: https://www.anthropic.com/legal/aup\n\nDetails: `[frontier_llm]`"
+    }
+   },
+   "expect": {
+    "cause": "refusal",
+    "calls": 2
+   }
+  },
+  {
+   "id": "infra-limit",
+   "kind": "infra",
+   "run": "p-20261012T102220-3a6fde",
+   "why": "limite de session Claude jusqu'à 2026-10-12T11:50:00.000Z",
+   "message": "[CALLBACK_WAKE lot=1 gen=1]\nLes résultats que tu attendais sont arrivés. Fais le point à l'utilisateur (2–5 puces par musicien, ce qu'il a EFFECTIVEMENT fait ; restitue verbatim toute question).\nNe redispatche QUE si c'était prévu dans la demande initiale ; sinon termine ton tour.\n\n— orchestrateur ✓ 1m46 · $548.68\n  **Nombre de mots :** le corps passe d'environ 1 410 à environ 1 610 mots. L'annexe compte environ 13 880 mots, pour un total d'environ 15 490. Le chef a reçu ce rapport.",
+   "infra": {
+    "result": {
+     "type": "result",
+     "subtype": "success",
+     "is_error": true,
+     "stop_reason": "stop_sequence",
+     "result": "You've hit your session limit · resets 2:50pm (Asia/Jerusalem)"
+    }
+   },
+   "expect": {
+    "cause": "limit",
+    "calls": 1
+   }
+  },
+  {
+   "id": "infra-auth",
+   "kind": "infra",
+   "run": "p-20261014T044705-556920",
+   "why": "Failed to authenticate: OAuth session expired and could not be refreshed",
+   "message": "Vide les contextes trop long, et regenere un contexte necessaire a la tache courante\n\nSi tu peux redemarre.\n\n[Routeur] 📝 Ajouté à la TODO list (chef/TODO_LIST.md) par le routeur :\n- chaque tache qui represente une fonctionalite (glisser deposer, annuler un item d'une liste, ...) doit etre un commit separe, pour pouvoir etre gere de maniere atomique par git. Pas besoin d'autorisation pour faire des commit. (t-bcd3ba)",
+   "infra": {
+    "result": {
+     "type": "result",
+     "subtype": "success",
+     "is_error": true,
+     "stop_reason": "stop_sequence",
+     "result": "Failed to authenticate: OAuth session expired and could not be refreshed"
+    }
+   },
+   "expect": {
+    "cause": "auth",
+    "calls": 1
+   }
+  },
+  {
+   "id": "citation-e8254b",
+   "kind": "reprise-par-citation",
+   "run": "p-20261019T180056-e8254b",
+   "why": "ancien Routage : p-20261019T144511-44d707 cité dans la demande, transformé en reprise (detectReprise)",
+   "message": "Est-ce que, lorsque de tests unitaires, des tests echouent, la consequence est de les repasser jusqu'a 3 fois max, ou essayer de trouver le probleme et de le corriger ? Verifie dans le code",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "orchestrateur-dev",
+      "titre": "vérifier : échec de tests = relance ou correction ?",
+      "demande": "Vérifier dans le code du moteur de pipeline (lecture seule, aucune modification) ce qui se passe quand des tests échouent pendant une étape de développement. Question de l'utilisateur (verbatim) : « Est-ce que, lorsque de tests unitaires, des tests echouent, la consequence est de les repasser jusqu'a 3 fois max, ou essayer de trouver le probleme et de le corriger ? Verifie dans le code ». Contexte (tu ne vois pas la conversation) : l'exécution en pause p-20261019T144511-44d707 « Reprise de pause : le message joint à « continuer » est perdu » a vu son second passage « Vert » refusé 3 fois : […]"
+     }
+    ]
+   },
+   "runs": {
+    "p-20261019T144511-44d707": {
+     "status": "paused",
+     "project": "orchestrateur-dev"
+    }
+   },
+   "expect": {
+    "noResume": [
+     "p-20261019T144511-44d707"
+    ],
+    "resumes": [],
+    "toTreat": 0,
+    "launchAtLeast": 1
+   }
+  },
+  {
+   "id": "citation-b610a9",
+   "kind": "reprise-par-citation",
+   "run": "p-20261012T073703-b610a9",
+   "why": "ancien Routage : p-20261009T123458-82d93b cité dans la demande, transformé en reprise (detectReprise)",
+   "message": "Je voudrais ecrire un document en anglais pour expliquer mes connaissances et mon experience en IA. Je veux que tu me fasses un document en plusieurs parties.\n1. les connaissances techniques : entrainement de model (backward propagation), context -> embbeding, vectord db, rag, \n2. les projets qui utilisent de l'IA pour faire un produit final qui utilise de l'IA (projet-o, orchestrateur), avec pour chacun d'eux des explications techniques, des schemas, ...\n3. les projets qui utilisent l'IA pour faire un produit (projet-h, frenchRadion, ...)",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "projet-radio",
+      "titre": "tâche citant une exécution",
+      "demande": "# Demande\n\nJe voudrais ecrire un document en anglais pour expliquer mes connaissances et mon experience en IA. Je veux que tu me fasses un document en plusieurs parties.\n1. les connaissances techniques : entrainement de model (backward propagation), context -> embbeding, vectord db, rag, \n2. les projets qui utilisent de l'IA pour faire un produit final qui utilise de l'IA (projet-o, orchestrateur), avec pour chacun d'eux des explications techniques, des schemas, ...\n3. les projets qui utilisent l'IA pour faire un produit (projet-h, frenchRadion, ...)\n (voir p-20261009T123458-82d93b)"
+     }
+    ]
+   },
+   "runs": {
+    "p-20261009T123458-82d93b": {
+     "status": "paused",
+     "project": "projet-radio"
+    }
+   },
+   "expect": {
+    "noResume": [
+     "p-20261009T123458-82d93b"
+    ],
+    "resumes": [],
+    "toTreat": 0,
+    "launchAtLeast": 1
+   }
+  },
+  {
+   "id": "citation-47deee",
+   "kind": "reprise-par-citation",
+   "run": "p-20261012T075424-47deee",
+   "why": "ancien Routage : p-20261009T123458-82d93b cité dans la demande, transformé en reprise (detectReprise)",
+   "message": "Rajoute projet-y et projet-e dans le portfolio\nTu peux ajouter aussi une section recherche, ou tu parleras de ce que j'ai fait sur pytorch et l'autotune.\nC'est toi (chef) qui fait l'assemblage final.\nIl faut que le document contienne les infos relatives a projet-radio\nLe but est un document prealable a un entretien. Il faut que tu sois sur de tout ce qui est marque dedans.",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "projet-radio",
+      "titre": "tâche citant une exécution",
+      "demande": "# Demande\n\nRajoute projet-y et projet-e dans le portfolio\nTu peux ajouter aussi une section recherche, ou tu parleras de ce que j'ai fait sur pytorch et l'autotune.\nC'est toi (chef) qui fait l'assemblage final.\nIl faut que le document contienne les infos relatives a projet-radio\nLe but est un document prealable a un entretien. Il faut que tu sois sur de tout ce qui est marque dedans.\n (voir p-20261009T123458-82d93b)"
+     }
+    ]
+   },
+   "runs": {
+    "p-20261009T123458-82d93b": {
+     "status": "paused",
+     "project": "projet-radio"
+    }
+   },
+   "expect": {
+    "noResume": [
+     "p-20261009T123458-82d93b"
+    ],
+    "resumes": [],
+    "toTreat": 0,
+    "launchAtLeast": 1
+   }
+  },
+  {
+   "id": "citation-9c57b2",
+   "kind": "reprise-par-citation",
+   "run": "p-20261016T163603-9c57b2",
+   "why": "ancien Routage : p-20261016T155123-18ff0c cité dans la demande, transformé en reprise (detectReprise)",
+   "message": "projet-video est toujours en pause, la correction ne sera pas faite ?",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "projet-video",
+      "titre": "xbni8ci : remux faststart, nouvelle exécution",
+      "demande": "Remux faststart du MP4 Dailymotion xbni8ci (bloc `moov` à placer avant `mdat`) pour que la vidéo se lise en streaming dans la page Séance (player.html). Contexte (tu ne vois pas la conversation) : l'exécution de pipeline p-20261016T155123-18ff0c « Dailymotion xbni8ci : télécharger et ajouter à Séance » a livré 7 items (fichier complet, MP4 H.264/AAC, 19 films existants conservés, aucune URL Dailymotion temporaire, UR-008, version + CHANGELOG, .mp4 ignoré par git), mais l'item 6 « Le fichier est lisible en streaming depuis la page : les métadonnées MP4 (moov) sont placées avant les données » a […]"
+     }
+    ]
+   },
+   "runs": {
+    "p-20261016T155123-18ff0c": {
+     "status": "paused",
+     "project": "projet-video"
+    }
+   },
+   "expect": {
+    "noResume": [
+     "p-20261016T155123-18ff0c"
+    ],
+    "resumes": [],
+    "toTreat": 0,
+    "launchAtLeast": 1
+   }
+  },
+  {
+   "id": "citation-c012a2",
+   "kind": "reprise-par-citation",
+   "run": "p-20261017T084436-c012a2",
+   "why": "ancien Routage : p-20261016T155415-e67865 cité dans la demande, transformé en reprise (detectReprise)",
+   "message": "relances lz rédaction du mail pour le destinataire. ne poses pas de question, fais le, tel que décrit dans les derniers messages",
+   "plan": {
+    "taches": [
+     {
+      "ref": "t1",
+      "projet": "projet-reunion",
+      "titre": "rédiger le brouillon du mail à le destinataire (réunion 16/10)",
+      "demande": "Rédaction du brouillon de mail à le destinataire sur la réunion d'une heure du matin du 16 octobre 2026 (nouvelle exécution de RÉDACTION, pas de rangement : ne supprime, ne déplace et ne renomme aucun fichier). Demande d'origine de l'utilisateur, verbatim : « Mail à le destinataire (destinataire unique) sur la réunion d'une heure de ce matin (16 octobre 2026). Rédige un brouillon de mail, en français, adressé uniquement à le destinataire. Le mail doit : 1) expliquer qu'il y a eu une réunion d'une heure ce matin ; 2) lister les participants ; 3) donner les grands titres de ce qui a été […] (voir p-20261016T155415-e67865)"
+     }
+    ]
+   },
+   "runs": {
+    "p-20261016T155415-e67865": {
+     "status": "paused",
+     "project": "projet-reunion"
+    }
+   },
+   "expect": {
+    "noResume": [
+     "p-20261016T155415-e67865"
+    ],
+    "resumes": [],
+    "toTreat": 0,
+    "launchAtLeast": 1
+   }
+  },
+  {
+   "id": "inversion-7e7851",
+   "kind": "inversion",
+   "run": "p-20261019T181739-7e7851",
+   "why": "ancien Routage : clôture lancée AVANT la note TODO (ordre inversé) et traduite en kill-stalled (« no pid file — nothing to kill »), exécution restée en pause",
+   "message": "Reprise de pause : le message joint à « continuer » est perdu : mettre en TODO avec les details, puis oublie\nDe quels paragraphes parles-tu dans ces phrases :\ninverser le §1 : oui ou non ?\nsupprimer le §3 sous condition : oui ou non ?",
+   "plan": {
+    "actions": [
+     {
+      "ref": "a",
+      "action": "todo_add",
+      "titre": "TODO : noter la reprise de pause mise de côté : Noter dans I:\\Dev\\Chef\\TODO_LIST.md (entrée horodatée 2026-10-19) une entrée « EN ATTENTE : orchestrateur-dev — Reprise de pause : le message joint à « continuer » est perdu », avec les détails de […]"
+     },
+     {
+      "ref": "b",
+      "action": "cancel_run",
+      "cible": "p-20261019T144511-44d707",
+      "raison": "abandon demandé par l’utilisateur, après la note TODO",
+      "apres": [
+       "a"
+      ]
+     }
+    ]
+   },
+   "runs": {
+    "p-20261019T144511-44d707": {
+     "status": "paused",
+     "project": "orchestrateur-dev"
+    }
+   },
+   "expect": {
+    "order": [
+     [
+      "a",
+      "b"
+     ]
+    ],
+    "cancelRun": [
+     "p-20261019T144511-44d707"
+    ],
+    "toTreat": 0,
+    "resumes": [],
+    "launchAtLeast": 2
+   }
+  }
+ ]
+}

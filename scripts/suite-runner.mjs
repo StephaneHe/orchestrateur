@@ -51,6 +51,8 @@ export function keepFailedOutput({ dir, suite, code, out, durationS }) {
 // ---------------------------------------------------------------------------
 export const SERIAL_SUITES = new Set([
   '_test_model_backoff.mjs',       // timing windows (back-off waits, 300 ms notice)
+  '_test_chef_turn_calls.mjs',     // parallel classification measured against the summed times; detached shadow
+  '_test_requests_pending_link.mjs', // detached turns released at the end of another turn (waits)
   '_test_permission_prompt.mjs',   // permission timeouts
   '_test_neutral_stop.mjs',        // heartbeat freshness
   '_test_responses_shim.mjs',      // real codex + Windows sandbox, heavy

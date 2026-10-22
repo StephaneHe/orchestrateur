@@ -1186,6 +1186,15 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis) {
         mod.startTurn(LOGS, r.id, { turn: TURN_ID, log: path.join(LOGS, `${projectName}.jsonl`), offset });
         REQ = { mod, request: r.id, chef: { offset } };
         process.env.ORCH_REQUEST_ID = r.id;
+        // Routage v3 phase 2, SHADOW: the single chef turn runs detached next to
+        // this real turn, for a new message of the user only; it writes only
+        // logs/chef-shadow/ and changes nothing here (chef-turn.mjs).
+        if (!known && r.kind === 'message' && !CHEF_HANDOFF) {
+          try {
+            const tun = await import('./pipeline-tuning.mjs');
+            if (tun.readChefV3(ROOT).shadow) (await import('./chef-turn.mjs')).spawnShadow({ root: ROOT, request: r.id, text: prompt });
+          } catch (e) { console.error(`[dispatch] tour v3 en ombre non lancé : ${e.message}`); }
+        }
         try { backoffMod = await import('./model-backoff.mjs'); } catch {}
       } else if (REQUEST_FROM_ENV && mod.readRequest(LOGS, REQUEST_FROM_ENV)) {
         const t = mod.addTask(LOGS, REQUEST_FROM_ENV, { projet: projectName, demande: prompt, launch: { callback: callbackProject, source: sourceProject,

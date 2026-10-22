@@ -2122,7 +2122,7 @@ export async function browserChecks(sb, t) {
       assert(await until(async () => (await page.locator('#models .mr-tab').count()) > 0, 10_000), 'vue');
       if (!(await until(async () => (await page.locator('#models .mr-reco-box').count()) > 0, 6000))) NA('suggestions absentes de cet état du code');
       const box = await page.textContent('#models .mr-reco-box');
-      assert(/8 octobre 2026/.test(box) && /a8c5cc2/.test(box) && /(109 cases sur 109|122 cases sur 122)/.test(box), `encadré : ${box.replace(/\s+/g, ' ').slice(0, 200)}`);
+      assert(/8 octobre 2026/.test(box) && /a8c5cc2/.test(box) && /(109 cases sur 109|122 cases sur 122|123 cases sur 123)/.test(box), `encadré : ${box.replace(/\s+/g, ' ').slice(0, 200)}`);
       // Sur CHAQUE pipeline, chaque étape et chaque variante a son bloc de suggestion.
       const tabs = await page.$$eval('#models .mr-tab', ts => ts.map(t => t.dataset.pipeline));
       let seen = 0;
@@ -2134,7 +2134,7 @@ export async function browserChecks(sb, t) {
         assert(r.length && !bad.length, `${id} : bloc absent ou incomplet pour ${bad.join(', ')}`);
         seen += r.length;
       }
-      assert(seen === 109 || seen === 122, `${seen} blocs au lieu de 122 (109 avant les génériques)`);
+      assert(seen === 109 || seen === 122 || seen === 123, `${seen} blocs au lieu de 123 (122 avant routage.chef, 109 avant les génériques)`);
       await page.click('#models .mr-tab[data-pipeline="discussion"]');
       assert(await page.locator('#models .mr-panel .mr-reco-und').count() > 0, '« non tranché » non signalé (Discussion)');
       await page.click('#models .mr-tab[data-pipeline="dev"]');

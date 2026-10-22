@@ -162,6 +162,8 @@ export const PIPELINES = [
     purpose: 'Ce que fait le chef : comprendre une demande, la découper, choisir qui la fait et avec quel model, suivre, rendre compte.',
     when: 'Toute demande adressée au chef.',
     flow: [
+      { id: 'chef', n: 'v3', title: 'Tour unique du chef (Routage v3)', what: 'UN appel remplace Lire, Comprendre, Découper et Rapporter : le chef répond en prose et termine par un plan typé (tâches, actions typées, reprises explicites) que le code répare pour la forme. En ombre tant que la bascule n’est pas décidée (chef-shadow) : aucun effet. Décision 2 : claude-sonnet-5-5.',
+        example: '« corrige le bug puis pousse » → une réponse et un plan {tâche a, tâche b après a}, en un seul appel.' },
       { id: 'lire', n: '1', title: 'Lire et comprendre la demande', what: 'Lire la demande dans son contexte, puis en comprendre le sens global (suite d’une question, nouvelles tâches, réponse directe, ou question à poser) — sans choisir de pipeline.',
         example: '« ajoute du travail sur images, vidéos, sons » → trois pipelines de plus.' },
       { id: 'decomposer', n: '2', title: 'Découper en tâches', what: 'Découper en tâches unitaires : un projet et une seule nature de travail chacune.',

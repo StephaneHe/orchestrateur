@@ -16,6 +16,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { writeFileAtomic } from './atomic-file.mjs';
 
 export const TUNING_LEVERS = {
   citedPathsLog: 'chemins cités jugés sur les fichiers lus pendant le tour (levier 1)',
@@ -88,4 +89,29 @@ export function applyTuningChange(raw, { on, lever, project = null }) {
 
 export function describeTuning(raw) {
   return LEVER_IDS.map(k => `${k} : ${raw[k] === true ? 'tous les projets' : Array.isArray(raw[k]) ? raw[k].join(', ') : 'coupé'}`).join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Routage v3, phase 2: the chef's single turn in SHADOW (chef-turn.mjs).
+// model-routing.json → chefV3 {shadow, since, by}, written by
+// `pipeline-enforce.mjs chef-shadow on|off`, re-read at each chef turn by
+// dispatch.mjs. Off when absent.
+// ---------------------------------------------------------------------------
+const readRouting = (root) => { try { return JSON.parse(fs.readFileSync(path.join(root, 'model-routing.json'), 'utf8')); } catch { return null; } };
+export function readChefV3(root) {
+  const c = readRouting(root)?.chefV3;
+  return { shadow: c?.shadow === true, since: c?.since || null, by: c?.by || null };
+}
+export function writeChefV3(root, { shadow, by }) {
+  const file = path.join(root, 'model-routing.json');
+  let j = readRouting(root);
+  if (!j || typeof j !== 'object') j = { version: 2, assignments: {} };
+  const before = j.chefV3?.shadow === true;
+  const at = new Date().toISOString();
+  j.chefV3 = { shadow: !!shadow, since: at, by };
+  j.history = Array.isArray(j.history) ? j.history : [];
+  j.history.push({ at, task: 'chefV3.shadow', from: before ? 'on' : 'off', to: shadow ? 'on' : 'off', by });
+  if (j.history.length > 500) j.history = j.history.slice(-500);
+  writeFileAtomic(file, JSON.stringify(j, null, 2) + '\n', `${file}.${process.pid}.tmp`);
+  return readChefV3(root);
 }
