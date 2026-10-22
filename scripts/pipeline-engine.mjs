@@ -559,6 +559,19 @@ function fmtDur(ms) {
   const m = Math.floor(s / 60);
   return `${m} min${s % 60 ? ` ${String(s % 60).padStart(2, '0')} s` : ''}`;
 }
+/**
+ * Who is called back when this run pauses or ends (user report 2026-10-22: a
+ * pause after a resume launched without --callback woke nobody). The callback
+ * belongs to the RUN: kept in run.json, reused by every resume whoever launches
+ * it; a resume launched by the chef (`chefCallback`) sets it to the chef even
+ * when it forgot --callback. Updates `state.callback`; the caller saves.
+ */
+export function runCallback(state, { callbackProject = null, chefCallback = null } = {}) {
+  const to = callbackProject || state?.callback || chefCallback || null;
+  if (state && to && state.callback !== to) state.callback = to;
+  return to;
+}
+
 function postNotify(root, project, text, source) {
   return new Promise((resolve) => {
     let token = '';
@@ -2646,6 +2659,9 @@ export async function runPipeline(o) {
     if (state.itemDelivery) state.plan.splice(state.plan.lastIndexOf('livrer'), 0, '@aside');
     fs.writeFileSync(path.join(artDir, 'demande.md'), `# Demande\n\n${prompt}\n`);
   }
+  // The callback belongs to the RUN, not to the turn (2026-10-22): a resume
+  // launched without --callback keeps the one the run was started with.
+  const callbackTo = runCallback(state, { callbackProject, chefCallback: o.resumeRun ? o.chefCallback : null });
   const saveState = () => {
     state.updatedAt = new Date().toISOString();
     // run.json is read by the server (GET /api/pipeline-runs) at any time: a
@@ -2858,7 +2874,7 @@ export async function runPipeline(o) {
     type: 'user_prompt', text: o.promptForLog ?? prompt,
     pipeline: { run, pipeline, mode: state.mode, kind, resumed: resumed || undefined, ...(state.lane ? { lane: state.lane.k, branch: state.lane.branch } : {}), steps: planned.map(p => ({ id: p.id, title: p.title, loop: p.loop || undefined, slot: p.slot.slot, model: p.slot.model, provider: p.slot.provider, second: p.slot.second, source: p.slot.source })) },
     ...(sourceProject ? { source: sourceProject } : {}),
-    ...(callbackProject ? { callback: callbackProject } : {}),
+    ...(callbackTo ? { callback: callbackTo } : {}),
     ...(o.ticket ? { ticket: o.ticket } : {}), ...(o.slot != null ? { slot: o.slot } : {}),
     ...(o.testLabel ? { test: { label: o.testLabel } } : {}),
   });
@@ -2986,8 +3002,8 @@ export async function runPipeline(o) {
     // Une pause part au chef avec TOUTE l'explication (ce qui s'est passé, où en
     // est le travail, les choix et la recommandation), pas seulement la question.
     const pausedText = paused ? [notice, result, question].filter(Boolean).join('\n\n') : null;
-    if (callbackProject) {
-      await postNotify(root, callbackProject, `[PIPELINE — ${projectName} — ${run}] ${paused ? pausedText : isError ? `✕ ${result.slice(0, 1500)}` : result.slice(0, 8000)}`, paused && chef ? 'pipeline-chef-pause' : paused && limit ? 'pipeline-limit' : 'pipeline');
+    if (callbackTo) {
+      await postNotify(root, callbackTo, `[PIPELINE — ${projectName} — ${run}] ${paused ? pausedText : isError ? `✕ ${result.slice(0, 1500)}` : result.slice(0, 8000)}`, paused && chef ? 'pipeline-chef-pause' : paused && limit ? 'pipeline-limit' : 'pipeline');
     } else if (paused && limit) {
       await postNotify(root, 'chef', `[PIPELINE — ${projectName} — ${run}] ${pausedText}`, chef ? 'pipeline-chef-pause' : 'pipeline-limit');
     }
@@ -4210,17 +4226,20 @@ export async function runPipeline(o) {
  *   changer le model → reste en pause, dit quelle case changer, attend « continuer ».
  * Un tour côté musicien : user_prompt + result. Renvoie le code de sortie.
  */
-export async function answerPausedRun({ logsDir, project, projectName, run, answer, promptForLog, sourceProject, callbackProject, testLabel, logFile = null, cwd = null, eventTag = null, chefDecision = null }) {
+export async function answerPausedRun({ logsDir, project, projectName, run, answer, promptForLog, sourceProject, callbackProject, testLabel, logFile = null, cwd = null, eventTag = null, chefDecision = null, chefCallback = null }) {
   const f = path.join(logsDir, 'runs', run, 'run.json');
   const state = readJson(f);
   if (!state || state.status !== 'paused' || state.project !== projectName) { console.error(`[pipeline] aucune exécution en pause ${run} pour ${projectName}`); return 65; }
+  const hadCallback = state.callback || null;
+  const callbackTo = runCallback(state, { callbackProject, chefCallback });
   // P9: the run's lane (log, worktree) when it works in one.
   const projectLog = logFile || path.join(logsDir, `${projectName}.jsonl`);
   const workDir = cwd || project.path;
   const writeEvent = (ev) => { try { fs.appendFileSync(projectLog, JSON.stringify({ ...(process.env.ORCH_TURN_ID ? { orch_turn: process.env.ORCH_TURN_ID } : {}), ...eventTagOf({ eventTag }, ev), ...ev, timestamp: new Date().toISOString() }) + '\n'); } catch {} };
   writeEvent({ type: 'user_prompt', text: promptForLog, pipeline: { run, pipeline: state.pipeline, mode: state.mode, answer },
-    ...(sourceProject ? { source: sourceProject } : {}), ...(callbackProject ? { callback: callbackProject } : {}), ...(testLabel ? { test: { label: testLabel } } : {}) });
+    ...(sourceProject ? { source: sourceProject } : {}), ...(callbackTo ? { callback: callbackTo } : {}), ...(testLabel ? { test: { label: testLabel } } : {}) });
   const save = () => { state.updatedAt = new Date().toISOString(); writeFileAtomic(f, JSON.stringify(state, null, 2)); };
+  if (callbackTo !== hadCallback) save();
   // 0.133.0: the answer is remembered with the pause's signature; the chef's decision is traced.
   if (state.lastPause) {
     const by = chefDecision ? 'chef' : 'utilisateur';

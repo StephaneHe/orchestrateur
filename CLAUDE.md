@@ -3281,6 +3281,24 @@ tu sais comment est organisé le process mieux que moi ».
   redémarrage pour le journal servi).
 - Recette : `_test_chef_process_pauses.mjs` (rejeu des 4 pauses réelles).
 
+## Le rappel appartient à l'exécution (0.136.0)
+
+Demande (2026-10-22) : « peut-on le mettre dans le code à la place ou en plus
+de ta mémoire ? » (pauses d'une exécution lancée par le chef qui ne le
+réveillaient plus après une reprise).
+
+- `runCallback` (moteur) : le `callback` de `run.json` sert à **toute** reprise
+  (`runPipeline`, `answerPausedRun`), quel qu'en soit l'auteur ; un
+  `--callback` explicite prime et devient celui de l'exécution.
+- `CHEF_RESUME_CALLBACK` (`dispatch.mjs`) : une reprise lancée depuis le tour du
+  chef (`ORCH_TURN_PROJECT`), avec `--source chef` ou par `[CHEF_ANSWER]` porte
+  le rappel au chef, même oublié ; une reprise du chef mise en file aussi.
+- `awaitedWake` (`fleet-status-core.mjs`, pump du serveur) : une exécution en
+  pause attendue par le chef le réveille, pause pour l'utilisateur comprise
+  (« ⇄ exécution en pause — attend ta décision ») ; la question d'un tour
+  ordinaire ne le réveille toujours pas. Redémarrage nécessaire pour ce point.
+- Recettes : `_test_run_callback.mjs`, HTTP `pipeline-pause-wake`.
+
 ## Reprise d'une pause : plus aucune « réponse attendue » (0.134.0)
 
 Signalement (2026-10-22) : « [projet] est toujours marqué avec "votre réponse

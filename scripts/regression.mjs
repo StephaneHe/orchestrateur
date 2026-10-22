@@ -2082,6 +2082,43 @@ async function apiChecks(sb) {
       `réveil : compte rendu incomplet : ${String(w?.text).slice(0, 400)}`);
     return `notification ${n.report.length} car., réveil complet`;
   });
+  // User request (2026-10-22): « peut-on le mettre dans le code à la place ou en
+  // plus de ta mémoire ? » — a pipeline run awaited by the chef that pauses on a
+  // question to the USER wakes the chef (« ⇄ attend ta décision »); a plain
+  // question outside a pipeline still does not (the bubble reaches its thread).
+  await check(S, 'pipeline-pause-wake', 'Exécution de pipeline attendue par le chef, en pause pour l’utilisateur : le chef est réveillé (⇄ attend ta décision) ; question d’un tour ordinaire : pas de réveil', async () => {
+    const src = fs.readFileSync(path.join(sb.root, 'scripts', 'fleet-status-core.mjs'), 'utf8');
+    if (!/export function awaitedWake/.test(src)) NA('réveil sur pause de pipeline absent de cet état du code');
+    const logFile = path.join(sb.root, 'logs', 'omega.jsonl');
+    const add = (ev) => fs.appendFileSync(logFile, JSON.stringify(ev) + '\n');
+    const wakes = () => readLog('chef').filter(e => e.type === 'user_prompt' && e.source === 'wake');
+    const before = wakes().length;
+    const run = 'p-20261022T190000-c0ffee';
+    const at = (s) => new Date(Date.now() + s).toISOString();
+    // A plain question first: awaited, but no pipeline — no wake.
+    add({ type: 'user_prompt', text: 'Question ordinaire', source: 'chef', callback: 'chef', timestamp: at(0) });
+    add({ type: 'system', subtype: 'init', session_id: 's-plain', timestamp: at(1) });
+    add({ type: 'assistant', message: { content: [{ type: 'text', text: 'NEEDS_USER_INPUT: A ou B ?' }] }, timestamp: at(2) });
+    add({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, duration_api_ms: 5, session_id: 's-plain', result: 'NEEDS_USER_INPUT: A ou B ?', timestamp: at(3) });
+    await new Promise(r => setTimeout(r, 1500));
+    // Then a resumed run (callback carried by the run) pausing for the user.
+    add({ type: 'user_prompt', text: `reprendre les items ${run}`, callback: 'chef', pipeline: { run, pipeline: 'dev', mode: 'complet', resumed: true, steps: [] }, timestamp: at(4) });
+    add({ type: 'system', subtype: 'pipeline_start', pipeline: { run, pipeline: 'dev', mode: 'complet' }, text: `reprise de l’exécution ${run}`, timestamp: at(5) });
+    add({ type: 'assistant', message: { model: '<synthetic>', content: [{ type: 'text', text: `⏸ correctif périmé\n\nNEEDS_USER_INPUT: omega en pause — répondez « écarter l’item ${run} »` }] }, timestamp: at(6) });
+    add({ type: 'result', subtype: 'success', is_error: false, num_turns: 3, duration_ms: 1000, duration_api_ms: 900, stop_reason: 'end_turn', pipeline: { run, pipeline: 'dev', status: 'paused', limit: 'aside_conflict' }, pipeline_paused: true,
+      result: `⏸ correctif périmé\n\nNEEDS_USER_INPUT: omega en pause — répondez « écarter l’item ${run} »`, timestamp: at(7) });
+    try {
+      const woke = await until(() => wakes().length > before ? wakes().pop() : null, 90_000, 1000);
+      assert(woke, 'le chef n’a pas été réveillé en 90 s');
+      assert(/— omega ⇄ exécution en pause — attend ta décision/.test(woke.text) && woke.text.includes(run), `réveil : ${String(woke.text).slice(0, 400)}`);
+      assert(!/A ou B/.test(woke.text), 'la question d’un tour ordinaire a réveillé le chef');
+      const chefDone = await until(() => { const l = readLog('chef'); const i = l.findIndex(e => e.type === 'user_prompt' && e.source === 'wake' && e.text === woke.text); return i >= 0 && l.slice(i).some(e => e.type === 'result'); }, 40_000, 1000);
+      assert(chefDone, 'le tour de réveil du chef ne s’est pas terminé');
+    } finally {
+      await post('/api/question/omega/resolve', { note: 'recette pipeline-pause-wake', by: 'regression' });
+    }
+    return 'pause de pipeline : chef réveillé ; question ordinaire : non';
+  });
   // Last of the HTTP walks: it creates kappa's log (kappa has none before, checked by 'pupitre').
   // User rule (2026-10-20): « si aucune activite de ma part depuis plus de 15
   // minutes, et qu'un process attend quelque chose de moi, et que je ne reponds

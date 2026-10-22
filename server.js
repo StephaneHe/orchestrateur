@@ -63,7 +63,7 @@ import { detectOverride } from './src/message_router.mjs';
 // Shared fleet state/silence/stall derivation — same module the CLI supervisor
 // (scripts/fleet-status.mjs) uses, so the live desk view (/api/pupitre) can
 // never diverge from `node scripts/fleet-status.mjs`.
-import { scanProject as scanFleetMember, isPhantomResult, isQuestionResolved, isAcknowledged, isConductorStop, stopInfo, createJournal } from './scripts/fleet-status-core.mjs';
+import { scanProject as scanFleetMember, isPhantomResult, awaitedWake, isQuestionResolved, isAcknowledged, isConductorStop, stopInfo, createJournal } from './scripts/fleet-status-core.mjs';
 import { readRuns as readRegressionRuns, progressText as regressionProgressText, reportPath as regressionReportPath } from './scripts/regression-live.mjs';
 import { laneDir as regressionLaneDir, HARD_CAP as LANES_HARD_CAP } from './scripts/lanes.mjs';
 import { queueHoldPolicy, holdReportDue, holdReport } from './scripts/queue-hold.mjs';
@@ -660,7 +660,7 @@ function buildWakePrompt(items, gen, reportOnly = false) {
     const mark = it.outcome === 'failed' ? '✕' : (it.awaitingChef ? '⇄' : '✓');
     const meta = [fmtWakeAge(it.durationMs), Number.isFinite(it.costUsd) ? `$${it.costUsd.toFixed(2)}` : '']
       .filter(Boolean).join(' · ');
-    const head = `— ${it.source} ${mark}${meta ? ' ' + meta : ''}`;
+    const head = `— ${it.source} ${mark}${it.pipelinePause ? ' exécution en pause — attend ta décision (réponds au menu ou relaie la question à l\'utilisateur)' : ''}${meta ? ' ' + meta : ''}`;
     const body = wakeItemBody(it);
     return body ? `${head}\n${body}` : head;
   }).join('\n');
@@ -6714,9 +6714,10 @@ function startBackgroundNotifyWatchers() {
             // would duplicate it), synthetic results (guarded above), and any turn
             // nobody awaited. A result that WAS awaited is never dropped any more:
             // past WAKE_MAX_GEN the wake fires in report-only mode instead.
-            if (expectCallback === conductorName() &&
-                name !== conductorName() &&
-                (newState === 'unread' || newState === 'error')) {
+            // 2026-10-22: a paused pipeline run (question to the user included)
+            // wakes the chef that awaited it — awaitedWake, fleet-status-core.mjs.
+            const awaited = awaitedWake({ expected: expectCallback, conductor: conductorName(), name, newState, awaitingChef, ev });
+            if (expectCallback === conductorName() && awaited) {
               const gen = Number(wakeGen) || 0;
               if (wakeIsReportOnly(gen + 1)) {
                 debugLog(`[wake] ${name} awaited, gen=${gen} ≥ WAKE_MAX_GEN=${WAKE_MAX_GEN} — réveil en rapport seul (dispatch interdit)`);
@@ -6724,10 +6725,11 @@ function startBackgroundNotifyWatchers() {
               scheduleConductorWake({
                 key: `${name}:${ev.session_id || ''}:${ev.timestamp || ev.duration_ms || ''}`,
                 source: name,
-                outcome: newState === 'error' ? 'failed' : (awaitingChef ? 'ask_chef' : 'done'),
+                outcome: awaited.outcome,
                 summary: summarizeResult(ev) || lastLine || '',
                 report: turnReport(name, ev),
-                durationMs, costUsd, awaitingChef, wakeGen: gen,
+                durationMs, costUsd, awaitingChef: awaited.awaitingChef, wakeGen: gen,
+                ...(awaited.pipelinePause ? { pipelinePause: true } : {}),
                 ts: Date.now(),
               });
             }

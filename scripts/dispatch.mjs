@@ -526,6 +526,10 @@ if (PIPE_STEP || (ENFORCED && (DUAL_BRANCH || dualSynthesis))) {
 const CHEF_PAUSE = !pipelineArg && !pipelineResumeArg && !PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && !CHEF_TARGET && horsPipelineArg == null
   && /^\s*\[CHEF_ANSWER\]/i.test(prompt) ? pipeEngine.pendingChefPause(path.join(ROOT, 'logs'), projectName) : null;
 if (CHEF_PAUSE) pipelineResumeArg = CHEF_PAUSE.run;
+// A run resumed by the chef (from its turn, its Routage, or its answer to a
+// process pause) calls the chef back, even when it forgot --callback
+// (2026-10-22). Used by the engine on resumes only (runCallback).
+const CHEF_RESUME_CALLBACK = projectName !== CONDUCTOR && (TURN_OF === CONDUCTOR || sourceProject === CONDUCTOR || !!CHEF_PAUSE) ? CONDUCTOR : null;
 // 4. Un projet en service ne reçoit pas de model choisi à la main : ce sont les
 //    cases de la page Models qui décident (sauf sortie d'urgence tracée).
 const AUTO_PIPELINE = ENFORCED && !PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && horsPipelineArg == null;
@@ -1128,6 +1132,8 @@ function postQueueIfBusy() {
     // Pipelines (0.48.0) : la demande garde son pipeline en file d'attente.
     if (pipelineArg)       payload.pipeline        = pipelineArg;
     if (pipelineResumeArg) payload.pipelineResume  = pipelineResumeArg;
+    // A resume queued by the chef keeps calling it back once drained.
+    if (pipelineResumeArg && !callbackProject && CHEF_RESUME_CALLBACK) payload.callback = CHEF_RESUME_CALLBACK;
     if (horsPipelineArg != null) payload.horsPipeline = horsPipelineArg;
     if (pipelineModeArg)   payload.pipelineMode    = pipelineModeArg;
     // Lanes (0.101.0): affinity, declared resources and the rule that made it wait.
@@ -1621,7 +1627,7 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
     }
     chefDecision = { key: dec.key, reason: dec.reason };
     if (pauseMenu.OPTION_KEYS[dec.key] === 'abandon') {
-      process.exit(await pipeEngine.answerPausedRun({ logsDir: LOGS, project, projectName, run: CHEF_PAUSE.run, answer: dec.key, promptForLog: prompt, sourceProject, callbackProject, testLabel, eventTag: taskTag,
+      process.exit(await pipeEngine.answerPausedRun({ logsDir: LOGS, project, projectName, run: CHEF_PAUSE.run, answer: dec.key, promptForLog: prompt, sourceProject, callbackProject, chefCallback: CHEF_RESUME_CALLBACK, testLabel, eventTag: taskTag,
         logFile: logPath, cwd: WORK_DIR, chefDecision }));
     }
     if (dec.key !== 'continuer') pauseOption = dec.key;
@@ -1636,7 +1642,7 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
     const k = pauseMenu.matchOptionKey(said);
     if (k && pauseMenu.OPTION_KEYS[k] === 'resume' && k !== 'continuer') pauseOption = k;
     if (answer) {
-      process.exit(await pipeEngine.answerPausedRun({ logsDir: LOGS, project, projectName, run: resumeRun, answer, promptForLog: prompt, sourceProject, callbackProject, testLabel, eventTag: taskTag }));
+      process.exit(await pipeEngine.answerPausedRun({ logsDir: LOGS, project, projectName, run: resumeRun, answer, promptForLog: prompt, sourceProject, callbackProject, chefCallback: CHEF_RESUME_CALLBACK, testLabel, eventTag: taskTag }));
     }
   }
   if (!pipe && !resumeRun) {
@@ -1661,7 +1667,7 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
     // Les autres choix proposés par la pause font vraiment quelque chose.
     const answer = paused ? pauseAnswer(reply) : null;
     if (answer) {
-      const code = await pipeEngine.answerPausedRun({ logsDir: LOGS, project, projectName, run: paused, answer, promptForLog: prompt, sourceProject, callbackProject, testLabel, eventTag: taskTag,
+      const code = await pipeEngine.answerPausedRun({ logsDir: LOGS, project, projectName, run: paused, answer, promptForLog: prompt, sourceProject, callbackProject, chefCallback: CHEF_RESUME_CALLBACK, testLabel, eventTag: taskTag,
         logFile: logPath, cwd: WORK_DIR });
       if (LANE && LANE.k >= 1) {
         // The run stays paused (lane kept for the next answer), or it is closed
@@ -1781,7 +1787,7 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
         : ''),
       promptForLog: prompt, pipeline: pipe, resumeRun, classification, mode, kind, acceptDefects, deleteDoubts, pauseOption, chefDecision,
       ...(pipeNotes.length ? { modeNote: pipeNotes.join(' ; ') } : {}),
-      callbackProject, sourceProject, obsId, testLabel,
+      callbackProject, chefCallback: CHEF_RESUME_CALLBACK, sourceProject, obsId, testLabel,
       dispatchScript: fileURLToPath(import.meta.url),
       // P9: the run works in the lane acquired above (worktree, task branch).
       cwd: WORK_DIR, logFile: logPath, pidFile: pidPath, eventTag: taskTag,

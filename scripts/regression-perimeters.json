@@ -730,6 +730,7 @@
         "_test_orphaned_run.mjs",
         "_test_resume_message.mjs",
         "_test_resume_clears_question.mjs",
+        "_test_run_callback.mjs",
         "_test_presenter_artefact.mjs",
         "_test_item_review.mjs",
         "_test_item_tests.mjs",
@@ -763,6 +764,7 @@
             "_test_chef_process_pauses.mjs",
             "_test_model_reco.mjs",
             "_test_resume_clears_question.mjs",
+            "_test_run_callback.mjs",
             "_test_reunion_pipeline.mjs"
           ]
         },
@@ -800,6 +802,7 @@
             "_test_presenter_artefact.mjs",
             "_test_release_prebump.mjs",
             "_test_resume_clears_question.mjs",
+            "_test_run_callback.mjs",
             "_test_resume_message.mjs",
             "_test_reunion_pipeline.mjs",
             "_test_reunion_redaction_route.mjs",
@@ -853,6 +856,7 @@
             "_test_presenter_artefact.mjs",
             "_test_release_prebump.mjs",
             "_test_resume_clears_question.mjs",
+            "_test_run_callback.mjs",
             "_test_resume_message.mjs",
             "_test_reunion_pipeline.mjs",
             "_test_reunion_redaction_route.mjs",
@@ -904,6 +908,7 @@
             "_test_presenter_artefact.mjs",
             "_test_release_prebump.mjs",
             "_test_resume_clears_question.mjs",
+            "_test_run_callback.mjs",
             "_test_resume_message.mjs",
             "_test_reunion_pipeline.mjs",
             "_test_reunion_redaction_route.mjs",
@@ -947,6 +952,7 @@
             "_test_presenter_artefact.mjs",
             "_test_release_prebump.mjs",
             "_test_resume_clears_question.mjs",
+            "_test_run_callback.mjs",
             "_test_resume_message.mjs",
             "_test_reunion_pipeline.mjs",
             "_test_reunion_redaction_route.mjs",
@@ -969,6 +975,7 @@
             "_test_pipeline_observe.mjs",
             "_test_pipeline_onboard.mjs",
             "_test_resume_clears_question.mjs",
+            "_test_run_callback.mjs",
             "_test_smart_pause.mjs",
             "_test_typed_operations.mjs"
           ]

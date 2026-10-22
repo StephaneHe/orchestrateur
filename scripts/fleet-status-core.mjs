@@ -53,6 +53,22 @@ export function isPhantomResult(ev) {
 }
 
 /**
+ * Does the end of an awaited turn wake the chef, and how (server pump)?
+ * `expected` is the `callback` of the turn's opening user_prompt. A turn ending
+ * on a question to the USER does not wake it (the question bubble already
+ * reaches its thread), EXCEPT a pipeline run in pause (2026-10-22: the chef
+ * launched the run and must see each pause, « ⇄ attend ta décision »).
+ * Returns null, or {outcome, awaitingChef, pipelinePause?}.
+ */
+export function awaitedWake({ expected, conductor, name, newState, awaitingChef = false, ev = null }) {
+  if (!expected || expected !== conductor || name === conductor) return null;
+  if (newState === 'error') return { outcome: 'failed', awaitingChef: false };
+  if (newState === 'unread') return { outcome: awaitingChef ? 'ask_chef' : 'done', awaitingChef: !!awaitingChef, ...(ev?.pipeline_paused ? { pipelinePause: true } : {}) };
+  if (newState === 'input' && ev?.type === 'result' && ev.pipeline_paused) return { outcome: 'ask_chef', awaitingChef: true, pipelinePause: true };
+  return null;
+}
+
+/**
  * Acquittement d'une question (0.25.0). Écrit par POST /api/question/:p/resolve
  * dans le log DU MUSICIEN, juste après le result qui a posé la question.
  * Pourquoi un événement de log plutôt qu'un sidecar : tous les réducteurs lisent

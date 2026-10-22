@@ -11,6 +11,34 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.136.0] - 2026-10-22
+
+User request (2026-10-22): « peut-on le mettre dans le code à la place ou en
+plus de ta mémoire ? », about the chef's slip « tu n'as pas intercepté la
+question de [projet] ». A run launched with `--callback chef` paused; the chef
+answered (« découper <run> ») without `--callback`, and the following pauses
+woke nobody. Worse, a resume launched WITH `--callback chef` that ended on a
+pause for the user did not wake the chef either: the server never woke it for
+a turn ending on `NEEDS_USER_INPUT`.
+
+### Fixed
+- (server) The callback belongs to the RUN, not to the turn (`runCallback`,
+  `pipeline-engine.mjs`): a run started with `--callback` keeps it in
+  `run.json` and every resume reuses it (`continuer`, a choice of the pause
+  menu, an answer handled by `answerPausedRun`), whoever launches it: chef,
+  user, app, automatic answer. The resume's `user_prompt` carries it and the
+  run's notifications go to it.
+- (server) A run resumed by the chef carries the callback even when the chef
+  forgot it (`CHEF_RESUME_CALLBACK` of `dispatch.mjs`: dispatch launched from
+  the chef's turn, `--source chef`, or its `[CHEF_ANSWER]` to a process
+  pause); it becomes the run's callback. A resume queued by the chef keeps it.
+- (server) A paused pipeline run awaited by the chef wakes it, pause for the
+  user included (`awaitedWake`, `fleet-status-core.mjs`), with the wake line
+  « ⇄ exécution en pause — attend ta décision ». A question of an ordinary
+  turn still does not wake it (its bubble already reaches the chef's thread).
+  Server restart needed for this part; the engine and dispatch parts are live
+  at once.
+
 ## [0.135.0] - 2026-10-22
 
 User report (2026-10-22, Android app 1.1.0): « a l'instant je ne vois dans
