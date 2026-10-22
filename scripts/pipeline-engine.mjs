@@ -4354,6 +4354,38 @@ export function pendingChefPause(logsDir, projectName) {
   return null;
 }
 
+/**
+ * 0.137.0: the pause a relayed chef answer names ({run, n}, the relay's
+ * [RELAIS: pause …] line). → { run, chefPause } when that very pause still
+ * waits for the chef, else { stale: why } — an answer is never applied to
+ * another pause than the one it answers.
+ */
+export function chefPauseTarget(logsDir, projectName, { run, n }) {
+  const s = readJson(path.join(logsDir, 'runs', run, 'run.json'));
+  if (!s || s.project !== projectName) return { stale: `exécution ${run} inconnue pour ${projectName}` };
+  if (s.status !== 'paused') return { stale: `exécution ${run} ${s.status === 'running' ? 'déjà reprise' : `close (${s.status})`}` };
+  if (s.lane?.k >= 1) return { stale: `exécution ${run} dans le couloir ${s.lane.k} (pause posée à l’utilisateur)` };
+  const cp = s.chefPause;
+  if (!cp || cp.n !== n) return { stale: `la pause n° ${n} n’est plus celle qui attend (pause en cours : n° ${cp?.n ?? '?'}${cp?.status === 'pending' ? ', en attente du chef' : ''})` };
+  if (cp.status !== 'pending') return { stale: `la pause n° ${n} est déjà tranchée (${cp.status === 'decided' ? `par le chef : « ${cp.key} »` : cp.status === 'answered-by-user' ? `par l’utilisateur : « ${cp.key} »` : 'rendue à l’utilisateur'})` };
+  return { run, chefPause: cp };
+}
+
+/**
+ * 0.137.0: a paused run of this project CITED in a reply (« livrer sans eux
+ * p-… »), whatever ran after it — the latest run of the main copy may be
+ * another one (incident of 2026-10-22: a newer Discussion hid the pause).
+ */
+export function citedPausedRun(logsDir, projectName, text) {
+  for (const run of String(text || '').match(/\bp-\d{8}T\d{6}-[a-z0-9]{4,8}\b/g) || []) {
+    let s = readJson(path.join(logsDir, 'runs', run, 'run.json'));
+    if (!s || s.project !== projectName) continue;
+    if (s.status === 'running') s = reclaimOrphanedRun(logsDir, run) || s;
+    if (s.status === 'paused') return { run, lane: Number(s.lane?.k) || 0, chefPause: s.chefPause || null, pausedLimit: s.pausedLimit || null };
+  }
+  return null;
+}
+
 const CODE_RE = /\.(m?js|cjs|ts|tsx|jsx|kt|kts|java|py|go|rs|cs|swift|c|cc|cpp|h)$/i;
 /** Périmètre d'un changement léger, hors tests et artefacts (plan §4 : plus de
  *  3 fichiers, plus de 150 lignes ou un NOUVEAU fichier de code ⇒ complet). */

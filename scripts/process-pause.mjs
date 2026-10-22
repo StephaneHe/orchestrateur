@@ -117,6 +117,8 @@ export function parseChefDecision(text, chefPause) {
   let t = String(text || '')
     .replace(/^\s*\[CHEF_ANSWER\]\s*/i, '')
     .replace(/\n\s*Reprends ta tâche en intégrant cette décision\.?\s*$/i, '')
+    // 0.137.0: the relay's line naming what the answer answers.
+    .replace(/\n?^\[RELAIS: [^\]\n]*\][ \t]*$/gm, '')
     .replace(/^\s*\[ANSWER\]\s*/i, '')
     .trim();
   if (/NEEDS_USER_INPUT\s*:/i.test(t)) return { ok: false, toUser: true, why: `le chef renvoie la décision à l’utilisateur : ${one(t.replace(/^[\s\S]*?NEEDS_USER_INPUT\s*:\s*/i, ''), 400)}` };

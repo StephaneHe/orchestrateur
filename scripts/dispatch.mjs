@@ -523,9 +523,54 @@ if (PIPE_STEP || (ENFORCED && (DUAL_BRANCH || dualSynthesis))) {
 // 0.133.0: the chef's relayed answer ([CHEF_ANSWER], server relay of a
 // NEEDS_CHEF_INPUT) to a PROCESS pause goes to that paused run, even on a
 // project not in service — the relay carries no --pipeline-resume.
-const CHEF_PAUSE = !pipelineArg && !pipelineResumeArg && !PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && !CHEF_TARGET && horsPipelineArg == null
-  && /^\s*\[CHEF_ANSWER\]/i.test(prompt) ? pipeEngine.pendingChefPause(path.join(ROOT, 'logs'), projectName) : null;
+// 0.137.0: a relay of a newer server names what it answers ([RELAIS: pause
+// <run> n° <n>] or [RELAIS: question]); the answer then goes to THAT pause
+// only — an answer to an ordinary question is never taken for a pause answer,
+// and an answer to a pause already settled is dropped (traced), never
+// classified as a new request. An older relay (no line) keeps the 0.133.0 rule.
+const chefRelay = await import('./chef-relay.mjs');
+const RELAY_TAG = chefRelay.relayTag(prompt);
+const PAUSE_ANSWER_BASE = !pipelineArg && !PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && !CHEF_TARGET && horsPipelineArg == null;
+const IS_CHEF_ANSWER = /^\s*\[CHEF_ANSWER\]/i.test(prompt);
+const PIPELINE_RESUME_GIVEN = !!pipelineResumeArg;
+/** The process pause a relayed chef answer settles: {run, chefPause}, {stale}, or null. */
+function chefAnswerTarget() {
+  if (!PAUSE_ANSWER_BASE || PIPELINE_RESUME_GIVEN || !IS_CHEF_ANSWER || RELAY_TAG?.kind === 'question') return null;
+  if (RELAY_TAG?.kind === 'pause') return pipeEngine.chefPauseTarget(path.join(ROOT, 'logs'), projectName, RELAY_TAG);
+  return pipeEngine.pendingChefPause(path.join(ROOT, 'logs'), projectName);
+}
+/** A relayed answer that arrived after its pause was settled: traced in the musician's log, no turn. */
+function dropStaleChefAnswer(why) {
+  const text = `↷ réponse du chef à la pause n° ${RELAY_TAG.n} de ${RELAY_TAG.run} arrivée après coup : ${why} — rien n’est relancé`;
+  try { fs.appendFileSync(path.join(ROOT, 'logs', `${projectName}.jsonl`), JSON.stringify({ type: 'system', subtype: 'pipeline_chef_answer_stale', pipeline: { run: RELAY_TAG.run }, n: RELAY_TAG.n, why, text, timestamp: new Date().toISOString() }) + '\n'); } catch {}
+  console.log(`[dispatch] ${text}`);
+  process.exit(0);
+}
+let CHEF_PAUSE = chefAnswerTarget();
+if (CHEF_PAUSE?.stale) dropStaleChefAnswer(CHEF_PAUSE.stale);
 if (CHEF_PAUSE) pipelineResumeArg = CHEF_PAUSE.run;
+// 0.137.0: a pause answer that CITES a paused run of this project (« livrer
+// sans eux p-… ») answers that run — even when a newer run of the main copy
+// hides it, even when the pause waits for the chef. Sent by the chef (its turn,
+// its Routage) to a pause waiting for it, with one of its options: the chef's
+// decision; otherwise an answer like the user's. Same for --pipeline-resume.
+if (!CHEF_PAUSE && PAUSE_ANSWER_BASE && RELAY_TAG?.kind !== 'question') {
+  const said = prompt.replace(/^\s*\[CHEF_ANSWER\]\s*/i, '').replace(chefRelay.RELAY_TAG_STRIP_RE, '').trim();
+  const bare = said.replace(/\bp-\d{8}T\d{6}-[a-z0-9]{4,8}\b/g, ' ').replace(/[\s.!…:,;«»"]+/g, ' ').trim();
+  const isPauseReply = !!pauseMenu.matchOptionKey(bare) || /^(reprends|reprendre|on continue|changer (?:de |le )?mod[eè]le?|tester (?:le )?mod[eè]le?)\b/i.test(bare);
+  const cited = pipelineResumeArg ? null : isPauseReply ? pipeEngine.citedPausedRun(path.join(ROOT, 'logs'), projectName, said) : null;
+  if (cited) pipelineResumeArg = cited.run;
+  const byChef = TURN_OF_CHEF || sourceProject === CONDUCTOR;
+  if (byChef && pipelineResumeArg && isPauseReply) {
+    let st = null;
+    try { st = JSON.parse(fs.readFileSync(path.join(ROOT, 'logs', 'runs', pipelineResumeArg, 'run.json'), 'utf8')); } catch { /* unknown run: the engine refuses it */ }
+    const t = st?.chefPause?.status === 'pending' ? pipeEngine.chefPauseTarget(path.join(ROOT, 'logs'), projectName, { run: pipelineResumeArg, n: st.chefPause.n }) : {};
+    if (t.chefPause) {
+      const { parseChefDecision } = await import('./process-pause.mjs');
+      if (parseChefDecision(said, t.chefPause).ok) CHEF_PAUSE = t;
+    }
+  }
+}
 // A run resumed by the chef (from its turn, its Routage, or its answer to a
 // process pause) calls the chef back, even when it forgot --callback
 // (2026-10-22). Used by the engine on resumes only (runCallback).
@@ -1377,7 +1422,8 @@ if (TURN_LOCK && LANES_MAX > 1) {
   // --lane ⇒ refused, never guessed.
   const pipelineish = !!(pipelineArg || pipelineResumeArg || AUTO_PIPELINE) && horsPipelineArg == null;
   if (pipelineish && !pipelineArg) {
-    const kind = pipelineResumeArg ? 'resume' : pausedReplyKind(prompt);
+    // 0.137.0: the chef's answer to an ordinary question never answers a pause.
+    const kind = pipelineResumeArg ? 'resume' : RELAY_TAG?.kind === 'question' ? null : pausedReplyKind(prompt);
     let cands = kind && !pipelineResumeArg ? lanesMod.pausedPipelineRuns(LOGS, projectName, { reclaim: (r) => pipeEngine.reclaimOrphanedRun(LOGS, r) }) : [];
     if (pipelineResumeArg) {
       // An explicit run: its own state says where it works (any paused run of
@@ -1514,6 +1560,12 @@ if (TURN_LOCK && LANES_MAX > 1) {
 // ---------- pipelines (0.48.0) : délégation au moteur -------------------------
 // Ici, après la file (comme le mode double) : un musicien occupé a reçu la
 // demande en file, avec son pipeline, et ce processus est déjà sorti.
+// 0.137.0: a relayed answer may have waited for the turn lock: its pause must
+// still be the one waiting (someone else may have settled it meanwhile).
+if (RELAY_TAG?.kind === 'pause' && CHEF_PAUSE && !CHEF_PAUSE.stale) {
+  const again = chefAnswerTarget();
+  if (again?.stale) dropStaleChefAnswer(again.stale);
+}
 let pipelineBypass = null;   // trace d'un tour qui ne passe PAS par un pipeline
 if (horsPipelineArg != null && !PIPE_STEP) {
   pipelineBypass = { reason: String(horsPipelineArg).replace(/\s+/g, ' ').trim().slice(0, 300), by: 'hors-pipeline', enforced: ENFORCED || (CHEF_TARGET && ENFORCEMENT.chef) };
@@ -1641,6 +1693,13 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
     const answer = pauseAnswer(said);
     const k = pauseMenu.matchOptionKey(said);
     if (k && pauseMenu.OPTION_KEYS[k] === 'resume' && k !== 'continuer') pauseOption = k;
+    // 0.137.0: « accepter » / « tout supprimer » with the run named (cited or --pipeline-resume).
+    if (k === 'accepter') acceptDefects = true;
+    if (k === 'tout supprimer') {
+      let pausedFor = null;
+      try { pausedFor = JSON.parse(fs.readFileSync(path.join(LOGS, 'runs', resumeRun, 'run.json'), 'utf8')).pausedLimit; } catch { /* unreadable: not a doubts pause */ }
+      if (pausedFor === 'doutes') deleteDoubts = true;
+    }
     if (answer) {
       process.exit(await pipeEngine.answerPausedRun({ logsDir: LOGS, project, projectName, run: resumeRun, answer, promptForLog: prompt, sourceProject, callbackProject, chefCallback: CHEF_RESUME_CALLBACK, testLabel, eventTag: taskTag }));
     }
@@ -1648,7 +1707,8 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
   if (!pipe && !resumeRun) {
     // Réponse « continuer » à une exécution en pause : on la reprend. With lanes
     // (P9), the paused run was found before the lane choice (PIPE_RESUME).
-    const paused = LANES_MAX > 1 ? (PIPE_RESUME?.run || null) : latestPausedRun(projectName);
+    // 0.137.0: an answer of the chef to an ordinary question ([RELAIS: question]) is not a pause answer.
+    const paused = RELAY_TAG?.kind === 'question' ? null : LANES_MAX > 1 ? (PIPE_RESUME?.run || null) : latestPausedRun(projectName);
     const reply = prompt.replace(/^\s*\[CHEF_ANSWER\]\s*/i, '').trim();
     if (paused && /^(continue|continuer|reprends|reprendre|on continue|oui|go|vas-y)\b/i.test(reply)) resumeRun = paused;
     // 0.65.0: « accepter » — the user explicitly accepts the remaining review

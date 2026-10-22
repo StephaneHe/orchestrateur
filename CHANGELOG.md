@@ -11,6 +11,57 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.137.0] - 2026-10-23
+
+User report (2026-10-22): « psyProfile ne semble pas avancer ». One run with
+`chefPauses` on: the chef's answer to process pause 1 was applied; its answers
+to pauses 2 and 3 (« [ANSWER] reprendre les items — … », « [ANSWER] livrer
+sans eux — … ») never were, and the run waited ~10 min until the chef resumed
+it by hand. Causes found in the logs: the server relay deduplicated on
+`session_id:num_turns`, and `num_turns` counts the turns of ONE `claude -p`
+call, so every short answer of the same chef session had the key `<sid>:1`
+and only the first was relayed (not the old code still loaded in memory). The
+relay also sent the chef's answer to the user and its `[CALLBACK_WAKE]`
+report to the last musician that had asked, as `[CHEF_ANSWER]`, which started
+parasitic Discussion runs. And « livrer sans eux p-… » sent by the chef
+started a new Discussion, because only the latest run of the main copy (a
+parasitic Discussion) was looked at for a pause.
+
+### Fixed
+- (server) Relay chef → musician (`scripts/chef-relay.mjs`, `chefAnswerRelay`):
+  a chef result is relayed only when the prompt that OPENED that very turn
+  (same `orch_turn`) carries `[NEEDS_CHEF_INPUT_FROM:…]`, once per opening
+  prompt. Several process pauses of one run answered by the same session are
+  all relayed; an answer to the user, a wake report, a turn with two
+  musicians' questions are never relayed. Server restart needed.
+- (server) The relayed prompt names what it answers (`[RELAIS: pause <run>
+  n° <n>]` or `[RELAIS: question]`). `dispatch.mjs` applies a pause answer to
+  THAT pause only (`chefPauseTarget`), checked again after waiting for the
+  turn lock; an answer to a pause already settled or replaced is dropped and
+  traced (`system/pipeline_chef_answer_stale`), never classified as a new
+  request. An answer to an ordinary question never resumes nor settles a pause
+  (it used to resume the latest paused run when it started with « oui »). A
+  relay of an older server (no line) keeps the 0.133.0 rule.
+- (server) A pause answer that cites a paused run of the project (« livrer
+  sans eux p-… », « découper p-… ») answers that run (`citedPausedRun`), even
+  when a newer run of the main copy hides it; sent by the chef to a pause
+  waiting for it with one of its options (also through `--pipeline-resume`),
+  it is the chef's decision. « accepter » and « tout supprimer » now work with
+  the run named too.
+
+### Added
+- (server) A chef answer to a process pause still not applied 2 min later is
+  reported to the chef, never to the user (`unappliedChefAnswers`, server
+  sweep every 30 s, once per pause): a decision ticket naming the pause, the
+  answer and the `--pipeline-resume` command, which the chef can answer again
+  (the relay then names the pause), and `system/pipeline_chef_answer_unapplied`
+  in the musician's log. Server restart needed.
+- Regression suite `_test_chef_pause_relay.mjs` (real dispatch, engine and
+  fake claude): two process pauses answered in a row with the same chef
+  session both applied, no relay of the chef's answers to the user, stale and
+  ordinary answers, the cited run behind a newer Discussion, the 2-min report,
+  and a Discussion waiting while a dev run holds the main copy.
+
 ## [0.136.0] - 2026-10-22
 
 User request (2026-10-22): « peut-on le mettre dans le code à la place ou en

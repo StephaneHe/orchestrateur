@@ -109,9 +109,10 @@ Routing :
    decision in hand.
 
 Dedupe is by `(musician, first-100-chars-of-question)` for
-musician→chef, and by `(chef session_id, num_turns)` for chef→musician.
-In-memory only ; server restart may re-relay the last chef answer at
-most once.
+musician→chef, and by the prompt that opened the chef's turn for
+chef→musician (0.137.0: only a chef turn OPENED by the marker is relayed,
+never its answers to the user). In-memory only ; server restart may
+re-relay the last chef answer at most once.
 
 ### Tie-breaker
 
@@ -3280,6 +3281,40 @@ tu sais comment est organisé le process mieux que moi ».
   [<projet>]` (relu à chaque dispatch, pas de redémarrage ; `turn-core.js` :
   redémarrage pour le journal servi).
 - Recette : `_test_chef_process_pauses.mjs` (rejeu des 4 pauses réelles).
+
+## Relais des réponses du chef : chaque pause, rien d'autre (0.137.0)
+
+Signalement (2026-10-22) : « psyProfile ne semble pas avancer » (2ᵉ et 3ᵉ
+réponses du chef aux pauses d'une même exécution jamais appliquées, réponses
+du chef à l'utilisateur relayées au musicien → Discussions parasites).
+
+- **Relais** (`scripts/chef-relay.mjs`, `chefAnswerRelay`, appelé par
+  `maybeRelayChefAnswer`) : un `result` du chef n'est relayé que si le
+  `user_prompt` qui a OUVERT ce tour (même `orch_turn` ; sans lui, le dernier
+  message non sourcé) porte `[NEEDS_CHEF_INPUT_FROM:…]` ; une fois par
+  ouverture (`turn:<orch_turn>`). **Jamais la clé `session_id:num_turns`** :
+  `num_turns` compte les tours d'UN appel `claude -p`, toutes les réponses
+  courtes d'une même session avaient la même.
+- Le texte relayé nomme ce qu'il tranche : `[RELAIS: pause <run> n° <n>]`
+  (question qui commence par `[<run> · pause <n>]`) ou `[RELAIS: question]`.
+  `dispatch.mjs` : `chefPauseTarget` (cette pause seulement, revérifiée après
+  le verrou de tour) ; pause déjà tranchée ou remplacée ⇒
+  `system/pipeline_chef_answer_stale`, sortie 0, aucun tour ; `question` ⇒
+  jamais une réponse de pause (ni « oui » qui reprend). Sans ligne (ancien
+  serveur) : règle 0.133.0.
+- **Exécution citée** (`citedPausedRun`) : une réponse de menu qui cite une
+  exécution en pause du projet lui répond, même si une exécution plus récente
+  occupe la copie principale ; du chef (son tour, `--source chef`) à une pause
+  qui l'attend, avec une de ses options (aussi par `--pipeline-resume`) =
+  décision du chef. « accepter » / « tout supprimer » avec l'exécution nommée.
+- **Réponse non appliquée sous 2 min** (`unappliedChefAnswers`, balayage du
+  serveur, `ORCH_CHEF_ANSWER_WATCH_MS` / `ORCH_CHEF_ANSWER_GRACE_MS`) : ticket
+  `decision` au chef (`unappliedText` : pause, réponse, commande
+  `--pipeline-resume`), une fois par pause, et
+  `system/pipeline_chef_answer_unapplied` dans le journal du musicien. Jamais
+  à l'utilisateur.
+- Redémarrage nécessaire (relais, balayage) ; `dispatch.mjs` est actif tout de
+  suite. Recette : `_test_chef_pause_relay.mjs`.
 
 ## Le rappel appartient à l'exécution (0.136.0)
 

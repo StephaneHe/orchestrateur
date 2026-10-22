@@ -67,6 +67,7 @@ import { scanProject as scanFleetMember, isPhantomResult, awaitedWake, isQuestio
 import { readRuns as readRegressionRuns, progressText as regressionProgressText, reportPath as regressionReportPath } from './scripts/regression-live.mjs';
 import { laneDir as regressionLaneDir, HARD_CAP as LANES_HARD_CAP } from './scripts/lanes.mjs';
 import { queueHoldPolicy, holdReportDue, holdReport } from './scripts/queue-hold.mjs';
+import { chefAnswerRelay, unappliedChefAnswers, unappliedText } from './scripts/chef-relay.mjs';
 // Registre /downloads relu à chaud depuis downloads.json (0.23.0).
 import { createDownloadsRegistry, VERSION_NAME_RE } from './scripts/downloads-registry.mjs';
 import { trustWorkspace } from './scripts/workspace-trust.mjs';
@@ -4325,11 +4326,14 @@ function readFileTail(filePath, maxBytes = 2 * 1024 * 1024) {
 //   dispatches chef response back via --resume with "[CHEF_ANSWER] …".
 // Dedupe:
 //   musician → chef : (musicianName, question first 100 chars)
-//   chef → musician : (session_id, num_turns)
+//   chef → musician : the prompt that opened the chef's turn (0.137.0,
+//     scripts/chef-relay.mjs). Only a turn OPENED by the marker is relayed —
+//     never the chef's answer to the user nor a wake report — and once per
+//     opening prompt. The former (session_id, num_turns) key dropped every
+//     answer after the first of a session (num_turns is per `claude -p` call).
 // State in-memory only ; restart may re-relay at most once.
 
 const NEEDS_CHEF_RE   = /NEEDS_CHEF_INPUT:\s*([^\n]+)/i;
-const CHEF_MARKER_RE  = /\[NEEDS_CHEF_INPUT_FROM:([A-Za-z][A-Za-z0-9_.\-]{0,63})\]/;
 const dispatchedNeedsChef = new Set();
 const relayedChefTurns    = new Set();
 
@@ -4376,39 +4380,45 @@ function maybeDispatchChefQuestion(musicianName, question) {
 
 function maybeRelayChefAnswer(parsedEv) {
   if (parsedEv?.type !== 'result' || typeof parsedEv.result !== 'string') return;
-  const sid = parsedEv.session_id;
-  const nt  = parsedEv.num_turns;
-  if (!sid || nt == null) return;
-  const key = `${sid}:${nt}`;
-  if (relayedChefTurns.has(key)) return;
-
   const chefLog = path.join(LOGS_DIR, `${conductorName()}.jsonl`);
-  const raw = readFileTail(chefLog, 512 * 1024);
-  const lines = raw.split(/\r?\n/).filter(l => l.trim());
-  let musicianName = null;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (!lines[i].includes('NEEDS_CHEF_INPUT_FROM:')) continue;
-    try {
-      const ev = JSON.parse(lines[i]);
-      if (ev.type === 'user_prompt' && typeof ev.text === 'string') {
-        const m = CHEF_MARKER_RE.exec(ev.text);
-        if (m) { musicianName = m[1]; break; }
-      }
-    } catch {}
-  }
-  if (!musicianName) return;
-  if (!config.projects.find(p => p.name === musicianName)) {
-    debugLog(`[chef-relay] unknown musician ${musicianName}, dropping`);
+  const lines = readFileTail(chefLog, 2 * 1024 * 1024).split(/\r?\n/).filter(l => l.trim());
+  const r = chefAnswerRelay({ lines, result: parsedEv, isKnown: (n) => !!config.projects.find(p => p.name === n) });
+  if (!r.musician) {
+    if (r.skip === 'unknown-musician' || r.skip === 'several-musicians') debugLog(`[chef-relay] ${r.skip} ${r.musician || (r.names || []).join(',')}, dropping`);
     return;
   }
-  relayedChefTurns.add(key);
-  const cleaned = parsedEv.result.replace(/^\s*\[ANSWER\]\s*/i, '').trim();
-  const musicianPrompt =
-    `[CHEF_ANSWER] ${cleaned}\n\n` +
-    `Reprends ta tâche en intégrant cette décision.`;
-  console.log(`[chef→${musicianName}] relay : ${cleaned.slice(0, 80)}…`);
-  spawnDirectDispatch(musicianName, musicianPrompt, [], [], { observeAs: 'relais-vers-musicien' });
+  if (relayedChefTurns.has(r.key)) return;
+  relayedChefTurns.add(r.key);
+  console.log(`[chef→${r.musician}] relay${r.pause ? ` (pause n° ${r.pause.n} de ${r.pause.run})` : ''} : ${parsedEv.result.replace(/^\s*\[ANSWER\]\s*/i, '').trim().slice(0, 80)}…`);
+  spawnDirectDispatch(r.musician, r.prompt, [], [], { observeAs: 'relais-vers-musicien' });
 }
+
+// 0.137.0: a chef answer to a process pause that is still not applied after
+// 2 min is told to the chef (never to the user), once per pause, as a new
+// question it can answer — the relay then names that pause again.
+const CHEF_ANSWER_WATCH_MS = Number(process.env.ORCH_CHEF_ANSWER_WATCH_MS) || 30_000;
+const CHEF_ANSWER_GRACE_MS = Number(process.env.ORCH_CHEF_ANSWER_GRACE_MS) || 120_000;
+const alertedChefAnswers = new Set();
+function sweepUnappliedChefAnswers() {
+  let list = [];
+  try { list = unappliedChefAnswers({ logsDir: LOGS_DIR, conductor: conductorName(), graceMs: CHEF_ANSWER_GRACE_MS }); } catch (e) { debugLog(`[chef-answer-watch] ${e.message}`); return; }
+  for (const u of list) {
+    const key = `${u.run}:${u.n}`;
+    if (alertedChefAnswers.has(key) || !config.projects.find(p => p.name === u.project)) continue;
+    alertedChefAnswers.add(key);
+    const text = unappliedText(u, { orchestratorRoot: __dirname });
+    appendLogEvent(u.project, { type: 'system', subtype: 'pipeline_chef_answer_unapplied', pipeline: { run: u.run }, n: u.n, answer: u.answer, answeredAt: u.answeredAt,
+      text: `⚠ réponse du chef à la pause n° ${u.n} non appliquée après ${Math.round(u.waitingMs / 60000)} min — signalée au chef`, timestamp: new Date().toISOString() });
+    poolEnqueue({
+      obsId: observeEntry({ entry: 'relais-vers-chef', project: conductorName(), text, caller: u.project }),
+      class: 'decision', text,
+      displayText: `réponse non appliquée — pause n° ${u.n} de ${u.project} (${u.run})`,
+    });
+    const m = `[chef-answer-watch] ${u.project} ${u.run} pause ${u.n} : réponse du chef non appliquée depuis ${Math.round(u.waitingMs / 1000)} s — signalée au chef`;
+    console.log(m); debugLog(m);
+  }
+}
+setInterval(sweepUnappliedChefAnswers, CHEF_ANSWER_WATCH_MS).unref?.();
 
 function allowedToolsFor(name) {
   const project = config.projects.find(p => p.name === name);
