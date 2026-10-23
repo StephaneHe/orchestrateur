@@ -64,6 +64,7 @@ import { routePause, pauseSignature, decisionText } from './process-pause.mjs';
 import { releasePlan, parseDeliveryText, deliverRelease, deliverCommit, staleVersionHints, staleText, versionMentions } from './code-delivery.mjs';
 import { cachedSuite } from './suite-cache.mjs';
 import * as Rework from './aside-rework.mjs';
+import * as Exploit from './exploitation.mjs';
 
 /** Changelog fragment a lane task delivers (P9; same slug as the integrator's, scripts/lanes.mjs). */
 export function laneFragmentPath(task) { return `changelog.d/${String(task).replace(/[^\w.-]/g, '_')}.md`; }
@@ -147,6 +148,10 @@ export function readEnforcement(root) {
   const pipelines = (Array.isArray(e.pipelines) ? e.pipelines : ENGINE_PIPELINES).filter(p => ENGINE_PIPELINES.includes(p));
   // terminal (0.52.0) : le terminal interactif /ws/pty passe par le routeur.
   return { projects, pipelines, terminal: e.terminal === true, chef: e.chef === true, since: e.since || null, generalSince: e.generalSince || null, by: e.by || null };
+}
+/** In service: listed in enforcement.pipelines, or the Exploitation lane (offered only with its switch, 0.141.0). */
+export function pipelineServed(enf, pipeline) {
+  return enf.pipelines.includes(pipeline) || pipeline === Exploit.EXPLOIT_PIPELINE;
 }
 export function isEnforced(enf, project) {
   return enf.projects.includes(project) || enf.projects.includes('*');
@@ -903,7 +908,10 @@ function catalogStepPrompt(L, ctx, step, art, T) {
   if (c.media?.optionalWith) machine.push(`MARQUEUR_SANS_MEDIA=${c.media.optionalWith}`);
   if (ctx.localTool) machine.push(`OUTIL_LOCAL=${ctx.localTool}`);
   if (c.meeting) machine.push(`REUNION=${c.meeting}`);
+  if (c.exploitation) machine.push('EXPLOITATION=oui');
   L.push(...machine);
+  // Exploitation (0.141.0): what the user authorized at the pause (« autoriser »), and only that.
+  if (c.exploitation && ctx.exploitAuthorized?.length) L.push(`AUTORISÉ par la réponse « autoriser » de l’utilisateur à la pause (et rien d’autre) : ${ctx.exploitAuthorized.join(' ; ')}. Fais-le, puis vérifie son effet ; jamais de --force.`);
   L.push('');
   if (step.kind === 'judge') {
     L.push(`Écris ${art(step.artefact)}${c.json ? ', et UNIQUEMENT ce JSON' : ''}. Ne modifie AUCUN fichier du projet (lecture seule : l’orchestrateur compare les empreintes).`);
@@ -1605,6 +1613,34 @@ const CODE_STEPS = {
     return { ok: true };
   },
 
+  // ── Exploitation (0.141.0, exploitation.mjs) ───────────────────────────
+  /**
+   * The program's delivery: files of the repository changed → patch version,
+   * the CHANGELOG text of the turn and ONE commit (hooks run, never a push);
+   * nothing changed → no commit. rapport.md (the result) = the turn's report,
+   * the proofs the code found in the turn, the way back and the delivery.
+   */
+  async 'exploitation-livrer'({ ctx, state, run, writeEvent }) {
+    const p = Exploit.parseExploitation(readArtefact(ctx, Exploit.EXPLOIT_ARTEFACT) || '');
+    const inGit = isGitWorkTree(ctx.cwd);
+    const changed = inGit ? git(ctx.cwd, ['status', '--porcelain']).out.split('\n').filter(l => l && !isLocalOnly(l.slice(3))).map(l => l.slice(3).replace(/^"|"$/g, '')) : [];
+    let line = inGit ? 'Aucun fichier du dépôt modifié : ni version ni commit.' : 'Dossier hors git : rien à commiter.';
+    if (changed.length) {
+      // The CHANGELOG text is the model's; no requirement line (an operations task is not a feature).
+      const d = deliverRelease(ctx.cwd, { ...ctx.cfg, requirements: null }, { bump: 'patch', changelog: p.changelog || '### Changed\n\n- exploitation', requirement: '', summary: p.report || '' }, { lane: ctx.lane, run });
+      if (!d.ok) return { ok: false, why: `livraison par le programme : ${d.why} — les fichiers modifiés restent dans le projet, non commités (${changed.slice(0, 6).join(', ')})` };
+      state.exploitDelivery = { version: d.version || null, from: d.from || null, commit: d.commit || null };
+      line = d.noCommit ? 'Rien de nouveau à commiter.' : `Commit ${String(d.commit || '').slice(0, 12)} fait par le programme (aucun model)${d.version ? ` : version ${d.from} → ${d.version} (patch)` : ''}, entrée du CHANGELOG${d.mentions?.length ? `, mentions de version (${d.mentions.join(', ')})` : ''} ; fichiers : ${changed.slice(0, 8).map(f => `\`${f}\``).join(', ')}. Pas de push.`;
+      writeEvent({ type: 'system', subtype: 'pipeline_exploitation_delivered', pipeline: { run, step: 'livrer' }, version: d.version || null, commit: d.commit || null, files: changed, text: `livraison de l’exploitation par le programme : ${line}` });
+    }
+    const md = ['## Compte rendu', '', (p.report || '').trim() || '—', '',
+      '## Vérification (preuves retrouvées par l’orchestrateur dans le journal du tour)', '', ...p.proofs.map(x => `- \`${x.ref}\` — ${x.observed}`), '',
+      '## Retour arrière', '', (p.rollback || '').trim(), '',
+      '## Livraison', '', line, ''];
+    fs.writeFileSync(path.join(ctx.artDir, 'rapport.md'), md.join('\n'));
+    return { ok: true };
+  },
+
   // ── Rédaction « document » (pipelines phase 1, document-check.mjs) ─────
   /**
    * codeFirst of « Cibler »: the request names ONE existing document (path
@@ -1795,7 +1831,7 @@ const CODE_STEPS = {
         rows.push(`| ${t.projet} | non lancée — ${t.chefHandoff ? `renvoyée au chef, qui agit lui-même après ce tour : ${t.raison || ''}` : t.chefAction && !t.refused ? `action du chef « ${t.chefAction} », exécutée par le code` : t.lacune ? `lacune : ${t.lacune}` : t.blocked ? `attend la tâche ${t.blocked}, non lancée` : `question : ${t.question || t.why || '?'}`} | — |`);
         return t;
       }
-      const served = !!t.pipeline && isEnforced(enf, t.projet) && enf.pipelines.includes(t.pipeline);
+      const served = !!t.pipeline && isEnforced(enf, t.projet) && pipelineServed(enf, t.pipeline);
       const steps = served ? planSteps(t.pipeline, { mode: t.mode || 'leger' }).filter(s => s.chain?.length && s.kind !== 'code').map(s => ({ id: s.id, ...resolveCase(assignments, s.chain) })) : [];
       rows.push(`| ${t.projet} | ${t.horsPipeline ? `hors pipeline, autorisé par l’utilisateur (« ${t.autorisation || '?'} ») : ${t.horsPipeline}` : served ? `${pipelineLabel(t.pipeline, t.mode)}` : t.reprise ? `reprise de ${t.reprise}` : `${t.pipeline} — projet hors service : tour ordinaire`}${t.sessionNeuve ? ' — session neuve' : ''} | ${steps.map(s => `${s.id}: ${s.model || 'défaut du projet'}`).join(', ') || '—'} |`);
       return { ...t, served };
@@ -2111,10 +2147,56 @@ function meetingCheck(ctx, kind, art, changed) {
   return { ok: false, why: `contrôle de réunion inconnu « ${kind} »` };
 }
 
+/**
+ * The Exploitation lane (0.141.0): its checklist, checked by the code on the
+ * artefact AND on the turn's own log. Guardrails first (they hold whatever the
+ * model writes); then the hand-over to the Development (model's BASCULE_DEV, a
+ * code or test file changed, a red suite) or the authorization pause; then the
+ * sections, each proof of the effect, the way back and the CHANGELOG text.
+ * → {ok, changed, bascule?, authorize?, proofs?} | {ok:false, why, noRetry?}
+ */
+function checkExploitation(ctx, step, before, after) {
+  const changed = changedFiles(before, after).filter(f => !isLocalOnly(f));
+  const fail = (why, extra = {}) => ({ ok: false, why, changed, ...extra });
+  const art = readArtefact(ctx, step.artefact);
+  if (art == null || art.trim().length < 20) return fail(`artefact ${step.artefact} absent ou vide`);
+  const p = Exploit.parseExploitation(art);
+  const uses = toolUsesInTurn(ctx.stepLogFile || '');
+  const commands = uses.filter(u => /^(Bash|PowerShell)$/.test(u.name)).map(u => String(u.input?.command || ''));
+  const irr = Exploit.irreversibleCommands(commands);
+  const forced = irr.filter(i => i.kind === 'force');
+  // Done already, it cannot be undone: refused at once (no identical retry), reported.
+  if (forced.length) return fail(`garde-fou : --force n’est jamais permis — commande lancée : ${forced[0].cmd}`, { noRetry: true, guardrail: true });
+  const byAnswer = (ctx.exploitAuthorized || []).length > 0;
+  const quoteOk = !!p.authorization && p.authorization.replace(/\s+/g, ' ').trim().length >= 4 && userSaid(ctx, p.authorization);
+  if (p.authorization && !quoteOk && !byAnswer) return fail(`section « ## Autorisation » : les mots cités (« ${p.authorization.slice(0, 120)} ») ne figurent pas dans la demande de l’utilisateur`, irr.length ? { noRetry: true, guardrail: true } : {});
+  const unauth = irr.filter(i => i.kind !== 'force');
+  if (unauth.length && !quoteOk && !byAnswer) return fail(`garde-fou : opération irréversible (${unauth[0].label}) lancée sans les mots exacts de l’utilisateur ni sa réponse « autoriser » — ${unauth[0].cmd}`, { noRetry: true, guardrail: true });
+  if (p.bascule) return { ok: true, changed, bascule: { why: p.bascule, by: 'model' } };
+  if (p.authRequired.length && !byAnswer) return { ok: true, changed, authorize: p.authRequired };
+  const code = Exploit.behaviourFiles(changed, ctx.cfg);
+  if (code.length) return { ok: true, changed, bascule: { why: `fichier(s) de code ou de test modifié(s) : ${code.slice(0, 6).join(', ')} — un changement de comportement passe par le Développement`, by: 'code', files: code } };
+  // A red suite means the task touched behaviour: the Development takes it.
+  if (changed.length && ctx.cfg.testCommand && !ctx.suiteRedAtStart) {
+    const t = runSuite(ctx);
+    if (!t.ok) return { ok: true, changed, bascule: { why: `la suite de tests échoue après la modification (${ctx.cfg.testCommand}, code ${t.code})`, by: 'test', out: String(t.out || '').slice(-1500) } };
+  }
+  const miss = missingSections(art, Exploit.EXPLOIT_SECTIONS);
+  if (miss.length) return fail(`${step.artefact} : sections manquantes « ${miss.map(s => `## ${s}`).join(' », « ')} »`);
+  const pr = Exploit.checkProofs(p.proofs, { uses, seenText: observedInTurn(ctx.stepLogFile || '').text });
+  if (!pr.ok) return fail(pr.why);
+  if (String(p.rollback || '').replace(/\s+/g, ' ').trim().length < 10) return fail('section « ## Retour arrière » vide : écris comment revenir à l’état d’avant (commandes exactes)');
+  if (changed.length && isGitWorkTree(ctx.cwd) && !String(p.changelog || '').trim()) {
+    return fail(`fichiers du dépôt modifiés (${changed.slice(0, 6).join(', ')}) : section « ## CHANGELOG » attendue (### Changed…, sans la ligne de version) — le programme écrit la version patch et le commit`);
+  }
+  return { ok: true, changed, proofs: p.proofs };
+}
+
 /** Critères génériques d'une étape du catalogue. */
 function checkCatalogCriteria(ctx, step, before, after) {
   ctx.lastCheck = null;
   ctx.docResult = null;
+  if (step.checks?.exploitation) return checkExploitation(ctx, step, before, after);
   const { cwd } = ctx;
   const c = step.checks || {};
   const changed = changedFiles(before, after);
@@ -2658,6 +2740,10 @@ export async function runPipeline(o) {
   // Switches read when the run starts and frozen in run.json (pipeline-tuning.mjs):
   // the plan itself may depend on them (lever 6), so they are read first.
   const startTuning = state ? null : tuningFor(readTuning(root), projectName);
+  // The Exploitation lane exists only with its switch (off = exactly as before 0.141.0).
+  if (!state && pipeline === Exploit.EXPLOIT_PIPELINE && !startTuning.exploitation) {
+    return refuse(64, 'la voie « Exploitation » est coupée pour ce projet (interrupteur « exploitation » : node scripts/pipeline-enforce.mjs tuning exploitation on [<projet>])');
+  }
   if (!state) {
     state = {
       run, project: projectName, pipeline, mode, kind, base, status: 'running',
@@ -2958,6 +3044,8 @@ export async function runPipeline(o) {
     lane: state.lane?.k >= 1 ? { ...state.lane, dir: cwd, main: project.path, fragment: laneFragmentPath(state.lane.task) } : null };
   // Phase 0 switches, frozen in run.json when the run starts (pipeline-tuning.mjs).
   ctx.tuning = runTuning(state, root, projectName, { resumed: !!o.resumeRun });
+  // Exploitation (0.141.0): the operations the user authorized by « autoriser » at the pause.
+  ctx.exploitAuthorized = pipeline === Exploit.EXPLOIT_PIPELINE ? (state.authorizedOps || []).filter(x => typeof x === 'string') : [];
   saveState();
   ctx.suiteCacheFile = path.join(logsDir, 'suite-cache', `${projectName}.json`);
   ctx.suiteCacheIndex = path.join(runDir, 'suite-cache.idx');
@@ -3143,6 +3231,45 @@ export async function runPipeline(o) {
     return finish({ code: 2, paused: true, limit, question: menuQuestion(projectName, d, menu), result: `${pauseText({ what, diag: d, menu, body })}${tail}`, notice });
   };
 
+  /**
+   * Exploitation → Development (0.141.0): the turn's changes to the project are
+   * undone (git), then the same request is dispatched with --pipeline dev,
+   * detached and queued behind this turn (its callback and source kept); this
+   * run ends saying so. Outside git the Development cannot run: a question.
+   */
+  const basculeToDev = async (step, last) => {
+    const b = last.crit.bascule;
+    const inGit = isGitWorkTree(cwd);
+    if (inGit && last.before && last.after) restoreFiles(cwd, last.before, last.after, null);
+    const undone = (last.crit.changed || []).length;
+    const byWhat = { model: 'le model l’a jugée hors de la voie légère', code: 'le code a vu un changement de comportement', test: 'le code a vu la suite de tests échouer' }[b.by] || 'bascule';
+    if (!inGit) {
+      writeEvent({ type: 'system', subtype: 'pipeline_exploitation_bascule', pipeline: { run, step: step.id }, by: b.by, why: b.why, launched: false, text: `↪ hors voie légère (${byWhat}) : ${b.why} — dossier hors git, Développement impossible` });
+      return finish({ code: 0, result: `↪ ${projectName} — cette demande sort de la voie légère « Exploitation » (${byWhat}) : ${b.why}.\n\nLe Développement exige un dépôt git ; ce dossier n’en est pas un. Rien n’a été annulé dans ce dossier.\n\nNEEDS_USER_INPUT: ${projectName} : cette demande demande du code ou un changement de comportement (${String(b.why).slice(0, 200)}). Comment voulez-vous la traiter ?` });
+    }
+    const argv = Exploit.basculeArgs({ dispatchScript, project: projectName, callback: callbackTo, source: sourceProject || state.source || null, testLabel: o.testLabel || null });
+    const text = Exploit.basculePrompt(state.request || prompt, b.why, run);
+    let launched = false, pid = null;
+    if (process.env.ORCH_BASCULE_RECORD) {
+      // Tests: the hand-over is recorded instead of launched (a real dispatch would run detached).
+      try { fs.appendFileSync(process.env.ORCH_BASCULE_RECORD, `${JSON.stringify({ argv: argv.slice(1), text })}\n`); launched = true; } catch { /* reported below */ }
+    } else {
+      const env = { ...process.env };
+      for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'ORCH_TURN_PROJECT', 'ORCH_TURN_STEP', 'ORCH_STEP_TOKEN', 'ORCH_OBS_ID', 'ORCH_TURN_ID', 'DISPATCH_SLOT', 'DISPATCH_TICKET']) delete env[k];
+      try {
+        const c = spawn(process.execPath, argv, { cwd: root, env, detached: true, stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
+        c.on('error', () => {}); c.stdin.on('error', () => {});
+        c.stdin.end(text); c.unref();
+        pid = c.pid || null; launched = !!pid;
+      } catch { launched = false; }
+    }
+    state.bascule = { by: b.by, why: b.why, at: new Date().toISOString(), launched, pid, undone };
+    saveState();
+    writeEvent({ type: 'system', subtype: 'pipeline_exploitation_bascule', pipeline: { run, step: step.id }, by: b.by, why: b.why, launched, pid, undone,
+      text: `↪ bascule en Développement (${byWhat}) : ${b.why}${launched ? ' — demande relancée en Développement, en file derrière ce tour' : ' — relance impossible'}` });
+    if (!launched) return finish({ code: 1, isError: true, result: `✕ ${projectName} — la demande doit passer en Développement (${b.why}), mais son lancement a échoué. ${undone ? `Les ${undone} fichier(s) modifié(s) ont été remis à l’état d’avant.` : 'Rien n’a été modifié.'} Relancez-la avec /dev.` });
+    return finish({ code: 0, result: `↪ ${projectName} — demande confiée au Développement : elle sort de la voie légère « Exploitation » (${byWhat}) — ${b.why}.\n\n- ${undone ? `${undone} fichier(s) modifié(s) par la voie légère remis à l’état d’avant` : 'rien n’avait été modifié dans le projet'} ;\n- la même demande est relancée avec le pipeline Développement, en file derrière ce tour${callbackTo ? ` (compte rendu à ${callbackTo})` : ''}.${b.out ? `\n\nSortie de la suite :\n\`\`\`\n${b.out.slice(-800)}\n\`\`\`` : ''}` });
+  };
   const pauseForLimit = async ({ limit, value, step, why, lastOutput, codeDelivery = null }) => {
     const its = parseItems(readArtefact(ctx, 'tests.md') || '');
     const left = its.filter(i => !i.done);
@@ -4042,6 +4169,16 @@ export async function runPipeline(o) {
         if (state.itemDelivery && g != null && setAside(g, limit, r.rec.why)) continue steps;
         return pauseForLimit({ limit, value: attempt, step, why: r.rec.why, lastOutput: r.crit?.test?.out, codeDelivery: r.rec.codeDelivery || null });
       }
+    }
+    // Exploitation (0.141.0): handed over to the Development, or paused for the user's authorization.
+    if (last.crit?.bascule) return basculeToDev(step, last);
+    if (last.crit?.authorize?.length) {
+      if (last.before && last.after) restoreFiles(cwd, last.before, last.after, null);
+      state.pendingAuth = last.crit.authorize.map(x => String(x).slice(0, 300));
+      saveState();
+      return pauseWith({ limit: 'autoriser', notice: `⏸ ${projectName} : action irréversible en attente de votre autorisation`,
+        what: `la tâche demande ${state.pendingAuth.length > 1 ? 'des opérations irréversibles' : 'une opération irréversible'} que votre demande n’autorise pas en toutes lettres : ${state.pendingAuth.join(' ; ')}. Seul l’état avant a été relevé, rien n’a été lancé. Seule votre réponse « autoriser » la déclenche (jamais une réponse automatique).`,
+        input: { extra: { operations: state.pendingAuth } } });
     }
     if (step.id === 'rouge' || step.crit === 'rouge') ctx.testPrint = testsNow();
     if (step.id === 'rouge' && ctx.testFix) { state.testFix = ctx.testFix = null; }

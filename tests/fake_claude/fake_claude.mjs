@@ -691,9 +691,17 @@ function catalogStep(text, step, artefact, bad, w, once) {
   // (FAKE_PIPE_JSON[step].artefact, else a short report) — action steps of the generics.
   let spec0 = {};
   try { spec0 = JSON.parse(process.env.FAKE_PIPE_JSON || '{}')[step] || {}; } catch { /* ignored */ }
-  if (spec0.writes && /^MODIFIER=(oui|docs)/m.test(text)) {
+  // Exploitation (0.141.0): spec.commands = [{command, output}] are logged as Bash
+  // tool uses of the turn (the proofs the engine looks for); spec.artefact alone
+  // writes the artefact without touching the project (an operations task).
+  for (const c of spec0.commands || []) {
+    const id = newId('toolu');
+    emit({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'Bash', input: { command: c.command, description: 'commande simulée' } }] } });
+    emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: c.output || 'sortie simulée', ...(c.error ? { is_error: true } : {}) }] } });
+  }
+  if ((spec0.writes || spec0.artefact) && /^MODIFIER=(oui|docs)/m.test(text)) {
     const mp4 = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypisom'), Buffer.alloc(12)]);
-    for (const [rel, content] of Object.entries(spec0.writes)) {
+    for (const [rel, content] of Object.entries(spec0.writes || {})) {
       const abs = path.isAbsolute(rel) ? rel : path.join(process.cwd(), rel);
       fs.mkdirSync(path.dirname(abs), { recursive: true });
       fs.writeFileSync(abs, content === '@mp4' ? mp4 : String(content));

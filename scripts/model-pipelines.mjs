@@ -501,7 +501,20 @@ export const PIPELINES = [
     ],
   },
 
-  // ── 17. Mémoire (graphe de connaissances, phase 1, 0.131.0) ───────────────
+  // ── 17. Exploitation (0.141.0, voie légère, interrupteur `exploitation`) ──
+  {
+    id: 'exploitation', label: 'Exploitation', icon: '🛠',
+    purpose: 'Une petite tâche d’exploitation en UN seul tour de model, sans TDD : état avant, action, vérification de l’effet réel, retour arrière, puis commit par le programme seulement si des fichiers du dépôt ont changé.',
+    when: 'Installer un outil, configurer ou redémarrer un service, publier un service sur le tailnet (tailscale serve), une règle de pare-feu, une tâche planifiée, changer une configuration, déclarer un service ou un script dans .orchestrateur/pipeline.json, une petite retouche de doc ou de config sans comportement nouveau. Du code, un test ou un comportement nouveau : Développement.',
+    flow: [
+      { id: 'executer', n: '1', title: 'Exécuter et vérifier', what: 'Un seul tour : constater l’état avant, agir, vérifier l’EFFET réel (une commande lancée ou une URL consultée dans le tour, jamais un code retour seul), écrire le retour arrière et un compte rendu court. Une action irréversible exige vos mots exacts ou « autoriser » ; jamais de --force. Un fichier de code ou de test modifié, ou une suite rouge : la demande passe au Développement.',
+        example: '« publie le service en HTTPS via tailscale serve » → tailscale serve status, tailscale serve --bg --https=443 7788, puis l’URL https://… répond 200.' },
+      { id: 'livrer', n: '2', title: 'Livrer (par le programme)', code: true, what: 'Si des fichiers du dépôt ont changé : version patch, entrée du CHANGELOG (texte du tour) et un commit, écrits par le programme ; sinon rien. Le compte rendu, les preuves et le retour arrière forment le résultat.',
+        example: 'Service déclaré dans .orchestrateur/pipeline.json → 1.9.0 → 1.9.1, CHANGELOG « ### Changed », un commit, pas de push.' },
+    ],
+  },
+
+  // ── 18. Mémoire (graphe de connaissances, phase 1, 0.131.0) ───────────────
   // Not a pipeline a request is routed to (excluded from classification like
   // the Routage): the two model cases of the knowledge index (KG-SYNTHESE §3.4).
   {

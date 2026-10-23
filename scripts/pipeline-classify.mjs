@@ -38,7 +38,7 @@ export const GENERIC_PIPELINES = ['operations', 'fichiers'];
 export const GENERIC_MODES = { redaction: ['document'], discussion: ['verification'], recherche: ['interne'] };
 // Never a destination of a request: the chef's Routage and the knowledge index's model cases (0.131.0).
 const NOT_ROUTED = new Set(['routage', 'kg']);
-const CHOICES = PIPELINES.filter(p => !NOT_ROUTED.has(p.id) && !GENERIC_PIPELINES.includes(p.id));
+const CHOICES = PIPELINES.filter(p => !NOT_ROUTED.has(p.id) && !GENERIC_PIPELINES.includes(p.id) && p.id !== 'exploitation');
 export const GENERIC_RULE = 'Specialised pipelines first, then the generic ones, then discussion for a pure question. ' +
   'operations = running ONE or a few operations on the project or its environment, no code to write: git push, git tag, push a tag, restore files to the last commit, prepare the production jump (plan only), publish the APK on the downloads page, install an APK on the device, restart a declared service, run a declared script → operations, never maintenance (maintenance upkeeps code) nor dev. ' +
   `For operations, set "operations" to the ordered list of ALL the operations the task asks for — every one of them, e.g. publishing then installing is two — each {"id": one of ${OPERATION_IDS.join(', ')}, "params": the parameters the request gives (e.g. {"remote": "origin"}, {"tag": "v1.2.0"})}, and "autorisation" to the user's EXACT words that ask for or authorize them when the request quotes them. ` +
@@ -46,23 +46,35 @@ export const GENERIC_RULE = 'Specialised pipelines first, then the generic ones,
   'redaction with mode "document" = a one-off piece of work on an EXISTING document the request names: proofread, summarize, translate, reformat, complete (e.g. add two items to a TODO_LIST.md) or convert it; writing a NEW text stays redaction with its usual mode. ' +
   'discussion with mode "verification" = check or compare and answer with verified findings (« vérifie que… », « compare… »), nothing modified. ' +
   'recherche with mode "interne" = research in the repository and its logs only, without the web. ';
-const genericRule = (choices) => (choices.some(p => GENERIC_PIPELINES.includes(p.id)) ? GENERIC_RULE : '');
+const genericRule = (choices) => (choices.some(p => GENERIC_PIPELINES.includes(p.id)) ? GENERIC_RULE : '') + exploitationRule(choices);
+// The light Exploitation lane (0.141.0, switch `exploitation`): a rule of MEANING for the model, never keywords.
+export const EXPLOITATION_PIPELINE = 'exploitation';
+export const EXPLOITATION_RULE = 'exploitation = a small one-off OPERATIONS task on the project or its machine, no code to write and no new behaviour: install a tool, configure, start or restart a service, publish a local service on the tailnet (tailscale serve), a firewall rule, a scheduled task, change a configuration value, declare a service or a script in .orchestrateur/pipeline.json, a small fix of a doc or config file → exploitation, never dev (even with « puis » / several steps) nor maintenance. ' +
+  'Writing or changing code, tests, a feature or a behaviour → dev, never exploitation. ';
+const exploitationRule = (choices) => (choices.some(p => p.id === EXPLOITATION_PIPELINE)
+  ? `${EXPLOITATION_RULE}${choices.some(p => p.id === 'operations') ? 'operations only when every operation is one of its closed list (push, tag, restore, prod jump plan, publish or install the APK, restart a DECLARED service, run a DECLARED script); any other operations task → exploitation. ' : ''}`
+  : '');
 const modeList = (choices) => (choices.some(p => GENERIC_PIPELINES.includes(p.id)) ? '"leger"|"complet"|"document"|"verification"|"interne"' : '"leger"|"complet"');
 const opFields = (choices) => (choices.some(p => GENERIC_PIPELINES.includes(p.id)) ? ',"operations":[{"id":"<optional>","params":{}}],"autorisation":"<optional>"' : '');
 
 /** Pipelines offered to the model: the Models page structure, accepted gaps included (their description, never keywords). */
-export function classifierChoices(root, { generic = false } = {}) {
+export function classifierChoices(root, { generic = false, exploitation = false } = {}) {
   let custom = null;
   // Decision 7 (switch inertCleanup): non-executable pipelines and keyword attachments are not offered.
   try { custom = effectiveCustom(JSON.parse(fs.readFileSync(path.join(root, 'model-routing.json'), 'utf8'))) || null; } catch { /* no file */ }
-  // Phase 1: the generic pipelines are offered only with the switch `generic` (off = exactly as before).
-  const keep = (p) => !NOT_ROUTED.has(p.id) && (generic || !GENERIC_PIPELINES.includes(p.id));
+  // Phase 1: the generic pipelines are offered only with the switch `generic` (off = exactly as before);
+  // the Exploitation lane only with its own switch (0.141.0).
+  const keep = (p) => !NOT_ROUTED.has(p.id) && (generic || !GENERIC_PIPELINES.includes(p.id)) && (exploitation || p.id !== EXPLOITATION_PIPELINE);
   try { return applyCustom(custom).filter(keep); } catch { return CHOICES.filter(keep); }
 }
 
 /** Is the switch `generic` on for this project (pipeline-tuning.mjs, re-read at each call)? */
 export function genericFor(root, project) {
   try { return !!tuningFor(readTuning(root), project || '').generic; } catch { return false; }
+}
+/** Is the switch `exploitation` on for this project (0.141.0, re-read at each call)? */
+export function exploitationFor(root, project) {
+  try { return !!tuningFor(readTuning(root), project || '').exploitation; } catch { return false; }
 }
 
 /** The assigned classifier model, or null when the slot is empty. */
@@ -238,7 +250,8 @@ async function askClassifier({ root, prompt, parse, oneShot, keys, fetchImpl, ti
  */
 export async function classifyEntry({ root, logsDir, text, project = null, entry = null, fixed = {}, oneShot = null, keys, fetchImpl, timeoutMs = 60_000, env = process.env } = {}) {
   const generic = genericFor(root, project);
-  const e = explicitChoice({ text, entry, generic });
+  const exploitation = exploitationFor(root, project);
+  const e = explicitChoice({ text, entry, generic, exploitation });
   const want = { pipeline: fixed.pipeline || e.pipeline || null, mode: fixed.mode || e.mode || null, kind: fixed.kind || null };
   if (e.system) return { pipeline: 'routage', mode: null, kind: null, explicit: true, classifier: 'explicite', reasons: [`entrée système « ${entry} »`] };
   // Complete explicit choice: dev needs its nature too; other pipelines take
@@ -250,7 +263,7 @@ export async function classifyEntry({ root, logsDir, text, project = null, entry
     return { pipeline: 'dev', mode: want.mode, kind: want.kind, explicit: true, classifier: 'explicite', reasons: ['choix explicite → dev'] };
   }
   const fixedForModel = { ...(want.pipeline ? { pipeline: want.pipeline } : {}), ...(want.mode ? { mode: want.mode } : {}) };
-  const choices = classifierChoices(root, { generic });
+  const choices = classifierChoices(root, { generic, exploitation });
   const r = await askClassifier({ root, prompt: classificationPrompt(text, fixedForModel, choices), parse: (t) => parseClassification(t, fixedForModel, choices), oneShot, keys, fetchImpl, timeoutMs, env });
   if (!r.ok) {
     record(logsDir, { project, entry, provider: r.provider || null, model: r.model || null, ok: false, why: r.why, fixed: fixedForModel });
@@ -325,7 +338,7 @@ export async function classifyTask({ root, logsDir, task, fixed = {}, oneShot = 
   }
   if (want.pipeline === 'dev' && want.mode && want.kind) return { pipeline: 'dev', mode: want.mode, kind: want.kind, classifier: 'explicite', raison: 'choix explicite → dev' };
   const fixedForModel = { ...(want.pipeline ? { pipeline: want.pipeline } : {}), ...(want.mode ? { mode: want.mode } : {}) };
-  const choices = classifierChoices(root, { generic: genericFor(root, task.projet) });
+  const choices = classifierChoices(root, { generic: genericFor(root, task.projet), exploitation: exploitationFor(root, task.projet) });
   const r = await askClassifier({ root, prompt: routingTaskPrompt(task, fixedForModel, choices), parse: (t) => parseTaskClassification(t, fixedForModel, choices), oneShot, keys, fetchImpl, timeoutMs, env });
   record(logsDir, { project: task.projet || null, entry: 'routage-tache', provider: r.provider || null, model: r.model || null, ok: r.ok, ...(r.ok ? { model_result: r.value } : { why: r.why }), fixed: fixedForModel });
   if (!r.ok) return { failed: true, why: r.why, model: r.model || null };

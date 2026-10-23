@@ -3401,6 +3401,45 @@ organisé le process mieux que moi ».
   `diagnosis.excluded`).
 - Recette : `_test_version_mentions.mjs` (rejeu de p-20261023T044621-dc1385).
 
+## Voie légère « Exploitation » (0.141.0)
+
+Demande (2026-10-23) : « Je ferai passer ce genre de petites tâches
+d'exploitation par une voie plus légère => fais ca » (déclarer un service puis
+le redémarrer était parti en Développement complet, ~45 min ; tailscale serve et
+un redémarrage refusés par Opérations).
+
+- Pipeline **`exploitation`** (`scripts/exploitation.mjs`, catalogue, onglet
+  « Exploitation » de la page Models, case `exploitation.executer`) : UN tour de
+  model sans TDD, puis « Livrer » par le programme (`exploitation-livrer`).
+  Check-list vérifiée par le code (`checkExploitation` du moteur) : sections
+  `## État avant`, `## Action`, `## Vérification` (« - Preuve : `<commande ou
+  URL>` — Constaté : … », commande lancée DANS le tour, URL vue dans le tour,
+  jamais un code retour seul), `## Retour arrière`, `## Compte rendu`, et
+  `## CHANGELOG` si des fichiers du dépôt ont changé. Fichiers changés ⇒
+  version patch, entrée du CHANGELOG, mentions de version, un commit (hooks,
+  jamais de push) ; sinon aucun commit.
+- **Bascule en Développement** : `BASCULE_DEV: …` du model, fichier de code, de
+  test, de script ou de type inconnu modifié (doc, config, versions, CHANGELOG
+  ne comptent pas), ou suite rouge ⇒ modifications annulées (git), même demande
+  relancée `--pipeline dev --queue-if-busy` (rappel et source gardés,
+  `ORCH_BASCULE_RECORD` en test), `system/pipeline_exploitation_bascule`.
+- **Garde-fous** (commandes du tour, `irreversibleCommands`) : `--force` refusé
+  aussitôt ; push, suppression, publication, envoi sans les mots exacts de
+  l'utilisateur (`## Autorisation`, citation vérifiée par `userSaid`) refusés
+  aussitôt ; `AUTORISATION_REQUISE: …` ⇒ pause `autoriser` (utilisateur seul,
+  jamais la réponse automatique), l'étape refaite avec l'autorisation.
+- **Classement** par le sens (`EXPLOITATION_RULE`), préfixe `/exploitation`,
+  `--pipeline exploitation`. Classée ainsi, la voie est en service sur tout
+  projet en service sans figurer dans `enforcement.pipelines`
+  (`pipelineServed`).
+- **Interrupteur** `exploitation` (`pipeline-tuning.mjs`, coupé par défaut,
+  figé dans `run.json.tuning`) : coupé = 0.140.0 exact (non proposée, préfixe
+  ignoré, `--pipeline exploitation` refusé 64). Mise en service par le chef :
+  `node scripts/pipeline-enforce.mjs tuning exploitation on [<projet>]`, relu à
+  chaque dispatch, sans redémarrage.
+- Recette : `_test_exploitation.mjs` (3 cas réels rejoués, bascules,
+  garde-fous, interrupteur).
+
 ## Le rappel appartient à l'exécution (0.136.0)
 
 Demande (2026-10-22) : « peut-on le mettre dans le code à la place ou en plus

@@ -34,6 +34,7 @@
 import { MEDIA_PIPELINES } from './pipeline-catalog-media.mjs';
 import { operationsCatalogText } from './typed-operations.mjs';
 import { DOC_OPERATIONS, DOC_ALREADY } from './document-check.mjs';
+import { EXPLOIT_ARTEFACT, EXPLOIT_ROLE, EXPLOIT_SECTIONS } from './exploitation.mjs';
 
 const DOC_GLOBS = ['**/*.md', 'docs/**', '**/*.txt', '**/*.rst', '**/*.adoc'];
 
@@ -364,6 +365,21 @@ S.fichiers = {
     { id: 'executer', title: '3 Copier, déplacer, supprimer, comparer (par le code)', chain: ['fichiers.executer'], group: 'fichiers', artefact: 'execution.json', kind: 'code', handler: 'fichiers-executer' },
     { id: 'verifier', title: '4 Vérifier (par le code)', chain: ['fichiers.verifier'], group: 'fichiers', artefact: 'verification.md', kind: 'code', handler: 'fichiers-verifier' },
     { id: 'livrer', title: '5 Livrer (par le code)', chain: ['fichiers.livrer'], group: 'fichiers', artefact: 'livraison.md', kind: 'code', handler: 'fichiers-livrer' },
+  ],
+};
+
+// ── Exploitation (0.141.0, scripts/exploitation.mjs) ─────────────────────
+// User request (2026-10-23): « Je ferai passer ce genre de petites tâches
+// d'exploitation par une voie plus légère ». ONE model turn with a fixed
+// checklist checked by the code, then the program's commit when files of the
+// repository changed. Offered only with the switch `exploitation`.
+S.exploitation = {
+  needs: { git: false, clean: true },
+  final: 'livrer',
+  steps: [
+    { id: 'executer', title: '1 Exécuter et vérifier', chain: ['exploitation.executer'], group: 'exploitation', artefact: EXPLOIT_ARTEFACT, kind: 'action',
+      role: EXPLOIT_ROLE, checks: { exploitation: true, sections: EXPLOIT_SECTIONS, artefactIsWork: true } },
+    { id: 'livrer', title: '2 Livrer (par le programme)', chain: ['exploitation.livrer'], group: 'exploitation', artefact: 'rapport.md', kind: 'code', handler: 'exploitation-livrer' },
   ],
 };
 

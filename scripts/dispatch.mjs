@@ -1820,7 +1820,8 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
   }
   if (!pipe && !resumeRun && classification) {
     const c = classification;
-    if (ENFORCEMENT.pipelines.includes(c.pipeline)) {
+    // The Exploitation lane is in service wherever the classifier may choose it (its switch, 0.141.0).
+    if (pipeEngine.pipelineServed(ENFORCEMENT, c.pipeline)) {
       pipe = c.pipeline;
       if (!mode) mode = c.mode;
     } else {

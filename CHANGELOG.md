@@ -11,6 +11,63 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.141.0] - 2026-10-23
+
+User request (2026-10-23): « Je ferai passer ce genre de petites tâches
+d'exploitation par une voie plus légère => fais ca ». Seen on a musician:
+« declare the service in .orchestrateur/pipeline.json then restart it » went
+to the complete Development (6 TDD items, ~45 min); « publish over HTTPS with
+tailscale serve » and « restart the service » were refused by « Opérations »
+(closed list), and the chef had to use --hors-pipeline.
+
+### Added
+- (server) A light pipeline **`exploitation`** (`scripts/exploitation.mjs`,
+  catalog entry, Models page tab « Exploitation », one case
+  `exploitation.executer`): ONE model turn, no TDD, a fixed checklist checked
+  by the code — `## État avant`, `## Action`, `## Vérification` (one line
+  « - Preuve : `<command or URL>` — Constaté : <effect> » per proof; each
+  command must have been run by Bash/PowerShell in THIS turn, each URL seen in
+  it; an exit code alone is refused), `## Retour arrière`, `## Compte rendu`,
+  and `## CHANGELOG` when files of the repository changed. Then « Livrer »
+  by the program (`exploitation-livrer`): files changed → patch version, the
+  turn's CHANGELOG text, every version mention and ONE commit (hooks run, no
+  requirement line, never a push); nothing changed → no commit. The result =
+  report, verified proofs, way back, delivery.
+- (server) Hand-over to the Development (« bascule »): the model's
+  `BASCULE_DEV: <why>`, a changed file that is code, test, script or of an
+  unknown kind (documents, configuration, version files and CHANGELOG are not
+  a behaviour), or a red suite after the change → the turn's changes are
+  undone (git), the same request is queued with `--pipeline dev`
+  (`--queue-if-busy`, callback and source kept), the run ends saying so
+  (`system/pipeline_exploitation_bascule`). Outside git: a question.
+- (server) Guardrails unchanged, checked on the commands the turn ran:
+  `--force` refused at once (no retry, reported); an irreversible command
+  (push, deletion, publication, sending) without the user's exact words
+  (`## Autorisation`, quote checked in the request) refused at once;
+  `AUTORISATION_REQUISE: <operation>` → pause « autoriser » (user only, never
+  the automatic answer), the step redone with the authorization.
+- (server) Classification by meaning (`EXPLOITATION_RULE` of
+  `pipeline-classify.mjs`, never keywords), explicit prefix `/exploitation`
+  (`/exploit`), `--pipeline exploitation` for the chef. Classified there, the
+  lane is in service on every enforced project without being listed in
+  `enforcement.pipelines` (`pipelineServed`).
+- (server) Switch `exploitation` (`pipeline-tuning.mjs`, off by default,
+  frozen in `run.json.tuning`): off = exactly 0.140.0 (not offered, prefix
+  not recognised, `--pipeline exploitation` refused with code 64). On:
+  `node scripts/pipeline-enforce.mjs tuning exploitation on [<projet>]`.
+- Tests: `_test_exploitation.mjs` replays the three real cases (service
+  declaration, tailscale serve HTTPS, service restart: one turn, effect
+  verified, no TDD item) and the hand-overs, guardrails and switch; fake
+  claude: `FAKE_PIPE_JSON[step].commands` (Bash tool uses of the turn) and an
+  artefact without project writes.
+
+### Changed
+- Models page, HTTP and browser checks: 18 pipeline tabs (« Exploitation »
+  before « Mémoire (graphe) »); the 17-tab form stays accepted for older refs.
+- `data/model-recommendations.json`: a suggestion for the new case
+  `exploitation.executer` (claude-sonnet-5-5, medium, extrapolated from the
+  Maintenance action steps): 126 cases, each with a suggestion.
+
 ## [0.140.0] - 2026-10-23
 
 Defect seen in production (2026-10-23, run p-20261023T044621-dc1385, lever

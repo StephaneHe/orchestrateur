@@ -34,6 +34,8 @@ export const TUNING_LEVERS = {
   testWrong: '4b peut déclarer le test de l’item faux (« TEST_FAUX: … ») : retour à 4a pour le corriger, au lieu de trois refus',
   asideRedo: 'un item mis de côté dont le correctif ne s’applique plus est refait à partir du code actuel (le correctif sert d’indication), une fois',
   asideGroup: 'les items mis de côté dont le correctif ne s’applique plus font une seule pause groupée, pas une pause par item',
+  // 0.141.0 (exploitation.mjs), « Je ferai passer ce genre de petites tâches d'exploitation par une voie plus légère ».
+  exploitation: 'voie légère « Exploitation » : petite tâche d’exploitation en un seul tour de model, sans TDD, check-list vérifiée par le code (proposée au classement, préfixe /exploitation, --pipeline exploitation)',
 };
 export const LEVER_IDS = Object.keys(TUNING_LEVERS);
 

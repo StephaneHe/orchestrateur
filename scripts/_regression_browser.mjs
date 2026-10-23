@@ -2002,10 +2002,12 @@ export async function browserChecks(sb, t) {
     const hasModels = async (pg) => (await pg.locator('#btn-models').count()) > 0;
     // Pipelines phase 1: the generics « Opérations » and « Fichiers » come last (an older state of the code has 14 tabs);
     // knowledge graph phase 1 (0.131.0) adds « Mémoire (graphe) » after them (16 tabs before).
-    const TABS = 'Développement,Discussion,Routage (chef),Incident,Recherche,Audit sécurité,Maintenance,Nouveau projet,Données,Rédaction,Compte rendu de réunion,Images,Vidéo,Audio,Opérations,Fichiers,Mémoire (graphe)';
+    // The Exploitation lane (0.141.0) comes before « Mémoire (graphe) » (17 tabs before it).
+    const TABS = 'Développement,Discussion,Routage (chef),Incident,Recherche,Audit sécurité,Maintenance,Nouveau projet,Données,Rédaction,Compte rendu de réunion,Images,Vidéo,Audio,Opérations,Fichiers,Exploitation,Mémoire (graphe)';
+    const TABS_17 = 'Développement,Discussion,Routage (chef),Incident,Recherche,Audit sécurité,Maintenance,Nouveau projet,Données,Rédaction,Compte rendu de réunion,Images,Vidéo,Audio,Opérations,Fichiers,Mémoire (graphe)';
     const TABS_16 = 'Développement,Discussion,Routage (chef),Incident,Recherche,Audit sécurité,Maintenance,Nouveau projet,Données,Rédaction,Compte rendu de réunion,Images,Vidéo,Audio,Opérations,Fichiers';
     const TABS_OLD = 'Développement,Discussion,Routage (chef),Incident,Recherche,Audit sécurité,Maintenance,Nouveau projet,Données,Rédaction,Compte rendu de réunion,Images,Vidéo,Audio';
-    await check(B, 'models-view', 'Models par tâche : 17 onglets de pipeline (16 avant la mémoire, 14 avant les génériques), bandeau, légende, chaque étape a titre + quand/quoi + exemple + menu (variantes repliables), boucles et retours dessinés, étape optionnelle distincte, renvois, menus par capacité (outils locaux), conseils, choix enregistré puis relu après rechargement, historique', async () => {
+    await check(B, 'models-view', 'Models par tâche : 18 onglets de pipeline (17 avant l’exploitation, 16 avant la mémoire, 14 avant les génériques), bandeau, légende, chaque étape a titre + quand/quoi + exemple + menu (variantes repliables), boucles et retours dessinés, étape optionnelle distincte, renvois, menus par capacité (outils locaux), conseils, choix enregistré puis relu après rechargement, historique', async () => {
       if (!(await hasModels(page))) NA('vue absente de cet état du code');
       await setHash(page, '#/');
       await page.click('#btn-models');
@@ -2014,8 +2016,8 @@ export async function browserChecks(sb, t) {
       if (!(await page.locator('#models .mr-tab').count())) NA('structure en pipelines absente de cet état du code');
       assert(!(await visible(page, '#rail')) && !(await visible(page, '#conductor-view')), 'le fil ou le rail reste affiché');
       const tabs = await page.$$eval('#models .mr-tab', els => els.map(e => e.textContent.replace(/\d+\/\d+/, '').replace(/^\W+/u, '').trim()));
-      assert(tabs.length === 17 || tabs.length === 16 || tabs.length === 14, `${tabs.length} onglets : ${tabs.join(', ')}`);
-      assert(tabs.join(',') === TABS || tabs.join(',') === TABS_16 || tabs.join(',') === TABS_OLD, `onglets : ${tabs.join(',')}`);
+      assert(tabs.length === 18 || tabs.length === 17 || tabs.length === 16 || tabs.length === 14, `${tabs.length} onglets : ${tabs.join(', ')}`);
+      assert(tabs.join(',') === TABS || tabs.join(',') === TABS_17 || tabs.join(',') === TABS_16 || tabs.join(',') === TABS_OLD, `onglets : ${tabs.join(',')}`);
       assert(await page.locator('#models .mr-legend li').count() >= 7, 'légende incomplète');
       for (const sym of ['→', '↻', '↩', '⤳', '◇']) assert((await page.textContent('#models .mr-legend')).includes(sym), `légende sans ${sym}`);
       // Chaque onglet : bandeau, et chaque étape complète.
@@ -2240,7 +2242,7 @@ export async function browserChecks(sb, t) {
       assert(await until(async () => (await page.locator('#models .mr-tab').count()) > 0, 10_000), 'vue');
       if (!(await until(async () => (await page.locator('#models .mr-reco-box').count()) > 0, 6000))) NA('suggestions absentes de cet état du code');
       const box = await page.textContent('#models .mr-reco-box');
-      assert(/8 octobre 2026/.test(box) && /a8c5cc2/.test(box) && /(109 cases sur 109|122 cases sur 122|123 cases sur 123|125 cases sur 125)/.test(box), `encadré : ${box.replace(/\s+/g, ' ').slice(0, 200)}`);
+      assert(/8 octobre 2026/.test(box) && /a8c5cc2/.test(box) && /(109 cases sur 109|122 cases sur 122|123 cases sur 123|125 cases sur 125|126 cases sur 126)/.test(box), `encadré : ${box.replace(/\s+/g, ' ').slice(0, 200)}`);
       // Sur CHAQUE pipeline, chaque étape et chaque variante a son bloc de suggestion.
       const tabs = await page.$$eval('#models .mr-tab', ts => ts.map(t => t.dataset.pipeline));
       let seen = 0;
@@ -2252,7 +2254,7 @@ export async function browserChecks(sb, t) {
         assert(r.length && !bad.length, `${id} : bloc absent ou incomplet pour ${bad.join(', ')}`);
         seen += r.length;
       }
-      assert(seen === 109 || seen === 122 || seen === 123 || seen === 125, `${seen} blocs au lieu de 125 (123 avant la mémoire, 122 avant routage.chef, 109 avant les génériques)`);
+      assert(seen === 126 || seen === 109 || seen === 122 || seen === 123 || seen === 125, `${seen} blocs au lieu de 126 (125 avant l’exploitation, 123 avant la mémoire, 122 avant routage.chef, 109 avant les génériques)`);
       await page.click('#models .mr-tab[data-pipeline="discussion"]');
       assert(await page.locator('#models .mr-panel .mr-reco-und').count() > 0, '« non tranché » non signalé (Discussion)');
       await page.click('#models .mr-tab[data-pipeline="dev"]');
@@ -2968,7 +2970,7 @@ export async function browserChecks(sb, t) {
       if (!(await hasModels(m))) NA('vue absente de cet état du code');
       await m.setViewportSize({ width: 390, height: 844 });
       await setHash(m, '#/models');
-      assert(await until(async () => [14, 16, 17].includes(await m.locator('#models .mr-tab').count()), 10_000), 'onglets');
+      assert(await until(async () => [14, 16, 17, 18].includes(await m.locator('#models .mr-tab').count()), 10_000), 'onglets');
       if (!(await until(async () => (await m.locator('#models .mr-reco-box').count()) > 0, 6000))) NA('suggestions absentes de cet état du code');
       await m.click('#models .mr-tab[data-pipeline="dev"]');
       await sleep(300);
@@ -2986,7 +2988,7 @@ export async function browserChecks(sb, t) {
       if (!(await hasModels(m))) NA('vue absente de cet état du code');
       await m.setViewportSize({ width: 390, height: 844 });
       await setHash(m, '#/models');
-      assert(await until(async () => [14, 16, 17].includes(await m.locator('#models .mr-tab').count()) && (await m.locator('#models .mr-panel .mr-card').count()) > 0, 10_000), 'onglets ou cartes');
+      assert(await until(async () => [14, 16, 17, 18].includes(await m.locator('#models .mr-tab').count()) && (await m.locator('#models .mr-panel .mr-card').count()) > 0, 10_000), 'onglets ou cartes');
       await m.click('#models .mr-tab[data-pipeline="dev"]');
       await sleep(300);
       const g = await m.evaluate(() => ({

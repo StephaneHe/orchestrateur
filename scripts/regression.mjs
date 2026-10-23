@@ -1615,7 +1615,7 @@ async function apiChecks(sb) {
     const r = await post('/api/project/omega/park', { parked: true });
     assert(r.status === 404, `route /park encore servie (HTTP ${r.status})`);
   });
-  await check(S, 'model-routing', 'Models par tâche : 17 pipelines (boucles, retours, renvois, étapes faites par le programme), une case par étape et variante, migration de l\'ancien format, capacités média, outils locaux, choix validé, enregistré hors config.json, relu, historisé', async () => {
+  await check(S, 'model-routing', 'Models par tâche : 18 pipelines (boucles, retours, renvois, étapes faites par le programme), une case par étape et variante, migration de l\'ancien format, capacités média, outils locaux, choix validé, enregistré hors config.json, relu, historisé', async () => {
     const routingPath = path.join(sb.root, 'model-routing.json');
     // Ancien format (0.39.0) posé avant la première lecture : il doit être migré.
     fs.writeFileSync(routingPath, JSON.stringify({ version: 1, assignments: {
@@ -1629,8 +1629,8 @@ async function apiChecks(sb) {
     if (!Array.isArray(v.pipelines)) NA('structure en pipelines absente de cet état du code');
     const ids = v.pipelines.map(p => p.id).join(',');
     // Pipelines phase 1: the generics « operations » and « fichiers » come last (an older state of the code has 14);
-    // knowledge graph phase 1 (0.131.0) adds « kg » after them.
-    assert(ids === 'dev,discussion,routage,incident,recherche,audit,maintenance,nouveau,donnees,redaction,reunion,images,video,audio,operations,fichiers,kg' || ids === 'dev,discussion,routage,incident,recherche,audit,maintenance,nouveau,donnees,redaction,reunion,images,video,audio,operations,fichiers' || ids === 'dev,discussion,routage,incident,recherche,audit,maintenance,nouveau,donnees,redaction,reunion,images,video,audio', `pipelines : ${ids}`);
+    // knowledge graph phase 1 (0.131.0) adds « kg » after them; the Exploitation lane (0.141.0) comes before « kg ».
+    assert(ids === 'dev,discussion,routage,incident,recherche,audit,maintenance,nouveau,donnees,redaction,reunion,images,video,audio,operations,fichiers,exploitation,kg' || ids === 'dev,discussion,routage,incident,recherche,audit,maintenance,nouveau,donnees,redaction,reunion,images,video,audio,operations,fichiers,kg' || ids === 'dev,discussion,routage,incident,recherche,audit,maintenance,nouveau,donnees,redaction,reunion,images,video,audio,operations,fichiers' || ids === 'dev,discussion,routage,incident,recherche,audit,maintenance,nouveau,donnees,redaction,reunion,images,video,audio', `pipelines : ${ids}`);
     const steps = (p) => p.flow.flatMap(n => (n.kind === 'loop' ? n.steps : [n]));
     for (const p of v.pipelines) {
       assert(p.purpose && p.when, `${p.id} : bandeau incomplet`);
