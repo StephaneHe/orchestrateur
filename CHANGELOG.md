@@ -11,6 +11,43 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.139.0] - 2026-10-23
+
+Chef's finding (2026-10-23) on six full-Development runs of one project
+(p-20261022T133600-829910 … p-20261022T221404-3a1835): many items set aside,
+their patches « overtaken » at the resume, one pause per discarded item, about
+half of the items never delivered. User rule behind it (2026-10-22): « arrête
+de poser des questions de découpage. tu sais comment est organisé le process
+mieux que moi ». Causes read in the run files: the correction of a Review
+finding on the item's own test header (« Item 4 » → « Item 8 ») was refused
+because 4b protects every test (12 refusals, 6 items set aside in the last
+run); 4b proved the item's test wrong with no way back to 4a; every set-aside
+patch conflicted on the requirements registry, where each item adds a row.
+
+### Added
+- (server) `scripts/aside-rework.mjs` and four switches of
+  `pipeline-tuning.mjs` (off by default, frozen in `run.json.tuning`, off =
+  exactly 0.138.0), `node scripts/pipeline-enforce.mjs tuning <levier> on|off [<projet>]`:
+  - **`itemTestFix`**: the correction step after an item's Review may edit the
+    item's own tests (changed since the last delivered item, never delivered);
+    every other test stays protected; the Review is told such a finding is
+    fixed at once, never « at delivery ».
+  - **`testWrong`**: 4b may write `TEST_FAUX: <reason>` in `vert.md`; the item
+    goes back to 4a to fix its own test (still red on the current code), then
+    4b again — at most twice per item (`system/pipeline_test_wrong`). An item
+    set aside at 4b says when its patch only holds the 4a tests.
+  - **`asideRedo`**: a set-aside item whose patch no longer applies is REDONE
+    from the current code (its cases reopened, 4a → 4b → review), the old patch
+    copied into the run folder as a hint only; once per item
+    (`system/pipeline_item_redo`, listed in the final result).
+  - **`asideGroup`**: the stale patches left are all tried first, then ONE
+    `aside_conflict` pause names them; « écarter l’item » discards them
+    together.
+- `scripts/_test_aside_rework.mjs` (serial): replay of
+  p-20261022T221404-3a1835 (`tests/aside-rework-case.json`, anonymised) and of
+  its pattern with the real engine — switches off: 1 item delivered out of 4,
+  one pause per conflict; switches on: 4 out of 4, a single pause.
+
 ## [0.138.0] - 2026-10-23
 
 User request (2026-10-22): « la non régression est en erreur. tu gères

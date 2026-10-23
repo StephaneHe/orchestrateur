@@ -548,7 +548,9 @@ export function smartMenu(d, ctx = {}) {
         : ['reprendre les items', 'chaque item mis de côté a une raison précise, donnée à la reprise.'];
       break;
     case 'aside_conflict':
-      add('écarter l’item', `j’écarte cet item (ses modifications restent gardées dans son correctif) et je continue avec ${ctx.restoreQueue ? `les ${ctx.restoreQueue} autre(s) item(s) mis de côté` : 'la fin de l’exécution'}.`);
+      // Grouped pause (lever asideGroup, 0.139.0): one answer for every stale patch.
+      if (ctx.conflicts > 1) add('écarter l’item', `j’écarte ces ${ctx.conflicts} items (leurs modifications restent gardées dans leurs correctifs) puis je passe à la suite (les autres items mis de côté s’il en reste, sinon la fin de l’exécution).`);
+      else add('écarter l’item', `j’écarte cet item (ses modifications restent gardées dans son correctif) et je continue avec ${ctx.restoreQueue ? `les ${ctx.restoreQueue} autre(s) item(s) mis de côté` : 'la fin de l’exécution'}.`);
       rec = ['écarter l’item', 'ses modifications ont été dépassées par les items livrés depuis : les réappliquer échouerait toujours.'];
       break;
     case 'authorization':

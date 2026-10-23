@@ -1,0 +1,1040 @@
+{
+ "run": "p-20261022T221404-3a1835",
+ "source": "run.json of a real full-Development run (2026-10-22), project name and texts removed; files and reasons kept",
+ "tuning": {
+  "citedPathsLog": true,
+  "codeDeliver": true,
+  "codeFormat": true,
+  "suiteCache": true,
+  "inertCleanup": true,
+  "generic": false,
+  "discussionOne": false,
+  "chefPauses": true
+ },
+ "items": 16,
+ "delivered": [
+  2,
+  3,
+  7,
+  10,
+  11,
+  13,
+  14
+ ],
+ "steps": [
+  {
+   "key": "05-rouge",
+   "id": "rouge",
+   "item": 1,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "06-vert",
+   "id": "vert",
+   "item": 1,
+   "status": "refused",
+   "why": "la suite échoue encore (npm test, code 1) : ing the synthesiser (32.7005ms) ✔ an empty synthesised audio (empty string or zero-length Buffer) is a 502, is not c"
+  },
+  {
+   "key": "07-vert",
+   "id": "vert",
+   "item": 1,
+   "status": "refused",
+   "why": "aucune modification"
+  },
+  {
+   "key": "08-vert",
+   "id": "vert",
+   "item": 1,
+   "status": "refused",
+   "why": "la suite échoue encore (npm test, code 1) : ling the synthesiser (29.7168ms) ✔ an empty synthesised audio (empty string or zero-length Buffer) is a 502, is not "
+  },
+  {
+   "key": "09-rouge",
+   "id": "rouge",
+   "item": 2,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "10-vert",
+   "id": "vert",
+   "item": 2,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "11-refactor",
+   "id": "refactor",
+   "item": 2,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "12-revue",
+   "id": "revue",
+   "item": 2,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "13-vert",
+   "id": "vert",
+   "item": null,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "14-revue",
+   "id": "revue",
+   "item": 2,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "15-rouge",
+   "id": "rouge",
+   "item": 3,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "16-vert",
+   "id": "vert",
+   "item": 3,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "17-refactor",
+   "id": "refactor",
+   "item": 3,
+   "status": "skipped",
+   "why": "4b n'a changé que 6 ligne(s) (seuil 10)"
+  },
+  {
+   "key": "18-revue",
+   "id": "revue",
+   "item": 3,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "19-rouge",
+   "id": "rouge",
+   "item": 4,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "20-vert",
+   "id": "vert",
+   "item": 4,
+   "status": "skipped",
+   "why": "item déjà couvert par le code existant (DEJA_COUVERT déclaré ; seuls des tests ont changé, suite verte)"
+  },
+  {
+   "key": "21-refactor",
+   "id": "refactor",
+   "item": 4,
+   "status": "skipped",
+   "why": "item déjà couvert par le code existant (DEJA_COUVERT déclaré ; seuls des tests ont changé, suite verte)"
+  },
+  {
+   "key": "22-revue",
+   "id": "revue",
+   "item": 4,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "23-vert",
+   "id": "vert",
+   "item": null,
+   "status": "refused",
+   "why": "fichiers de test modifiés (interdit à cette étape) : tests/requirements/response-too-large.test.mjs"
+  },
+  {
+   "key": "24-vert",
+   "id": "vert",
+   "item": null,
+   "status": "refused",
+   "why": "aucune modification"
+  },
+  {
+   "key": "25-vert",
+   "id": "vert",
+   "item": null,
+   "status": "refused",
+   "why": "aucune modification"
+  },
+  {
+   "key": "26-rouge",
+   "id": "rouge",
+   "item": 5,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "27-vert",
+   "id": "vert",
+   "item": 5,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "28-refactor",
+   "id": "refactor",
+   "item": 5,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "29-revue",
+   "id": "revue",
+   "item": 5,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "30-rouge",
+   "id": "rouge",
+   "item": 6,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "31-vert",
+   "id": "vert",
+   "item": 6,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "32-refactor",
+   "id": "refactor",
+   "item": 6,
+   "status": "skipped",
+   "why": "4b n'a changé que 2 ligne(s) (seuil 10)"
+  },
+  {
+   "key": "33-revue",
+   "id": "revue",
+   "item": 5,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "34-vert",
+   "id": "vert",
+   "item": null,
+   "status": "refused",
+   "why": "fichiers de test modifiés (interdit à cette étape) : tests/requirements/response-mpeg-extension.test.mjs"
+  },
+  {
+   "key": "35-vert",
+   "id": "vert",
+   "item": null,
+   "status": "refused",
+   "why": "aucune modification"
+  },
+  {
+   "key": "36-vert",
+   "id": "vert",
+   "item": null,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "37-revue",
+   "id": "revue",
+   "item": 5,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "38-rouge",
+   "id": "rouge",
+   "item": 7,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "39-vert",
+   "id": "vert",
+   "item": 7,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "40-refactor",
+   "id": "refactor",
+   "item": 7,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "41-revue",
+   "id": "revue",
+   "item": 7,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "42-vert",
+   "id": "vert",
+   "item": null,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "43-revue",
+   "id": "revue",
+   "item": 7,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "44-rouge",
+   "id": "rouge",
+   "item": 8,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "45-vert",
+   "id": "vert",
+   "item": 8,
+   "status": "skipped",
+   "why": "item déjà couvert par le code existant (DEJA_COUVERT déclaré ; seuls des tests ont changé, suite verte)"
+  },
+  {
+   "key": "46-refactor",
+   "id": "refactor",
+   "item": 8,
+   "status": "skipped",
+   "why": "item déjà couvert par le code existant (DEJA_COUVERT déclaré ; seuls des tests ont changé, suite verte)"
+  },
+  {
+   "key": "47-revue",
+   "id": "revue",
+   "item": 8,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "48-vert",
+   "id": "vert",
+   "item": null,
+   "status": "refused",
+   "why": "aucune modification"
+  },
+  {
+   "key": "49-vert",
+   "id": "vert",
+   "item": null,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "50-revue",
+   "id": "revue",
+   "item": 8,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "51-vert",
+   "id": "vert",
+   "item": null,
+   "status": "refused",
+   "why": "fichiers de test modifiés (interdit à cette étape) : tests/requirements/response-vignette-outside-plan.test.mjs"
+  },
+  {
+   "key": "52-vert",
+   "id": "vert",
+   "item": null,
+   "status": "refused",
+   "why": "aucune modification"
+  },
+  {
+   "key": "53-vert",
+   "id": "vert",
+   "item": null,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "54-revue",
+   "id": "revue",
+   "item": 8,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "55-rouge",
+   "id": "rouge",
+   "item": 9,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "56-vert",
+   "id": "vert",
+   "item": 9,
+   "status": "skipped",
+   "why": "item déjà couvert par le code existant (DEJA_COUVERT déclaré ; seuls des tests ont changé, suite verte)"
+  },
+  {
+   "key": "57-refactor",
+   "id": "refactor",
+   "item": 9,
+   "status": "skipped",
+   "why": "item déjà couvert par le code existant (DEJA_COUVERT déclaré ; seuls des tests ont changé, suite verte)"
+  },
+  {
+   "key": "58-revue",
+   "id": "revue",
+   "item": 9,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "59-vert",
+   "id": "vert",
+   "item": null,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "60-revue",
+   "id": "revue",
+   "item": 9,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "61-vert",
+   "id": "vert",
+   "item": null,
+   "status": "refused",
+   "why": "fichiers de test modifiés (interdit à cette étape) : tests/requirements/stt-status-pending-then-ready.test.mjs"
+  },
+  {
+   "key": "62-vert",
+   "id": "vert",
+   "item": null,
+   "status": "refused",
+   "why": "aucune modification"
+  },
+  {
+   "key": "63-vert",
+   "id": "vert",
+   "item": null,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "64-revue",
+   "id": "revue",
+   "item": 9,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "65-rouge",
+   "id": "rouge",
+   "item": 10,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "66-vert",
+   "id": "vert",
+   "item": 10,
+   "status": "skipped",
+   "why": "item déjà couvert par le code existant (DEJA_COUVERT déclaré ; seuls des tests ont changé, suite verte)"
+  },
+  {
+   "key": "67-refactor",
+   "id": "refactor",
+   "item": 10,
+   "status": "skipped",
+   "why": "item déjà couvert par le code existant (DEJA_COUVERT déclaré ; seuls des tests ont changé, suite verte)"
+  },
+  {
+   "key": "68-revue",
+   "id": "revue",
+   "item": 10,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "69-rouge",
+   "id": "rouge",
+   "item": 11,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "70-vert",
+   "id": "vert",
+   "item": 11,
+   "status": "skipped",
+   "why": "item déjà couvert par le code existant (DEJA_COUVERT déclaré ; seuls des tests ont changé, suite verte)"
+  },
+  {
+   "key": "71-refactor",
+   "id": "refactor",
+   "item": 11,
+   "status": "skipped",
+   "why": "item déjà couvert par le code existant (DEJA_COUVERT déclaré ; seuls des tests ont changé, suite verte)"
+  },
+  {
+   "key": "72-revue",
+   "id": "revue",
+   "item": 11,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "73-rouge",
+   "id": "rouge",
+   "item": 12,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "74-vert",
+   "id": "vert",
+   "item": 12,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "75-refactor",
+   "id": "refactor",
+   "item": 12,
+   "status": "skipped",
+   "why": "4b n'a changé que 8 ligne(s) (seuil 10)"
+  },
+  {
+   "key": "76-revue",
+   "id": "revue",
+   "item": 12,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "77-vert",
+   "id": "vert",
+   "item": null,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "78-revue",
+   "id": "revue",
+   "item": 12,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "79-vert",
+   "id": "vert",
+   "item": null,
+   "status": "refused",
+   "why": "fichiers de test modifiés (interdit à cette étape) : tests/requirements/vignette-audio-invalid-result.test.mjs"
+  },
+  {
+   "key": "80-vert",
+   "id": "vert",
+   "item": null,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "81-revue",
+   "id": "revue",
+   "item": 12,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "82-rouge",
+   "id": "rouge",
+   "item": 13,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "83-vert",
+   "id": "vert",
+   "item": 13,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "84-refactor",
+   "id": "refactor",
+   "item": 13,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "85-revue",
+   "id": "revue",
+   "item": 13,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "86-rouge",
+   "id": "rouge",
+   "item": 14,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "87-vert",
+   "id": "vert",
+   "item": 14,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "88-refactor",
+   "id": "refactor",
+   "item": 14,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "89-revue",
+   "id": "revue",
+   "item": 14,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "90-rouge",
+   "id": "rouge",
+   "item": 15,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "91-vert",
+   "id": "vert",
+   "item": 15,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "92-refactor",
+   "id": "refactor",
+   "item": 15,
+   "status": "skipped",
+   "why": "4b n'a changé que 3 ligne(s) (seuil 10)"
+  },
+  {
+   "key": "93-revue",
+   "id": "revue",
+   "item": 15,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "94-vert",
+   "id": "vert",
+   "item": null,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "95-revue",
+   "id": "revue",
+   "item": 15,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "96-vert",
+   "id": "vert",
+   "item": null,
+   "status": "refused",
+   "why": "fichiers de test modifiés (interdit à cette étape) : tests/requirements/service-worker-no-cache-bypass.test.mjs"
+  },
+  {
+   "key": "97-vert",
+   "id": "vert",
+   "item": null,
+   "status": "refused",
+   "why": "aucune modification"
+  },
+  {
+   "key": "98-vert",
+   "id": "vert",
+   "item": null,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "99-revue",
+   "id": "revue",
+   "item": 15,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "100-rouge",
+   "id": "rouge",
+   "item": 16,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "101-vert",
+   "id": "vert",
+   "item": 16,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "102-refactor",
+   "id": "refactor",
+   "item": 16,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "103-revue",
+   "id": "revue",
+   "item": 16,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "104-vert",
+   "id": "vert",
+   "item": null,
+   "status": "refused",
+   "why": "fichiers de test modifiés (interdit à cette étape) : tests/requirements/service-worker-static-cache.test.mjs"
+  },
+  {
+   "key": "105-vert",
+   "id": "vert",
+   "item": null,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "106-revue",
+   "id": "revue",
+   "item": 16,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "107-vert",
+   "id": "vert",
+   "item": null,
+   "status": "refused",
+   "why": "fichiers de test modifiés (interdit à cette étape) : tests/requirements/service-worker-static-cache.test.mjs"
+  },
+  {
+   "key": "108-vert",
+   "id": "vert",
+   "item": null,
+   "status": "refused",
+   "why": "aucune modification"
+  },
+  {
+   "key": "109-vert",
+   "id": "vert",
+   "item": null,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "110-revue",
+   "id": "revue",
+   "item": 16,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "112-vert",
+   "id": "vert",
+   "item": 1,
+   "status": "refused",
+   "why": "aucune modification"
+  },
+  {
+   "key": "113-vert",
+   "id": "vert",
+   "item": 1,
+   "status": "refused",
+   "why": "aucune modification"
+  },
+  {
+   "key": "114-vert",
+   "id": "vert",
+   "item": 1,
+   "status": "refused",
+   "why": "aucune modification"
+  },
+  {
+   "key": "115-vert",
+   "id": "vert",
+   "item": null,
+   "status": "refused",
+   "why": "fichiers de test modifiés (interdit à cette étape) : tests/requirements/response-too-large.test.mjs"
+  },
+  {
+   "key": "116-vert",
+   "id": "vert",
+   "item": null,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "117-revue",
+   "id": "revue",
+   "item": 4,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "118-vert",
+   "id": "vert",
+   "item": null,
+   "status": "refused",
+   "why": "fichiers de test modifiés (interdit à cette étape) : tests/requirements/response-too-large.test.mjs"
+  },
+  {
+   "key": "119-vert",
+   "id": "vert",
+   "item": null,
+   "status": "refused",
+   "why": "aucune modification"
+  },
+  {
+   "key": "120-vert",
+   "id": "vert",
+   "item": null,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "121-revue",
+   "id": "revue",
+   "item": 4,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "122-vert",
+   "id": "vert",
+   "item": 1,
+   "status": "refused",
+   "why": "aucune modification"
+  },
+  {
+   "key": "123-vert",
+   "id": "vert",
+   "item": 1,
+   "status": "refused",
+   "why": "aucune modification"
+  },
+  {
+   "key": "124-vert",
+   "id": "vert",
+   "item": 1,
+   "status": "refused",
+   "why": "aucune modification"
+  },
+  {
+   "key": "125-revue",
+   "id": "revue",
+   "item": 4,
+   "status": "ok",
+   "why": ""
+  },
+  {
+   "key": "126-vert",
+   "id": "vert",
+   "item": null,
+   "status": "refused",
+   "why": "fichiers de test modifiés (interdit à cette étape) : tests/requirements/response-too-large.test.mjs"
+  },
+  {
+   "key": "127-vert",
+   "id": "vert",
+   "item": null,
+   "status": "refused",
+   "why": "aucune modification"
+  },
+  {
+   "key": "128-vert",
+   "id": "vert",
+   "item": null,
+   "status": "refused",
+   "why": "fichiers de test modifiés (interdit à cette étape) : tests/requirements/response-too-large.test.mjs"
+  }
+ ],
+ "aside": [
+  {
+   "group": 1,
+   "limit": "green",
+   "why": "aucune modification",
+   "files": [
+    "tests/requirements/response-idempotent-conflict.test.mjs"
+   ],
+   "conflict": null,
+   "discarded": false
+  },
+  {
+   "group": 4,
+   "limit": "green",
+   "why": "fichiers de test modifiés (interdit à cette étape) : tests/requirements/response-too-large.test.mjs",
+   "files": [
+    "docs/USER_REQUIREMENTS.md",
+    "tests/requirements/response-too-large.test.mjs"
+   ],
+   "conflict": null,
+   "discarded": false
+  },
+  {
+   "group": 5,
+   "limit": "review",
+   "why": "la revue de l’item 5 (« … », est accepté et son audio est conservé avec l'extension correspondante (.webm, .mp4, .ogg) ») relève encore : tests/requi",
+   "files": [
+    "docs/USER_REQUIREMENTS.md",
+    "src/server.mjs",
+    "tests/requirements/response-browser-formats.test.mjs",
+    "tests/requirements/response-mpeg-extension.test.mjs"
+   ],
+   "conflict": "Applied patch to 'docs/USER_REQUIREMENTS.md' with conflicts.",
+   "discarded": true
+  },
+  {
+   "group": 8,
+   "limit": "review",
+   "why": "la revue de l’item 8 (« … ») relève encore : At delivery: change the header comment of tests/requirements/response-",
+   "files": [
+    "docs/USER_REQUIREMENTS.md",
+    "tests/requirements/response-vignette-outside-plan.test.mjs"
+   ],
+   "conflict": "Applied patch to 'docs/USER_REQUIREMENTS.md' with conflicts.",
+   "discarded": true
+  },
+  {
+   "group": 9,
+   "limit": "review",
+   "why": "la revue de l’item 9 (« … » (pending ou running) sans texte tant que le transcripteur travaille, puis « … » avec exactement le texte brut renvoyé une fois la transcription term",
+   "files": [
+    "docs/USER_REQUIREMENTS.md",
+    "tests/requirements/stt-status-pending-then-ready.test.mjs"
+   ],
+   "conflict": "Applied patch to 'docs/USER_REQUIREMENTS.md' with conflicts.",
+   "discarded": true
+  },
+  {
+   "group": 12,
+   "limit": "review",
+   "why": "la revue de l’item 12 (« … ») relève encore : À l'étape Livrer ",
+   "files": [
+    "docs/USER_REQUIREMENTS.md",
+    "src/server.mjs",
+    "tests/requirements/vignette-audio-invalid-result.test.mjs"
+   ],
+   "conflict": "Applied patch to 'docs/USER_REQUIREMENTS.md' with conflicts.",
+   "discarded": true
+  },
+  {
+   "group": 15,
+   "limit": "review",
+   "why": "la revue de l’item 15 (« … ») relève enco",
+   "files": [
+    "docs/USER_REQUIREMENTS.md",
+    "public/sw.js",
+    "tests/requirements/service-worker-no-cache-bypass.test.mjs"
+   ],
+   "conflict": "Applied patch to 'docs/USER_REQUIREMENTS.md' with conflicts.",
+   "discarded": true
+  },
+  {
+   "group": 16,
+   "limit": "review",
+   "why": "la revue de l’item 16 (« … ») relève encore : tests/requirements/service-worker-static-cache.test.mjs: the file header co",
+   "files": [
+    "docs/USER_REQUIREMENTS.md",
+    "public/sw.js",
+    "tests/requirements/service-worker-static-cache.test.mjs"
+   ],
+   "conflict": "Applied patch to 'docs/USER_REQUIREMENTS.md' with conflicts.",
+   "discarded": true
+  }
+ ],
+ "pauses": [
+  {
+   "n": 1,
+   "limit": "items_blocked",
+   "key": "reprendre les items",
+   "by": "chef"
+  },
+  {
+   "n": 2,
+   "limit": "duration",
+   "key": "prolonger",
+   "by": "chef"
+  },
+  {
+   "n": 3,
+   "limit": "aside_conflict",
+   "key": "écarter l’item",
+   "by": "chef"
+  },
+  {
+   "n": 4,
+   "limit": "aside_conflict",
+   "key": "écarter l’item",
+   "by": "chef"
+  },
+  {
+   "n": 5,
+   "limit": "aside_conflict",
+   "key": "écarter l’item",
+   "by": "chef"
+  },
+  {
+   "n": 6,
+   "limit": "aside_conflict",
+   "key": "écarter l’item",
+   "by": "chef"
+  },
+  {
+   "n": 7,
+   "limit": "aside_conflict",
+   "key": "écarter l’item",
+   "by": "chef"
+  },
+  {
+   "n": 8,
+   "limit": "aside_conflict",
+   "key": "écarter l’item",
+   "by": "chef"
+  },
+  {
+   "n": 9,
+   "limit": "items_blocked",
+   "key": "livrer sans eux",
+   "by": "chef"
+  }
+ ],
+ "testGlobs": [
+  "tests/**"
+ ]
+}

@@ -432,6 +432,12 @@ ${process.env.FAKE_CLAUDE_TOOL_OUTPUT}` : ''}` },
 //   FAKE_PIPE_REVIEW_LOG=<f>     chaque revue ajoute {item, diff} à ce fichier (JSON par ligne)
 //   FAKE_PIPE_REVIEW_SEVERITY=P2 le défaut de FAKE_PIPE_REVIEW_ITEM porte cette gravité
 //   FAKE_PIPE_REVIEW_DOC_ITEM=<k>[:n][,…]  revue de l'item k : un constat de doc (hors_tdd), n fois
+//   FAKE_PIPE_TEST_WRONG=<k>[,…]  0.139.0 (psyProfile, item 1) : 4a écrit un test FAUX pour l'item k
+//                               (« // faux », corrigé quand la consigne porte « TEST_FAUX= ») ; 4b le dit
+//                               par « TEST_FAUX: … » dans vert.md
+//   FAKE_PIPE_HEADER=<k>[,…]     4a écrit l'en-tête « // Item 1 (test 1) » dans le test de l'item k ; la
+//                               revue le relève (hors_tdd) ; la correction réécrit l'en-tête du test
+//   FAKE_PIPE_REQ_ROW=1          4b de chaque item ajoute sa ligne au registre des exigences
 //   « [FAKE_LONG_REPORT] » dans la demande : compte rendu final de plusieurs
 //                               paragraphes (nombre de tests au milieu, dernier
 //                               paragraphe de plus de 280 caractères, FIN-DU-RAPPORT)
@@ -516,7 +522,11 @@ function pipelineStep(text) {
         const [e, en] = String(process.env.FAKE_PIPE_ITEM_EXTRA_TESTS || '').split(':');
         const extra = Number(e) > 0 && once(`extra${en ? `:${en}` : ''}`, 'extra') ? Number(e) : 0;
         const one = (j) => `test('pipe item ${k}${j ? ` extra ${j}` : ''}', async () => {\n  const m = await import('../src/pipe-${k}.mjs');\n  assert.equal(m.f(2), ${2 * k});\n});\n`;
-        w(`test/pipe-${k}.test.mjs`, `import { test } from 'node:test';\nimport assert from 'node:assert';\n${Array.from({ length: extra + 1 }, (_, j) => one(j)).join('')}`);
+        // 0.139.0: a wrong test (FAKE_PIPE_TEST_WRONG), fixed once the prompt says « TEST_FAUX= »; a wrong header (FAKE_PIPE_HEADER).
+        const wrong = String(process.env.FAKE_PIPE_TEST_WRONG || '').split(',').includes(String(k)) && !/^TEST_FAUX=/m.test(text);
+        const header = String(process.env.FAKE_PIPE_HEADER || '').split(',').includes(String(k)) ? '// Item 1 (test 1)\n' : '';
+        const body = wrong ? `test('pipe item ${k}', async () => {\n  const m = await import('../src/pipe-${k}.mjs');\n  assert.equal(m.f(2), ${2 * k});\n  assert.equal(m.f(0), 1); // faux\n});\n` : Array.from({ length: extra + 1 }, (_, j) => one(j)).join('');
+        w(`test/pipe-${k}.test.mjs`, `${header}import { test } from 'node:test';\nimport assert from 'node:assert';\n${body}`);
         if (bad) w(`src/pipe-${k}.mjs`, `export const f = (x) => x * ${k};\n`);
         w(artefact, `# Rouge\n\nTest « pipe item ${k} » : échoue, src/pipe-${k}.mjs n’existe pas.\n`);
         break;
@@ -528,8 +538,19 @@ function pipelineStep(text) {
     }
     case 'vert': {
       const k = item(text);
+      // 0.139.0: the review's finding on a test header — the correction rewrites it (allowed or not: the engine judges).
+      const hdr = /CORRIGER les problèmes/.test(text) && /test\/pipe-(\d+)\.test\.mjs : l’en-tête/.exec(text);
+      if (hdr) {
+        const tf = path.join(cwd, 'test', `pipe-${hdr[1]}.test.mjs`);
+        if (fs.existsSync(tf)) fs.writeFileSync(tf, fs.readFileSync(tf, 'utf8').replace(/^\/\/ Item \d+ /, `// Item ${hdr[1]} `));
+        w(artefact, `# Vert\n\nEn-tête de test/pipe-${hdr[1]}.test.mjs corrigé.\n`);
+        break;
+      }
       if (k) {
         w(`src/pipe-${k}.mjs`, `export const f = (x) => x * ${k};\n`);
+        if (process.env.FAKE_PIPE_REQ_ROW === '1') fs.appendFileSync(path.join(cwd, 'docs', 'USER_REQUIREMENTS.md'), `| 2026-10-22 | item ${k} | test/pipe-${k}.test.mjs | — |\n`);
+        let tsrc = ''; try { tsrc = fs.readFileSync(path.join(cwd, 'test', `pipe-${k}.test.mjs`), 'utf8'); } catch {}
+        if (/\/\/ faux/.test(tsrc)) { w(artefact, `TEST_FAUX: test/pipe-${k}.test.mjs:6 attend f(0) = 1, impossible pour une multiplication par ${k}\n\n# Vert\n\nsrc/pipe-${k}.mjs écrit ; le test ne peut pas passer.\n`); break; }
         // FAKE_PIPE_ITEM_BUMP=<k>[:req|:nolog]: item k also bumps the version (and
         // adds its CHANGELOG entry unless « nolog », its requirement line with
         // « req ») — like an item « bump version + CHANGELOG » of the plan (0.114.1).
@@ -574,6 +595,11 @@ function pipelineStep(text) {
       if (process.env.FAKE_PIPE_REVIEW_LOG) {
         let diff = ''; try { diff = fs.readFileSync(path.join(path.dirname(artefact), 'diff.patch'), 'utf8'); } catch {}
         fs.appendFileSync(process.env.FAKE_PIPE_REVIEW_LOG, JSON.stringify({ item: rItem == null ? null : Number(rItem), diff }) + '\n');
+      }
+      // 0.139.0: a wrong header of the item's own test is a hors_tdd finding (FAKE_PIPE_HEADER).
+      if (rItem != null && rItem !== '1' && process.env.FAKE_PIPE_HEADER) {
+        let tsrc = ''; try { tsrc = fs.readFileSync(path.join(cwd, 'test', `pipe-${rItem}.test.mjs`), 'utf8'); } catch {}
+        if (/^\/\/ Item 1 /.test(tsrc)) { w(artefact, JSON.stringify({ verdict: 'problèmes', items: [], hors_tdd: [`test/pipe-${rItem}.test.mjs : l’en-tête dit « Item 1 » au lieu de « Item ${rItem} »`] })); break; }
       }
       const perItem = String(process.env.FAKE_PIPE_REVIEW_ITEM || '').split(',').filter(Boolean).map(s => s.split(':'));
       const hit = rItem != null && perItem.find(([k]) => k === rItem);

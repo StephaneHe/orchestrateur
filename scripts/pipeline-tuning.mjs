@@ -29,6 +29,11 @@ export const TUNING_LEVERS = {
   discussionOne: 'Discussion en un seul appel, la recherche seulement si la réponse la demande (levier 6, décision 10)',
   // 0.133.0, user rule « arrête de poser des questions de découpage » (process-pause.mjs).
   chefPauses: 'pauses de processus (découpage, items mis de côté, limites de tests ou d’étapes, reprises) tranchées par le chef, plus posées à l’utilisateur',
+  // 0.139.0 (aside-rework.mjs), chef's finding on psyProfile (2026-10-23).
+  itemTestFix: 'la correction après la relecture peut modifier les tests de l’item, pas encore livrés (en-tête, commentaire…), au lieu de mettre l’item de côté',
+  testWrong: '4b peut déclarer le test de l’item faux (« TEST_FAUX: … ») : retour à 4a pour le corriger, au lieu de trois refus',
+  asideRedo: 'un item mis de côté dont le correctif ne s’applique plus est refait à partir du code actuel (le correctif sert d’indication), une fois',
+  asideGroup: 'les items mis de côté dont le correctif ne s’applique plus font une seule pause groupée, pas une pause par item',
 };
 export const LEVER_IDS = Object.keys(TUNING_LEVERS);
 

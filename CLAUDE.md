@@ -3340,6 +3340,32 @@ automatiquement ? je ne te vois pas reprendre la main ».
   lu, rien écrit ; `off --all` le coupe. Redémarrage nécessaire (balayage).
 - Recettes : `_test_chef_alerts.mjs`, HTTP `chef-alerts`.
 
+## Items mis de côté : moins souvent, jamais perdus (0.139.0)
+
+Constat du chef (2026-10-23, six exécutions du Développement complet d'un même
+projet) et règle « arrête de poser des questions de découpage. tu sais comment
+est organisé le process mieux que moi ». `scripts/aside-rework.mjs`, quatre
+leviers de `pipeline-tuning.mjs` (coupés par défaut, **figés dans
+`run.json.tuning`**, coupé = 0.138.0 exact) :
+
+- `itemTestFix` : la correction après la Revue d'un item peut modifier les
+  tests de CET item (changés depuis le dernier item livré, `ownTestFiles`) ;
+  les autres restent protégés ; la Revue sait qu'un tel constat est corrigé
+  tout de suite, jamais « à l'étape Livrer ».
+- `testWrong` : 4b écrit `TEST_FAUX: <raison>` dans `vert.md` ⇒ retour à 4a
+  (`state.testFix`, consigne `TEST_FAUX=`) pour corriger le test, deux fois au
+  plus par item (`system/pipeline_test_wrong`). Marqueur de protocole, comme
+  `DEJA_COUVERT`, jamais un mot-clé.
+- `asideRedo` : correctif qui ne s'applique plus ⇒ item REFAIT depuis le code
+  actuel (`uncheckGroup`, `redoHints`, correctif copié dans le dossier
+  d'exécution comme indication), une fois par item (`state.redone`,
+  `system/pipeline_item_redo`).
+- `asideGroup` : les conflits restants sont tous constatés, puis UNE pause
+  `aside_conflict` (`asideConflict` = liste, `asideGrouped`).
+- Mise en service : `node scripts/pipeline-enforce.mjs tuning <levier> on
+  [<projet>]` (relu à chaque dispatch, sans redémarrage). Recette :
+  `_test_aside_rework.mjs` (série ; rejeu de p-20261022T221404-3a1835).
+
 ## Le rappel appartient à l'exécution (0.136.0)
 
 Demande (2026-10-22) : « peut-on le mettre dans le code à la place ou en plus

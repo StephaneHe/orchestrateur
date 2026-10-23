@@ -63,6 +63,7 @@ import { diagnosePause, diagnoseWithModel, smartMenu, fixMenu, menuQuestion, men
 import { routePause, pauseSignature, decisionText } from './process-pause.mjs';
 import { releasePlan, parseDeliveryText, deliverRelease, deliverCommit } from './code-delivery.mjs';
 import { cachedSuite } from './suite-cache.mjs';
+import * as Rework from './aside-rework.mjs';
 
 /** Changelog fragment a lane task delivers (P9; same slug as the integrator's, scripts/lanes.mjs). */
 export function laneFragmentPath(task) { return `changelog.d/${String(task).replace(/[^\w.-]/g, '_')}.md`; }
@@ -680,6 +681,7 @@ function stepPrompt(ctx, step, extra) {
       break;
     case 'rouge':
       if (ctx.item) L.push(`Item de la liste de tests à traiter MAINTENANT, et lui seul (tests.md) : « ${ctx.item.text} ».`);
+      L.push(...Rework.testFixLines(ctx.testFix), ...Rework.redoLines(ctx.redoHint));
       L.push(`Ton rôle : étape 4a ROUGE du TDD. Écris UN test qui décrit le comportement attendu${ctx.kind === 'bugfix' && !ctx.item ? ' — ici : un test qui REPRODUIT le bug signalé' : ''}, et rien d'autre.`);
       L.push(`Tu ne modifies QUE des fichiers de test (motifs : ${(cfg.testGlobs || []).join(', ')}). Aucun code de production.`);
       L.push(`Après ton tour, l'orchestrateur lance ${T} : elle doit ÉCHOUER, à cause de ton test.`);
@@ -688,7 +690,10 @@ function stepPrompt(ctx, step, extra) {
       break;
     case 'vert':
       if (ctx.reviewItems?.length) {
-        L.push('Ton rôle : CORRIGER les problèmes relevés par la revue (revue.json), sans toucher aux tests existants (tu peux en AJOUTER).');
+        L.push(ctx.fixOwnTests?.length
+          ? 'Ton rôle : CORRIGER les problèmes relevés par la revue (revue.json), sans toucher aux tests déjà livrés (tu peux en AJOUTER).'
+          : 'Ton rôle : CORRIGER les problèmes relevés par la revue (revue.json), sans toucher aux tests existants (tu peux en AJOUTER).');
+        L.push(...Rework.ownTestsLines(ctx.fixOwnTests));
         L.push(`Problèmes à corriger :\n${ctx.reviewItems.map(i => `- ${i}`).join('\n')}`);
       } else if (ctx.kind === 'mecanique') {
         L.push('Ton rôle : étape 4b — faire la modification MÉCANIQUE demandée (renommage, remplacement…), sans changer le comportement. Ne modifie aucun test existant.');
@@ -696,6 +701,8 @@ function stepPrompt(ctx, step, extra) {
         if (ctx.item) L.push(`Item en cours : « ${ctx.item.text} ». Ne traite pas les items suivants : ils auront leur propre test.`);
         L.push('Ton rôle : étape 4b VERT du TDD. Écris le code MINIMAL qui fait passer le test écrit à l’étape 4a (voir rouge.md) ET tous les autres.');
         L.push('Interdit : modifier les fichiers de test (l’orchestrateur compare leur empreinte : toute modification est refusée).');
+        if (ctx.item && ctx.tuning?.testWrong) L.push(Rework.testWrongLine());
+        L.push(...Rework.redoLines(ctx.redoHint));
       }
       L.push(`Après ton tour, l'orchestrateur lance ${T} : elle doit PASSER.`);
       L.push(`Écris ${art('vert.md')} : ce que tu as changé et pourquoi. Ne commite pas (l'étape Livrer le fera).`);
@@ -720,7 +727,10 @@ function stepPrompt(ctx, step, extra) {
       if (covered?.length) L.push(`Items acceptés comme DÉJÀ COUVERTS (leur test passait d'emblée, sans nouveau code) : ${covered.map(coveredLabel).join(' ; ')}. Vérifie que chacun de ces tests est FIDÈLE à son item et qu'il échouerait si le comportement disparaissait ; un test vide de sens est un « problème ».`);
       L.push('Ne relève PAS l’absence de numéro de version incrémenté, d’entrée CHANGELOG ni de ligne dans le registre des exigences : l’étape Livrer, qui suit, les ajoute, et l’orchestrateur les vérifie.');
       L.push(`Écris ${art('revue.json')}, et UNIQUEMENT ce JSON : {"verdict": "ok" | "problèmes", "items": ["défaut de comportement 1", …], "hors_tdd": ["correction de doc ou de commentaire 1", …]}.`);
-      L.push('« items » : uniquement des défauts de COMPORTEMENT, qu’un test peut prouver (ils repartent dans la boucle de tests). « hors_tdd » : ce qui ne se teste pas (documentation, README, commentaires…) — ce sera fait à la livraison. « problèmes » seulement pour un défaut réel, à corriger maintenant.');
+      if (scope && ctx.tuning?.itemTestFix) {
+        L.push('« items » : uniquement des défauts de COMPORTEMENT, qu’un test peut prouver (ils repartent dans la boucle de tests). « hors_tdd » : ce qui ne se teste pas (documentation, README, commentaires, en-têtes de test…) — corrigé juste après par l’étape de correction, avant toute livraison. « problèmes » seulement pour un défaut réel, à corriger maintenant.');
+        L.push(Rework.reviewOwnTestsLine());
+      } else L.push('« items » : uniquement des défauts de COMPORTEMENT, qu’un test peut prouver (ils repartent dans la boucle de tests). « hors_tdd » : ce qui ne se teste pas (documentation, README, commentaires…) — ce sera fait à la livraison. « problèmes » seulement pour un défaut réel, à corriger maintenant.');
       if (ctx.mode === 'complet') {
         const cap = ctx.limits?.testsPerItem || LIMITS.testsPerItem;
         L.push(`Chaque entrée de « items » devient une case de tests.md${scope ? ', rattachée à cet item seulement' : ''} : commence-la par « (tests: N) », N = nombre de tests prévus pour la prouver, de 1 à ${cap} (ex. « (tests: 1) [P2] … »). Un défaut qui en demande plus doit être découpé en plusieurs entrées.`);
@@ -2457,7 +2467,8 @@ function checkCriteria(ctx, step, before, after) {
   }
   if (step.id === 'vert') {
     if (!changed.length) return { ok: false, why: 'aucune modification', changed };
-    const tests = ctx.testPrint;  // empreinte des tests à protéger
+    // Review correction (lever itemTestFix): the item's own tests, not delivered yet, may be edited.
+    const tests = ctx.reviewItems?.length && ctx.fixOwnTests?.length ? Rework.withoutOwnTests(ctx.testPrint, ctx.fixOwnTests) : ctx.testPrint;
     const touched = [...tests.keys()].filter(f => after.get(f) !== tests.get(f));
     if (touched.length) return { ok: false, why: `fichiers de test modifiés (interdit à cette étape) : ${touched.slice(0, 8).join(', ')}`, changed };
     const t = runSuite(ctx);
@@ -2784,8 +2795,10 @@ export async function runPipeline(o) {
     state.aside = (state.aside || []).filter(a => !goneGroups.has(a.group));
     // An older engine emptied the queue at the conflict: the remaining items are put back.
     const queued = (state.restoreQueue || []).filter(g => !goneGroups.has(g));
-    state.restoreQueue = queued.length ? queued : state.aside.map(a => a.group);
+    // Grouped pause (lever asideGroup): the queue was tried in full, the items left go to « items_blocked ».
+    state.restoreQueue = queued.length || state.asideGrouped ? queued : state.aside.map(a => a.group);
     state.asideConflict = null;
+    state.asideGrouped = false;
     extended = { limit: 'aside_conflict', to: state.restoreQueue.length, discarded: stale };
   }
   // « accepter » (0.65.0): the review defects that paused the run are accepted
@@ -3142,7 +3155,7 @@ export async function runPipeline(o) {
         written: limit === 'item_tests' ? value : undefined, defects,
         aside: (state.aside || []).map(a => ({ group: a.group, limit: a.limit, reason: ASIDE_WORDS[a.limit] || a.limit, why: plainWhy(a.why) })),
         extra: { rounds: value, duration: fmtDur(limits.runMs) } },
-      menuCtx: { canAccept, keep: limit === 'items' && (state.itemsDone || 0) === 0 ? maxItems : 0, restoreQueue: (state.restoreQueue || []).length } });
+      menuCtx: { canAccept, keep: limit === 'items' && (state.itemsDone || 0) === 0 ? maxItems : 0, restoreQueue: (state.restoreQueue || []).length, conflicts: state.asideGrouped ? (state.aside || []).filter(a => a.conflict).length : 0 } });
   };
 
   const pauseForModel = async (step, info, why) => {
@@ -3503,6 +3516,7 @@ export async function runPipeline(o) {
     const c = commitWork(cwd, itemCommitMessage({ group: g, text: groupText(g), run, cases: groupCases(readItems(), g).length }));
     if (!c.ok || c.empty) return c;
     state.lastDelivered = c.commit;
+    if (state.redoHints?.[g]) { state.redoHints = { ...state.redoHints }; delete state.redoHints[g]; }
     state.delivered = [...(state.delivered || []), { group: g, text: groupText(g).slice(0, 300), commit: c.commit }];
     state.releasePending = true;
     writeEvent({ type: 'system', subtype: 'pipeline_item_delivered', pipeline: { run, item: g }, commit: c.commit,
@@ -3526,12 +3540,18 @@ export async function runPipeline(o) {
     const patchFile = path.join(runDir, `aside-item-${g}.patch`);
     const r = setAsideWork(cwd, { from: state.lastDelivered || base, indexFile: path.join(runDir, 'item-review.idx'), patchFile });
     if (!r.ok) { state.plan.splice(state.index, 0, ...prefix); return false; }
+    // Lever testWrong: « le code ne fait pas passer le test » says what the patch holds and what 4b found.
+    if (limit === 'green' && ctx.tuning?.testWrong) {
+      const diag = Rework.greenAsideDiagnosis({ files: r.files, isTest: (f) => isTestFile(f, cfg.testGlobs), claim: Rework.testWrongClaim(readArtefact(ctx, 'vert.md')) });
+      if (diag) why = `${diag} — ${why || ''}`;
+    }
     const patch = path.relative(root, patchFile).split(path.sep).join('/');
     state.aside = [...(state.aside || []), { group: g, text: groupText(g).slice(0, 300), limit, why: String(why || '').slice(0, 2000), prefix,
       item: state.item, itemTestBase: state.itemTestBase, reviewGroup: state.reviewGroup, lastGreenLines: state.lastGreenLines ?? null, patch, files: r.files }];
     state.item = ctx.item = null;
     state.itemTestBase = ctx.itemTestBase = null;
     state.reviewGroup = null; ctx.reviewScope = null;
+    if (state.testFix) state.testFix = ctx.testFix = null;
     // Its pending doc correction goes aside with it (0.114.0): left behind, the
     // NEXT item's 4b took it as its own and re-reviewed this group mid-item,
     // which cleared state.item and crashed « @check » (frozen run, 2026-10-18).
@@ -3624,8 +3644,39 @@ export async function runPipeline(o) {
         foldTo(cwd, from);
         const r = reapplyWork(cwd, path.join(root, a.patch));
         if (!r.ok) {
+          const err = String(r.err || '').split('\n')[0];
+          // Lever asideRedo (0.139.0): the item is REDONE from the current code,
+          // its old patch a hint only — once per item, never for group 0.
+          if (ctx.tuning?.asideRedo && g !== 0 && !(state.redone || []).some(x => x.group === g)) {
+            const md = Rework.uncheckGroup(readArtefact(ctx, 'tests.md') || '', g);
+            fs.writeFileSync(path.join(artDir, 'tests.md'), md.md);
+            state.itemsDone = Math.max(0, (state.itemsDone || 0) - md.unchecked);
+            const hintFile = Rework.patchHint(path.join(root, a.patch), artDir, g);
+            const hintPath = hintFile ? hintFile.replace(/\\/g, '/') : null;
+            state.redoHints = { ...(state.redoHints || {}), [g]: { group: g, why: ASIDE_WORDS[a.limit] || a.limit, patch: hintPath } };
+            state.redone = [...(state.redone || []), { group: g, at: new Date().toISOString(), limit: a.limit, patch: a.patch, conflict: err.slice(0, 500) }];
+            state.aside = state.aside.filter(x => x !== a);
+            state.groupTrees = { ...(state.groupTrees || {}), [g]: git(cwd, ['rev-parse', `${from}^{tree}`]).out };
+            state.itemReviewRounds = { ...(state.itemReviewRounds || {}) }; delete state.itemReviewRounds[g];
+            if (state.itemReviewBudgets) { state.itemReviewBudgets = { ...state.itemReviewBudgets }; delete state.itemReviewBudgets[g]; }
+            if (state.testWrongRounds) { state.testWrongRounds = { ...state.testWrongRounds }; delete state.testWrongRounds[g]; }
+            ctx.testPrint = testsNow();
+            state.plan.splice(state.index, 0, '@loop');
+            if (state.plan.indexOf('livrer', state.index) < 0) state.plan.push('livrer');
+            writeEvent({ type: 'system', subtype: 'pipeline_item_redo', pipeline: { run, item: g }, patch: a.patch, hint: hintPath, conflict: err.slice(0, 500),
+              text: `↻ ${groupLabel(g)} refait à partir du code actuel : ses modifications ne s’appliquent plus sur le travail livré depuis (${err.slice(0, 200)}) — l’ancien correctif ne sert que d’indication` });
+            saveState();
+            continue;
+          }
+          a.conflict = { at: new Date().toISOString(), err: err.slice(0, 500) };
+          // Lever asideGroup (0.139.0): the other items are tried first, one pause for every conflict.
+          if (ctx.tuning?.asideGroup) {
+            writeEvent({ type: 'system', subtype: 'pipeline_aside_conflict', pipeline: { run, item: g }, patch: a.patch,
+              text: `⚠ ${groupLabel(g)} : ses modifications ne s’appliquent plus sur le travail livré depuis (${err.slice(0, 200)}) — je continue avec les autres items, une seule pause à la fin` });
+            saveState();
+            continue;
+          }
           // The rest of the queue is kept: « continuer » sets this one apart and goes on with them.
-          a.conflict = { at: new Date().toISOString(), err: String(r.err || '').split('\n')[0].slice(0, 500) };
           state.asideConflict = g;
           saveState();
           return pauseForLimit({ limit: 'aside_conflict', value: g, step: stepDefs.vert,
@@ -3656,6 +3707,15 @@ export async function runPipeline(o) {
         state.plan.splice(li, 0, '@aside');
         saveState();
         continue;
+      }
+      // Lever asideGroup: every stale patch of this resume, in ONE pause.
+      const stale = ctx.tuning?.asideGroup ? state.aside.filter(a => a.conflict) : [];
+      if (stale.length) {
+        state.asideConflict = stale.map(a => a.group).join(',');
+        state.asideGrouped = true;
+        saveState();
+        return pauseForLimit({ limit: 'aside_conflict', value: stale.length, step: stepDefs.vert,
+          why: `les modifications de ${stale.length} item(s) mis de côté ne s’appliquent plus sur le travail livré depuis : ${stale.map(a => `${groupLabel(a.group)} (« ${String(a.text).slice(0, 120)} », gardées dans ${a.patch} : ${a.conflict.err})`).join(' ; ')}` });
       }
       return pauseForLimit({ limit: 'items_blocked', value: state.aside.length, step: null });
     }
@@ -3844,6 +3904,14 @@ export async function runPipeline(o) {
         else writeEvent({ type: 'system', subtype: 'pipeline_code_deliver_skipped', pipeline: { run, step: id }, why: p.why, text: `livraison confiée au model, comme avant : ${p.why}` });
       } else if (step.kind === 'deliver' && !step.crit) ctx.deliveryMode = 'commit';
     }
+    // Lever itemTestFix (0.139.0): the correction of a Review may edit the
+    // item's own tests (changed since the last delivery, never delivered).
+    ctx.fixOwnTests = step.id === 'vert' && ctx.reviewItems?.length && ctx.tuning?.itemTestFix && isGit
+      ? Rework.ownTestFiles(cwd, state.itemDelivery ? (state.lastDelivered || base) : base, (f) => isTestFile(f, cfg.testGlobs)) : null;
+    // Items redone from the current code (lever asideRedo): their old patch as a hint.
+    ctx.redoHint = ctx.item && ['rouge', 'vert'].includes(step.id) ? state.redoHints?.[groupOf(ctx.item)] || null : null;
+    // 4a sent back by 4b (lever testWrong): fix the item's own test.
+    ctx.testFix = step.id === 'rouge' && ctx.item && state.testFix?.item === ctx.item.n ? state.testFix : null;
     let maxAttempts = step.id === 'vert' ? limits.greenAttempts : limits.criteriaAttempts;
     // An honest "already covered" claim refused on form (missing proof, test not
     // rewritten after a refused try) is not a failure: it does not consume the
@@ -3910,6 +3978,21 @@ export async function runPipeline(o) {
         writeEvent({ type: 'system', subtype: 'pipeline_retry_not_counted', pipeline: { run, step: step.id, key: r.rec.key, attempt },
           text: `essai ${attempt} de « ${step.title} » non compté : « déjà couvert » déclaré, à compléter (${plainWhy(r.rec.why)})` });
       }
+      // Lever testWrong (0.139.0): 4b proved the item's own test wrong — back to
+      // 4a to fix that test, then 4b again; bounded per item, never in silence.
+      const wrong = step.id === 'vert' && ctx.item && !ctx.reviewItems?.length && ctx.tuning?.testWrong ? Rework.testWrongClaim(readArtefact(ctx, 'vert.md')) : null;
+      if (wrong && (state.testWrongRounds?.[ctx.item.n] || 0) < Rework.TEST_WRONG_ROUNDS) {
+        const n = ctx.item.n;
+        const round = (state.testWrongRounds?.[n] || 0) + 1;
+        state.testWrongRounds = { ...(state.testWrongRounds || {}), [n]: round };
+        const files = isGit ? Rework.ownTestFiles(cwd, state.itemDelivery ? (state.lastDelivered || base) : base, (f) => isTestFile(f, cfg.testGlobs)) : [];
+        state.testFix = { item: n, why: wrong, round, files };
+        state.plan.splice(state.index, 0, 'rouge');
+        writeEvent({ type: 'system', subtype: 'pipeline_test_wrong', pipeline: { run, step: 'vert', item: n, round }, why: wrong, files,
+          text: `↩ item ${n} : 4b juge son test faux (« ${wrong.slice(0, 300)} ») — retour à 4a pour corriger ce test, puis 4b (${round}/${Rework.TEST_WRONG_ROUNDS})` });
+        saveState();
+        continue steps;
+      }
       // The program's own work refused (phase 0 b/3): a new try would repeat it identically.
       if (attempt >= maxAttempts || r.crit?.noRetry) {
         const limit = step.id === 'vert' ? 'green' : 'criteria';
@@ -3920,6 +4003,9 @@ export async function runPipeline(o) {
       }
     }
     if (step.id === 'rouge' || step.crit === 'rouge') ctx.testPrint = testsNow();
+    if (step.id === 'rouge' && ctx.testFix) { state.testFix = ctx.testFix = null; }
+    // The correction edited the item's own tests: they are the protected print from now on.
+    if (step.id === 'vert' && ctx.fixOwnTests?.length) ctx.testPrint = testsNow();
     if (step.id === 'livrer' && state.itemDelivery) {
       // The release covers every item delivered since the previous one.
       state.releasePending = false;
@@ -4209,6 +4295,8 @@ export async function runPipeline(o) {
       (state.mode === 'complet' ? `- TDD : ${state.itemsDone || 0} item(s) de la liste de tests, un à la fois (4a → 4b → 4c)\n` : '') +
       ((state.delivered || []).length ? `- Livraison par item : ${state.delivered.map(d => `${d.group === 0 ? 'travail d’avant la montée en complet' : `item ${d.group}`} → ${d.commit.slice(0, 7)}`).join(' ; ')}, puis la version (${(state.releases || []).map(r => `${r.version || '?'} ${r.commit.slice(0, 7)}`).join(', ')})\n` : '') +
       discardedText(state, '- ') +
+      ((state.redone || []).length ? `- ↻ Refait(s) à partir du code actuel (leur correctif ne s’appliquait plus) : ${state.redone.map(x => `item ${x.group}${(state.delivered || []).some(d => d.group === x.group) ? ' (livré)' : ''}`).join(' ; ')}
+` : '') +
       (state.escalated ? '- ⇧ Monté de léger en complet : la demande dépassait le périmètre du mode léger\n' : '') +
       ((state.coveredItems || []).length ? `- ↺ Déjà assuré par le code existant (test ajouté comme documentation, sans nouveau code) : ${state.coveredItems.map(coveredLabel).join(' ; ')}\n` : '') +
       `- Critères vérifiés par l'orchestrateur : test rouge puis vert, tests inchangés en 4b, revue, ${ctx.lane ? `fragment ${ctx.lane.fragment}` : 'version, CHANGELOG'}${cfg.requirements ? ', exigence' : ''}, suite verte\n` +

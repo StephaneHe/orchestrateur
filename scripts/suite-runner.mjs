@@ -71,6 +71,7 @@ export const SERIAL_SUITES = new Set([
   '_test_hors_pipeline_task.mjs',  // detached task turns awaited with a deadline (failed under parallel load, 0.134.0)
   '_test_phase4b_harness.mjs',     // harness latency capped at 500 ms per turn (547 ms under parallel load, 0.134.0)
   '_test_pipeline_gates.mjs',      // ~240 s alone, 278 s then > 300 s (suite timeout) under parallel load (0.138.0)
+  '_test_aside_rework.mjs',        // ~90 s alone: nine sequential full-Development runs (0.139.0)
 ]);
 
 /** Default parallelism: ORCH_REGRESS_JOBS, else a quarter of the CPUs, 1 to 4. */
