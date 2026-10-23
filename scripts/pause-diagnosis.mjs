@@ -70,7 +70,7 @@ export const CAUSE_KINDS = Object.freeze({
   missing_file: 'un fichier ou un compte rendu attendu est absent',
   no_commit: 'la livraison n’a créé aucun commit',
   version_stale: 'la livraison par le programme a laissé une mention de version à l’ancienne valeur',
-  code_delivery: 'la livraison faite par le programme casse un test du projet',
+  code_delivery: 'tests rouges après livraison : la livraison casse un test du projet',
   criterion_strict: 'un critère automatique est plus strict que le travail ne le justifie',
   too_big: 'la demande est trop grosse pour une seule exécution',
   review_defects: 'la relecture relève encore des défauts précis',
@@ -147,7 +147,8 @@ export function readTestOutput(out) {
     if (inTest) return { kind: 'test_wrong', file: inTest.file, at: inTest.line, line: clean(m[0]) };
     return { kind: 'code_wrong', line: clean(m[0]) };
   }
-  if ((m = ASSERT_RE.exec(text))) return { kind: 'code_wrong', line: clean(m[1]) };
+  // node --test prints a « ✖ failing tests: » header before the failures themselves.
+  if ((m = ASSERT_RE.exec(text.replace(/^\s*✖\s*failing tests:?\s*$/gim, '')))) return { kind: 'code_wrong', line: clean(m[1]) };
   return { kind: 'code_wrong', line: clean(text.split('\n').filter(l => l.trim()).slice(-1)[0] || '') };
 }
 
@@ -172,9 +173,22 @@ function lineAt(t, i) { return t.slice(t.lastIndexOf('\n', i) + 1).split('\n')[0
 export const BUDGET_LIMITS = Object.freeze(['items', 'duration', 'review', 'item_tests']);
 const QUOTED_RE = /«[^»]*»?/g;
 
-/** The text where a provider error may be read: never the work quoted in the reason. */
+// Test output is never a provider message: « network error » in a CHANGELOG
+// line, « 509.2256ms » read as a 5xx (runs of 2026-10-23).
+const SUITE_REASON_RE = /^(la suite échoue|la suite passe encore|la suite reste rouge|les tests échouent)/i;
+const TEST_LINE_RE = /^\s*(✔|✖|ℹ|▶|#|ok \d|not ok \d|at |test at |actual:|expected:|operator:|generatedMessage:|code: 'ERR_|diff:|AssertionError|\+ |- |'.*' !== )/;
+
+/**
+ * The text where a provider error may be read: what the model call passed apart
+ * (providerError), plus the reason of a refusal that is not a test result,
+ * stripped of the work it quotes and of any test-runner line.
+ */
 export function providerText(input = {}) {
-  const why = BUDGET_LIMITS.includes(input.limit) ? '' : String(input.why || '').replace(QUOTED_RE, '« … »');
+  const raw = String(input.why || '');
+  const out = String(input.testOutput || '').trim().slice(0, 200);
+  const testReason = SUITE_REASON_RE.test(firstLine(raw)) || (out.length >= 20 && raw.includes(out));
+  const why = BUDGET_LIMITS.includes(input.limit) || testReason ? ''
+    : raw.split('\n').filter(l => !TEST_LINE_RE.test(l)).join('\n').replace(QUOTED_RE, '« … »');
   const apart = input.providerError && input.providerError !== input.why ? String(input.providerError) : '';
   return [apart, why].filter(Boolean).join('\n');
 }
@@ -249,8 +263,18 @@ export function diagnosePause(input = {}) {
     const t = cd.red ? readTestOutput(input.testOutput || why) : null;
     if (t && ['code_wrong', 'test_wrong'].includes(t.kind)) {
       ev.push({ source: 'sortie des tests', text: t.line });
-      return withRepeat(out('code_delivery', `La suite échoue après la livraison faite par le programme (version ${cd.from || '?'} → ${cd.to || '?'}, CHANGELOG, exigence, commit) : ${t.line || 'test en échec'}. Le travail était vert avant Livrer : c’est la livraison qui casse ce test, et la refaire à l’identique échouerait encore.`,
+      return withRepeat(out('code_delivery', `Tests rouges après livraison : la suite échoue après la livraison faite par le programme (version ${cd.from || '?'} → ${cd.to || '?'}, CHANGELOG, exigence, commit) : ${t.line || 'test en échec'}. Le travail était vert avant Livrer : c’est la livraison qui casse ce test, et la refaire à l’identique échouerait encore.`,
         { failure: t.line, from: cd.from || null, to: cd.to || null }), input);
+    }
+  }
+  // Livrer refused because the suite is red after the delivery (whoever wrote
+  // it): a deterministic cause, never an outage nor « continuer » (2026-10-23).
+  if (/^la suite échoue après la livraison/i.test(motif)) {
+    const t = readTestOutput(input.testOutput || why);
+    if (!t || ['code_wrong', 'test_wrong'].includes(t.kind)) {
+      if (t) ev.push({ source: 'sortie des tests', text: t.line });
+      return withRepeat(out('code_delivery', `Tests rouges après livraison : la suite échoue après l’étape « ${step} » (version, CHANGELOG, exigence, commit) : ${t?.line || 'test en échec'}. Le travail était vert avant Livrer : c’est la livraison qui casse ce test, et la refaire à l’identique échouerait encore.`,
+        { failure: t?.line || null }), input);
     }
   }
   if (/^la suite passe encore/i.test(motif)) {
@@ -506,6 +530,13 @@ export function smartMenu(d, ctx = {}) {
       rec = ['confier au model', d.kind === 'version_stale'
         ? `le programme ne sait pas écrire ${files || 'cette mention'} : un model peut le faire, sous la même vérification (pour que le programme le fasse seul ensuite : déclarer l’emplacement dans .orchestrateur/pipeline.json → versionMentions).`
         : 'refaire la même livraison par le programme échouerait à l’identique : un model peut lire l’échec et compléter la livraison, sous la même vérification.'];
+      // Red after a delivery: a second, different way of handing the fix to a
+      // model, offered when « confier au model » was already tried (anti-loop).
+      if (d.kind === 'code_delivery') {
+        add('changer d’approche', 'je relance Livrer, confiée au model, avec une autre méthode : lire d’abord le test en échec et le fichier qu’il vérifie (README, CHANGELOG, mention de version, registre), écrire l’écart exact dans le compte rendu, puis corriger ce fichier dans le commit de livraison ; la même vérification (suite verte) s’applique.',
+          { modelDeliver: true, message: `CHANGER D’APPROCHE (décision prise à la pause, cause : ${d.cause}) — ne refais pas la même livraison. Lis d’abord le test en échec et le fichier qu’il vérifie, écris dans le compte rendu l’écart exact (valeur attendue contre valeur obtenue), puis corrige ce fichier dans le commit de livraison, sans changer le comportement livré.` });
+        if (ctx.modelDelivered) rec = ['changer d’approche', 'la livraison était déjà confiée au model et la suite reste rouge : la refaire de la même façon échouerait encore ; il faut partir du test en échec.'];
+      }
       break;
     }
     case 'too_big': {

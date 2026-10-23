@@ -101,7 +101,8 @@ section('2. La pause : cause nommée, « confier au model » recommandé, jamais
   const step = { id: 'livrer', label: 'livraison (version, journal des changements, commit)' };
   const stale = [{ file: 'README.md', line: 5, found: '1.8.1', why: 'affiche encore 1.8.1' }];
   const old = diagnosePause({ limit: 'criteria', step, why, testOutput: why });
-  ok(old.kind !== 'version_stale' && old.kind !== 'code_delivery', `sans constat de la livraison : diagnostic d’avant (${old.kind})`);
+  // 0.141.1: without the program's report, a red suite after Livrer is still « tests rouges après livraison », never an outage.
+  ok(old.kind === 'code_delivery' && !/panne|fournisseur/i.test(old.cause), `sans constat de la livraison : tests rouges après livraison (${old.kind})`, old.cause);
   const d = diagnosePause({ limit: 'criteria', step, why, testOutput: why, codeDelivery: { from: '1.8.1', to: '1.9.0', red: true, stale } });
   ok(d.kind === 'version_stale' && /README\.md/.test(d.cause) && /ligne 5/.test(d.cause) && /1\.8\.1/.test(d.cause) && /1\.9\.0/.test(d.cause), `cause : la mention nommée (${d.cause})`);
   const menu = fixMenu(d, smartMenu(d, { step }));

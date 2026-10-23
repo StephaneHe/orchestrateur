@@ -3177,13 +3177,16 @@ export async function runPipeline(o) {
     }
     const slotInfo = sid && stepDefs[sid]?.chain?.length ? resolveCase(readAssignments(root), stepDefs[sid].chain) : null;
     const mctx = { step, slot: input.slot || slotInfo?.slot || null, model: input.model || slotInfo?.model || null,
-      delivered: (state.delivered || []).length, hasLock: fs.existsSync(path.join(cwd, 'package-lock.json')), durationText: fmtDur(limits.runMs), ...menuCtx };
+      delivered: (state.delivered || []).length, hasLock: fs.existsSync(path.join(cwd, 'package-lock.json')), durationText: fmtDur(limits.runMs),
+      modelDelivered: !!state.modelDeliver, ...menuCtx };
     let menu = fixMenu(d, smartMenu(d, mctx));
     // Anti-loop of a delivery step (0.140.0): the same error of Livrer twice in a
-    // row never offers again the option already answered on it.
+    // row never offers again the option already answered on it. A stale version
+    // mention and a red suite after the delivery are one cause (0.141.1).
     const prev = state.diagnosis;
     const deliverStep = sid && (sid === 'livrer' || stepDefs[sid]?.crit === 'livrer' || stepDefs[sid]?.kind === 'deliver');
-    const answered = deliverStep && prev && prev.step === sid && prev.kind === d.kind && (prev.limit || null) === (input.limit || null)
+    const family = (k) => (k === 'version_stale' ? 'code_delivery' : k);
+    const answered = deliverStep && prev && prev.step === sid && family(prev.kind) === family(d.kind) && (prev.limit || null) === (input.limit || null)
       ? [...(prev.excluded || []), ...(prev.answered || [])] : [];
     let excluded = [];
     if (answered.length) {

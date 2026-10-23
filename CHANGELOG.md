@@ -11,6 +11,41 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.141.1] - 2026-10-23
+
+Defect seen in production (two complete Development runs of a project,
+2026-10-23): Livrer was refused because the project's suite failed after the
+delivery — a deterministic cause — but the pause said « Le fournisseur du model
+a une panne passagère », its « cause » being a line of the test output
+(« network error » in a CHANGELOG line, « 509.2256ms » read as an HTTP 5xx),
+menu « continuer » / « abandonner », sent to the user instead of the chef.
+User rule: « arrête de poser des questions de découpage. tu sais comment est
+organisé le process mieux que moi ».
+
+### Fixed
+- (server) `providerText` (`scripts/pause-diagnosis.mjs`): the reason of a
+  test result (« la suite échoue… », or a reason that carries the test output)
+  is never read for a provider error; in any other reason, test-runner lines
+  (✔ ✖ ℹ, `at …`, `actual:`, `expected:`…) are dropped first. A provider error
+  passed apart by the model call (`providerError`) is still read.
+- (server) A Livrer refused because the suite is red after the delivery is
+  « Tests rouges après livraison » (`code_delivery`), whoever wrote the
+  delivery (program or model) — no longer only with the program's delivery
+  report: « confier au model » offered and recommended, never « continuer »,
+  a process pause routed to the chef.
+- (server) `readTestOutput` skips the « ✖ failing tests: » header of
+  `node --test` and names the failing test itself.
+
+### Changed
+- (server) Anti-loop of Livrer: a stale version mention and a red suite after
+  the delivery are one cause; once the delivery was handed to the model, the
+  next red delivery recommends « changer d’approche » (still delivered by the
+  model, starting from the failing test and the file it checks).
+
+### Added
+- (server) `scripts/_test_delivery_red_cause.mjs` replays both real refusals
+  (`tests/delivery-red-cases.json`, anonymized).
+
 ## [0.141.0] - 2026-10-23
 
 User request (2026-10-23): « Je ferai passer ce genre de petites tâches

@@ -3249,6 +3249,15 @@ intelligent ».
   `duration`, `review`, `item_tests`) ne lisent une erreur du fournisseur que
   dans `providerError` passé à part (`providerText`) ; ailleurs, le texte entre
   « » est ignoré par ce détecteur. Recette : `_test_limit_pause_cause.mjs`.
+- **La sortie des tests n'est jamais une panne** (0.141.1, Livrer refusé pour
+  suite rouge pris pour une panne : « network error », « 509.2256ms ») :
+  `providerText` ne lit jamais le motif d'un résultat de tests (« la suite
+  échoue… », ou motif qui contient la sortie) et retire ailleurs les lignes de
+  lanceur de tests ; seul `providerError` passé à part reste lu. Livrer refusé
+  pour suite rouge ⇒ `code_delivery` « Tests rouges après livraison », que la
+  livraison soit du programme ou du model : « confier au model », puis
+  « changer d'approche » (anti-boucle, mention périmée et suite rouge = même
+  cause). Recette : `_test_delivery_red_cause.mjs`.
 - Rejeu des vraies pauses (lecture seule) : `node scripts/pause-replay.mjs
   --logs <dossier> [--md <fichier>]` (sortie hors dépôt : noms de projets).
 - Recette : `_test_smart_pause.mjs` (vrais cas `tests/pause-cases.json`,
