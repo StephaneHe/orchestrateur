@@ -68,6 +68,7 @@ import { readRuns as readRegressionRuns, progressText as regressionProgressText,
 import { laneDir as regressionLaneDir, HARD_CAP as LANES_HARD_CAP } from './scripts/lanes.mjs';
 import { queueHoldPolicy, holdReportDue, holdReport } from './scripts/queue-hold.mjs';
 import { chefAnswerRelay, unappliedChefAnswers, unappliedText } from './scripts/chef-relay.mjs';
+import * as ChefAlerts from './scripts/chef-alerts.mjs';
 // Registre /downloads relu à chaud depuis downloads.json (0.23.0).
 import { createDownloadsRegistry, VERSION_NAME_RE } from './scripts/downloads-registry.mjs';
 import { trustWorkspace } from './scripts/workspace-trust.mjs';
@@ -4419,6 +4420,48 @@ function sweepUnappliedChefAnswers() {
   }
 }
 setInterval(sweepUnappliedChefAnswers, CHEF_ANSWER_WATCH_MS).unref?.();
+
+// 0.138.0: the chef's alerts (scripts/chef-alerts.mjs) — a red or interrupted
+// regression, a process pause the chef was not told about, a stuck musician or
+// a lost process wake the chef ONCE per event, grouped, after its current turn.
+// Switch chefAlerts in model-routing.json (off by default: nothing is read).
+const CHEF_ALERTS_SWEEP_MS = Number(process.env.ORCH_CHEF_ALERTS_SWEEP_MS) || 30_000;
+function chefAlertsCollect(settings) {
+  const conductor = conductorName();
+  const chefNames = new Set([conductor, ...pool.slots.map(s => s.name), `${conductor}-2`, `${conductor}-3`]);
+  const snaps = new Map();
+  const snapOf = (name) => { if (!snaps.has(name)) { let s = null; try { s = scanFleetMember(name, LOGS_DIR); } catch { /* unreadable log */ } snaps.set(name, s); } return snaps.get(name); };
+  const busy = (name) => {
+    const s = config.projects.some(p => p.name === name) ? snapOf(name) : null;
+    return s && (s.logState === 'live' || s.logState === 'think' || s.lingering) ? { state: s.state, sinceMs: s.turnElapsedMs } : null;
+  };
+  const dirs = [];
+  for (const p of config.projects) { try { for (const d of regressionDirsOf(p)) dirs.push({ project: p.name, ...d }); } catch { /* no checkout */ } }
+  const musicians = config.projects.filter(p => !chefNames.has(p.name)).map(p => p.name);
+  return [
+    ...ChefAlerts.regressionAlerts({ dirs, since: settings.since, busy }),
+    ...ChefAlerts.pauseAlerts({ runsDir: path.join(LOGS_DIR, 'runs'), since: settings.since, conductor }),
+    ...ChefAlerts.stallAlerts({ snapshots: musicians.map(name => ({ name, snap: snapOf(name) })), stallMin: settings.stallMin, excluded: [...chefNames] }),
+  ];
+}
+function chefAlertsBusy() {
+  if (pool.slots.some(s => s.ticket) || pool.queue.length) return true;
+  try { const s = scanFleetMember(conductorName(), LOGS_DIR); return s.logState === 'live' || s.logState === 'think'; } catch { return true; }
+}
+function sweepChefAlerts() {
+  try {
+    ChefAlerts.sweepAlerts({
+      root: __dirname, logsDir: LOGS_DIR, log: (m) => { console.log(m); debugLog(m); },
+      settings: () => ChefAlerts.readAlertSettings(__dirname),
+      collect: chefAlertsCollect, chefBusy: chefAlertsBusy,
+      enqueue: ({ text, displayText }) => poolEnqueue({
+        obsId: observeEntry({ entry: 'alerte-chef', project: conductorName(), text }),
+        class: 'decision', text, displayText, chefAlert: true,
+      }).id,
+    });
+  } catch (e) { debugLog(`[chef-alerts] balayage : ${e.message}`); }
+}
+setInterval(sweepChefAlerts, CHEF_ALERTS_SWEEP_MS).unref?.();
 
 function allowedToolsFor(name) {
   const project = config.projects.find(p => p.name === name);

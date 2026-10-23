@@ -2119,6 +2119,46 @@ async function apiChecks(sb) {
     }
     return 'pause de pipeline : chef réveillé ; question ordinaire : non';
   });
+  // User request (2026-10-22): « la non régression est en erreur. tu gères
+  // automatiquement ? je ne te vois pas reprendre la main. si ce n'est pas le
+  // cas, il faut que tu corriges le code et ou ta mémoire pour que tu réagisses
+  // à ça » — a red regression of a project wakes the chef ONCE ([ALERTE …]).
+  await check(S, 'chef-alerts', 'Alertes du chef : une non-régression KO d’un projet réveille le chef une seule fois ([ALERTE …], suites KO, lanceur), jamais quand l’interrupteur est coupé', async () => {
+    if (!fs.existsSync(path.join(sb.root, 'scripts', 'chef-alerts.mjs'))) NA('alertes du chef absentes de cet état du code');
+    const routingPath = path.join(sb.root, 'model-routing.json');
+    const before = fs.existsSync(routingPath) ? fs.readFileSync(routingPath, 'utf8') : null;
+    const cfg = JSON.parse(fs.readFileSync(path.join(sb.root, 'config.json'), 'utf8'));
+    const omega = cfg.projects.find(p => p.name === 'omega');
+    assert(omega?.path, 'projet omega introuvable');
+    const hist = path.join(omega.path, '.regress', 'history.ndjson');
+    // Restored afterwards: a recent KO run stays in #regress-band and would
+    // shrink the dashboard for the browser walks that follow.
+    const histBefore = fs.existsSync(hist) ? fs.readFileSync(hist, 'utf8') : null;
+    const id = `r-${new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15)}-4242`;
+    const alerts = () => readLog('chef').filter(e => e.type === 'user_prompt' && String(e.text || '').startsWith('[ALERTE') && e.text.includes(id));
+    const t0 = new Date(Date.now() - 1000).toISOString();
+    const writeRouting = (on) => { const j = before ? JSON.parse(before) : { version: 2, assignments: {} }; j.chefAlerts = on ? { enabled: true, since: t0, stallMin: 240, by: 'regression' } : { enabled: false, stallMin: 240, by: 'regression' }; fs.writeFileSync(routingPath, JSON.stringify(j, null, 2)); };
+    const record = () => { fs.mkdirSync(path.dirname(hist), { recursive: true }); fs.appendFileSync(hist, JSON.stringify({ id, pid: 4242, label: 'worktree', mode: 'full', launcher: { by: 'tour de omega', project: 'omega' }, startedAt: new Date(Date.now() - 60_000).toISOString(), status: 'ko', ko: ['suite:_test_recette_alerte.mjs'], endedAt: new Date().toISOString() }) + '\n'); };
+    try {
+      writeRouting(false);
+      record();
+      await new Promise(r => setTimeout(r, 3500));
+      assert(alerts().length === 0, 'interrupteur coupé : le chef a été alerté');
+      writeRouting(true);
+      const woke = await until(() => alerts()[0] || null, 90_000, 1000);
+      assert(woke, 'le chef n’a pas été alerté en 90 s');
+      assert(/Non-régression terminée KO — omega/.test(woke.text) && woke.text.includes('_test_recette_alerte.mjs') && /tour de omega/.test(woke.text), `alerte : ${String(woke.text).slice(0, 400)}`);
+      await new Promise(r => setTimeout(r, 5000));
+      assert(alerts().length === 1, `${alerts().length} alertes pour le même événement`);
+      const chefDone = await until(() => { const l = readLog('chef'); const i = l.findIndex(e => e.type === 'user_prompt' && e.text === woke.text); return i >= 0 && l.slice(i).some(e => e.type === 'result'); }, 40_000, 1000);
+      assert(chefDone, 'le tour d’alerte du chef ne s’est pas terminé');
+      assert(alerts().length === 1, 'deuxième alerte après le tour du chef');
+    } finally {
+      if (before == null) fs.rmSync(routingPath, { force: true }); else fs.writeFileSync(routingPath, before);
+      if (histBefore == null) fs.rmSync(hist, { force: true }); else fs.writeFileSync(hist, histBefore);
+    }
+    return 'non-régression KO : un seul réveil du chef ; coupé : aucun';
+  });
   // Last of the HTTP walks: it creates kappa's log (kappa has none before, checked by 'pupitre').
   // User rule (2026-10-20): « si aucune activite de ma part depuis plus de 15
   // minutes, et qu'un process attend quelque chose de moi, et que je ne reponds

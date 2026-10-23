@@ -11,6 +11,50 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.138.0] - 2026-10-23
+
+User request (2026-10-22): « la non régression est en erreur. tu gères
+automatiquement ? je ne te vois pas reprendre la main. si ce n'est pas le cas,
+il faut que tu corriges le code et ou ta mémoire pour que tu réagisses à ça ».
+The full regression `r-20261022T163147-19644` of orchestrateur-dev ended KO
+(`_test_hors_pipeline_task.mjs`); the musician handled it, but nothing told the
+chef: no event wakes it on a red regression, a process pause routed to the
+user, or a stuck musician.
+
+### Added
+- (server) **Chef alerts** (`scripts/chef-alerts.mjs`): one mechanism, a
+  sweep of the server (`ORCH_CHEF_ALERTS_SWEEP_MS`, 30 s) that wakes the chef
+  with an `[ALERTE n=…]` ticket of the direction queue (class `decision`,
+  observed as `alerte-chef`) for:
+  1. a regression run ended KO / in error, or interrupted without a report
+     (project, id, KO suites, launcher, and who already handles it: a relaunch
+     started after it, the project's turn in progress);
+  2. a pipeline PROCESS pause the chef was not told about (lever `chefPauses`
+     off for the run, run not awaited by the chef), with the command to
+     settle it;
+  3. a musician live/think without progress for ≥ `stallMin` (10 min by
+     default), or whose PID is dead while its log still says « live ».
+  Each event has a stable key and is raised once (`logs/chef-alerts.json`,
+  survives restarts; journal `logs/chef-alerts.ndjson`). Alerts wait while the
+  chef has a turn or queued work, then leave together as ONE ticket; a stall or
+  pause resolved meanwhile is dropped; at most 6 alert wakes per hour. The
+  prompt asks the chef to check first whether a musician already handles it,
+  else act or inform the user.
+- (server) Switch `chefAlerts` in `model-routing.json`
+  (`node scripts/pipeline-enforce.mjs chef-alerts on|off [--stall-min N]`),
+  re-read at every sweep, off by default; turning it on freezes `since` (older
+  events never alert); off = the previous behaviour exactly (nothing read,
+  written or queued); `off --all` turns it off.
+- Tests: `_test_chef_alerts.mjs` (replays the KO run and its relaunch, an
+  interrupted run, process pauses, a stalled and a lost musician on real logs,
+  one grouped wake, restart, cap, switch), HTTP `chef-alerts` (real server: a
+  KO regression wakes the chef once, nothing when off).
+
+### Fixed
+- (tooling) `_test_pipeline_gates.mjs` runs alone (`SERIAL_SUITES`): about
+  240 s alone, it reached 278 s in parallel for 0.137.0 and exceeded the 300 s
+  suite timeout twice under parallel load.
+
 ## [0.137.0] - 2026-10-23
 
 User report (2026-10-22): « psyProfile ne semble pas avancer ». One run with

@@ -3316,6 +3316,30 @@ du chef à l'utilisateur relayées au musicien → Discussions parasites).
 - Redémarrage nécessaire (relais, balayage) ; `dispatch.mjs` est actif tout de
   suite. Recette : `_test_chef_pause_relay.mjs`.
 
+## Alertes du chef (0.138.0)
+
+Demande (2026-10-22) : « la non régression est en erreur. tu gères
+automatiquement ? je ne te vois pas reprendre la main ».
+
+- `scripts/chef-alerts.mjs`, balayage du serveur (`ORCH_CHEF_ALERTS_SWEEP_MS`,
+  30 s) : un ticket `[ALERTE n=…]` de la file de direction (classe
+  `decision`, entrée observée `alerte-chef`) pour (1) une non-régression KO,
+  en erreur ou interrompue sans bilan d'un projet (`regressionDirsOf` : projet,
+  id, suites KO, lanceur, relance ou tour en cours qui la traite) ; (2) une
+  pause de PROCESSUS non transmise au chef (`pauseFamily`, ni `chefPause`
+  pending, ni rappel au chef : ceux-là le réveillent déjà) ; (3) un musicien
+  en cours sans progrès depuis `stallMin` (10 min) ou au PID mort alors qu'il
+  est « en cours » (`scanProject`, chef et slots exclus).
+- **Une fois par événement** (clé stable, `logs/chef-alerts.json`, survit au
+  redémarrage ; journal `logs/chef-alerts.ndjson`) ; en attente pendant un tour
+  du chef ou une file non vide, puis UN ticket pour tout ce qui attend ;
+  blocage ou pause résolus entre-temps retirés ; 6 réveils par heure au plus.
+- **Interrupteur** `chefAlerts` de `model-routing.json` : `node
+  scripts/pipeline-enforce.mjs chef-alerts on|off [--stall-min N]`, relu à
+  chaque balayage, coupé par défaut, `since` figé à l'activation, coupé = rien
+  lu, rien écrit ; `off --all` le coupe. Redémarrage nécessaire (balayage).
+- Recettes : `_test_chef_alerts.mjs`, HTTP `chef-alerts`.
+
 ## Le rappel appartient à l'exécution (0.136.0)
 
 Demande (2026-10-22) : « peut-on le mettre dans le code à la place ou en plus

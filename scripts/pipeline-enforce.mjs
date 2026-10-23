@@ -23,6 +23,9 @@
 //                                                     tour unique v3 du chef EN OMBRE (Routage v3 phase 2) :
 //                                                     à côté de chaque message, un plan sans aucun effet,
 //                                                     journal logs/chef-shadow/ ; le chef réel ne change pas
+//   node scripts/pipeline-enforce.mjs chef-alerts [on|off] [--stall-min N]
+//                                                     alertes du chef (0.138.0) : non-régression KO ou interrompue,
+//                                                     pause de processus, musicien bloqué → un réveil par événement
 //   node scripts/pipeline-enforce.mjs chef-mode       mode du chef : off | routage (« v3 » : phase 4, bascule)
 //
 // Écrit model-routing.json → enforcement (temp + rename, historique), relu à
@@ -38,6 +41,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readEnforcement, writeEnforcement, ENGINE_PIPELINES } from './pipeline-engine.mjs';
 import { readTuning, applyTuningChange, describeTuning, readChefV3, writeChefV3 } from './pipeline-tuning.mjs';
+import { readAlertSettings, writeAlertSettings, describeSettings as describeAlerts } from './chef-alerts.mjs';
 import { readKgSettings, writeKgSettings, writeKgSwitch, KG_SWITCHES, MODES as KG_MODES } from './kg.mjs';
 
 
@@ -97,6 +101,15 @@ if (cmd === 'chef-shadow') {
   console.log(`chefV3.shadow = ${c.shadow ? 'on (à chaque message de l’utilisateur au chef : plan en ombre, aucun effet ; journal logs/chef-shadow/, node scripts/chef-turn.mjs list)' : 'off (rien ne tourne en ombre)'}`);
   process.exit(0);
 }
+// chef-alerts (0.138.0): the server wakes the chef once per event (scripts/chef-alerts.mjs).
+if (cmd === 'chef-alerts') {
+  if (!target) { console.log(describeAlerts(readAlertSettings(ROOT))); process.exit(0); }
+  const rest = process.argv.slice(4);
+  const sm = rest.indexOf('--stall-min');
+  if (!['on', 'off'].includes(target) || (sm !== -1 && !rest[sm + 1])) { console.error('usage: node scripts/pipeline-enforce.mjs chef-alerts [on|off] [--stall-min N]'); process.exit(64); }
+  try { console.log(describeAlerts(writeAlertSettings(ROOT, { enabled: target === 'on', stallMin: sm !== -1 ? rest[sm + 1] : null, by: `pipeline-enforce chef-alerts ${target}` }))); } catch (e) { console.error(e.message); process.exit(64); }
+  process.exit(0);
+}
 // chef-mode (ROUTAGE-SYNTHESE §3.9): « off » = ordinary chef turns, « routage » = the Routage pipeline.
 // « v3 » is the switch-over of phase 4 (a user decision): refused here.
 if (cmd === 'chef-mode') {
@@ -124,4 +137,5 @@ else {
 const tuning = cmd === 'off' && target === '--all' ? {} : undefined;
 show(writeEnforcement(ROOT, { projects, terminal, chef, pipelines: cur.pipelines.length ? cur.pipelines : ENGINE_PIPELINES, tuning, by: `pipeline-enforce ${cmd} ${target}` }));
 if (cmd === 'off' && target === '--all' && readKgSettings(ROOT).mode !== 'off') writeKgSettings(ROOT, { mode: 'off', by: 'pipeline-enforce off --all' });
+if (cmd === 'off' && target === '--all' && readAlertSettings(ROOT).enabled) writeAlertSettings(ROOT, { enabled: false, by: 'pipeline-enforce off --all' });
 if (cmd === 'off' && target === '--all' && readChefV3(ROOT).shadow) writeChefV3(ROOT, { shadow: false, by: 'pipeline-enforce off --all' });

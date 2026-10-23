@@ -101,13 +101,14 @@ export const ENTRY_KINDS = {
   'wake':                'Réveil du chef (callback)',
   'relais-vers-chef':    'Question NEEDS_CHEF_INPUT d’un musicien au chef',
   'relais-vers-musicien':'Réponse du chef relayée au musicien',
+  'alerte-chef':         'Alerte du serveur au chef (non-régression, pause, musicien bloqué)',
   'notify':              'notify.mjs / POST /api/notify',
   'session-neuve':       'Session neuve (POST /api/projects/:p/sessions/new)',
   'terminal':            'Terminal interactif (/ws/pty)',
   'spawn':               'Autre lancement serveur (filet de sécurité)',
   'signalement':         'Lacune signalée explicitement (POST /api/pipeline-gaps)',
 };
-const SYSTEM_ENTRIES = new Set(['wake', 'relais-vers-chef', 'notify']);
+const SYSTEM_ENTRIES = new Set(['wake', 'relais-vers-chef', 'notify', 'alerte-chef']);
 
 /** Projet dont le dossier contient `cwd` (le plus profond), ou null. */
 export function projectFromCwd(cwd, projects) {

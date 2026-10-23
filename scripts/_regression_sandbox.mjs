@@ -326,6 +326,8 @@ export function serverEnv(root, port) {
     // Queue held by a lingering process (0.82.0): seconds instead of minutes.
     ORCH_QUEUE_HOLD_SWEEP_MS: '1000',
     ORCH_QUEUE_HOLD_ALERT_MS: '2000',
+    // Chef alerts (0.138.0): one sweep per second.
+    ORCH_CHEF_ALERTS_SWEEP_MS: '1000',
     // Automatic answer (0.121.0): short delays allowed, fast sweep, the fake
     // claude announces the model asked (claude-opus-5-5, explicit, checked).
     ORCH_AUTO_ANSWER_TESTING: '1',
