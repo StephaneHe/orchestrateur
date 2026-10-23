@@ -3375,6 +3375,32 @@ leviers de `pipeline-tuning.mjs` (coupés par défaut, **figés dans
   [<projet>]` (relu à chaque dispatch, sans redémarrage). Recette :
   `_test_aside_rework.mjs` (série ; rejeu de p-20261022T221404-3a1835).
 
+## Livraison par le programme : toutes les mentions de version (0.140.0)
+
+Défaut vu en prod (2026-10-23, levier `codeDeliver`) : package.json en 1.9.0,
+la ligne « Version » du README restée à 1.8.1, test d'exigence du projet rouge ;
+la pause ne proposait que « corriger le code », qui relançait la même livraison.
+Règle : « arrête de poser des questions de découpage. tu sais comment est
+organisé le process mieux que moi ».
+
+- `code-delivery.mjs` : `versionMentions` = ligne « Version » du README
+  (convention) + `.orchestrateur/pipeline.json` → `versionMentions` (chemin, ou
+  `{file, regex}` à UN groupe capturant) ; `syncVersionMentions` les écrit dans
+  le commit de version ; une mention déclarée introuvable ⇒ Livrer échoue
+  avant tout commit, fichier nommé (`staleVersion`). Suite rouge après la
+  livraison : `staleVersionHints` nomme les lignes suivies qui affichent
+  encore l'ancienne version à côté de « version ».
+- Pause : causes `version_stale` / `code_delivery` (entrée `codeDelivery` du
+  diagnostic, `rec.codeDelivery`), option « confier au model » (effet
+  `modelDeliver` : Livrer par le model pour cette exécution, consigne précise,
+  `pipeline_model_deliver`) ; jamais « corriger le code ». Pause de processus
+  (chef).
+- **Anti-boucle de Livrer** (tous leviers) : même étape de livraison, même
+  cause, deux pauses de suite ⇒ l'option déjà répondue
+  (`diagnosis.answered`) n'est plus proposée (`excludeAnswered`,
+  `diagnosis.excluded`).
+- Recette : `_test_version_mentions.mjs` (rejeu de p-20261023T044621-dc1385).
+
 ## Le rappel appartient à l'exécution (0.136.0)
 
 Demande (2026-10-22) : « peut-on le mettre dans le code à la place ou en plus

@@ -69,6 +69,8 @@ export const CAUSE_KINDS = Object.freeze({
   cited_paths: 'l’étape cite des chemins introuvables dans le projet',
   missing_file: 'un fichier ou un compte rendu attendu est absent',
   no_commit: 'la livraison n’a créé aucun commit',
+  version_stale: 'la livraison par le programme a laissé une mention de version à l’ancienne valeur',
+  code_delivery: 'la livraison faite par le programme casse un test du projet',
   criterion_strict: 'un critère automatique est plus strict que le travail ne le justifie',
   too_big: 'la demande est trop grosse pour une seule exécution',
   review_defects: 'la relecture relève encore des défauts précis',
@@ -233,6 +235,24 @@ export function diagnosePause(input = {}) {
   // 1. Refused criterion and its reason (orchestrator messages).
   if (motif) ev.push({ source: 'critère', text: clean(motif, 300) });
   let m;
+  // Livrer done by the program (0.140.0): its own release broke the delivery —
+  // never « corriger le code », which would relaunch the identical release.
+  if (input.codeDelivery) {
+    const cd = input.codeDelivery;
+    const st = cd.stale || [];
+    if (st.length) {
+      const list = st.map(x => `\`${x.file}\`${x.line ? ` ligne ${x.line}` : ''}${x.found ? ` (« ${x.found} »)` : ''}${x.why ? ` — ${x.why}` : ''}`).join(', ');
+      ev.push({ source: 'livraison', text: clean(list, 300) });
+      return withRepeat(out('version_stale', `La livraison faite par le programme a passé la version de ${cd.from || '?'} à ${cd.to || '?'}, mais ${st.length > 1 ? 'ces mentions de version ne sont' : 'cette mention de version n’est'} pas à jour : ${list}. Le programme ne met à jour que les fichiers de version et les mentions déclarées (pipeline.json → versionMentions, ou la ligne « Version » du README).`,
+        { stale: st, from: cd.from || null, to: cd.to || null }), input);
+    }
+    const t = cd.red ? readTestOutput(input.testOutput || why) : null;
+    if (t && ['code_wrong', 'test_wrong'].includes(t.kind)) {
+      ev.push({ source: 'sortie des tests', text: t.line });
+      return withRepeat(out('code_delivery', `La suite échoue après la livraison faite par le programme (version ${cd.from || '?'} → ${cd.to || '?'}, CHANGELOG, exigence, commit) : ${t.line || 'test en échec'}. Le travail était vert avant Livrer : c’est la livraison qui casse ce test, et la refaire à l’identique échouerait encore.`,
+        { failure: t.line, from: cd.from || null, to: cd.to || null }), input);
+    }
+  }
   if (/^la suite passe encore/i.test(motif)) {
     const item = input.item?.text ? ` « ${input.item.text} »` : '';
     return withRepeat(out('test_passes', `Le nouveau test${item} passe déjà sans aucun code nouveau : soit il ne vérifie pas le comportement qui manque, soit ce comportement existe déjà dans le code.`), input);
@@ -357,7 +377,7 @@ export const OPTION_KEYS = Object.freeze({
   'corriger le code': 'resume', 'corriger les références': 'resume', 'créer le fichier': 'resume', 'ajuster le critère': 'resume',
   'découper': 'resume', 'prolonger': 'resume', 'corriger les défauts': 'resume', 'réduire les tests': 'resume',
   'compléter le compte rendu': 'resume', 'respecter le périmètre': 'resume', 'corriger le format': 'resume',
-  'réparer': 'resume','réparé': 'resume', 'reconnecté': 'resume', 'relancer après correction': 'resume', 'garder les doutes': 'resume',
+  'réparer': 'resume', 'réparé': 'resume', 'confier au model': 'resume', 'reconnecté': 'resume', 'relancer après correction': 'resume', 'garder les doutes': 'resume',
   'reprendre les items': 'resume', 'écarter l’item': 'resume', 'relancer l’étape': 'resume', 'refaire le commit': 'resume',
   'autoriser': 'resume', 'relancer l’opération': 'resume',
   'accepter': 'accept', 'tout supprimer': 'deleteDoubts',
@@ -478,6 +498,16 @@ export function smartMenu(d, ctx = {}) {
         { message: `REFAIRE LE COMMIT : ${d.cause} Fais réellement le commit (git add puis git commit), puis vérifie avec git log qu’il existe.` });
       rec = ['refaire le commit', 'le travail est fait, seul le commit manque.'];
       break;
+    case 'version_stale':
+    case 'code_delivery': {
+      const files = (d.stale || []).map(x => `${x.file}${x.line ? `:${x.line}` : ''}`).join(', ');
+      add('confier au model', `je relance Livrer en la confiant au model pour cette exécution : il écrit lui-même la version${files ? `, met à jour ${files}` : ''}, le CHANGELOG, l’exigence et le commit, en partant de l’échec exact ; la même vérification (suite verte) s’applique.`,
+        { modelDeliver: true, message: `LIVRAISON CONFIÉE AU MODEL : ${d.cause} ${files ? `Mets la nouvelle version dans ${files}, en plus des fichiers de version. ` : 'Lis l’échec exact de la suite et complète ce que la livraison doit mettre à jour (une mention de version, un test qui lit la version…), sans changer le comportement livré. '}Puis fais le commit unique de livraison.` });
+      rec = ['confier au model', d.kind === 'version_stale'
+        ? `le programme ne sait pas écrire ${files || 'cette mention'} : un model peut le faire, sous la même vérification (pour que le programme le fasse seul ensuite : déclarer l’emplacement dans .orchestrateur/pipeline.json → versionMentions).`
+        : 'refaire la même livraison par le programme échouerait à l’identique : un model peut lire l’échec et compléter la livraison, sous la même vérification.'];
+      break;
+    }
     case 'too_big': {
       const keep = Math.max(0, ctx.keep ?? 0);
       const rest = (d.left || []).slice(keep);
@@ -623,6 +653,24 @@ export function fixMenu(d, menu) {
   if (!recommend?.key || !options.some(o => o.key === recommend.key)) recommend = { key: options[0].key, why: recommend?.why || 'c’est l’option qui agit sur la cause établie.' };
   if (!String(recommend.why || '').trim()) recommend = { ...recommend, why: 'c’est l’option qui agit sur la cause établie.' };
   return { options, recommend };
+}
+
+/**
+ * Anti-loop (0.140.0): the options already answered on the SAME error of the
+ * same step are not offered again (« abandonner » always stays). `fallback`:
+ * an option to offer instead when it was not tried yet. → menu + `excluded`.
+ */
+export function excludeAnswered(menu, answered = [], { fallback = null } = {}) {
+  const gone = [...new Set(answered)].filter(k => k && k !== 'abandonner');
+  if (!gone.length) return menu;
+  const options = (menu?.options || []).filter(o => !gone.includes(o.key));
+  if (fallback && !gone.includes(fallback.key) && !options.some(o => o.key === fallback.key)) options.unshift(fallback);
+  let recommend = options.some(o => o.key === menu?.recommend?.key) ? menu.recommend : null;
+  if (!recommend) {
+    const first = options.find(o => o.key !== 'abandonner') || options[0] || { key: 'abandonner' };
+    recommend = { key: first.key, why: `${gone.map(k => `« ${k} »`).join(', ')} a déjà été choisi sur cette même erreur sans la résoudre : le reproposer referait la même chose.` };
+  }
+  return { options, recommend, excluded: gone };
 }
 
 /** The question line: answers and recommendation FIRST (the dashboard cuts at 160 characters). */

@@ -59,9 +59,9 @@ import { judgeCitedPaths, observedInTurn, toolUsesInTurn } from './cited-paths.m
 import * as Ops from './typed-operations.mjs';
 import * as Files from './files-check.mjs';
 import * as Doc from './document-check.mjs';
-import { diagnosePause, diagnoseWithModel, smartMenu, fixMenu, menuQuestion, menuBlock, matchOptionKey, readTestOutput } from './pause-diagnosis.mjs';
+import { diagnosePause, diagnoseWithModel, smartMenu, fixMenu, menuQuestion, menuBlock, matchOptionKey, readTestOutput, excludeAnswered } from './pause-diagnosis.mjs';
 import { routePause, pauseSignature, decisionText } from './process-pause.mjs';
-import { releasePlan, parseDeliveryText, deliverRelease, deliverCommit } from './code-delivery.mjs';
+import { releasePlan, parseDeliveryText, deliverRelease, deliverCommit, staleVersionHints, staleText, versionMentions } from './code-delivery.mjs';
 import { cachedSuite } from './suite-cache.mjs';
 import * as Rework from './aside-rework.mjs';
 
@@ -755,7 +755,7 @@ function stepPrompt(ctx, step, extra) {
         L.push(`1. la version est DÉJÀ incrémentée par un item de cette exécution (${ctx.prebump.from} → ${ctx.prebump.to}) : ne l'incrémente PAS de nouveau ;`);
         L.push(`2. vérifie et complète au besoin l'entrée « ## [${ctx.prebump.to}] » de ${cfg.changelog || 'CHANGELOG.md'} ;`);
       } else {
-        L.push(`1. incrémente la version (patch pour une correction, minor pour une fonctionnalité) dans : ${(cfg.versionFiles || []).join(', ') || '(fichier de version du projet)'} ;`);
+        L.push(`1. incrémente la version (patch pour une correction, minor pour une fonctionnalité) dans : ${(cfg.versionFiles || []).join(', ') || '(fichier de version du projet)'}${ctx.tuning?.codeDeliver && mentionList(ctx) ? ` — et mets la même version dans chaque mention de version du projet : ${mentionList(ctx)}` : ''} ;`);
         L.push(`2. ajoute l'entrée « ## [X.Y.Z] - AAAA-MM-JJ » correspondante dans ${cfg.changelog || 'CHANGELOG.md'} ;`);
       }
       if (cfg.requirements) L.push(`3. ajoute D'OFFICE la ligne de la demande dans ${cfg.requirements} (date, demande verbatim, tests associés, version) — c'est obligatoire à chaque livraison, personne d'autre ne le fera ;`);
@@ -791,7 +791,7 @@ function deliveryTextPrompt(L, ctx, art, T) {
   L.push('MODIFIER=non');
   const does = ctx.lane ? `le fragment ${ctx.lane.fragment}`
     : ctx.prebump ? `l'entrée « ## [${ctx.prebump.to}] » de ${cl} (la version est DÉJÀ incrémentée par un item de cette exécution : ${ctx.prebump.from} → ${ctx.prebump.to})`
-      : `la version (${(cfg.versionFiles || []).join(', ') || 'aucun fichier de version'}) et l'entrée de ${cl}`;
+      : `la version (${(cfg.versionFiles || []).join(', ') || 'aucun fichier de version'}${mentionList(ctx) ? `, mentions : ${mentionList(ctx)}` : ''}) et l'entrée de ${cl}`;
   L.push(`Ton rôle : rédiger le TEXTE de la livraison, et seulement lui. Le programme de l'orchestrateur écrit lui-même ${does}${cfg.requirements ? `, la ligne de ${cfg.requirements}` : ''} et le commit, puis vérifie ${cfg.testCommand ? `${T} vert` : 'le résultat'}${cfg.buildCommand ? ` et le build` : ''}.`);
   if (ctx.coveredItems?.length) L.push(`Comportement(s) DÉJÀ assuré(s) par le code existant (le test ajouté sert de documentation) : ${ctx.coveredItems.map(coveredLabel).join(' ; ')}. Mentionne-le dans l'entrée.`);
   if (ctx.acceptedDefects?.length) L.push(`Défauts ACCEPTÉS explicitement par l'utilisateur : ${ctx.acceptedDefects.map(d => `${d.item != null ? `[item ${d.item}] ` : ''}${d.description}`).join(' ; ')}. Mentionne-les dans l'entrée (problèmes connus).`);
@@ -806,6 +806,11 @@ function deliveryTextPrompt(L, ctx, art, T) {
   if (cfg.requirements) L.push('## Exigence', `la ligne à ajouter à ${cfg.requirements}, au format de ce fichier (lis ses dernières lignes) : date, demande verbatim, tests associés ; écris {version} à la place du numéro de version`);
   L.push('## Livré', 'ce qui a été livré, en quelques lignes');
   L.push('Ne modifie AUCUN fichier du projet et ne lance ni git add ni git commit : le programme le fait, et refuse l’étape si un fichier a changé.');
+}
+
+/** Version mentions the delivery keeps equal to the version (0.140.0), for the instructions. */
+function mentionList(ctx) {
+  try { return versionMentions(ctx.cwd, ctx.cfg).map(m => m.file).join(', '); } catch { return ''; }
 }
 
 /**
@@ -2736,6 +2741,11 @@ export async function runPipeline(o) {
         output: String((rr.stdout || '') + (rr.stderr || '') || rr.error?.message || '').slice(-2000),
         text: `réparation « ${eff.repair.join(' ')} » : ${rr.status === 0 ? 'réussie' : `échec (code ${rr.status ?? rr.error?.code ?? '?'})`}` });
     }
+    if (eff.modelDeliver) {
+      state.modelDeliver = { at: new Date().toISOString(), why: String(state.diagnosis?.cause || '').slice(0, 300) };
+      writeEvent({ type: 'system', subtype: 'pipeline_model_deliver', pipeline: { run }, cause: state.diagnosis?.cause || null,
+        text: 'livraison confiée au model pour cette exécution (choix fait à la pause) : il écrit lui-même version, mentions de version, CHANGELOG et commit, avec la consigne précise' });
+    }
     if (eff.message) {
       state.resumeMessages = [...(state.resumeMessages || []), { at: new Date().toISOString(), step: state.plan?.[state.index] || null, pausedLimit: state.pausedLimit || null, from: 'diagnostic', text: eff.message }];
     }
@@ -2750,6 +2760,11 @@ export async function runPipeline(o) {
   }
   // 0.133.0: every answer to a pause is remembered with the pause's signature
   // (anti-loop of process-pause.mjs); a decision of the chef is traced below.
+  // 0.140.0: the option answered stays on the diagnosis, so the next pause of the
+  // same step for the same cause does not offer it again (anti-loop, any lever).
+  if (resumed && state.diagnosis && (o.chefDecision?.key || o.pauseOption)) {
+    state.diagnosis = { ...state.diagnosis, answered: [...(state.diagnosis.answered || []), o.chefDecision?.key || o.pauseOption] };
+  }
   let chefDecided = null;
   if (resumed && state.lastPause) {
     const key = o.chefDecision?.key || o.pauseOption || (o.acceptDefects ? 'accepter' : o.deleteDoubts ? 'tout supprimer' : 'continuer');
@@ -3073,11 +3088,26 @@ export async function runPipeline(o) {
       d = await diagnoseWithModel(d, full, { choose: chooseOption, root, logsDir, project: projectName });
     }
     const slotInfo = sid && stepDefs[sid]?.chain?.length ? resolveCase(readAssignments(root), stepDefs[sid].chain) : null;
-    const menu = fixMenu(d, smartMenu(d, { step, slot: input.slot || slotInfo?.slot || null, model: input.model || slotInfo?.model || null,
-      delivered: (state.delivered || []).length, hasLock: fs.existsSync(path.join(cwd, 'package-lock.json')), durationText: fmtDur(limits.runMs), ...menuCtx }));
+    const mctx = { step, slot: input.slot || slotInfo?.slot || null, model: input.model || slotInfo?.model || null,
+      delivered: (state.delivered || []).length, hasLock: fs.existsSync(path.join(cwd, 'package-lock.json')), durationText: fmtDur(limits.runMs), ...menuCtx };
+    let menu = fixMenu(d, smartMenu(d, mctx));
+    // Anti-loop of a delivery step (0.140.0): the same error of Livrer twice in a
+    // row never offers again the option already answered on it.
+    const prev = state.diagnosis;
+    const deliverStep = sid && (sid === 'livrer' || stepDefs[sid]?.crit === 'livrer' || stepDefs[sid]?.kind === 'deliver');
+    const answered = deliverStep && prev && prev.step === sid && prev.kind === d.kind && (prev.limit || null) === (input.limit || null)
+      ? [...(prev.excluded || []), ...(prev.answered || [])] : [];
+    let excluded = [];
+    if (answered.length) {
+      const fallback = input.codeDelivery && !state.modelDeliver ? smartMenu({ ...d, kind: 'code_delivery' }, mctx).options.find(x => x.key === 'confier au model') : null;
+      const x = excludeAnswered(menu, answered, { fallback });
+      excluded = x.excluded || [];
+      menu = fixMenu(d, x);
+      if (excluded.length) d = { ...d, cause: `${d.cause} Même erreur qu’à la pause précédente : ${excluded.map(k => `« ${k} »`).join(', ')} n’est plus proposé (déjà choisi, sans effet).` };
+    }
     state.diagnosis = { at: new Date().toISOString(), limit: input.limit || null, step: sid, kind: d.kind, transient: d.transient, cause: d.cause, source: d.source,
       ...(d.model ? { model: d.model } : {}), ...(d.proof ? { proof: d.proof } : {}), ...(d.repeated ? { repeated: true } : {}),
-      evidence: (d.evidence || []).slice(0, 8), options: menu.options, recommend: menu.recommend };
+      evidence: (d.evidence || []).slice(0, 8), options: menu.options, recommend: menu.recommend, ...(excluded.length ? { excluded } : {}) };
     writeEvent({ type: 'system', subtype: 'pipeline_diagnosis', pipeline: { run, step: sid }, diagnosis: state.diagnosis,
       text: `🔎 cause de la pause${d.source === 'model' ? ` (selon le model ${d.model || ''})` : ''} : ${d.cause} — je recommande « ${menu.recommend.key} »` });
     return { d, menu };
@@ -3113,7 +3143,7 @@ export async function runPipeline(o) {
     return finish({ code: 2, paused: true, limit, question: menuQuestion(projectName, d, menu), result: `${pauseText({ what, diag: d, menu, body })}${tail}`, notice });
   };
 
-  const pauseForLimit = async ({ limit, value, step, why, lastOutput }) => {
+  const pauseForLimit = async ({ limit, value, step, why, lastOutput, codeDelivery = null }) => {
     const its = parseItems(readArtefact(ctx, 'tests.md') || '');
     const left = its.filter(i => !i.done);
     const itemTxt = ctx.item ? ` pour le test « ${ctx.item.text} »` : '';
@@ -3152,7 +3182,7 @@ export async function runPipeline(o) {
     const defects = limit === 'review' ? String(why || '').replace(/^la revue relève encore\s*:\s*/i, '').split(/\s*;\s*/).filter(Boolean) : [];
     return pauseWith({ limit, what: M.what, notice,
       input: { step, why, testOutput: lastOutput, itemsLeft: left, itemsDone: state.itemsDone || 0, itemsMax: maxItems, item: ctx.item || state.item || null,
-        written: limit === 'item_tests' ? value : undefined, defects,
+        written: limit === 'item_tests' ? value : undefined, defects, codeDelivery,
         aside: (state.aside || []).map(a => ({ group: a.group, limit: a.limit, reason: ASIDE_WORDS[a.limit] || a.limit, why: plainWhy(a.why) })),
         extra: { rounds: value, duration: fmtDur(limits.runMs) } },
       menuCtx: { canAccept, keep: limit === 'items' && (state.itemsDone || 0) === 0 ? maxItems : 0, restoreQueue: (state.restoreQueue || []).length, conflicts: state.asideGrouped ? (state.aside || []).filter(a => a.conflict).length : 0 } });
@@ -3399,13 +3429,22 @@ export async function runPipeline(o) {
       const c = d.ok ? checkCriteria(ctx, step, before, after2) : d;
       rec.status = c.ok ? 'ok' : 'refused';
       rec.why = c.ok ? null : c.why;
+      // 0.140.0: a refusal of the program's release says which version mention
+      // is behind (named by the program, or still showing the old version in a
+      // tracked file after a red suite) — the pause acts on it, never « corriger le code ».
+      if (!c.ok && !d.textProblem) {
+        const stale = d.staleVersion || (d.ok && c.test && !c.test.ok ? staleVersionHints(cwd, d.from, d.version, cfg) : []);
+        rec.codeDelivery = { from: d.from || null, to: d.version || null, red: !!(c.test && !c.test.ok), stale };
+        if (stale.length && !d.staleVersion) rec.why = `${rec.why}\nmention(s) de version restée(s) à ${d.from} : ${staleText(stale, d.version)}`;
+      }
+      if (c.ok && d.mentions?.length) rec.versionMentions = d.mentions;
       rec.changed = c.changed?.slice(0, 50);
       rec.byCode = 'version, CHANGELOG, exigence et commit écrits par le programme';
       if (c.test) rec.test = { ok: c.test.ok, code: c.test.code, ms: c.test.ms, ...(c.test.cached ? { cached: true } : {}) };
       if (c.ok) writeArtefactNote(step, `\n\n## Livraison faite par le programme\n\n${c.version ? `- version ${c.version}\n` : ''}- commit ${String(c.commit || '').slice(0, 12)}${c.noCommit ? ' (aucun commit nécessaire : déjà livré)' : ''}\n`);
       // A text problem is the model's to fix (new try); a refusal of the
       // program's release (red suite, build…) would repeat identically.
-      return { rec, crit: { ...c, noRetry: !c.ok && !d.textProblem }, info, before, after: after2, log };
+      return { rec, crit: { ...c, noRetry: !c.ok && !d.textProblem, ...(rec.codeDelivery ? { codeDelivery: rec.codeDelivery } : {}) }, info, before, after: after2, log };
     }
     const c = checkCriteria(ctx, step, before, after);
     // Lever 1: accepted cited paths that are not files of the project are said, never silent.
@@ -3899,7 +3938,9 @@ export async function runPipeline(o) {
     ctx.deliveryMode = null;
     if (delivering && ctx.tuning?.codeDeliver && isGit) {
       if (step.crit === 'livrer' || (step.id === 'livrer' && !step.kind && !step.checks)) {
-        const p = releasePlan(cwd, cfg, { deliveryFixes: ctx.deliveryFixes, lane: ctx.lane });
+        // « confier au model » answered at a pause of the program's release (0.140.0).
+        const p = state.modelDeliver ? { ok: false, why: `confiée au model à la pause (${state.modelDeliver.why || 'la livraison par le programme a échoué'})` }
+          : releasePlan(cwd, cfg, { deliveryFixes: ctx.deliveryFixes, lane: ctx.lane });
         if (p.ok) ctx.deliveryMode = 'release';
         else writeEvent({ type: 'system', subtype: 'pipeline_code_deliver_skipped', pipeline: { run, step: id }, why: p.why, text: `livraison confiée au model, comme avant : ${p.why}` });
       } else if (step.kind === 'deliver' && !step.crit) ctx.deliveryMode = 'commit';
@@ -3999,7 +4040,7 @@ export async function runPipeline(o) {
         // An item's own step (4a/4b/4c, its Review) stops only that item.
         const g = ctx.reviewScope ? ctx.reviewScope.group : ctx.item && ['rouge', 'vert', 'refactor'].includes(step.id) ? groupOf(ctx.item) : step.id === 'vert' && state.fixGroup != null ? state.fixGroup : null;
         if (state.itemDelivery && g != null && setAside(g, limit, r.rec.why)) continue steps;
-        return pauseForLimit({ limit, value: attempt, step, why: r.rec.why, lastOutput: r.crit?.test?.out });
+        return pauseForLimit({ limit, value: attempt, step, why: r.rec.why, lastOutput: r.crit?.test?.out, codeDelivery: r.rec.codeDelivery || null });
       }
     }
     if (step.id === 'rouge' || step.crit === 'rouge') ctx.testPrint = testsNow();

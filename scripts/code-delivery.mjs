@@ -50,6 +50,102 @@ function versionSlot(file, text) {
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Version MENTIONS (0.140.0): other places that show the project's version.
+// Prod run of 2026-10-23: package.json went to 1.9.0, the README still said
+// « - **Version** : `1.8.1` », a requirement test of the project checked both,
+// and « corriger le code » relaunched the very same program delivery, twice.
+// Declared in .orchestrateur/pipeline.json → `versionMentions`: a path (the
+// README convention, else the first `version … X.Y.Z` line) or
+// {file, regex} with ONE capture group = the version. Plus, undeclared, the
+// README convention: a line starting with « Version » (bullet, bold allowed).
+// ---------------------------------------------------------------------------
+const README_VERSION_RE = /^([ \t]*(?:[-*+][ \t]+)?(?:\*\*|__)?version(?:\*\*|__)?[ \t]*(?:\*\*|__)?[ \t]*[:=][ \t]*(?:\*\*|__)?[ \t]*`?v?)(\d+\.\d+\.\d+[0-9A-Za-z.+-]*)/im;
+const GENERIC_VERSION_RE = /^(.*?\bversion\b[^\n0-9]{0,40}?v?)(\d+\.\d+\.\d+[0-9A-Za-z.+-]*)/im;
+const SEMVER = /^\d+\.\d+\.\d+/;
+
+/** Mentions to keep equal to the version: [{file, re, declared}] (never a version file itself). */
+export function versionMentions(cwd, cfg = {}) {
+  const own = new Set((cfg.versionFiles || []).map(f => f.replace(/\\/g, '/').toLowerCase()));
+  const out = [];
+  const seen = new Set();
+  const push = (file, re, declared) => {
+    const k = file.replace(/\\/g, '/').toLowerCase();
+    if (own.has(k) || seen.has(k)) return;
+    seen.add(k); out.push({ file: file.replace(/\\/g, '/'), re, declared });
+  };
+  for (const m of Array.isArray(cfg.versionMentions) ? cfg.versionMentions : []) {
+    if (typeof m === 'string' && m.trim()) push(m.trim(), null, true);
+    else if (m && typeof m.file === 'string') {
+      let re = null;
+      try { re = m.regex ? new RegExp(m.regex, String(m.flags || 'm').replace(/[^imsu]/g, '')) : null; } catch { re = 'invalid'; }
+      push(m.file, re, true);
+    }
+  }
+  let names = []; try { names = fs.readdirSync(cwd); } catch { /* no folder */ }
+  const readme = names.find(n => /^readme(\.md|\.markdown|\.txt)?$/i.test(n));
+  if (readme) {
+    let s = ''; try { s = fs.readFileSync(path.join(cwd, readme), 'utf8'); } catch {}
+    if (README_VERSION_RE.test(s)) push(readme, null, false);
+  }
+  return out;
+}
+
+/** Where the version sits in a mention's text: {index, value, line} | null. */
+function mentionSlot(text, re) {
+  if (re === 'invalid') return null;
+  if (re) {
+    const m = re.exec(text);
+    if (!m || m[1] == null) return null;
+    const at = m.index + m[0].indexOf(m[1]);
+    return { index: at, value: m[1], line: text.slice(0, at).split('\n').length };
+  }
+  const m = README_VERSION_RE.exec(text) || GENERIC_VERSION_RE.exec(text);
+  if (!m) return null;
+  const at = m.index + m[1].length;
+  return { index: at, value: m[2], line: text.slice(0, at).split('\n').length };
+}
+
+/**
+ * Writes `version` in every mention. → { updated: [file], stale: [{file, line?, found?, why}] }
+ * A declared mention the program cannot find stays stale, named precisely.
+ */
+export function syncVersionMentions(cwd, cfg, version) {
+  const updated = [], stale = [];
+  for (const m of versionMentions(cwd, cfg)) {
+    const f = path.join(cwd, m.file);
+    let s;
+    try { s = fs.readFileSync(f, 'utf8'); } catch { stale.push({ file: m.file, why: 'fichier introuvable' }); continue; }
+    const slot = mentionSlot(s, m.re);
+    if (!slot) { stale.push({ file: m.file, why: m.re === 'invalid' ? 'expression « regex » invalide dans pipeline.json' : 'mention de version introuvable dans le fichier' }); continue; }
+    if (slot.value === version) continue;
+    if (!SEMVER.test(slot.value)) { stale.push({ file: m.file, line: slot.line, found: slot.value, why: `« ${slot.value} » n’est pas un numéro de version` }); continue; }
+    fs.writeFileSync(f, s.slice(0, slot.index) + version + s.slice(slot.index + slot.value.length));
+    updated.push(m.file);
+  }
+  return { updated, stale };
+}
+
+/** One line naming every stale mention (file, line, value found, expected). */
+export function staleText(stale, version) {
+  return stale.map(x => `${x.file}${x.line ? ` ligne ${x.line}` : ''}${x.found ? ` (« ${x.found} » au lieu de « ${version} »)` : ''} : ${x.why}`).join(' ; ');
+}
+
+/**
+ * After a red suite: tracked lines that still show the old version next to the
+ * word « version » (version files, CHANGELOG, the requirement register, lockfiles excluded).
+ */
+export function staleVersionHints(cwd, from, to, cfg = {}) {
+  if (!from || !to || from === to) return [];
+  const r = git(cwd, ['grep', '-n', '-I', '-F', '-e', from, '--', '.', ':!node_modules', ':!*.lock', ':!package-lock.json', ':!npm-shrinkwrap.json',
+    `:!${cfg.changelog || 'CHANGELOG.md'}`, ...(cfg.requirements ? [`:!${cfg.requirements}`] : []), ...(cfg.versionFiles || []).map(v => `:!${v}`), ':!changelog.d']);
+  if (!r.ok) return [];
+  const esc = from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return r.out.split('\n').map(l => /^([^:]+):(\d+):(.*)$/.exec(l)).filter(Boolean)
+    .filter(m => /version/i.test(m[3]) && new RegExp(`(^|[^0-9.])v?${esc}(?![0-9])`).test(m[3]))
+    .slice(0, 10).map(m => ({ file: m[1], line: Number(m[2]), found: from, text: m[3].trim().slice(0, 160), why: `affiche encore ${from}` }));
+}
+
 export function bumpVersion(v, bump) {
   const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(v || ''));
   if (!m) return null;
@@ -143,13 +239,13 @@ const subjectOf = (changelog) => (String(changelog).split('\n').map(l => l.repla
 export function deliverRelease(cwd, cfg, text, { prebump = null, versionBase = null, lane = null, date = new Date().toISOString().slice(0, 10), run = '' } = {}) {
   const cl = path.join(cwd, cfg.changelog || 'CHANGELOG.md');
   const req = cfg.requirements ? path.join(cwd, cfg.requirements) : null;
-  let version = null;
+  let version = null, from = null;
   if (lane) {
     fs.mkdirSync(path.dirname(path.join(cwd, lane.fragment)), { recursive: true });
     fs.writeFileSync(path.join(cwd, lane.fragment), `---\nbump: ${text.bump || 'patch'}\n---\n\n${text.changelog.trim()}\n`);
     if (req) appendRequirement(req, text.requirement.replace(/\{version\}/g, 'à l’intégration'));
   } else if (prebump) {
-    version = prebump.to;
+    version = prebump.to; from = prebump.from || null;
     let cur = ''; try { cur = fs.readFileSync(cl, 'utf8'); } catch {}
     if (!cur.includes(`## [${version}]`)) insertChangelogEntry(cl, version, text.changelog.replace(/\{version\}/g, version), date);
     const reqDone = req && versionBase && git(cwd, ['diff', '--name-only', `${versionBase}..HEAD`, '--', cfg.requirements]).out;
@@ -161,6 +257,7 @@ export function deliverRelease(cwd, cfg, text, { prebump = null, versionBase = n
       let s = fs.readFileSync(f, 'utf8');
       const slot = versionSlot(vf, s);
       if (!slot) return { ok: false, why: `version introuvable dans ${vf}` };
+      from = from || slot.version;
       version = version || bumpVersion(slot.version, text.bump);
       s = s.replace(slot.re, (m, a, v, b) => `${a}${version}${b}`);
       if (/versionName/.test(s)) s = s.replace(/(versionCode\s*=?\s*)(\d+)/, (m, a, n) => `${a}${Number(n) + 1}`);
@@ -170,13 +267,23 @@ export function deliverRelease(cwd, cfg, text, { prebump = null, versionBase = n
     else if (fs.existsSync(cl)) addUnreleased(cl, text.changelog);
     if (req) appendRequirement(req, text.requirement.replace(/\{version\}/g, version || ''));
   }
+  // Every other mention of the version follows it, or the step fails naming the file.
+  let mentions = [];
+  if (!lane && version) {
+    const sync = syncVersionMentions(cwd, cfg, version);
+    mentions = sync.updated;
+    if (sync.stale.length) {
+      return { ok: false, version, from, staleVersion: sync.stale,
+        why: `mention(s) de version pas à jour après le passage à ${version} : ${staleText(sync.stale, version)} — le programme n’a pas pu l’écrire (déclarer l’emplacement dans .orchestrateur/pipeline.json → versionMentions, ou confier la livraison au model)` };
+    }
+  }
   const subject = subjectOf(text.changelog);
   const message = lane
     ? `docs(changelog): fragment for ${path.basename(lane.fragment, '.md')}${subject ? ` — ${subject}` : ''}`
     : `chore(release): ${version ? `v${version}` : 'delivery'}${subject ? ` — ${subject}` : ''}`;
   const c = commitWork(cwd, `${message}\n\nDelivered by the orchestrator (pipeline run ${run}): version, CHANGELOG and commit written by the program.`);
-  if (!c.ok) return { ok: false, why: `commit impossible : ${String(c.err).split('\n')[0]}` };
-  return { ok: true, version, commit: c.commit || null, noCommit: !!c.empty };
+  if (!c.ok) return { ok: false, version, from, why: `commit impossible : ${String(c.err).split('\n')[0]}` };
+  return { ok: true, version, from, mentions, commit: c.commit || null, noCommit: !!c.empty };
 }
 
 /** A delivery without version (Rédaction, media): one commit of what changed. */

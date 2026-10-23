@@ -658,8 +658,14 @@ function pipelineStep(text) {
       const pkgF = path.join(cwd, 'package.json');
       const pkg = JSON.parse(fs.readFileSync(pkgF, 'utf8'));
       const v = String(pkg.version || '1.0.0').split('.').map(Number); v[2]++;
+      const oldVersion = pkg.version;
       pkg.version = v.join('.');
       fs.writeFileSync(pkgF, JSON.stringify(pkg, null, 2) + '\n');
+      // 0.140.0: FAKE_PIPE_SYNC_FILE=<a,b> — the model also updates these version mentions.
+      for (const rel of String(process.env.FAKE_PIPE_SYNC_FILE || '').split(',').filter(Boolean)) {
+        const f = path.join(cwd, rel);
+        if (fs.existsSync(f)) fs.writeFileSync(f, fs.readFileSync(f, 'utf8').split(oldVersion).join(pkg.version));
+      }
       const cl = path.join(cwd, 'CHANGELOG.md');
       const old = fs.existsSync(cl) ? fs.readFileSync(cl, 'utf8') : '# Changelog\n';
       fs.writeFileSync(cl, old.replace(/^(# Changelog\s*\n)/, `$1\n## [${pkg.version}] - 2026-10-09\n### Added\n- double()\n`));

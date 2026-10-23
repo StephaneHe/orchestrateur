@@ -33,7 +33,8 @@ export const PROCESS_LIMITS = Object.freeze(['items', 'items_blocked', 'aside_co
 
 /** Diagnosed causes the chef can settle (an environment, a model or an unknown cause: the user). */
 export const PROCESS_KINDS = Object.freeze(['too_big', 'items_blocked', 'aside_conflict', 'criterion_strict', 'test_passes', 'no_test', 'test_wrong', 'code_wrong',
-  'no_change', 'missing_sections', 'scope_violation', 'bad_format', 'cited_paths', 'missing_file', 'no_commit', 'review_defects', 'interrupted']);
+  'no_change', 'missing_sections', 'scope_violation', 'bad_format', 'cited_paths', 'missing_file', 'no_commit', 'review_defects', 'interrupted',
+  'version_stale', 'code_delivery']);
 
 /**
  * Menu words the chef may choose. Never: closing the work (abandonner,
@@ -42,7 +43,8 @@ export const PROCESS_KINDS = Object.freeze(['too_big', 'items_blocked', 'aside_c
  */
 export const CHEF_KEYS = Object.freeze(['continuer', 'corriger le test', 'écrire le test', 'changer d’approche', 'corriger le code', 'corriger les références',
   'créer le fichier', 'ajuster le critère', 'découper', 'prolonger', 'corriger les défauts', 'réduire les tests', 'compléter le compte rendu',
-  'respecter le périmètre', 'corriger le format', 'reprendre les items', 'écarter l’item', 'relancer l’étape', 'refaire le commit', 'livrer sans eux']);
+  'respecter le périmètre', 'corriger le format', 'reprendre les items', 'écarter l’item', 'relancer l’étape', 'refaire le commit', 'livrer sans eux',
+  'confier au model']);
 
 /** Same option on the same pause at most this many times (a 3rd identical resume is refused). */
 export const MAX_SAME_ANSWER = 2;

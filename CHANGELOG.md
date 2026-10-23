@@ -11,6 +11,43 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.140.0] - 2026-10-23
+
+Defect seen in production (2026-10-23, run p-20261023T044621-dc1385, lever
+`codeDeliver`): Livrer by the program put package.json at 1.9.0 but left the
+README line « - **Version** : `1.8.1` »; a requirement test of the project
+compares both. The pause sent to the chef offered only « corriger le code »,
+which relaunched the very same program delivery: twice, then closed by hand.
+User rule: « arrête de poser des questions de découpage. tu sais comment est
+organisé le process mieux que moi ».
+
+### Added
+- (server) Livrer by the program updates every version MENTION, in the release
+  commit: the README « Version » line (convention: a line starting with
+  « Version », bullet and bold allowed) and every mention declared in
+  `.orchestrateur/pipeline.json` → `versionMentions` (a path, or
+  `{file, regex}` with one capture group) (`versionMentions`,
+  `syncVersionMentions` of `code-delivery.mjs`). A declared mention the program
+  cannot write fails Livrer at once, naming the file, before any commit.
+- (server) After a red suite following a program delivery, tracked lines that
+  still show the old version next to « version » are named, file and line
+  (`staleVersionHints`; version files, CHANGELOG, requirement register and
+  lockfiles excluded).
+- (server) Pause causes `version_stale` and `code_delivery`: the cause names
+  the file(s); the menu offers « confier au model » (recommended): Livrer is
+  then done by the model for this run, with the exact instruction (event
+  `pipeline_model_deliver`, `run.json.modelDeliver`). Never « corriger le
+  code » for a program delivery. Process pauses: the chef can settle them.
+- `scripts/_test_version_mentions.mjs`: replay of the real case, real dispatch
+  + engine end to end (`FAKE_PIPE_SYNC_FILE` of the fake claude).
+
+### Fixed
+- (server) Anti-loop of Livrer: the same error of a delivery step twice in a
+  row never offers again the option already answered on it, whatever the
+  levers (`excludeAnswered`, `run.json.diagnosis.answered` / `excluded`); an
+  option not tried yet (« confier au model ») replaces it, and the cause says
+  so.
+
 ## [0.139.1] - 2026-10-23
 
 Defect seen in production (2026-10-23, a complete Development run, after
