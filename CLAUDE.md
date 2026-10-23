@@ -206,6 +206,10 @@ with `NEEDS_USER_INPUT: <reformulated>` instead of `[ANSWER]`.
 - Build argv arrays; never shell-concat user-provided strings.
 - Comments explain non-obvious WHY only; names do the rest.
 - Prefer editing over creating files.
+- **Secret scan before any push**: gitleaks is installed outside the PATH,
+  `I:\tools\gitleaks\gitleaks.exe` (v8.30.1). Scan the commits about to be
+  pushed: `I:\tools\gitleaks\gitleaks.exe git --log-opts="<last pushed>..<tag
+  or HEAD>" --redact -v .` — push only on « no leaks found ».
 
 ---
 
