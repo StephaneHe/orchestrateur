@@ -3511,6 +3511,52 @@ un redémarrage refusés par Opérations).
 - Recette : `_test_exploitation.mjs` (3 cas réels rejoués, bascules,
   garde-fous, interrupteur).
 
+## Leviers « vitesse » du Développement complet (0.143.0)
+
+Accord de l'utilisateur (2026-10-23) : « ok », sur la proposition du chef
+mesurée sur 6 exécutions réelles d'un projet (304 appels, 319 min de model).
+`scripts/pipeline-speed.mjs` ; six leviers de `pipeline-tuning.mjs`, **coupés
+par défaut, figés dans `run.json.tuning`** (valeurs dans
+`run.json.tuningValues`) ; coupé = 0.142.0 exact. Mise en service : `node
+scripts/pipeline-enforce.mjs tuning <levier> on [<projet>]`, relu à chaque
+dispatch, sans redémarrage.
+
+- `limits` : limites réglables à chaud, `pipeline-enforce.mjs tuning-values
+  [--items N] [--run-min N] [--review-batch N] [--red-green-max N] | --reset`
+  (`enforcement.tuningValues` ; `off --all` les remet à zéro) ; levier allumé :
+  25 tests, 150 min par défaut.
+- `redGreen` : item ≤ 2 tests annoncés ⇒ UNE étape `rouge-vert` (case de 4b) ;
+  le **programme** prouve le rouge (code de l'étape remis comme avant, la suite
+  doit échouer en citant le test, sortie `logs/runs/<run>/<clé>.rouge.txt`),
+  puis le vert. Refusée une fois ⇒ 4a puis 4b (`pipeline_redgreen_fallback`),
+  jamais un défaut.
+- `groupReview` : une relecture pour `reviewBatch` (3) items ; commit
+  provisoire par item (`state.batch`), chaque constat nomme son item, un défaut
+  ne reprend que son item (case rattachée insérée après les items commencés),
+  le préfixe relu est livré (`deliverablePrefix`). Limite de relecture : l'item
+  et ceux commités par-dessus dans le lot mis de côté ensemble (nommés).
+  **Rien de non relu ne reste commité** : abandon, échec, `close-run.mjs` ⇒
+  `unfoldBatch`. Une mise de côté d'un item seul part du dernier commit du lot.
+- `reuseContext` : une exécution complète qui cite (identifiant, jamais des
+  mots) l'exécution précédente de la même demande reprend `comprehension.md` et
+  `plan.md`, sauf divergence du code depuis sa fin (`divergence` : autre chose
+  que doc, versions, CHANGELOG, registre) ; raison dite dans les deux cas.
+- `targetedTests` : 4a, 4b, 4c, 4ab ne lancent que les tests de l'item et ceux
+  dont la clôture d'imports atteint, ou dont le texte nomme, un fichier modifié
+  depuis la dernière livraison (tests d'exigence compris) ; un doute ⇒ suite
+  complète, dit. Suite complète au départ et à Livrer. Commande :
+  `targetedTestCommand` (`{files}`) de `.orchestrateur/pipeline.json`, sinon
+  déduite d'un script `node … --test`. (L'index d'impact de la Mémoire ne couvre
+  que l'orchestrateur et n'est jamais importé par le moteur : ce levier calcule
+  la même règle sur les tests du projet.)
+- `extraTests` : « N annoncés, N+1 écrits » accepté et noté si le test en plus
+  est dans le même fichier.
+- Banc : `node scripts/pipeline-speed-bench.mjs extract …` (lecture seule,
+  cas anonymisés `tests/speed-bench-cases.json`) puis `replay` (vrai moteur,
+  faux claude ; appels comptés, temps estimé depuis les temps mesurés). Hors
+  non-régression.
+- Recette : `_test_pipeline_speed.mjs` (série).
+
 ## Le rappel appartient à l'exécution (0.136.0)
 
 Demande (2026-10-22) : « peut-on le mettre dans le code à la place ou en plus

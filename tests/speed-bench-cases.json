@@ -1,0 +1,532 @@
+{
+  "about": "Real full-Development runs, anonymised (no project name, no request text) — scripts/pipeline-speed-bench.mjs extract",
+  "cases": [
+    {
+      "run": "p-20261022T235654-f8aa6c",
+      "items": [
+        {
+          "b": 1,
+          "n": 1,
+          "declared": 2,
+          "review": 0,
+          "docs": 1
+        },
+        {
+          "b": 2,
+          "n": 2,
+          "declared": 2,
+          "review": 1,
+          "docs": 1
+        },
+        {
+          "b": 3,
+          "n": 4,
+          "declared": 1,
+          "review": 0,
+          "docs": 1
+        },
+        {
+          "b": 4,
+          "n": 5,
+          "declared": 2,
+          "review": 0,
+          "docs": 1
+        },
+        {
+          "b": 5,
+          "n": 6,
+          "declared": 2,
+          "review": 0,
+          "docs": 1
+        },
+        {
+          "b": 6,
+          "n": 7,
+          "declared": 2,
+          "review": 1,
+          "docs": 1
+        },
+        {
+          "b": 7,
+          "n": 10,
+          "declared": 2,
+          "review": 0,
+          "docs": 1
+        },
+        {
+          "b": 8,
+          "n": 11,
+          "declared": 2,
+          "review": 1,
+          "docs": 1
+        },
+        {
+          "b": 9,
+          "n": 14,
+          "declared": 1,
+          "review": 0,
+          "docs": 1
+        },
+        {
+          "b": 10,
+          "n": 15,
+          "declared": 2,
+          "review": 1,
+          "docs": 0
+        }
+      ],
+      "extraRefusals": 1,
+      "steps": {
+        "comprendre": {
+          "calls": 2,
+          "refused": 1,
+          "modelMs": 76862
+        },
+        "concevoir": {
+          "calls": 1,
+          "refused": 0,
+          "modelMs": 198356
+        },
+        "liste-tests": {
+          "calls": 1,
+          "refused": 0,
+          "modelMs": 58585
+        },
+        "rouge": {
+          "calls": 16,
+          "refused": 1,
+          "modelMs": 102103
+        },
+        "vert": {
+          "calls": 31,
+          "refused": 5,
+          "modelMs": 26049
+        },
+        "refactor": {
+          "calls": 9,
+          "refused": 0,
+          "modelMs": 12881
+        },
+        "revue": {
+          "calls": 22,
+          "refused": 0,
+          "modelMs": 36242
+        },
+        "livrer": {
+          "calls": 1,
+          "refused": 0,
+          "modelMs": 35360
+        }
+      },
+      "fixedMs": 3839,
+      "suite": {
+        "runs": 43,
+        "meanMs": 5968
+      },
+      "activeMs": 4635476,
+      "realCalls": 83,
+      "targetedShare": 0.381,
+      "totalTests": 164,
+      "reuse": {
+        "cited": true,
+        "possible": false,
+        "why": "p-20261022T235208-33aaf4 : pas un Développement complet"
+      }
+    },
+    {
+      "run": "p-20261023T125013-3db203",
+      "items": [
+        {
+          "b": 1,
+          "n": 1,
+          "declared": 2,
+          "review": 1,
+          "docs": 0
+        },
+        {
+          "b": 2,
+          "n": 4,
+          "declared": 2,
+          "review": 0,
+          "docs": 1
+        },
+        {
+          "b": 3,
+          "n": 5,
+          "declared": 2,
+          "review": 1,
+          "docs": 0
+        },
+        {
+          "b": 4,
+          "n": 7,
+          "declared": 2,
+          "review": 1,
+          "docs": 0
+        },
+        {
+          "b": 5,
+          "n": 9,
+          "declared": 1,
+          "review": 0,
+          "docs": 1
+        },
+        {
+          "b": 6,
+          "n": 10,
+          "declared": 1,
+          "review": 0,
+          "docs": 1
+        },
+        {
+          "b": 7,
+          "n": 11,
+          "declared": 2,
+          "review": 0,
+          "docs": 0
+        },
+        {
+          "b": 8,
+          "n": 12,
+          "declared": 2,
+          "review": 0,
+          "docs": 1
+        }
+      ],
+      "extraRefusals": 0,
+      "steps": {
+        "comprendre": {
+          "calls": 2,
+          "refused": 1,
+          "modelMs": 100356
+        },
+        "concevoir": {
+          "calls": 1,
+          "refused": 0,
+          "modelMs": 254586
+        },
+        "liste-tests": {
+          "calls": 1,
+          "refused": 0,
+          "modelMs": 53571
+        },
+        "rouge": {
+          "calls": 19,
+          "refused": 4,
+          "modelMs": 59481
+        },
+        "vert": {
+          "calls": 22,
+          "refused": 3,
+          "modelMs": 39480
+        },
+        "refactor": {
+          "calls": 3,
+          "refused": 0,
+          "modelMs": 16262
+        },
+        "revue": {
+          "calls": 17,
+          "refused": 0,
+          "modelMs": 34038
+        },
+        "livrer": {
+          "calls": 1,
+          "refused": 0,
+          "modelMs": 21016
+        }
+      },
+      "fixedMs": 5645,
+      "suite": {
+        "runs": 36,
+        "meanMs": 26743
+      },
+      "activeMs": 5715967,
+      "realCalls": 66,
+      "targetedShare": 0.415,
+      "totalTests": 164,
+      "reuse": {
+        "cited": true,
+        "possible": true,
+        "why": "p-20261023T110556-bebab6 : code inchangé depuis sa fin"
+      }
+    },
+    {
+      "run": "p-20261023T084315-ebaa3d",
+      "items": [
+        {
+          "b": 1,
+          "n": 1,
+          "declared": 2,
+          "review": 0,
+          "docs": 0
+        },
+        {
+          "b": 2,
+          "n": 4,
+          "declared": 1,
+          "review": 0,
+          "docs": 0
+        },
+        {
+          "b": 3,
+          "n": 5,
+          "declared": 2,
+          "review": 1,
+          "docs": 1
+        },
+        {
+          "b": 4,
+          "n": 7,
+          "declared": 1,
+          "review": 0,
+          "docs": 1
+        },
+        {
+          "b": 5,
+          "n": 8,
+          "declared": 2,
+          "review": 0,
+          "docs": 1
+        },
+        {
+          "b": 6,
+          "n": 9,
+          "declared": 2,
+          "review": 1,
+          "docs": 0
+        },
+        {
+          "b": 7,
+          "n": 12,
+          "declared": 1,
+          "review": 0,
+          "docs": 0
+        },
+        {
+          "b": 8,
+          "n": 13,
+          "declared": 2,
+          "review": 0,
+          "docs": 1
+        },
+        {
+          "b": 9,
+          "n": 14,
+          "declared": 1,
+          "review": 1,
+          "docs": 1
+        }
+      ],
+      "extraRefusals": 0,
+      "steps": {
+        "rouge": {
+          "calls": 15,
+          "refused": 0,
+          "modelMs": 45288
+        },
+        "vert": {
+          "calls": 25,
+          "refused": 3,
+          "modelMs": 74358
+        },
+        "liste-tests": {
+          "calls": 1,
+          "refused": 0,
+          "modelMs": 41593
+        },
+        "revue": {
+          "calls": 19,
+          "refused": 0,
+          "modelMs": 37971
+        },
+        "refactor": {
+          "calls": 9,
+          "refused": 0,
+          "modelMs": 10807
+        },
+        "livrer": {
+          "calls": 1,
+          "refused": 0,
+          "modelMs": 25410
+        }
+      },
+      "fixedMs": 4368,
+      "suite": {
+        "runs": 39,
+        "meanMs": 25847
+      },
+      "activeMs": 5839910,
+      "realCalls": 70,
+      "targetedShare": 0.677,
+      "totalTests": 164,
+      "reuse": {
+        "cited": false,
+        "possible": false,
+        "why": "la demande ne cite aucune exécution"
+      }
+    },
+    {
+      "run": "p-20261023T025847-455c82",
+      "items": [
+        {
+          "b": 1,
+          "n": 1,
+          "declared": 1,
+          "review": 0,
+          "docs": 1
+        },
+        {
+          "b": 2,
+          "n": 2,
+          "declared": 1,
+          "review": 0,
+          "docs": 1
+        },
+        {
+          "b": 3,
+          "n": 3,
+          "declared": 1,
+          "review": 0,
+          "docs": 1
+        },
+        {
+          "b": 4,
+          "n": 4,
+          "declared": 2,
+          "review": 1,
+          "docs": 1
+        },
+        {
+          "b": 5,
+          "n": 6,
+          "declared": 1,
+          "review": 0,
+          "docs": 1
+        },
+        {
+          "b": 6,
+          "n": 7,
+          "declared": 1,
+          "review": 0,
+          "docs": 1
+        },
+        {
+          "b": 7,
+          "n": 8,
+          "declared": 1,
+          "review": 0,
+          "docs": 0
+        },
+        {
+          "b": 8,
+          "n": 9,
+          "declared": 1,
+          "review": 0,
+          "docs": 0
+        },
+        {
+          "b": 9,
+          "n": 10,
+          "declared": 1,
+          "review": 0,
+          "docs": 0
+        },
+        {
+          "b": 10,
+          "n": 11,
+          "declared": 2,
+          "review": 0,
+          "docs": 1
+        },
+        {
+          "b": 11,
+          "n": 12,
+          "declared": 1,
+          "review": 0,
+          "docs": 1
+        },
+        {
+          "b": 12,
+          "n": 13,
+          "declared": 2,
+          "review": 0,
+          "docs": 0
+        },
+        {
+          "b": 13,
+          "n": 14,
+          "declared": 2,
+          "review": 0,
+          "docs": 0
+        },
+        {
+          "b": 14,
+          "n": 15,
+          "declared": 2,
+          "review": 0,
+          "docs": 1
+        },
+        {
+          "b": 15,
+          "n": 16,
+          "declared": 1,
+          "review": 0,
+          "docs": 1
+        }
+      ],
+      "extraRefusals": 0,
+      "steps": {
+        "comprendre": {
+          "calls": 1,
+          "refused": 0,
+          "modelMs": 74607
+        },
+        "concevoir": {
+          "calls": 1,
+          "refused": 0,
+          "modelMs": 234377
+        },
+        "liste-tests": {
+          "calls": 1,
+          "refused": 0,
+          "modelMs": 41828
+        },
+        "rouge": {
+          "calls": 16,
+          "refused": 0,
+          "modelMs": 50286
+        },
+        "revue": {
+          "calls": 26,
+          "refused": 0,
+          "modelMs": 26159
+        },
+        "vert": {
+          "calls": 16,
+          "refused": 0,
+          "modelMs": 18105
+        },
+        "livrer": {
+          "calls": 1,
+          "refused": 0,
+          "modelMs": 20256
+        }
+      },
+      "fixedMs": 3414,
+      "suite": {
+        "runs": 32,
+        "meanMs": 6670
+      },
+      "activeMs": 2875624,
+      "realCalls": 62,
+      "targetedShare": 0.084,
+      "totalTests": 164,
+      "reuse": {
+        "cited": true,
+        "possible": true,
+        "why": "p-20261023T011506-ef29a5 : code inchangé depuis sa fin"
+      }
+    }
+  ]
+}

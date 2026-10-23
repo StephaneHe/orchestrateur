@@ -54,7 +54,8 @@ import { countTests, addedTests, itemTestsVerdict } from './item-tests.mjs';
 import { groupOf, groupCases, groupReady, insertAttachedCases, worktreeTree, treeDiff } from './item-review.mjs';
 import { foldTo, commitWork, itemCommitMessage, setAsideWork, reapplyWork, head as headOf } from './item-delivery.mjs';
 import { readFragments } from './lanes.mjs';
-import { cleanTuning, runTuning, readTuning, tuningFor } from './pipeline-tuning.mjs';
+import { cleanTuning, runTuning, readTuning, tuningFor, cleanValues, runTuningValues } from './pipeline-tuning.mjs';
+import * as Speed from './pipeline-speed.mjs';
 import { runIdleRegression } from './idle-regression.mjs';
 import { judgeCitedPaths, observedInTurn, toolUsesInTurn } from './cited-paths.mjs';
 import * as Ops from './typed-operations.mjs';
@@ -159,7 +160,7 @@ export function isEnforced(enf, project) {
 }
 
 /** Écriture atomique de la mise en service (CLI pipeline-enforce.mjs, route serveur). */
-export function writeEnforcement(root, { projects, pipelines, terminal, chef, generalSince, tuning, by }) {
+export function writeEnforcement(root, { projects, pipelines, terminal, chef, generalSince, tuning, tuningValues, by }) {
   const file = path.join(root, 'model-routing.json');
   let j = {};
   try { j = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* neuf */ }
@@ -174,8 +175,10 @@ export function writeEnforcement(root, { projects, pipelines, terminal, chef, ge
   const gen = generalSince || before?.generalSince || null;
   // Phase 0 switches (pipeline-tuning.mjs): kept as they are unless given.
   const tun = cleanTuning(tuning === undefined ? before?.tuning : tuning);
-  j.enforcement = { projects: [...new Set(projects)], pipelines: pipelines.filter(p => ENGINE_PIPELINES.includes(p)), ...(term ? { terminal: true } : {}), ...(chf ? { chef: true } : {}), ...(gen ? { generalSince: gen } : {}), ...(Object.keys(tun).length ? { tuning: tun } : {}), since: at, by };
-  const fmt = (e) => `${(e.projects || []).join(',') || '—'} / ${(e.pipelines || []).join(',')}${e.terminal ? ' / terminal' : ''}${e.chef ? ' / chef' : ''}${e.tuning ? ` / réglages ${Object.entries(e.tuning).map(([k, v]) => `${k}=${v === true ? 'tous' : v.join('+')}`).join(',')}` : ''}`;
+  // Values of the « vitesse » levers (0.143.0): kept unless given ({} = back to the defaults).
+  const vals = cleanValues(tuningValues === undefined ? before?.tuningValues : tuningValues);
+  j.enforcement = { projects: [...new Set(projects)], pipelines: pipelines.filter(p => ENGINE_PIPELINES.includes(p)), ...(term ? { terminal: true } : {}), ...(chf ? { chef: true } : {}), ...(gen ? { generalSince: gen } : {}), ...(Object.keys(tun).length ? { tuning: tun } : {}), ...(Object.keys(vals).length ? { tuningValues: vals } : {}), since: at, by };
+  const fmt = (e) => `${(e.projects || []).join(',') || '—'} / ${(e.pipelines || []).join(',')}${e.terminal ? ' / terminal' : ''}${e.chef ? ' / chef' : ''}${e.tuning ? ` / réglages ${Object.entries(e.tuning).map(([k, v]) => `${k}=${v === true ? 'tous' : v.join('+')}`).join(',')}` : ''}${e.tuningValues ? ` / valeurs ${Object.entries(e.tuningValues).map(([k, v]) => `${k}=${v}`).join(',')}` : ''}`;
   j.history.push({ at, task: 'enforcement', from: before ? fmt(before) : null, to: fmt(j.enforcement), by });
   if (j.history.length > 500) j.history = j.history.slice(-500);
   j.updatedAt = at;
@@ -307,6 +310,8 @@ export function devCatalog({ mode = 'leger', kind = 'simple' } = {}) {
     '@aside': { id: '@aside', title: 'items mis de côté', chain: [], marker: true },
     rouge: { id: 'rouge', title: `4a Rouge${kind === 'bugfix' ? ' (reproduire le bug)' : ''}`, chain: [`dev.rouge.${v}`, 'dev.rouge'], group: 'tests', artefact: 'rouge.md' },
     vert: { id: 'vert', title: '4b Vert', chain: [`dev.vert.${vv}`, 'dev.vert'], group: 'code', artefact: 'vert.md' },
+    // Lever redGreen (0.143.0): a small item's test and code in one call, on the case of 4b (it writes the code).
+    'rouge-vert': { id: 'rouge-vert', title: '4ab Rouge puis Vert (un appel)', chain: [`dev.vert.${vv}`, 'dev.vert'], group: 'code', artefact: 'rouge-vert.md' },
     refactor: { id: 'refactor', title: '4c Refactor', chain: ['dev.refactor'], group: 'code', artefact: 'refactor.md', optional: true },
     revue: { id: 'revue', title: '5 Revue', chain: ['dev.revue.code', 'dev.revue'], group: 'revue', artefact: 'revue.json', judge: true },
     livrer: { id: 'livrer', title: '6 Livrer (+ 7 Documenter)', chain: ['dev.livrer.git', 'dev.livrer'], group: 'code', artefact: 'livraison.md', final: true },
@@ -457,9 +462,20 @@ function runCommand(cwd, command, env, timeoutMs = TEST_TIMEOUT_MS) {
  */
 function runSuite(ctx) {
   const { cwd, cfg } = ctx;
-  const run = () => runCommand(cwd, cfg.testCommand, ctx.testEnv, testTimeoutMs(cfg));
-  if (!ctx.tuning?.suiteCache || !cfg.testCommand || !ctx.suiteCacheFile) return run();
-  const t = cachedSuite({ cwd, command: cfg.testCommand, env: ctx.testEnv, indexFile: ctx.suiteCacheIndex, file: ctx.suiteCacheFile }, run);
+  let run = () => runCommand(cwd, cfg.testCommand, ctx.testEnv, testTimeoutMs(cfg));
+  let command = cfg.testCommand;
+  // Lever targetedTests (0.143.0): a TDD step runs the item's tests and those
+  // its changes reach; anything uncertain runs the full suite, said.
+  if (ctx.tuning?.targetedTests && ctx.suiteMode === 'targeted' && command && ctx.targetFrom) {
+    const sel = Speed.selectTargetedTests({ cwd, cfg, from: ctx.targetFrom(), isTest: (f) => isTestFile(f, cfg.testGlobs) });
+    ctx.onSuiteTargeted?.(sel);
+    if (sel.targeted) {
+      command = sel.command;
+      run = () => ({ ...runCommand(cwd, sel.command, ctx.testEnv, testTimeoutMs(cfg)), targeted: { files: sel.files.length, total: sel.total } });
+    }
+  }
+  if (!ctx.tuning?.suiteCache || !command || !ctx.suiteCacheFile) return run();
+  const t = cachedSuite({ cwd, command, env: ctx.testEnv, indexFile: ctx.suiteCacheIndex, file: ctx.suiteCacheFile }, run);
   if (t.cached) ctx.onSuiteCached?.(t.cached);
   return t;
 }
@@ -630,7 +646,7 @@ function stepPrompt(ctx, step, extra) {
   if (step.devRole) L.push(`ETAPE=${step.id}`);
   L.push(`ARTEFACT=${art(step.artefact)}`);
   L.push(`DOSSIER_ARTEFACTS=${artDir.replace(/\\/g, '/')}`);
-  if (ctx.item && ['rouge', 'vert', 'refactor'].includes(step.id)) L.push(`ITEM=${ctx.item.n}: ${ctx.item.text}`);
+  if (ctx.item && ['rouge', 'vert', 'refactor', 'rouge-vert'].includes(step.id)) L.push(`ITEM=${ctx.item.n}: ${ctx.item.text}`);
   L.push('');
   L.push(`Demande d'origine : ${art('demande.md')} (lis-la d'abord). Les artefacts des étapes précédentes sont dans le même dossier : lis ceux qui existent.`);
   if (ctx.lane) {
@@ -694,6 +710,16 @@ function stepPrompt(ctx, step, extra) {
       L.push(`Écris ${art('rouge.md')} : le nom du test, le fichier, et pourquoi il échoue aujourd'hui.`);
       L.push(`Exception : si ce comportement est DÉJÀ assuré par le code existant (tout test fidèle ${ctx.item ? 'à l’item' : 'à la demande'} passe d’emblée), ne fausse jamais le test pour le faire échouer. Garde ce test fidèle comme documentation (il doit être écrit dans CE tour, même si tu l’avais écrit lors d’un essai précédent), écris le mot DEJA_COUVERT en tête de rouge.md, puis la PREUVE : le commit (hash) et/ou le fichier:ligne du code de production qui l’implémente déjà. L’orchestrateur vérifie la preuve, que seuls des tests ont changé et que toute la suite passe ; ${ctx.item ? 'il coche l’item sans 4b ni 4c' : 'il passe alors directement à la revue, sans 4b'}, et la Revue jugera le test.`);
       break;
+    case 'rouge-vert':
+      if (ctx.item) L.push(`Item de la liste de tests à traiter MAINTENANT, et lui seul (tests.md) : « ${ctx.item.text} ». Ne traite pas les items suivants : ils auront leur propre test.`);
+      L.push(...Rework.redoLines(ctx.redoHint));
+      L.push('Ton rôle : étapes 4a ROUGE puis 4b VERT du TDD, dans CE tour et dans cet ordre :');
+      L.push(`1. écris d’abord le test (fichiers de test seulement, motifs : ${(cfg.testGlobs || []).join(', ')}) qui décrit le comportement attendu, et rien d’autre ; lance-le : il doit ÉCHOUER à cause de ce comportement manquant ;`);
+      L.push('2. puis écris le code de production MINIMAL qui le fait passer, ainsi que tous les autres tests ; ne retouche plus le test pour le faire passer.');
+      L.push(`Après ton tour, l’orchestrateur PROUVE le rouge lui-même : il remet ton code de production comme avant ton tour et lance ${T} — elle doit échouer, en citant ton test (sortie gardée) ; puis il remet ton code et la relance — elle doit passer.`);
+      L.push(`Écris ${art('rouge-vert.md')} : le test (nom, fichier), pourquoi il échouait, puis le code écrit.`);
+      L.push(`Exception : si ce comportement est DÉJÀ assuré par le code existant, n’écris aucun code de production : garde le test fidèle, écris DEJA_COUVERT en tête de rouge-vert.md avec la PREUVE (commit et/ou fichier:ligne du code de production).`);
+      break;
     case 'vert':
       if (ctx.reviewItems?.length) {
         L.push(ctx.fixOwnTests?.length
@@ -715,7 +741,16 @@ function stepPrompt(ctx, step, extra) {
       break;
     case 'revue': {
       const scope = ctx.reviewScope;
-      if (scope) {
+      if (scope?.batch) {
+        // Lever groupReview (0.143.0): one Review for the items of the batch.
+        L.push(`REVUE_ITEMS=${scope.batch.join(',')}`);
+        L.push(`Ton rôle : REVUE GROUPÉE de ${scope.batch.length > 1 ? `ces ${scope.batch.length} items` : 'cet item'} de la liste de tests, chacun jugé pour lui-même (défauts, sécurité, cohérence, tests suffisants) :`);
+        for (const g of scope.batch) L.push(`- item ${g} : « ${scope.texts[g]} »`);
+        if (scope.reviewed?.length) L.push(`Déjà relus sans défaut, à ne pas rejuger (leur code est dans le diff parce qu’il est commité avec le lot) : item(s) ${scope.reviewed.join(', ')}.`);
+        L.push('Le diff de ces items (depuis le dernier item livré) est dans le fichier :');
+        L.push(`  ${art('diff.patch')}`);
+        L.push(`Chaque entrée de « items » et de « hors_tdd » NOMME l’item qu’elle concerne : {"item": <numéro>, "text": "…"}. Un défaut ne fait reprendre que son item ; les autres sont livrés.`);
+      } else if (scope) {
         L.push(`REVUE_ITEM=${scope.group}`);
         L.push(scope.group === 0
           ? 'Ton rôle : REVUE du travail fait AVANT la montée en Développement complet (le premier test et son code), et de lui seul (défauts, sécurité, cohérence, tests suffisants).'
@@ -732,7 +767,9 @@ function stepPrompt(ctx, step, extra) {
       const covered = scope ? (ctx.coveredItems || []).filter(c => scope.cases.includes(c.n)) : ctx.coveredItems;
       if (covered?.length) L.push(`Items acceptés comme DÉJÀ COUVERTS (leur test passait d'emblée, sans nouveau code) : ${covered.map(coveredLabel).join(' ; ')}. Vérifie que chacun de ces tests est FIDÈLE à son item et qu'il échouerait si le comportement disparaissait ; un test vide de sens est un « problème ».`);
       L.push('Ne relève PAS l’absence de numéro de version incrémenté, d’entrée CHANGELOG ni de ligne dans le registre des exigences : l’étape Livrer, qui suit, les ajoute, et l’orchestrateur les vérifie.');
-      L.push(`Écris ${art('revue.json')}, et UNIQUEMENT ce JSON : {"verdict": "ok" | "problèmes", "items": ["défaut de comportement 1", …], "hors_tdd": ["correction de doc ou de commentaire 1", …]}.`);
+      L.push(scope?.batch
+        ? `Écris ${art('revue.json')}, et UNIQUEMENT ce JSON : {"verdict": "ok" | "problèmes", "items": [{"item": ${scope.batch[0]}, "text": "défaut de comportement 1"}, …], "hors_tdd": [{"item": ${scope.batch.at(-1)}, "text": "correction de doc ou de commentaire 1"}, …]}.`
+        : `Écris ${art('revue.json')}, et UNIQUEMENT ce JSON : {"verdict": "ok" | "problèmes", "items": ["défaut de comportement 1", …], "hors_tdd": ["correction de doc ou de commentaire 1", …]}.`);
       if (scope && ctx.tuning?.itemTestFix) {
         L.push('« items » : uniquement des défauts de COMPORTEMENT, qu’un test peut prouver (ils repartent dans la boucle de tests). « hors_tdd » : ce qui ne se teste pas (documentation, README, commentaires, en-têtes de test…) — corrigé juste après par l’étape de correction, avant toute livraison. « problèmes » seulement pour un défaut réel, à corriger maintenant.');
         L.push(Rework.reviewOwnTestsLine());
@@ -2447,6 +2484,57 @@ export function checkItemTests({ cwd, files, base, item }) {
   return { ...itemTestsVerdict({ declared: item?.declared, added, itemN: item?.n }), added };
 }
 
+/**
+ * Lever redGreen (0.143.0): test AND code written in one call. The program
+ * proves the red itself — the step's code files put back as before, the suite
+ * must fail on the new test (output kept in the run folder) — then the green:
+ * code back, the suite must pass. The files are always left as the step wrote them.
+ */
+function checkRedGreen(ctx, step, before, after, changed, art) {
+  const { cwd, cfg } = ctx;
+  const isTest = (f) => isTestFile(f, cfg.testGlobs);
+  if (!art || art.trim().length < 20) return { ok: false, why: `artefact ${step.artefact} absent ou vide`, changed };
+  const tests = changed.filter(isTest), code = changed.filter(f => !isTest(f));
+  const claimed = /\bDEJA_COUVERT\b/.test(art);
+  if (!tests.length) return { ok: false, why: 'aucun test ajouté ni modifié : écris d’abord le test de l’item, puis le code', changed };
+  let tolerated = null;
+  if (ctx.item && ctx.itemTestBase && !itemTestsRelaxed(ctx.relaxed, ctx.item)) {
+    const v = checkItemTests({ cwd, files: [...after.keys()].filter(isTest), base: ctx.itemTestBase, item: ctx.item });
+    tolerated = !v.ok && ctx.tuning?.extraTests ? Speed.toleratedExtra(v) : null;
+    if (!v.ok && !tolerated) return { ok: false, why: v.why, changed, itemTests: v };
+  }
+  const extra = tolerated ? { toleratedTests: tolerated } : {};
+  if (!code.length) {
+    // Already covered (Q10): the faithful test passes with the code as it is.
+    const t = runSuite(ctx);
+    if (claimed && t.ok) {
+      const proof = coveredProof(cwd, art, cfg);
+      if (!proof.length) return { ok: false, why: 'DEJA_COUVERT déclaré sans preuve vérifiable : cite le commit (hash) et/ou le fichier:ligne du code de production', changed, test: t };
+      return { ok: true, changed, test: t, covered: true, proof, ...extra };
+    }
+    return { ok: false, why: t.ok ? `aucun code écrit et le test passe déjà — ${COVERED_HINT}` : 'aucun code de production écrit : le test échoue (rouge), le code qui le fait passer manque', changed, test: t };
+  }
+  // RED: the code as it was before the step, the new test in place.
+  const redFile = path.join(ctx.runDir, `${ctx.stepKey || 'rouge-vert'}.rouge.txt`);
+  let red;
+  const failed = Speed.restoreFromSnapshot(cwd, code, before);
+  try {
+    if (failed.length) return { ok: false, why: `preuve du rouge impossible : ${failed.slice(0, 4).join(', ')} non restaurable(s)`, changed };
+    red = runSuite(ctx);
+  } finally {
+    const back = Speed.restoreFromSnapshot(cwd, code, after);
+    if (back.length) return { ok: false, why: `fichiers de l’étape non remis après la preuve du rouge : ${back.join(', ')}`, changed };
+  }
+  try { fs.writeFileSync(redFile, `# Preuve du rouge — ${ctx.stepKey || ''}\n# code de production remis comme avant l’étape : ${code.join(', ')}\n# code de sortie : ${red.code}\n\n${red.out}`); } catch {}
+  const redRef = path.relative(ctx.root, redFile).split(path.sep).join('/');
+  if (red.ok) return { ok: false, why: `le test passe sans le code de l’étape : il ne prouve rien (sortie : ${redRef}) — écris un test qui échoue tant que le comportement manque`, changed, test: red };
+  if (!Speed.failureCites(cwd, tests, red.out)) return { ok: false, why: `sans le code, la suite échoue, mais l’échec ne cite pas le test de l’item (cause sans rapport ? sortie : ${redRef})`, changed, test: red };
+  // GREEN: the step's code back, every test must pass.
+  const green = runSuite(ctx);
+  if (!green.ok) return { ok: false, why: `la suite échoue avec le code de l’étape (${cfg.testCommand}, code ${green.code}) :\n${green.out.slice(-1500)}`, changed, test: green };
+  return { ok: true, changed, test: green, red: { code: red.code, ms: red.ms, file: redRef, ...(red.targeted ? { targeted: red.targeted } : {}) }, ...extra };
+}
+
 function checkCriteria(ctx, step, before, after) {
   // Catalogue (phase 6) : critères génériques, ou critère du Développement réutilisé.
   if (!step.crit && (step.checks || step.kind)) return checkCatalogCriteria(ctx, step, before, after);
@@ -2510,7 +2598,14 @@ function checkCriteria(ctx, step, before, after) {
       }
       const fixes = [...new Set(delivery)].slice(0, 15);
       if (verdict === 'problemes' && !items.length && !fixes.length) return { ok: false, why: 'revue.json : verdict « problèmes » sans aucun défaut listé (items ou hors_tdd)', changed };
-      return { ok: true, changed, review: { verdict: items.length || fixes.length ? 'problemes' : 'ok', items, delivery: fixes } };
+      // Grouped Review (lever groupReview): every finding names its item.
+      let byItem = null;
+      if (ctx.reviewScope?.batch) {
+        const a = Speed.attributeFindings(art, ctx.reviewScope.batch);
+        if (!a.ok) return { ok: false, why: a.why, changed };
+        byItem = a.byItem;
+      }
+      return { ok: true, changed, review: { verdict: items.length || fixes.length ? 'problemes' : 'ok', items, delivery: fixes, ...(byItem ? { byItem } : {}) } };
     }
     return { ok: true, changed };
   }
@@ -2525,10 +2620,14 @@ function checkCriteria(ctx, step, before, after) {
     if (notTests.length) return { ok: false, why: `l’étape Rouge ne touche que des tests ; modifiés hors tests : ${notTests.slice(0, 8).join(', ')}`, changed };
     // Seule 4a écrit des tests (4b et 4c ne peuvent pas y toucher) : le compte
     // de l'item se vérifie ici, DEJA_COUVERT compris.
+    let tolerated = null;
     if (devRouge && ctx.item && ctx.itemTestBase && !itemTestsRelaxed(ctx.relaxed, ctx.item)) {
       const v = checkItemTests({ cwd, files: [...after.keys()].filter(f => isTestFile(f, cfg.testGlobs)), base: ctx.itemTestBase, item: ctx.item });
-      if (!v.ok) return { ok: false, why: v.why, changed, itemTests: v };
+      // Lever extraTests (0.143.0): one test more, in the same file, is accepted and said.
+      tolerated = !v.ok && ctx.tuning?.extraTests ? Speed.toleratedExtra(v) : null;
+      if (!v.ok && !tolerated) return { ok: false, why: v.why, changed, itemTests: v };
     }
+    const okRed = (r) => (tolerated && r.ok ? { ...r, toleratedTests: tolerated } : r);
     const t = runSuite(ctx);
     if (t.ok) {
       // Décision utilisateur Q10 (« A », 2026-10-09) : un comportement DÉJÀ
@@ -2539,7 +2638,7 @@ function checkCriteria(ctx, step, before, after) {
       if (claimed) {
         const proof = coveredProof(cwd, art, cfg);
         if (!proof.length) return { ok: false, why: 'DEJA_COUVERT déclaré sans preuve vérifiable : cite le commit (hash) et/ou le fichier:ligne du code de production qui implémente déjà le comportement', changed, test: t, claimedCovered: true };
-        return { ok: true, changed, test: t, covered: true, proof };
+        return okRed({ ok: true, changed, test: t, covered: true, proof });
       }
       return { ok: false, why: `la suite passe encore : le nouveau test n’échoue pas (${cfg.testCommand})${devRouge ? ` — ${COVERED_HINT}` : ''}`, changed, test: t };
     }
@@ -2551,8 +2650,9 @@ function checkCriteria(ctx, step, before, after) {
     }
     const cited = [...names, ...titles].some(n => n && t.out.includes(n));
     if (!cited) return { ok: false, why: 'la suite échoue, mais l’échec ne cite pas le test ajouté (cause sans rapport ?)', changed, test: t };
-    return { ok: true, changed, test: t };
+    return okRed({ ok: true, changed, test: t });
   }
+  if (step.id === 'rouge-vert') return checkRedGreen(ctx, step, before, after, changed, art);
   if (step.id === 'vert') {
     if (!changed.length) return { ok: false, why: 'aucune modification', changed };
     // Review correction (lever itemTestFix): the item's own tests, not delivered yet, may be edited.
@@ -2643,6 +2743,18 @@ function checkCriteria(ctx, step, before, after) {
  * Lance (ou reprend) une exécution. Renvoie le code de sortie du processus :
  * 0 terminée, 2 pause (question à l'utilisateur), 64/65 refus avant écriture.
  */
+/**
+ * Grouped Review (0.143.0): the batch's provisional commits — never reviewed —
+ * go back to the work tree (soft reset to the last delivered commit) when the
+ * run ends without delivering them (abandoned, failed, closed by command).
+ */
+export function unfoldBatch(cwd, state) {
+  if (!state?.batch?.seq?.length || !cwd) return false;
+  foldTo(cwd, state.lastDelivered || state.base);
+  state.batch = { ...state.batch, seq: [], folded: true };
+  return true;
+}
+
 /** Extra fields the caller adds to an event of the musician's log (never throws). */
 function eventTagOf(o, ev) { try { return (typeof o?.eventTag === 'function' && o.eventTag(ev)) || {}; } catch { return {}; } }
 
@@ -2762,6 +2874,12 @@ export async function runPipeline(o) {
     if (state.itemDelivery) state.plan.splice(state.plan.lastIndexOf('livrer'), 0, '@aside');
     fs.writeFileSync(path.join(artDir, 'demande.md'), `# Demande\n\n${prompt}\n`);
   }
+  // Lever `limits` (0.143.0): the run's limits come from the hot settings
+  // (pipeline-enforce.mjs tuning-values), frozen with the switches when the
+  // run starts — before any budget below is computed from them.
+  const speedTuning = runTuning(state, root, projectName, { resumed: !!o.resumeRun });
+  const speedValues = runTuningValues(state, root, { resumed: !!o.resumeRun });
+  if (speedTuning.limits) { limits.items = speedValues.items; limits.runMs = speedValues.runMin * 60_000; }
   // The callback belongs to the RUN, not to the turn (2026-10-22): a resume
   // launched without --callback keeps the one the run was started with.
   const callbackTo = runCallback(state, { callbackProject, chefCallback: o.resumeRun ? o.chefCallback : null });
@@ -2982,7 +3100,7 @@ export async function runPipeline(o) {
     stepDefs[sid] = { ...s, variant: v, chain: [`${pipeline}.${s.id}.${v}`, ...s.chain], mediaKind: s.mediaByVariant?.[v] || s.checks?.media?.kind };
   }
   // Frise annoncée : la boucle TDD se lit 4a → 4b → 4c (→ 5 Revue de l'item), répétée par item.
-  const loopIds = ['rouge', 'vert', 'refactor', ...(state.itemReview ? ['revue'] : [])];
+  const loopIds = [...(state.tuning?.redGreen && pipeline === 'dev' ? ['rouge-vert'] : ['rouge', 'vert']), 'refactor', ...(state.itemReview ? ['revue'] : [])];
   const planned = state.plan.flatMap(id => (id === '@loop' ? loopIds.map(x => ({ id: x, loop: true })) : id === '@check' || id === '@aside' ? [] : [{ id }]))
     .map(p => ({ ...p, title: stepDefs[p.id].title, slot: stepDefs[p.id].kind === 'code' ? { slot: stepDefs[p.id].chain[0], model: null, provider: null, second: null, source: 'code' } : resolveCase(assignments, stepDefs[p.id].chain) }));
   writeEvent({
@@ -3045,6 +3163,14 @@ export async function runPipeline(o) {
     lane: state.lane?.k >= 1 ? { ...state.lane, dir: cwd, main: project.path, fragment: laneFragmentPath(state.lane.task) } : null };
   // Phase 0 switches, frozen in run.json when the run starts (pipeline-tuning.mjs).
   ctx.tuning = runTuning(state, root, projectName, { resumed: !!o.resumeRun });
+  ctx.speed = speedValues;
+  // Lever targetedTests: where the item's changes are measured from (its last delivery).
+  ctx.targetFrom = () => (state.itemDelivery ? state.lastDelivered || base : base);
+  ctx.onSuiteTargeted = (sel) => {
+    state.targetedRuns = (state.targetedRuns || 0) + 1;
+    writeEvent({ type: 'system', subtype: 'pipeline_suite_targeted', pipeline: { run, step: current?.id || ctx.suiteStep || null }, files: sel.files, requirement: sel.requirement, total: sel.total, ...(sel.why ? { why: sel.why } : {}),
+      text: sel.targeted ? `tests ciblés : ${sel.files.length} fichier(s) de test sur ${sel.total}${sel.requirement.length ? ` (dont ${sel.requirement.length} d’exigence)` : ''} — suite complète à Livrer` : `suite complète à cette étape : ${sel.why}` });
+  };
   // 0.142.0 (idle-regression.mjs), frozen in run.json at the start: the test
   // command's targeted run never falls back to the full one (done later, while idle).
   ctx.idleRegression = runIdleRegression(state, root, [projectName, project?.devOf].filter(Boolean), { resumed: !!o.resumeRun });
@@ -3060,8 +3186,9 @@ export async function runPipeline(o) {
       text: `suite verte déjà vérifiée sur ce même arbre (${c.tree.slice(0, 12)}, le ${c.at.slice(0, 16).replace('T', ' ')}) : non relancée, ${fmtDur(c.ms)} évitées` });
   };
   if (!o.resumeRun && Object.values(ctx.tuning).some(Boolean)) {
-    writeEvent({ type: 'system', subtype: 'pipeline_tuning', pipeline: { run }, tuning: ctx.tuning,
-      text: `réglages de cette exécution (figés au départ) : ${Object.entries(ctx.tuning).filter(([, v]) => v).map(([k]) => k).join(', ')}` });
+    const vals = Speed.valuesText(ctx.tuning, speedValues);
+    writeEvent({ type: 'system', subtype: 'pipeline_tuning', pipeline: { run }, tuning: ctx.tuning, ...(vals ? { values: speedValues } : {}),
+      text: `réglages de cette exécution (figés au départ) : ${Object.entries(ctx.tuning).filter(([, v]) => v).map(([k]) => k).join(', ')}${vals ? ` — ${vals}` : ''}` });
   }
   // Durée ACTIVE : le temps passé en pause à attendre l'utilisateur ne compte
   // pas dans la limite de 90 min (une reprise repart du temps déjà consommé).
@@ -3071,6 +3198,8 @@ export async function runPipeline(o) {
 
   const finish = async ({ code, result, isError = false, paused = false, question = null, limit = null, notice = null, chef = false }) => {
     clearInterval(progress);
+    // A failed run delivers nothing more: unreviewed provisional commits go back to the work tree.
+    if (isError) unfoldBatch(cwd, state);
     state.status = paused ? 'paused' : isError ? 'failed' : 'done';
     state.endedAt = new Date().toISOString();
     state.activeMs = elapsed();
@@ -3424,6 +3553,7 @@ export async function runPipeline(o) {
   const programStep = (step, attempt, key, info, work) => {
     const t0 = Date.now();
     const before = snapshot(cwd);
+    ctx.suiteMode = 'full';
     writeEvent({ type: 'system', subtype: 'pipeline_step_start', pipeline: { run, step: step.id, key, slot: info.slot, attempt }, byCode: true,
       text: `étape ${step.title} — faite par le programme${attempt > 1 ? ` — essai ${attempt}` : ''}` });
     let c;
@@ -3442,6 +3572,10 @@ export async function runPipeline(o) {
     const info = resolveCase(readAssignments(root), step.chain);
     const n = String(state.steps.length + 1).padStart(2, '0');
     const key = `${n}-${step.id}`;
+    // Lever targetedTests: the TDD loop's checks run targeted tests, everything else the full suite.
+    ctx.suiteMode = pipeline === 'dev' && Speed.TARGET_STEPS.has(step.id) ? 'targeted' : 'full';
+    ctx.suiteStep = step.id;
+    ctx.stepKey = key;
     // A delivery without version (Rédaction, media): one commit, by the program.
     if (ctx.deliveryMode === 'commit') {
       return programStep(step, attempt, key, info, () => {
@@ -3678,6 +3812,31 @@ export async function runPipeline(o) {
   if (pipeline === 'dev' || (catalog && (cfg.testGlobs || []).length)) ctx.testPrint = testsNow();
   if (state.reviewItems) ctx.reviewItems = state.reviewItems;
 
+  // Lever reuseContext (0.143.0): a new full Development run that cites the
+  // previous run of the same request (« suite de p-… ») starts from its
+  // understanding and plan — unless the code diverged since it ended.
+  if (pipeline === 'dev' && state.mode === 'complet' && ctx.tuning?.reuseContext && !resumed && state.index === 0 && !state.steps.length
+    && state.plan[0] === 'comprendre' && state.plan[1] === 'concevoir') {
+    const found = Speed.findReusableRun({ logsDir, request: state.request || prompt, project: projectName, run, dirs: [...new Set([cwd, project.path])], cfg, cwd, base });
+    if (found.none) {
+      if (Speed.citedRuns(state.request || prompt).length) writeEvent({ type: 'system', subtype: 'pipeline_context_not_reused', pipeline: { run }, why: found.why, text: `compréhension et plan refaits : ${found.why}` });
+    } else {
+      const note = `> Repris de l’exécution ${found.run} (même demande, code inchangé depuis sa fin ${String(found.end || '').slice(0, 7)}) par l’orchestrateur, sans nouvel appel. La demande ACTUELLE est dans demande.md : ne traite que ce qu’elle demande encore.\n\n`;
+      for (const f of ['comprehension.md', 'plan.md']) fs.writeFileSync(path.join(artDir, f), note + fs.readFileSync(path.join(found.dir, f), 'utf8'));
+      const why = `repris de l’exécution ${found.run} (code inchangé depuis)`;
+      for (const sid of ['comprendre', 'concevoir']) {
+        const key = `${String(state.steps.length + 1).padStart(2, '0')}-${sid}`;
+        state.steps.push({ id: sid, key, title: stepDefs[sid].title, status: 'skipped', why, reused: found.run, attempt: 1, durationMs: 0 });
+        writeEvent({ type: 'system', subtype: 'pipeline_step_done', pipeline: { run, step: sid, key, attempt: 1 }, status: 'skipped', why, durationMs: 0, text: `étape ${stepDefs[sid].title} : sautée — ${why}` });
+      }
+      state.index = 2;
+      state.reusedContext = { run: found.run, end: found.end };
+      writeEvent({ type: 'system', subtype: 'pipeline_context_reused', pipeline: { run }, from: found.run, end: found.end,
+        text: `♻ compréhension et plan repris de l’exécution ${found.run} : Comprendre et Concevoir ne sont pas refaits (code inchangé depuis sa fin)` });
+      saveState();
+    }
+  }
+
   // ── Boucle des étapes ─────────────────────────────────────────────────────
   const readItems = () => parseItems(readArtefact(ctx, 'tests.md') || '');
   // ── Per-item delivery (0.64.0, « c+d » part c) ─────────────────────────
@@ -3707,12 +3866,73 @@ export async function runPipeline(o) {
     writeEvent({ type: 'system', subtype: 'pipeline_defect_accepted', pipeline: { run, step: step?.id || null, item: key === 'global' ? null : key }, defects: list,
       text: `✓ ${list.length} défaut(s) accepté(s) explicitement par l’utilisateur${key === 'global' ? '' : ` pour ${groupLabel(key)}`} — livraison autorisée en connaissance de cause${list.length ? ` : ${list.slice(0, 5).join(' ; ')}` : ''}` });
   };
-  const setAside = (g, limit, why) => {
+  // ── Grouped Review (lever groupReview, 0.143.0) ────────────────────────
+  // state.batch = { seq: [{commit, group}], groups, reviewed, folded }: each
+  // item of the batch has its own provisional commit (on top of the last
+  // delivered one); the longest reviewed prefix is delivered; a pause folds the
+  // undelivered commits back into the work tree (nothing unreviewed stays committed).
+  const batchCommit = (groups, message = null) => {
+    const b = state.batch || (state.batch = { seq: [], groups: [], reviewed: [], folded: false });
+    if (state.checkpoints) { foldTo(cwd, b.seq.at(-1)?.commit || state.lastDelivered || base); state.checkpoints = 0; }
+    // Folded at a pause: their work is in the tree again, committed with this one.
+    const gs = b.folded ? [...new Set([...b.groups, ...groups])] : groups;
+    const g0 = groups[0];
+    const c = commitWork(cwd, message || itemCommitMessage({ group: g0, text: groupText(g0), run, cases: groupCases(readItems(), g0).length }).replace('delivered item by item.', 'provisional commit, delivered after its grouped review.'));
+    if (!c.ok) return c;
+    const sha = c.empty ? headOf(cwd) : c.commit;
+    for (const g of gs) b.seq.push({ commit: sha, group: g });
+    for (const g of groups) if (!b.groups.includes(g)) b.groups.push(g);
+    b.reviewed = b.reviewed.filter(x => !groups.includes(x));
+    b.folded = false;
+    writeEvent({ type: 'system', subtype: 'pipeline_item_provisional', pipeline: { run, item: g0 }, commit: sha, groups: gs,
+      text: `🗂 ${groups.map(groupLabel).join(', ')} : commit provisoire ${sha.slice(0, 7)}, livré après la relecture groupée` });
+    return { ok: true, commit: sha };
+  };
+  const batchMaybeReview = (at, endOfList = false) => {
+    const b = state.batch;
+    if (!b || state.batchReview?.length) return false;
+    const U = b.groups.filter(x => !b.reviewed.includes(x));
+    if (!U.length || state.batchFix?.length) return false;
+    const items = readItems();
+    if (!U.every(x => groupReady(items, x))) return false;
+    const aside = asideGroups();
+    const nextOpen = items.find(i => !i.done && !aside.has(groupOf(i)));
+    const again = U.some(x => (state.itemReviewRounds?.[x] || 0) > 0);
+    if (!(endOfList || !nextOpen || again || U.length >= ctx.speed.reviewBatch)) return false;
+    state.batchReview = U;
+    state.plan.splice(at, 0, 'revue');
+    writeEvent({ type: 'system', subtype: 'pipeline_review_batch', pipeline: { run, item: U[0] }, groups: U,
+      text: `relecture groupée : ${U.length > 1 ? `items ${U.join(', ')}` : `item ${U[0]}`} (une relecture pour ${U.length} item(s))` });
+    return true;
+  };
+  const batchDeliver = () => {
+    const b = state.batch;
+    if (!b) return;
+    const p = Speed.deliverablePrefix(b.seq, new Set(b.reviewed));
+    if (!p) return;
+    const lastAt = b.seq.map(s => s.commit).lastIndexOf(p.commit);
+    for (const g of p.groups) {
+      const commits = [...new Set(b.seq.slice(0, lastAt + 1).filter(s => s.group === g).map(s => s.commit))];
+      state.delivered = [...(state.delivered || []), { group: g, text: groupText(g).slice(0, 300), commit: commits.at(-1), commits }];
+      if (state.redoHints?.[g]) { state.redoHints = { ...state.redoHints }; delete state.redoHints[g]; }
+      writeEvent({ type: 'system', subtype: 'pipeline_item_delivered', pipeline: { run, item: g }, commit: commits.at(-1), commits, batch: true,
+        text: `📦 ${groupLabel(g)} livré (relu dans un lot) : ${commits.map(c => c.slice(0, 7)).join(', ')}` });
+    }
+    state.lastDelivered = p.commit;
+    state.releasePending = true;
+    b.seq = b.seq.slice(lastAt + 1);
+    b.groups = b.groups.filter(g => !p.groups.includes(g));
+    b.reviewed = b.reviewed.filter(g => !p.groups.includes(g));
+    if (!b.groups.length) state.batch = null;
+  };
+  const setAside = (g, limit, why, extra = {}) => {
     const end = state.plan.indexOf('@loop', state.index);
     if (end < 0) return false;
     const prefix = state.plan.splice(state.index, end - state.index);
     const patchFile = path.join(runDir, `aside-item-${g}.patch`);
-    const r = setAsideWork(cwd, { from: state.lastDelivered || base, indexFile: path.join(runDir, 'item-review.idx'), patchFile });
+    // An item of its own (not a batch): the batch's provisional commits stay, only this item's work goes.
+    const from = extra.batch || !state.batch?.seq?.length ? (state.lastDelivered || base) : state.batch.seq.at(-1).commit;
+    const r = setAsideWork(cwd, { from, indexFile: path.join(runDir, 'item-review.idx'), patchFile });
     if (!r.ok) { state.plan.splice(state.index, 0, ...prefix); return false; }
     // Lever testWrong: « le code ne fait pas passer le test » says what the patch holds and what 4b found.
     if (limit === 'green' && ctx.tuning?.testWrong) {
@@ -3720,7 +3940,11 @@ export async function runPipeline(o) {
       if (diag) why = `${diag} — ${why || ''}`;
     }
     const patch = path.relative(root, patchFile).split(path.sep).join('/');
-    state.aside = [...(state.aside || []), { group: g, text: groupText(g).slice(0, 300), limit, why: String(why || '').slice(0, 2000), prefix,
+    // A grouped Review (lever groupReview): the items committed after this one in
+    // its batch rest on its work — they go aside with it, named, and are reviewed again with it.
+    const carried = (extra.batch || []).filter(x => x !== g);
+    const text = `${groupText(g)}`.slice(0, 300) + (carried.length ? ` (avec ${carried.map(x => `l’item ${x}`).join(', ')}, du même lot de relecture, qui repose dessus)` : '');
+    state.aside = [...(state.aside || []), { group: g, text, limit, why: String(why || '').slice(0, 2000), prefix, ...(extra.batch ? { batch: extra.batch } : {}),
       item: state.item, itemTestBase: state.itemTestBase, reviewGroup: state.reviewGroup, lastGreenLines: state.lastGreenLines ?? null, patch, files: r.files }];
     state.item = ctx.item = null;
     state.itemTestBase = ctx.itemTestBase = null;
@@ -3757,6 +3981,8 @@ export async function runPipeline(o) {
       }
       const aside = asideGroups();
       const next = readItems().find(i => !i.done && !aside.has(groupOf(i)));
+      // Grouped Review: the last items of the list are reviewed before the loop ends.
+      if (!next && batchMaybeReview(state.index, true)) { saveState(); continue; }
       if (!next) { state.plan.splice(state.index, 1); state.item = ctx.item = null; saveState(); continue; }
       if ((state.itemsDone || 0) >= (state.budgets?.items || limits.items)) {
         return pauseForLimit({ limit: 'items', value: limits.items, step: stepDefs['@loop'], why: `la liste n'est pas vide après ${limits.items} items (suivant : « ${next.text} ») — découper la demande` });
@@ -3770,7 +3996,10 @@ export async function runPipeline(o) {
       }
       // Point de départ du compte des tests de cet item (vérifié en 4a et en le cochant).
       state.itemTestBase = ctx.itemTestBase = countTests(cwd, [...testsNow().keys()]);
-      state.plan.splice(state.index, 0, 'rouge', 'vert', 'refactor', '@check');
+      // Lever redGreen (0.143.0): a small item in one call (test then code), the
+      // red proven by the program; refused once → the classic 4a then 4b.
+      const oneCall = ctx.tuning?.redGreen && kind !== 'mecanique' && Number.isInteger(next.declared) && next.declared <= ctx.speed.redGreenMaxTests && !state.redGreenFallback?.[next.n];
+      state.plan.splice(state.index, 0, ...(oneCall ? ['rouge-vert'] : ['rouge', 'vert']), 'refactor', '@check');
       writeEvent({ type: 'system', subtype: 'pipeline_item_start', pipeline: { run, item: next.n }, text: `item ${next.n} : ${next.text}` });
       saveState();
       continue;
@@ -3787,11 +4016,13 @@ export async function runPipeline(o) {
           writeEvent({ type: 'system', subtype: 'pipeline_criterion_relaxed', pipeline: { run, item: state.item.n }, criterion: 'itemTests',
             text: `item ${state.item.n} : ${v.written} test(s) acceptés au lieu de ${state.item.declared ?? '?'} annoncé(s) — critère ajusté pour cet item à la pause (« ajuster le critère »)` });
         }
+        // Lever extraTests: the same tolerance as at 4a (one test more, same file).
+        if (!v.ok && ctx.tuning?.extraTests) { const t = Speed.toleratedExtra(v); if (t) { v.ok = true; v.tolerated = t; } }
         if (!v.ok) {
           if (state.itemDelivery && setAside(groupOf(state.item), 'item_tests', v.why)) continue;
           return pauseForLimit({ limit: 'item_tests', value: v.written, step: stepDefs.rouge, why: v.why });
         }
-        tests = v.checked ? { declared: v.declared, written: v.written } : { written: v.written, unchecked: v.note };
+        tests = v.checked ? { declared: v.declared, written: v.written, ...(v.tolerated ? { tolerated: v.tolerated.file } : {}) } : { written: v.written, unchecked: v.note };
       } else tests = { unchecked: 'item commencé avant 0.62.0 : nombre de tests non vérifié' };
       fs.writeFileSync(path.join(artDir, 'tests.md'), checkItem(readArtefact(ctx, 'tests.md') || '', state.item.n));
       state.itemsDone = (state.itemsDone || 0) + 1;
@@ -3801,6 +4032,18 @@ export async function runPipeline(o) {
       // and the cases its Review attached to it are reviewed together).
       const g = groupOf(state.item);
       const reviewNow = !!state.itemReview && groupReady(readItems(), g);
+      // Lever groupReview (0.143.0): the item is committed provisionally and
+      // joins the batch; one Review for 2–3 items (batchMaybeReview).
+      if (reviewNow && ctx.tuning?.groupReview && state.itemDelivery && g !== 0 && isGit) {
+        state.plan.splice(state.index, 1);
+        state.item = ctx.item = null;
+        state.itemTestBase = ctx.itemTestBase = null;
+        const c = batchCommit([g]);
+        if (!c.ok) return pauseForLimit({ limit: 'item_commit', value: g, step: stepDefs.livrer, why: `le commit provisoire de ${groupLabel(g)} a échoué : ${String(c.err).split('\n')[0]}` });
+        batchMaybeReview(state.index);
+        saveState();
+        continue;
+      }
       state.plan.splice(state.index, 1, ...(reviewNow ? ['revue'] : []));
       if (reviewNow) state.reviewGroup = g;
       state.item = ctx.item = null;
@@ -3814,7 +4057,7 @@ export async function runPipeline(o) {
         const g = state.restoreQueue.shift();
         const a = (state.aside || []).find(x => x.group === g);
         if (!a) { saveState(); continue; }
-        const from = state.lastDelivered || base;
+        const from = state.batch?.seq?.length ? state.batch.seq.at(-1).commit : state.lastDelivered || base;
         foldTo(cwd, from);
         const r = reapplyWork(cwd, path.join(root, a.patch));
         if (!r.ok) {
@@ -3822,7 +4065,9 @@ export async function runPipeline(o) {
           // Lever asideRedo (0.139.0): the item is REDONE from the current code,
           // its old patch a hint only — once per item, never for group 0.
           if (ctx.tuning?.asideRedo && g !== 0 && !(state.redone || []).some(x => x.group === g)) {
-            const md = Rework.uncheckGroup(readArtefact(ctx, 'tests.md') || '', g);
+            // A batch set aside together (lever groupReview): every item of it is redone.
+            let md = { md: readArtefact(ctx, 'tests.md') || '', unchecked: 0 };
+            for (const x of a.batch || [g]) { const u = Rework.uncheckGroup(md.md, x); md = { md: u.md, unchecked: md.unchecked + u.unchecked }; }
             fs.writeFileSync(path.join(artDir, 'tests.md'), md.md);
             state.itemsDone = Math.max(0, (state.itemsDone || 0) - md.unchecked);
             const hintFile = Rework.patchHint(path.join(root, a.patch), artDir, g);
@@ -3864,6 +4109,14 @@ export async function runPipeline(o) {
         state.reviewGroup = a.reviewGroup ?? null;
         state.lastGreenLines = a.lastGreenLines;
         if (a.fixes?.length) { state.fixGroup = g; state.reviewItems = ctx.reviewItems = a.fixes; }
+        // A batch set aside together: back as one batch, its work committed again, every item reviewed again.
+        if (a.batch?.length) {
+          state.batch = { seq: [], groups: [], reviewed: [], folded: false };
+          const c = batchCommit(a.batch, `feat(items ${a.batch.join(', ')}): put back after being set aside\n\nPipeline run ${run} — provisional commit, delivered after its grouped review.`);
+          if (!c.ok) return pauseForLimit({ limit: 'item_commit', value: g, step: stepDefs.livrer, why: `le commit provisoire du lot ${a.batch.join(', ')} a échoué : ${String(c.err).split('\n')[0]}` });
+          state.batchReview = [...a.batch];
+          state.reviewGroup = null;
+        }
         if (a.limit === 'review') state.itemReviewBudgets = { ...(state.itemReviewBudgets || {}), [g]: (state.itemReviewRounds?.[g] || 0) + limits.reviewRounds };
         ctx.testPrint = testsNow();
         state.plan.splice(state.index, 0, ...a.prefix, '@loop');
@@ -3894,7 +4147,15 @@ export async function runPipeline(o) {
       return pauseForLimit({ limit: 'items_blocked', value: state.aside.length, step: null });
     }
     let step = stepDefs[id];
-    if (id === 'revue' && state.reviewGroup != null) {
+    if (id === 'revue' && state.batchReview?.length) {
+      // Grouped Review (lever groupReview): the items of the batch not reviewed yet, together.
+      const U = state.batchReview;
+      const its = readItems();
+      ctx.reviewScope = { group: U[0], batch: U, reviewed: [...(state.batch?.reviewed || [])], texts: Object.fromEntries(U.map(g => [g, groupText(g)])),
+        text: U.map(g => `${g} « ${groupText(g)} »`).join(' ; '), cases: U.flatMap(g => groupCases(its, g).map(i => i.n)), fallback: false };
+      step = { ...step, title: U.length > 1 ? `5 Revue groupée des items ${U.join(', ')}` : `5 Revue de l’item ${U[0]}` };
+      state.item = ctx.item = { n: U[0], text: groupText(U[0]) };
+    } else if (id === 'revue' && state.reviewGroup != null) {
       const g = state.reviewGroup;
       const its = readItems();
       const root = its.find(i => i.n === g);
@@ -3904,7 +4165,7 @@ export async function runPipeline(o) {
       state.item = ctx.item = { n: g, text: g === 0 ? 'travail d’avant la montée en complet' : root?.text || '' };
     } else ctx.reviewScope = null;
     // Defects accepted by the user (« accepter »): the Review is replaced by the acceptance.
-    if (id === 'revue' && (state.acceptReview || []).includes(state.reviewGroup != null ? state.reviewGroup : 'global')) {
+    if (id === 'revue' && !ctx.reviewScope?.batch && (state.acceptReview || []).includes(state.reviewGroup != null ? state.reviewGroup : 'global')) {
       const key = state.reviewGroup != null ? state.reviewGroup : 'global';
       acceptDefects(key, step);
       if (key !== 'global') {
@@ -4054,7 +4315,9 @@ export async function runPipeline(o) {
       let itemDiff = null;
       if (ctx.reviewScope) {
         const g = ctx.reviewScope.group;
-        const from = g === 0 ? git(cwd, ['rev-parse', `${base}^{tree}`]).out : state.groupTrees?.[g];
+        // A batch: everything since the last delivered commit (its items' provisional commits and work).
+        const from = ctx.reviewScope.batch ? git(cwd, ['rev-parse', `${state.lastDelivered || base}^{tree}`]).out
+          : g === 0 ? git(cwd, ['rev-parse', `${base}^{tree}`]).out : state.groupTrees?.[g];
         const now = from ? worktreeTree(cwd, path.join(runDir, 'item-review.idx')) : null;
         itemDiff = from && now ? treeDiff(cwd, from, now) : null;
         if (itemDiff == null) ctx.reviewScope.fallback = true;
@@ -4144,6 +4407,17 @@ export async function runPipeline(o) {
       if (step.checks?.document === 'modification' && r.before && r.after && isWalkSnapshot(r.before)) restoreDocAttempt(ctx, r.before, r.after);
       if (step.judge && r.before && r.after) restoreFiles(cwd, r.before, r.after, null);
       if (r.crit?.noRetry && delivering) git(cwd, ['reset', '-q']);
+      // Lever redGreen: the one-call step refused once → the item goes the classic
+      // way, 4a then 4b (its try is undone above); never a defect, never a pause.
+      if (step.id === 'rouge-vert' && ctx.item) {
+        const n = ctx.item.n;
+        state.redGreenFallback = { ...(state.redGreenFallback || {}), [n]: String(r.rec.why || '').slice(0, 500) };
+        state.plan.splice(state.index, 1, 'rouge', 'vert');
+        writeEvent({ type: 'system', subtype: 'pipeline_redgreen_fallback', pipeline: { run, step: step.id, item: n }, why: String(r.rec.why || '').slice(0, 1000),
+          text: `item ${n} : test + code en un appel refusé (${String(r.rec.why || '').split('\n')[0].slice(0, 200)}) — l’item passe par 4a puis 4b, comme avant` });
+        saveState();
+        continue steps;
+      }
       retryWhy = r.rec.why;
       // A step criterion not met (red suite, protected test touched…) is a
       // detected problem: reported now, even if the next try fixes it.
@@ -4188,7 +4462,20 @@ export async function runPipeline(o) {
         what: `la tâche demande ${state.pendingAuth.length > 1 ? 'des opérations irréversibles' : 'une opération irréversible'} que votre demande n’autorise pas en toutes lettres : ${state.pendingAuth.join(' ; ')}. Seul l’état avant a été relevé, rien n’a été lancé. Seule votre réponse « autoriser » la déclenche (jamais une réponse automatique).`,
         input: { extra: { operations: state.pendingAuth } } });
     }
-    if (step.id === 'rouge' || step.crit === 'rouge') ctx.testPrint = testsNow();
+    if (step.id === 'rouge' || step.crit === 'rouge' || step.id === 'rouge-vert') ctx.testPrint = testsNow();
+    // Lever extraTests: one test more than declared, same file — accepted, said, remembered for « @check ».
+    if (last.crit?.toleratedTests && ctx.item) {
+      state.toleratedTests = { ...(state.toleratedTests || {}), [ctx.item.n]: last.crit.toleratedTests };
+      writeEvent({ type: 'system', subtype: 'pipeline_item_tests_tolerated', pipeline: { run, step: step.id, item: ctx.item.n }, ...last.crit.toleratedTests,
+        text: Speed.toleratedText(last.crit.toleratedTests, ctx.item.n) });
+    }
+    // Lever redGreen: the red proven by the program, its output kept.
+    if (step.id === 'rouge-vert') {
+      if (last.crit?.red) writeEvent({ type: 'system', subtype: 'pipeline_red_proof', pipeline: { run, step: step.id, item: ctx.item?.n ?? null }, red: last.crit.red,
+        text: `rouge prouvé par le programme${ctx.item ? ` (item ${ctx.item.n})` : ''} : sans le code de l’étape, la suite échoue sur le nouveau test (sortie : ${last.crit.red.file}) ; avec, elle passe` });
+      const codeFiles = (last.rec.changed || []).filter(f => !isTestFile(f, cfg.testGlobs));
+      state.lastGreenLines = lineDelta(cwd, last.before, last.after, codeFiles);
+    }
     if (step.id === 'rouge' && ctx.testFix) { state.testFix = ctx.testFix = null; }
     // The correction edited the item's own tests: they are the protected print from now on.
     if (step.id === 'vert' && ctx.fixOwnTests?.length) ctx.testPrint = testsNow();
@@ -4243,7 +4530,7 @@ export async function runPipeline(o) {
         text: `${step.title} : ${left.length} point(s) restant(s) → retour à « ${stepDefs[step.loop.back[0]].title} » (tour ${state.reviewRounds}/${limits.reviewRounds})` });
       }
     }
-    if (step.id === 'rouge' && last.crit?.covered) {
+    if ((step.id === 'rouge' || step.id === 'rouge-vert') && last.crit?.covered) {
       // Q10 (A) : item déjà couvert — 4b et 4c de CET item sont sautées, en le disant.
       const why = `item déjà couvert par le code existant (DEJA_COUVERT déclaré ; seuls des tests ont changé, suite verte)`;
       for (const sid of ['vert', 'refactor']) {
@@ -4278,6 +4565,14 @@ export async function runPipeline(o) {
         state.fixGroup = null;
         if (state.itemReview && groupReady(readItems(), g)) { state.plan.splice(state.index + 1, 0, 'revue'); state.reviewGroup = g; }
       }
+      // Grouped Review: the corrections are committed provisionally, then their items reviewed again.
+      if (afterReview && state.batchFix?.length) {
+        const groups = state.batchFix;
+        state.batchFix = null;
+        const c = batchCommit(groups, `fix(items ${groups.join(', ')}): corrections asked by their review\n\nPipeline run ${run} — provisional commit, delivered after its grouped review.`);
+        if (!c.ok) return pauseForLimit({ limit: 'item_commit', value: groups[0], step: stepDefs.livrer, why: `le commit provisoire des corrections (items ${groups.join(', ')}) a échoué : ${String(c.err).split('\n')[0]}` });
+        batchMaybeReview(state.index + 1);
+      }
       // Garde-fou du léger (plan §4) : au-delà du périmètre, montée en complet
       // à l'étape 3 — annoncée, jamais en silence.
       if (state.mode === 'leger' && !afterReview && !state.escalated) {
@@ -4306,7 +4601,53 @@ export async function runPipeline(o) {
       await reportDefects(step, last.crit.review.items, 'revue');
       await reportDefects(step, last.crit.review.delivery, 'doc');
     }
-    if (step.id === 'revue' && ctx.reviewScope) {
+    if (step.id === 'revue' && ctx.reviewScope?.batch) {
+      // Grouped Review (lever groupReview, 0.143.0): each item of the batch is
+      // judged for itself — a defect sends back only its item (attached case or
+      // correction, rounds counted per item); the reviewed prefix is delivered.
+      const U = ctx.reviewScope.batch;
+      const b = state.batch || (state.batch = { seq: [], groups: [...U], reviewed: [], folded: false });
+      const problems = last.crit?.review?.verdict === 'problemes';
+      const by = last.crit?.review?.byItem || { [U[0]]: { items: last.crit?.review?.items || [], fixes: last.crit?.review?.delivery || [] } };
+      const fixesAll = [], fixGroups = [], over = [];
+      let md = readArtefact(ctx, 'tests.md') || '';
+      for (const g of U) {
+        let defects = problems ? by[g]?.items || [] : [], fixes = problems ? by[g]?.fixes || [] : [];
+        // « accepter » answered for this item (it was set aside on its review limit).
+        if ((state.acceptReview || []).includes(g)) { acceptDefects(g, step); defects = []; fixes = []; }
+        if (!defects.length && !fixes.length) {
+          if (!b.reviewed.includes(g)) b.reviewed.push(g);
+          writeEvent({ type: 'system', subtype: 'pipeline_item_reviewed', pipeline: { run, item: g }, batch: U, text: `✓ revue de ${groupLabel(g)} (relecture groupée) : rien à corriger` });
+          continue;
+        }
+        state.lastDefects = { ...(state.lastDefects || {}), [g]: [...defects, ...fixes] };
+        const rounds = state.itemReviewRounds?.[g] || 0;
+        const budget = state.itemReviewBudgets?.[g] || limits.reviewRounds;
+        if (rounds >= budget) { over.push({ g, list: [...defects, ...fixes] }); continue; }
+        state.itemReviewRounds = { ...(state.itemReviewRounds || {}), [g]: rounds + 1 };
+        if (defects.length) md = Speed.insertAfterStarted(md, g, defects);
+        if (fixes.length) { fixesAll.push(...fixes.map(f => `(item ${g}) ${f}`)); fixGroups.push(g); }
+        writeEvent({ type: 'system', subtype: 'pipeline_loop', pipeline: { run, from: 'revue', to: defects.length ? 'tdd' : 'vert', item: g, round: rounds + 1 }, batch: U,
+          text: `revue groupée, ${groupLabel(g)} : ${[defects.length && `${defects.length} problème(s) → case(s) rattachée(s) à cet item seulement`, fixes.length && `${fixes.length} constat(s) de documentation → correction avant toute livraison`].filter(Boolean).join(' ; ')} (tour de revue ${rounds + 1}/${budget} de cet item ; les autres items du lot ne sont pas repris)` });
+      }
+      fs.writeFileSync(path.join(artDir, 'tests.md'), md);
+      state.batchReview = null;
+      state.item = ctx.item = null;
+      ctx.reviewScope = null;
+      batchDeliver();
+      if (over.length) {
+        const { g, list } = over[0];
+        const why = `la revue de ${groupLabel(g)} (« ${groupText(g)} ») relève encore : ${list.slice(0, 5).join(' ; ')}`;
+        if (setAside(g, 'review', why, { batch: [...(state.batch?.groups || [g])].sort((x, y) => (x === g ? -1 : y === g ? 1 : 0)) })) { state.batch = null; continue; }
+        return pauseForLimit({ limit: 'review', value: state.itemReviewRounds?.[g] || 0, step, why });
+      }
+      if (fixesAll.length) {
+        ctx.reviewItems = state.reviewItems = fixesAll;
+        state.batchFix = fixGroups;
+        ctx.testPrint = testsNow();
+        state.plan.splice(state.index + 1, 0, 'vert');
+      }
+    } else if (step.id === 'revue' && ctx.reviewScope) {
       // Per-item Review (« c+d », part c): a defect becomes a case attached to
       // THIS item, the rounds are counted for THIS item, the others go on.
       const g = ctx.reviewScope.group;
@@ -4553,6 +4894,9 @@ export async function answerPausedRun({ logsDir, project, projectName, run, answ
     text = `D’accord. Ouvrez la page Models et choisissez un autre model pour l’étape « ${plainStep(last.id)} »${last.slot ? ` (case « ${last.slot} »${last.model ? `, actuellement ${last.model}` : ''})` : ''}. Le changement est pris en compte tout de suite, sans redémarrage.\n\nNEEDS_USER_INPUT: ${projectName} attend toujours : une fois le model changé dans la page Models, répondez « continuer » pour reprendre là où je me suis arrêté.`;
     paused = true;
   } else {
+    // Grouped Review (0.143.0): nothing unreviewed stays committed — the batch's
+    // provisional commits go back to the work tree, listed below with the rest.
+    unfoldBatch(workDir, state);
     const changed = git(workDir, ['status', '--porcelain']).out.split('\n').filter(l => l && !isLocalOnly(l.slice(3))).map(l => l.slice(3));
     // A folder outside git (the chef's): nothing can be said about leftovers.
     const inGit = git(workDir, ['rev-parse', '--is-inside-work-tree']).out === 'true';

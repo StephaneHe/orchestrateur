@@ -103,7 +103,7 @@ export function taskBrief(lines, { turns = 3, perText = 4000 } = {}) {
 }
 
 // TDD steps work on ONE item: their session is the item's, not the run's.
-const ITEM_STEPS = new Set(['rouge', 'vert', 'refactor']);
+const ITEM_STEPS = new Set(['rouge', 'vert', 'refactor', 'rouge-vert']);
 
 /** Session group of a pipeline step: per run (as before) + per item / reviewed group / delivery. */
 export function stepSessionGroup({ step, model = null, item = null, reviewGroup = null }) {
@@ -119,11 +119,11 @@ export function stepSessionGroup({ step, model = null, item = null, reviewGroup 
 const RULES_ALL = ['background', 'requirements', 'commands', 'todo', 'stale'];
 // Steps of the Development and Discussion pipelines, whose needs are known.
 // Any other step (catalogue pipelines) keeps every rule: never under-inform.
-const CALIBRATED_STEPS = new Set(['comprendre', 'concevoir', 'liste-tests', 'rouge', 'vert', 'refactor', 'revue', 'livrer', 'rechercher', 'repondre']);
+const CALIBRATED_STEPS = new Set(['comprendre', 'concevoir', 'liste-tests', 'rouge', 'vert', 'refactor', 'rouge-vert', 'revue', 'livrer', 'rechercher', 'repondre']);
 export function stepRules(stepId) {
   if (!stepId || !CALIBRATED_STEPS.has(stepId)) return RULES_ALL;
   const rules = ['background', 'commands'];
-  if (['liste-tests', 'rouge', 'vert', 'refactor', 'livrer'].includes(stepId)) rules.push('stale');
-  if (['liste-tests', 'rouge', 'livrer'].includes(stepId)) rules.push('requirements');
+  if (['liste-tests', 'rouge', 'vert', 'refactor', 'rouge-vert', 'livrer'].includes(stepId)) rules.push('stale');
+  if (['liste-tests', 'rouge', 'rouge-vert', 'livrer'].includes(stepId)) rules.push('requirements');
   return rules;
 }

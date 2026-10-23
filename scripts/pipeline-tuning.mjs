@@ -36,6 +36,13 @@ export const TUNING_LEVERS = {
   asideGroup: 'les items mis de côté dont le correctif ne s’applique plus font une seule pause groupée, pas une pause par item',
   // 0.141.0 (exploitation.mjs), « Je ferai passer ce genre de petites tâches d'exploitation par une voie plus légère ».
   exploitation: 'voie légère « Exploitation » : petite tâche d’exploitation en un seul tour de model, sans TDD, check-list vérifiée par le code (proposée au classement, préfixe /exploitation, --pipeline exploitation)',
+  // 0.143.0, « vitesse » phase (pipeline-speed.mjs), user's « ok » of 2026-10-23.
+  limits: 'limites d’une exécution réglables à chaud (tests par exécution, durée de travail ; défaut 25 tests, 150 min ; pipeline-enforce.mjs tuning-values)',
+  redGreen: 'test + code en un appel pour un petit item (≤ 2 tests annoncés) : le programme prouve le rouge (test qui échoue sans le code, sortie gardée) puis le vert',
+  groupReview: 'une relecture pour 2 à 3 items consécutifs (commit provisoire par item ; un défaut ne fait reprendre que son item)',
+  reuseContext: 'une exécution qui cite l’exécution précédente de la même demande reprend sa compréhension et son plan, sauf si le code a divergé',
+  targetedTests: 'tests ciblés à chaque étape (tests de l’item, tests qui importent ou nomment les fichiers modifiés, exigences comprises) ; suite complète seulement à Livrer',
+  extraTests: '« N tests annoncés, N+1 écrits » accepté (et noté) quand le test en plus est dans le même fichier que ceux de l’item',
 };
 export const LEVER_IDS = Object.keys(TUNING_LEVERS);
 
@@ -98,6 +105,56 @@ export function applyTuningChange(raw, { on, lever, project = null }) {
 
 export function describeTuning(raw) {
   return LEVER_IDS.map(k => `${k} : ${raw[k] === true ? 'tous les projets' : Array.isArray(raw[k]) ? raw[k].join(', ') : 'coupé'}`).join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Values of the « vitesse » levers (0.143.0): model-routing.json →
+// enforcement.tuningValues, written by `pipeline-enforce.mjs tuning-values`,
+// re-read at each dispatch and frozen in run.json.tuningValues when a run
+// starts. They only apply while their lever is on (limits, groupReview, redGreen).
+// ---------------------------------------------------------------------------
+export const VALUE_DEFAULTS = { items: 25, runMin: 150, reviewBatch: 3, redGreenMaxTests: 2 };
+export const VALUE_BOUNDS = { items: [1, 60], runMin: [10, 600], reviewBatch: [2, 3], redGreenMaxTests: [1, 2] };
+export const VALUE_LABELS = { items: 'tests (items) par exécution', runMin: 'minutes de travail par exécution', reviewBatch: 'items par relecture groupée', redGreenMaxTests: 'tests annoncés au plus pour test + code en un appel' };
+
+/** Only known keys, integers within their bounds; anything else dropped. */
+export function cleanValues(v) {
+  const out = {};
+  if (!v || typeof v !== 'object') return out;
+  for (const [k, [lo, hi]] of Object.entries(VALUE_BOUNDS)) {
+    const n = Number(v[k]);
+    if (Number.isInteger(n) && n >= lo && n <= hi) out[k] = n;
+  }
+  return out;
+}
+export function readTuningValues(root) {
+  let j = null;
+  try { j = JSON.parse(fs.readFileSync(path.join(root, 'model-routing.json'), 'utf8')); } catch { /* absent */ }
+  return { ...VALUE_DEFAULTS, ...cleanValues(j?.enforcement?.tuningValues) };
+}
+/** Values of a run: the frozen ones, else read now and frozen (a run started before 0.143.0: the defaults). */
+export function runTuningValues(state, root, { resumed = false } = {}) {
+  if (state.tuningValues && typeof state.tuningValues === 'object') return { ...VALUE_DEFAULTS, ...cleanValues(state.tuningValues) };
+  const v = resumed ? { ...VALUE_DEFAULTS } : readTuningValues(root);
+  state.tuningValues = v;
+  return v;
+}
+/** Parses `--items 25 --run-min 150 --review-batch 3 --red-green-max 2`; throws a French message. */
+export function parseValueArgs(argv) {
+  const flags = { '--items': 'items', '--run-min': 'runMin', '--review-batch': 'reviewBatch', '--red-green-max': 'redGreenMaxTests' };
+  const out = {};
+  for (let i = 0; i < argv.length; i++) {
+    const k = flags[argv[i]];
+    if (!k) throw new Error(`option inconnue : ${argv[i]} — connues : ${Object.keys(flags).join(', ')}, --reset`);
+    const n = Number(argv[++i]);
+    const [lo, hi] = VALUE_BOUNDS[k];
+    if (!Number.isInteger(n) || n < lo || n > hi) throw new Error(`${argv[i - 1]} : entier de ${lo} à ${hi} attendu (reçu « ${argv[i] ?? ''} »)`);
+    out[k] = n;
+  }
+  return out;
+}
+export function describeValues(v) {
+  return Object.keys(VALUE_DEFAULTS).map(k => `${k} = ${v[k]} (${VALUE_LABELS[k]}${v[k] === VALUE_DEFAULTS[k] ? ', défaut' : ''})`).join('\n');
 }
 
 // ---------------------------------------------------------------------------

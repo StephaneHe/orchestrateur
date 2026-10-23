@@ -11,6 +11,79 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.143.0] - 2026-10-23
+
+User's « ok » (2026-10-23) to the chef's proposal to speed up the pipelines,
+measured on six real full-Development runs of one project (304 model calls,
+319 min of model time, 27 refusals; 4b 119 min / 94 calls, 4a 106 min / 73
+calls, Review 41 min / 61 calls, Understand + Design replayed by every new run,
+almost every run stopped on « découper »: 15 tests or 90 min). Six levers in
+`scripts/pipeline-speed.mjs`, each behind its own switch of
+`pipeline-tuning.mjs`, off by default and frozen per run (`run.json.tuning`,
+`run.json.tuningValues`): off = 0.142.0 exactly.
+
+### Added
+
+- (server) Lever `limits`: the run limits are set hot —
+  `node scripts/pipeline-enforce.mjs tuning-values [--items N] [--run-min N]
+  [--review-batch N] [--red-green-max N] | --reset` (model-routing.json →
+  `enforcement.tuningValues`, re-read at each dispatch, frozen when a run
+  starts, reset by `off --all`). With the lever on: 25 tests and 150 min of
+  working time per run by default (instead of 15 / 90 min, which the
+  `ORCH_PIPE_*` variables still set when the lever is off).
+- (server) Lever `redGreen`: a small item (≤ `redGreenMaxTests` = 2 declared
+  tests) runs ONE step « 4ab Rouge puis Vert » (case of 4b): the model writes
+  the test, then the code. The program proves the red itself — the step's
+  production files put back as before the step, the suite must fail citing the
+  new test (output kept in `logs/runs/<run>/<key>.rouge.txt`) — then the green
+  with the code back. DEJA_COUVERT still allowed (proof checked). Refused once ⇒
+  the item goes the classic way, 4a then 4b (`pipeline_redgreen_fallback`), no
+  defect, no pause.
+- (server) Lever `groupReview`: one Review for up to `reviewBatch` (3) items.
+  Each item gets a provisional commit; the Review reads everything since the
+  last delivered commit and every finding names its item (`{"item", "text"}`,
+  refused otherwise). A defect sends back only its item (attached case,
+  inserted after the items already started, rounds counted per item); the
+  longest reviewed prefix of commits is delivered at once. A review limit sets
+  the item aside together with the items committed on top of it in the batch
+  (named), and « continuer » puts them back and reviews them together. Nothing
+  unreviewed stays committed: abandon, failure or `close-run.mjs` fold the
+  provisional commits back into the work tree (`unfoldBatch`).
+- (server) Lever `reuseContext`: a new full Development run whose request cites
+  the previous run of the same request (run identifier, never words) reuses its
+  `comprehension.md` and `plan.md` (with a note pointing to the current
+  request) — Understand and Design skipped, said — unless the code diverged
+  since that run ended (commits touching more than docs, versions, CHANGELOG or
+  the requirements registry): then they are redone, the reason said.
+- (server) Lever `targetedTests`: 4a, 4b, 4c and 4ab run only the item's tests
+  and the tests whose real import closure reaches, or whose text names, a file
+  changed since the last delivery (requirement tests included, flagged); a
+  changed file covered by no test, an unknown command or too many files ⇒ the
+  full suite, said. The full suite still runs at the start (precondition) and
+  at Livrer. Command: `targetedTestCommand` (with `{files}`) of
+  `.orchestrateur/pipeline.json`, else inferred for a `node … --test` script.
+- (server) Lever `extraTests`: « N tests declared, N+1 written » is accepted at
+  4a, 4ab and when the item is checked, when the extra test is in the same file
+  (`pipeline_item_tests_tolerated`, `tests.tolerated` on the checked item).
+- (server) `scripts/pipeline-speed-bench.mjs`: `extract` (read-only on a real
+  fleet, anonymised case file `tests/speed-bench-cases.json`) and `replay`
+  (real engine, fake claude, levers off then on; calls and suite runs counted,
+  time estimated from the measured step times). Measured on 4 real runs
+  (8–15 items): 220 → 106 model calls (−52 %), 39–40 → 2 full suite runs per
+  run, 203 → 159 estimated minutes (−22 %, a cautious estimate: a 4ab call
+  counts 4a + 4b minus one measured fixed cost of ~4 s, a grouped Review k
+  Reviews minus k−1 fixed costs); the 15-item run paused on « découper » with
+  the levers off and finished with them on.
+- Tests: `scripts/_test_pipeline_speed.mjs` (every lever off then on, frozen
+  per run, pure helpers, the CLI); fake claude: step « rouge-vert »
+  (`FAKE_PIPE_RG_NOFAIL`), grouped Review (`REVUE_ITEMS=`,
+  `FAKE_PIPE_REVIEW_UNNAMED`), `FAKE_PIPE_REVIEW_BASE` / `_DOC_BASE` for the bench.
+
+### Changed
+
+- (server) `context-policy.mjs`: step « rouge-vert » has its item's session and
+  the rules of 4a and 4b.
+
 ## [0.142.0] - 2026-10-23
 
 User decision (2026-10-23): « non. la non régression ne serait plus une

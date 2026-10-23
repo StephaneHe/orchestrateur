@@ -15,6 +15,9 @@
 //   node scripts/pipeline-enforce.mjs tuning          interrupteurs de la phase 0 des pipelines
 //   node scripts/pipeline-enforce.mjs tuning <levier|all> on|off [<projet>]
 //                                                     sans projet : tous les projets ; avec : ce projet
+//   node scripts/pipeline-enforce.mjs tuning-values [--items N] [--run-min N] [--review-batch N] [--red-green-max N] | --reset
+//                                                     valeurs des leviers « vitesse » (0.143.0) : limites (25 tests, 150 min),
+//                                                     relecture groupée (3 items), test + code en un appel (≤ 2 tests)
 //   node scripts/pipeline-enforce.mjs kg [off|shadow|assist]
 //                                                     index de connaissances (KG phase 0 b) ; off = rien ne tourne
 //   node scripts/pipeline-enforce.mjs kg <build|extract|ui> on|off
@@ -44,7 +47,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readEnforcement, writeEnforcement, ENGINE_PIPELINES } from './pipeline-engine.mjs';
-import { readTuning, applyTuningChange, describeTuning, readChefV3, writeChefV3 } from './pipeline-tuning.mjs';
+import { readTuning, applyTuningChange, describeTuning, readChefV3, writeChefV3, readTuningValues, parseValueArgs, describeValues } from './pipeline-tuning.mjs';
 import { readAlertSettings, writeAlertSettings, describeSettings as describeAlerts } from './chef-alerts.mjs';
 import { readSettings as readIdleRegression, writeSettings as writeIdleRegression, describeSettings as describeIdleRegression } from './idle-regression.mjs';
 import { readKgSettings, writeKgSettings, writeKgSwitch, KG_SWITCHES, MODES as KG_MODES } from './kg.mjs';
@@ -79,6 +82,21 @@ if (cmd === 'tuning') {
   try { tuning = applyTuningChange(readTuning(ROOT), { on: onOff === 'on', lever, project }); } catch (e) { console.error(e.message); process.exit(64); }
   writeEnforcement(ROOT, { projects: cur.projects, terminal: cur.terminal, chef: cur.chef, pipelines: cur.pipelines.length ? cur.pipelines : ENGINE_PIPELINES, tuning, by: `pipeline-enforce tuning ${lever} ${onOff}${project ? ` ${project}` : ''}` });
   console.log(describeTuning(readTuning(ROOT)));
+  process.exit(0);
+}
+// tuning-values (0.143.0): values of the « vitesse » levers, re-read at each
+// dispatch, frozen in run.json when a run starts; they apply only while their
+// lever is on (tuning limits|groupReview|redGreen on).
+if (cmd === 'tuning-values') {
+  const rest = process.argv.slice(3);
+  if (!rest.length) { console.log(describeValues(readTuningValues(ROOT))); process.exit(0); }
+  let values;
+  if (rest.length === 1 && rest[0] === '--reset') values = {};
+  else {
+    try { values = { ...readTuningValues(ROOT), ...parseValueArgs(rest) }; } catch (e) { console.error(e.message); process.exit(64); }
+  }
+  writeEnforcement(ROOT, { projects: cur.projects, terminal: cur.terminal, chef: cur.chef, pipelines: cur.pipelines.length ? cur.pipelines : ENGINE_PIPELINES, tuningValues: values, by: `pipeline-enforce tuning-values ${rest.join(' ')}` });
+  console.log(describeValues(readTuningValues(ROOT)));
   process.exit(0);
 }
 // kg (knowledge index, phase 0 b): off | shadow | assist, re-read at every call.
@@ -154,7 +172,7 @@ else {
   projects = cmd === 'on' ? [...projects, target] : projects.filter(p => p !== target);
 }
 const tuning = cmd === 'off' && target === '--all' ? {} : undefined;
-show(writeEnforcement(ROOT, { projects, terminal, chef, pipelines: cur.pipelines.length ? cur.pipelines : ENGINE_PIPELINES, tuning, by: `pipeline-enforce ${cmd} ${target}` }));
+show(writeEnforcement(ROOT, { projects, terminal, chef, pipelines: cur.pipelines.length ? cur.pipelines : ENGINE_PIPELINES, tuning, tuningValues: tuning, by: `pipeline-enforce ${cmd} ${target}` }));
 if (cmd === 'off' && target === '--all' && readKgSettings(ROOT).mode !== 'off') writeKgSettings(ROOT, { mode: 'off', by: 'pipeline-enforce off --all' });
 if (cmd === 'off' && target === '--all' && readAlertSettings(ROOT).enabled) writeAlertSettings(ROOT, { enabled: false, by: 'pipeline-enforce off --all' });
 if (cmd === 'off' && target === '--all' && readIdleRegression(ROOT).enabled) writeIdleRegression(ROOT, { enabled: false, by: 'pipeline-enforce off --all' });

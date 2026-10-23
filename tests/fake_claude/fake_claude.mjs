@@ -439,6 +439,10 @@ ${process.env.FAKE_CLAUDE_TOOL_OUTPUT}` : ''}` },
 //   FAKE_PIPE_HEADER=<k>[,…]     4a écrit l'en-tête « // Item 1 (test 1) » dans le test de l'item k ; la
 //                               revue le relève (hors_tdd) ; la correction réécrit l'en-tête du test
 //   FAKE_PIPE_REQ_ROW=1          4b de chaque item ajoute sa ligne au registre des exigences
+//   0.143.0 (vitesse) : « rouge-vert » écrit le test puis le code de l'item ; FAKE_PIPE_RG_NOFAIL=<k>[,…]
+//                               y écrit un test qui passe sans le code (preuve du rouge refusée) ;
+//                               « REVUE_ITEMS=1,2 » (relecture groupée) : un constat par item, {"item", "text"} ;
+//                               FAKE_PIPE_REVIEW_UNNAMED=1[:n] y ajoute un constat sans item
 //   « [FAKE_LONG_REPORT] » dans la demande : compte rendu final de plusieurs
 //                               paragraphes (nombre de tests au milieu, dernier
 //                               paragraphe de plus de 280 caractères, FIN-DU-RAPPORT)
@@ -539,6 +543,26 @@ function pipelineStep(text) {
       w(artefact, '# Rouge\n\nTest « pipe double » dans test/pipe.test.mjs : échoue, double() n’existe pas encore.\n');
       break;
     }
+    case 'rouge-vert': {
+      // 0.143.0 (lever redGreen): test then code in one call. FAKE_PIPE_RG_NOFAIL=<k>[,…]
+      // writes a test that already passes without the code (the red proof must refuse it).
+      const k = item(text);
+      if (String(process.env.FAKE_PIPE_COVERED || '').split(',').includes(String(k))) {
+        w(`test/pipe-${k}.test.mjs`, `import { test } from 'node:test';\nimport assert from 'node:assert';\nimport { id } from '../src/pipe.mjs';\ntest('pipe-${k} déjà couvert', () => {\n  assert.equal(id(${k}), ${k});\n});\n`);
+        w(artefact, `DEJA_COUVERT\n\n# Rouge + Vert\n\nid() de src/pipe.mjs assure déjà l'item ${k}. Le test passe d'emblée.\n`);
+        break;
+      }
+      const noFail = String(process.env.FAKE_PIPE_RG_NOFAIL || '').split(',').includes(String(k));
+      const [e, en] = String(process.env.FAKE_PIPE_ITEM_EXTRA_TESTS || '').split(':');
+      const extra = Number(e) > 0 && once(`extra${en ? `:${en}` : ''}`, 'extra') ? Number(e) : 0;
+      const one = (j) => noFail
+        ? `test('pipe item ${k}${j ? ` extra ${j}` : ''}', async () => {\n  const m = await import('../src/pipe.mjs');\n  assert.equal(m.id(${k}), ${k});\n});\n`
+        : `test('pipe item ${k}${j ? ` extra ${j}` : ''}', async () => {\n  const m = await import('../src/pipe-${k}.mjs');\n  assert.equal(m.f(2), ${2 * k});\n});\n`;
+      w(`test/pipe-${k}.test.mjs`, `import { test } from 'node:test';\nimport assert from 'node:assert';\n${Array.from({ length: extra + 1 }, (_, j) => one(j)).join('')}`);
+      w(`src/pipe-${k}.mjs`, `export const f = (x) => x * ${k};\n`);
+      w(artefact, `# Rouge + Vert\n\nTest « pipe item ${k} » (test/pipe-${k}.test.mjs) : échouait, src/pipe-${k}.mjs n’existait pas. Code : f(x) = ${k}x.\n`);
+      break;
+    }
     case 'vert': {
       const k = item(text);
       // 0.139.0: the review's finding on a test header — the correction rewrites it (allowed or not: the engine judges).
@@ -547,6 +571,13 @@ function pipelineStep(text) {
         const tf = path.join(cwd, 'test', `pipe-${hdr[1]}.test.mjs`);
         if (fs.existsSync(tf)) fs.writeFileSync(tf, fs.readFileSync(tf, 'utf8').replace(/^\/\/ Item \d+ /, `// Item ${hdr[1]} `));
         w(artefact, `# Vert\n\nEn-tête de test/pipe-${hdr[1]}.test.mjs corrigé.\n`);
+        break;
+      }
+      // Bench (0.143.0): a documentation finding (« README : documenter … ») is fixed in README.md.
+      const docFix = process.env.FAKE_PIPE_REVIEW_DOC_BASE && /CORRIGER les problèmes/.test(text) &&[...text.matchAll(/README : documenter le comportement de l’item (\d+)/g)].map(m => m[1]);
+      if (docFix?.length) {
+        fs.appendFileSync(path.join(cwd, 'README.md'), docFix.map(n => `- item ${n} : documenté\n`).join(''));
+        w(artefact, `# Vert\n\nREADME.md : comportement des items ${docFix.join(', ')} documenté.\n`);
         break;
       }
       if (k) {
@@ -595,6 +626,45 @@ function pipelineStep(text) {
       // (item reviewed + the diff it was given); FAKE_PIPE_REVIEW_ITEM=<k>[:n][,…]
       // reports one defect when reviewing item k (the n first times).
       const rItem = (/^REVUE_ITEM=(\d+)$/m.exec(text) || [])[1];
+      // 0.143.0 (lever groupReview): one review for several items (« REVUE_ITEMS=1,2,3 »);
+      // every finding names its item; same FAKE_PIPE_REVIEW_ITEM / _DOC_ITEM knobs per item.
+      const batch = (/^REVUE_ITEMS=([\d,]+)$/m.exec(text) || [])[1];
+      // Bench (0.143.0): FAKE_PIPE_REVIEW_BASE / _DOC_BASE=<b>:<n>[,…] target the b-th item of the
+      // ORIGINAL list (« multiplier par b+1 »), whatever its number after attached cases.
+      const baseSpec = (v) => String(v || '').split(',').filter(Boolean).map(s => s.split(':'));
+      if (process.env.FAKE_PIPE_REVIEW_BASE || process.env.FAKE_PIPE_REVIEW_DOC_BASE) {
+        const reviewed = batch
+          ? [...text.matchAll(/^- item (\d+) : « [^\n]*?multiplier par (\d+)/gm)].map(m => ({ g: Number(m[1]), b: Number(m[2]) - 1 }))
+          : [...text.matchAll(/REVUE de l’item (\d+)[^\n]*?multiplier par (\d+)/g)].map(m => ({ g: Number(m[1]), b: Number(m[2]) - 1 }));
+        const items = [], hors = [];
+        for (const { g: gi, b } of reviewed) {
+          const hit = baseSpec(process.env.FAKE_PIPE_REVIEW_BASE).find(([x]) => Number(x) === b);
+          if (hit && once(`base${b}:${hit[1] || 1}`, `base${b}`)) items.push({ item: gi, text: `(tests: 1) défaut relevé sur l’item ${gi}` });
+          const doc = baseSpec(process.env.FAKE_PIPE_REVIEW_DOC_BASE).find(([x]) => Number(x) === b);
+          if (doc && once(`basedoc${b}:${doc[1] || 1}`, `basedoc${b}`)) hors.push({ item: gi, text: `README : documenter le comportement de l’item ${gi}` });
+        }
+        const flat = (l) => (batch ? l : l.map(x => x.text));
+        w(artefact, JSON.stringify(items.length || hors.length ? { verdict: 'problèmes', items: flat(items), hors_tdd: flat(hors) } : { verdict: 'ok', items: [] }));
+        break;
+      }
+      if (batch) {
+        const ks = batch.split(',');
+        if (process.env.FAKE_PIPE_REVIEW_LOG) {
+          let diff = ''; try { diff = fs.readFileSync(path.join(path.dirname(artefact), 'diff.patch'), 'utf8'); } catch {}
+          fs.appendFileSync(process.env.FAKE_PIPE_REVIEW_LOG, JSON.stringify({ item: null, items: ks.map(Number), diff }) + '\n');
+        }
+        const items = [], hors = [];
+        for (const k of ks) {
+          const hit = String(process.env.FAKE_PIPE_REVIEW_ITEM || '').split(',').filter(Boolean).map(s => s.split(':')).find(([x]) => x === k);
+          if (hit && once(`item${k}${hit[1] ? `:${hit[1]}` : ''}`, `item${k}`)) items.push({ item: Number(k), text: `(tests: 1) défaut relevé sur l’item ${k}` });
+          const doc = String(process.env.FAKE_PIPE_REVIEW_DOC_ITEM || '').split(',').filter(Boolean).map(s => s.split(':')).find(([x]) => x === k);
+          if (doc && once(`doc${k}${doc[1] ? `:${doc[1]}` : ''}`, `doc${k}`)) hors.push({ item: Number(k), text: `README : documenter le comportement de l’item ${k}` });
+        }
+        // FAKE_PIPE_REVIEW_UNNAMED=1[:n]: a finding without its item (refused for a batch of several).
+        if (once(process.env.FAKE_PIPE_REVIEW_UNNAMED && `u:${String(process.env.FAKE_PIPE_REVIEW_UNNAMED).split(':')[1] || ''}`.replace(/:$/, ''), 'u')) items.push('(tests: 1) défaut sans item');
+        w(artefact, JSON.stringify(items.length || hors.length ? { verdict: 'problèmes', items, hors_tdd: hors } : { verdict: 'ok', items: [] }));
+        break;
+      }
       if (process.env.FAKE_PIPE_REVIEW_LOG) {
         let diff = ''; try { diff = fs.readFileSync(path.join(path.dirname(artefact), 'diff.patch'), 'utf8'); } catch {}
         fs.appendFileSync(process.env.FAKE_PIPE_REVIEW_LOG, JSON.stringify({ item: rItem == null ? null : Number(rItem), diff }) + '\n');

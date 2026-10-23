@@ -735,7 +735,10 @@
         "scripts/document-check.mjs",
         "scripts/pipeline-corpus-classify.mjs",
         "scripts/pipeline-discussion-bench.mjs",
-        "tests/pipeline-corpus/cases.json"
+        "tests/pipeline-corpus/cases.json",
+        "scripts/pipeline-speed.mjs",
+        "scripts/pipeline-speed-bench.mjs",
+        "tests/speed-bench-cases.json"
       ],
       "suites": [
         "_test_pipeline_catalog.mjs",
@@ -784,7 +787,8 @@
         "_test_generic_document.mjs",
         "_test_generic_modes.mjs",
         "_test_exploitation.mjs",
-        "_test_pipeline_corpus.mjs"
+        "_test_pipeline_corpus.mjs",
+        "_test_pipeline_speed.mjs"
       ],
       "uses": [
         {
@@ -833,6 +837,7 @@
             "_test_pipeline_media.mjs",
             "_test_pipeline_observe.mjs",
             "_test_pipeline_onboard.mjs",
+            "_test_pipeline_speed.mjs",
             "_test_presenter_artefact.mjs",
             "_test_release_prebump.mjs",
             "_test_resume_clears_question.mjs",
@@ -856,7 +861,8 @@
             "_test_dev_instance_pipelines.mjs",
             "_test_pipeline_catalog.mjs",
             "_test_pipeline_entries.mjs",
-            "_test_pipeline_onboard.mjs"
+            "_test_pipeline_onboard.mjs",
+            "_test_pipeline_speed.mjs"
           ]
         },
         {
@@ -894,6 +900,7 @@
             "_test_pipeline_media.mjs",
             "_test_pipeline_observe.mjs",
             "_test_pipeline_onboard.mjs",
+            "_test_pipeline_speed.mjs",
             "_test_presenter_artefact.mjs",
             "_test_release_prebump.mjs",
             "_test_resume_clears_question.mjs",
@@ -952,6 +959,7 @@
             "_test_pipeline_gates.mjs",
             "_test_pipeline_media.mjs",
             "_test_pipeline_observe.mjs",
+            "_test_pipeline_speed.mjs",
             "_test_presenter_artefact.mjs",
             "_test_release_prebump.mjs",
             "_test_resume_clears_question.mjs",
@@ -1003,6 +1011,7 @@
             "_test_pipeline_media.mjs",
             "_test_pipeline_observe.mjs",
             "_test_pipeline_onboard.mjs",
+            "_test_pipeline_speed.mjs",
             "_test_presenter_artefact.mjs",
             "_test_release_prebump.mjs",
             "_test_resume_clears_question.mjs",

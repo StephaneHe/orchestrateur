@@ -28,7 +28,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { RUN_RE, reclaimOrphanedRun } from './pipeline-engine.mjs';
+import { RUN_RE, reclaimOrphanedRun, unfoldBatch } from './pipeline-engine.mjs';
 import { writeFileAtomic } from './atomic-file.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -66,6 +66,13 @@ if (Number(state.lane?.k) >= 1) {
   process.exit(64);
 }
 
+// Grouped Review (0.143.0): unreviewed provisional commits of the run go back to the work tree.
+let unfolded = false;
+if (state.batch?.seq?.length) {
+  let proj = null;
+  try { proj = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8')).projects.find(p => p.name === state.project); } catch {}
+  unfolded = unfoldBatch(proj?.path, state);
+}
 const at = new Date().toISOString();
 const question = state.question || null;
 state.status = 'abandoned';
@@ -80,7 +87,7 @@ const log = path.join(LOGS, `${state.project}.jsonl`);
 const ev = (e) => JSON.stringify({ ...e, timestamp: at });
 fs.appendFileSync(log, [
   ev({ type: 'system', subtype: 'pipeline_summary', pipeline: { run, pipeline: state.pipeline, mode: state.mode, status: 'abandoned' }, closed: state.closed,
-    text: `${what} — rien n'est annulé dans le projet, ce qui est déjà livré reste livré` }),
+    text: `${what} — rien n'est annulé dans le projet, ce qui est déjà livré reste livré${unfolded ? ' ; les commits provisoires non relus (relecture groupée) sont redevenus des modifications non commitées' : ''}` }),
   ev({ type: 'notification', subtype: 'question_resolved', question, note: what, by, run }),
 ].join('\n') + '\n');
 
