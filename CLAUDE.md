@@ -3244,6 +3244,11 @@ intelligent ».
   `OPTION_KEYS`, cas dans `_test_smart_pause.mjs`.
 - Réponse automatique : cause, choix et recommandation dans le prompt ;
   `normalizeAnswer` refuse une réponse hors du menu.
+- **Le motif d'une limite de budget cite le travail** (0.139.1, item citant
+  « Voix indisponible » pris pour une panne) : `BUDGET_LIMITS` (`items`,
+  `duration`, `review`, `item_tests`) ne lisent une erreur du fournisseur que
+  dans `providerError` passé à part (`providerText`) ; ailleurs, le texte entre
+  « » est ignoré par ce détecteur. Recette : `_test_limit_pause_cause.mjs`.
 - Rejeu des vraies pauses (lecture seule) : `node scripts/pause-replay.mjs
   --logs <dossier> [--md <fichier>]` (sortie hors dépôt : noms de projets).
 - Recette : `_test_smart_pause.mjs` (vrais cas `tests/pause-cases.json`,

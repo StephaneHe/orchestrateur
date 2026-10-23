@@ -163,6 +163,20 @@ export function readProviderError(text) {
 }
 function lineAt(t, i) { return t.slice(t.lastIndexOf('\n', i) + 1).split('\n')[0]; }
 
+// Budget limits: their reason is a message of the orchestrator itself, which
+// quotes the work (item text, review defects). « Voix indisponible » in an item
+// is not a provider outage (run of 2026-10-23): only a real provider error,
+// passed apart, is read for them.
+export const BUDGET_LIMITS = Object.freeze(['items', 'duration', 'review', 'item_tests']);
+const QUOTED_RE = /«[^»]*»?/g;
+
+/** The text where a provider error may be read: never the work quoted in the reason. */
+export function providerText(input = {}) {
+  const why = BUDGET_LIMITS.includes(input.limit) ? '' : String(input.why || '').replace(QUOTED_RE, '« … »');
+  const apart = input.providerError && input.providerError !== input.why ? String(input.providerError) : '';
+  return [apart, why].filter(Boolean).join('\n');
+}
+
 /** The same refusal twice in a row (numbers and hashes aside). */
 export function isRepeated(attempts) {
   const sig = (w) => STRIP(firstLine(w)).replace(/[0-9a-f]{7,}/g, '#').replace(/\d+/g, 'n').slice(0, 160);
@@ -268,18 +282,19 @@ export function diagnosePause(input = {}) {
   if (Array.isArray(input.changed)) ev.push({ source: 'diff', text: input.changed.length ? `${input.changed.length} fichier(s) modifié(s) : ${input.changed.slice(0, 5).join(', ')}` : 'aucun fichier modifié' });
 
   // 4. Provider error.
-  const p = readProviderError([input.providerError, why].filter(Boolean).join('\n'));
+  const p = readProviderError(providerText(input));
   if (p) {
     ev.push({ source: 'fournisseur', text: p.line });
     const mdl = input.model ? `le model ${input.model}` : 'le model';
+    const ofMdl = input.model ? `du model ${input.model}` : 'du model';
     if (p.kind === 'env_auth') return out('env_auth', `La connexion de Claude a expiré (OAuth) : ${p.line}. Plus aucun model Claude ne peut répondre tant qu’elle n’est pas renouvelée.`);
-    if (p.kind === 'refusal') return out('refusal', `Le fournisseur de ${mdl} refuse la demande (politique d’usage) : ${p.line}.`, { proof: { kind: 'refusal', text: p.line } });
+    if (p.kind === 'refusal') return out('refusal', `Le fournisseur ${ofMdl} refuse la demande (politique d’usage) : ${p.line}.`, { proof: { kind: 'refusal', text: p.line } });
     // A usage limit is not the model's fault: it comes back by itself (no proof, no « changer le model »).
     if (p.kind === 'limit') return out('limit', `${cap(mdl)} a atteint sa limite d’utilisation${p.until ? ` (jusqu’à ${p.until})` : ''} : ${p.line}.`, { until: p.until });
     if (p.kind === 'model_unknown') return out('model_unknown', `${cap(mdl)} n’existe pas ou n’est pas servi par son fournisseur : ${p.line}.`, { proof: { kind: 'unknown-model', text: p.line } });
     if (p.kind === 'provider_transient') {
       if (input.limit === 'launch') return out('launch', `${cap(mdl)} n’a rien produit ${input.extra?.failures || 'plusieurs'} fois de suite malgré des attentes de plus en plus longues : ${p.line}.`, proof ? { proof } : {});
-      return out('provider_transient', `Le fournisseur de ${mdl} a une panne passagère : ${p.line}.`);
+      return out('provider_transient', `Le fournisseur ${ofMdl} a une panne passagère : ${p.line}.`);
     }
   }
   if (input.limit === 'launch') return out('launch', `${cap(input.model ? `le model ${input.model}` : 'le model')} n’a rien produit ${input.extra?.failures || 'plusieurs'} fois de suite : ${clean(motif || 'sortie sans résultat', 200)}.`, proof ? { proof } : {});
@@ -322,7 +337,7 @@ function withRepeat(d, input) {
 export function modelProof(input = {}) {
   if (input.modelTest && input.modelTest.ok === false && (!input.model || input.modelTest.model === input.model)) return { kind: 'model-test', text: `le test du model ${input.modelTest.model || ''} a échoué : ${clean(input.modelTest.why, 160)}` };
   if (input.succeededElsewhere) return { kind: 'succeeded-elsewhere', text: clean(input.succeededElsewhere, 200) };
-  const p = readProviderError([input.providerError, input.why].filter(Boolean).join('\n'));
+  const p = readProviderError(providerText(input));
   if (p?.kind === 'model_unknown') return { kind: 'unknown-model', text: p.line };
   if (p?.kind === 'refusal') return { kind: 'refusal', text: p.line };
   return null;

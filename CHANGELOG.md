@@ -11,6 +11,30 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.139.1] - 2026-10-23
+
+Defect seen in production (2026-10-23, a complete Development run, after
+« prolonger »): the 15-test limit was reached, the next item quoted the
+screen text « Voix indisponible », and the pause read « indisponible » as a
+provider outage. User rule (2026-10-22): « arrête de poser des questions de
+découpage. tu sais comment est organisé le process mieux que moi ».
+
+### Fixed
+- (server) A budget limit (`items`, `duration`, `review`, `item_tests`) is
+  never diagnosed as a provider error from its own reason, which quotes the
+  work (`BUDGET_LIMITS`, `providerText` of `pause-diagnosis.mjs`); only a
+  provider error passed apart is read. For other pauses, the work quoted
+  between « » is ignored by the provider detector. The 15-test limit is again
+  « too_big »: « découper » is offered, « continuer » no longer loops on the
+  same limit, and the pause goes to the chef as a process pause (lever
+  `chefPauses`) instead of asking the user.
+- (server) « Le fournisseur du model … », never « de le model ».
+
+### Added
+- `scripts/_test_limit_pause_cause.mjs`: replay of the real pause, every
+  budget limit quoting outage-like words, real dispatch + engine end to end
+  (`FAKE_PIPE_ITEM_SUFFIX` of the fake claude).
+
 ## [0.139.0] - 2026-10-23
 
 Chef's finding (2026-10-23) on six full-Development runs of one project

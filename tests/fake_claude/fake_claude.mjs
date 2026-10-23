@@ -424,6 +424,7 @@ ${process.env.FAKE_CLAUDE_TOOL_OUTPUT}` : ''}` },
 //   FAKE_PIPE_NOCLAIM=1         … mais sans écrire DEJA_COUVERT
 //   FAKE_PIPE_ITEM_EXTRA_TESTS=<e>[:n]  4a d'un item écrit e tests de plus (n fois)
 //   FAKE_PIPE_DECL=two          chaque case de tests.md déclare « (tests: 2) »
+//   FAKE_PIPE_ITEM_SUFFIX=<t>   texte ajouté à chaque case de tests.md
 //   FAKE_CLAUDE_DUMP_PROMPT=<f>  ajoute chaque prompt reçu à ce fichier (JSON par ligne)
 //   FAKE_CLAUDE_REPLY=<texte>    réponse finale imposée (ex. un paragraphe en anglais)
 //   FAKE_CLAUDE_TRANSLATION=<t>  réponse d'une demande « [REFORMULATION] » (défaut : un texte français)
@@ -496,7 +497,9 @@ function pipelineStep(text) {
       // FAKE_PIPE_DECL=two declares 2 tests on every case (0.62.0).
       const two = process.env.FAKE_PIPE_DECL === 'two';
       const decl = (i) => (i === 0 && noDecl ? '' : `(tests: ${i === 0 && over ? cap + 1 : two ? 2 : 1}) `);
-      w(artefact, `# Liste de tests\n\n${head}${Array.from({ length: n }, (_, i) => `- [ ] ${decl(i)}multiplier par ${i + 2}`).join('\n')}\n`);
+      // FAKE_PIPE_ITEM_SUFFIX: appended to every case (0.139.1: an item quoting « Voix indisponible »).
+      const suffix = process.env.FAKE_PIPE_ITEM_SUFFIX || '';
+      w(artefact, `# Liste de tests\n\n${head}${Array.from({ length: n }, (_, i) => `- [ ] ${decl(i)}multiplier par ${i + 2}${suffix}`).join('\n')}\n`);
       break;
     }
     case 'rouge': {
