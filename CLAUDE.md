@@ -772,6 +772,68 @@ seul status n'est pas une source de bug. »
 - Recettes : `_test_regression_live.mjs`, `_test_config_state_independence.mjs`,
   HTTP et navigateur `regression-live`.
 
+## Non-régression complète a posteriori, pendant l'inactivité (0.142.0)
+
+Décision utilisateur (2026-10-23) : « non. la non régression ne serait plus une
+condition pour la mise en prod. la.mise en prod ne dépend plus que des tests
+unitaires et les non régression ne servent plus qu'à posteriori. Les non
+régressions et corrections ne sont lancées que pendant les heures
+d'inactivité » (idée : « ne faire les tests de non régression qu'en dehors des
+sprints de dev. mesures un laps de temps d'au moins une demi heure avant
+d'autoriser un lancement de non régression »).
+
+- **Interrupteur** `idleRegression` de `model-routing.json` : `node
+  scripts/pipeline-enforce.mjs idle-regression on|off [<projet>] [--idle-min
+  N]` (défaut 30 min), relu à chaque balayage et à chaque dispatch, **figé dans
+  `run.json.idleRegression`** au départ d'une exécution ; coupé par défaut ;
+  coupé = les règles des sections précédentes, exactement ; `off --all` le
+  coupe. Pour la dev : allumé pour `orchestrateur` ou `orchestrateur-dev`.
+- **Allumé — pendant une tâche** : seulement les tests de la tâche, ceux qui
+  couvrent les fichiers modifiés (tests d'exigence compris, toujours
+  intouchables) et la suite rapide. `regression.mjs --targeted` ne bascule
+  **jamais** sur la complète (`--no-full`, ou `ORCH_UNIT_DELIVERY=1` posé par
+  `dispatch.mjs` dans le tour et par le moteur pour la commande de test) : un
+  fichier non couvert ou un changement de dépendances est listé « reporté a
+  posteriori » (`selection.deferred`). Consigne des musiciens :
+  `requirementsRuleText(true)` (plus de « avant / après »). **Plus de tag
+  « avant » ni de complète « avant / après » pour ce projet non plus.**
+- **Livraison** : le hook `pre-commit` exige toujours un rapport vert sur
+  l'arbre exact (une ciblée suffit, comme avant). **Mise en prod** :
+  `prod-jump.mjs` (interrupteur lu dans la prod, jamais écrit, ou `--unit`)
+  accepte un rapport vert de tout mode sur l'arbre du tag (pas un essai
+  `report-idle-*` partiel) ; l'état des complètes a posteriori est affiché,
+  jamais une condition. `delivery-gate.mjs prod-check <ref> --unit`. Le point
+  de retour `prod-before-…` reste.
+- **Complète a posteriori** (`scripts/idle-regression.mjs`, balayage du serveur
+  toutes les 60 s, `ORCH_IDLE_REGRESSION_SWEEP_MS`) : lancée par le
+  **programme**, jamais par un musicien, seulement si l'utilisateur est inactif
+  depuis le seuil (`logs/user-activity.json` : gestes et présence du dashboard
+  et de l'app) ET qu'aucun musicien n'est en cours sur le projet ; une à la fois
+  pour la flotte ; arrêtée (arbre du processus) dès que l'un ou l'autre change,
+  ou si l'interrupteur est coupé, puis relancée dans une fenêtre suivante. Elle
+  porte sur la tête de la copie, depuis la dernière complète verte. Cibles :
+  projets en service et instances de dev ; **jamais une prod** (`devOf`,
+  instance « prod », puis `prod-guard.mjs` dans le runner) : l'orchestrateur
+  est testé dans orchestrateur-dev. Déclaration dans
+  `.orchestrateur/pipeline.json` → `idleRegression {full, bisect, inPlace,
+  timeoutMin}` (`{ref}`, `{report}`, `{suites}`) ; sans elle, la
+  `testCommand` dans un worktree détaché du commit (dépendances liées).
+  Runner détaché `scripts/idle-regression-runner.mjs` (jamais importé).
+- **Rouge** : recherche dichotomique du commit fautif entre la dernière verte
+  et la rouge (seulement les suites KO, `regression.mjs --ref <c>
+  --only-suites a,b`), alerte au chef (type `posteriori` de `chef-alerts.mjs`
+  si chefAlerts est allumé, sinon ticket direct), puis la **correction**
+  (voie Incident, `--source idle-regression`) lancée vers le musicien du projet
+  pendant l'inactivité, une fois ; tout de suite seulement à la demande :
+  `node scripts/idle-regression.mjs fix <projet> --now`. Les essais du
+  programme ne sont pas signalés comme « non-régression KO ».
+- État : `logs/idle-regression.json` (ce module seul l'écrit), journal
+  `logs/idle-regression.ndjson`, sorties `logs/idle-regression/<projet>/`.
+  Lecture : `node scripts/idle-regression.mjs status`. Redémarrage nécessaire
+  pour le balayage ; `dispatch.mjs`, le moteur et `prod-jump.mjs` sont actifs
+  tout de suite.
+- Recette : `_test_idle_regression.mjs`.
+
 ## Un test périmé s'arrête aussitôt (0.94.0)
 
 Demande utilisateur (2026-10-14) : « si un test est detecte comme inutile, on

@@ -87,6 +87,17 @@ when.
      and every expected suite and stage present — production clean, no turn
      running, fast-forward possible) and prints the plan ;
    - push `dev` and the tag to `origin`, with the user's authorisation.
+
+   **With the idle-time policy on** (0.142.0, `node scripts/pipeline-enforce.mjs
+   idle-regression on`, user decision of 2026-10-23: « la mise en prod ne
+   dépend plus que des tests unitaires et les non régression ne servent plus
+   qu'à posteriori »): no full nor perimeter run is required. `prod-jump.mjs`
+   (switch read in the production's `model-routing.json`, or `--unit`) accepts
+   the green report of the task's tests on the tag's tree — the delivery
+   commit's own targeted report — and prints the state of the full runs after
+   the fact (`scripts/idle-regression.mjs`: launched by the program in
+   orchestrateur-dev while the user is idle, never in production). The
+   `prod-before-vX.Y.Z` tag and the way back are unchanged.
 2. In `I:\orchestrateur`, when **no orchestrator turn runs**
    (`node scripts/fleet-status.mjs`, no `logs/orchestrateur.turnlock`, empty
    queue). The scripts are read live by every turn of the fleet.

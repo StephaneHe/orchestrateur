@@ -55,6 +55,7 @@ import { groupOf, groupCases, groupReady, insertAttachedCases, worktreeTree, tre
 import { foldTo, commitWork, itemCommitMessage, setAsideWork, reapplyWork, head as headOf } from './item-delivery.mjs';
 import { readFragments } from './lanes.mjs';
 import { cleanTuning, runTuning, readTuning, tuningFor } from './pipeline-tuning.mjs';
+import { runIdleRegression } from './idle-regression.mjs';
 import { judgeCitedPaths, observedInTurn, toolUsesInTurn } from './cited-paths.mjs';
 import * as Ops from './typed-operations.mjs';
 import * as Files from './files-check.mjs';
@@ -3044,6 +3045,10 @@ export async function runPipeline(o) {
     lane: state.lane?.k >= 1 ? { ...state.lane, dir: cwd, main: project.path, fragment: laneFragmentPath(state.lane.task) } : null };
   // Phase 0 switches, frozen in run.json when the run starts (pipeline-tuning.mjs).
   ctx.tuning = runTuning(state, root, projectName, { resumed: !!o.resumeRun });
+  // 0.142.0 (idle-regression.mjs), frozen in run.json at the start: the test
+  // command's targeted run never falls back to the full one (done later, while idle).
+  ctx.idleRegression = runIdleRegression(state, root, [projectName, project?.devOf].filter(Boolean), { resumed: !!o.resumeRun });
+  if (ctx.idleRegression) testEnv.ORCH_UNIT_DELIVERY = '1'; else delete testEnv.ORCH_UNIT_DELIVERY;
   // Exploitation (0.141.0): the operations the user authorized by « autoriser » at the pause.
   ctx.exploitAuthorized = pipeline === Exploit.EXPLOIT_PIPELINE ? (state.authorizedOps || []).filter(x => typeof x === 'string') : [];
   saveState();

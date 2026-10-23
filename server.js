@@ -69,6 +69,7 @@ import { laneDir as regressionLaneDir, HARD_CAP as LANES_HARD_CAP } from './scri
 import { queueHoldPolicy, holdReportDue, holdReport } from './scripts/queue-hold.mjs';
 import { chefAnswerRelay, unappliedChefAnswers, unappliedText } from './scripts/chef-relay.mjs';
 import * as ChefAlerts from './scripts/chef-alerts.mjs';
+import * as IdleRegression from './scripts/idle-regression.mjs';
 // Registre /downloads relu à chaud depuis downloads.json (0.23.0).
 import { createDownloadsRegistry, VERSION_NAME_RE } from './scripts/downloads-registry.mjs';
 import { trustWorkspace } from './scripts/workspace-trust.mjs';
@@ -4442,6 +4443,7 @@ function chefAlertsCollect(settings) {
     ...ChefAlerts.regressionAlerts({ dirs, since: settings.since, busy }),
     ...ChefAlerts.pauseAlerts({ runsDir: path.join(LOGS_DIR, 'runs'), since: settings.since, conductor }),
     ...ChefAlerts.stallAlerts({ snapshots: musicians.map(name => ({ name, snap: snapOf(name) })), stallMin: settings.stallMin, excluded: [...chefNames] }),
+    ...IdleRegression.posterioriAlerts({ logsDir: LOGS_DIR, since: settings.since }),
   ];
 }
 function chefAlertsBusy() {
@@ -4462,6 +4464,46 @@ function sweepChefAlerts() {
   } catch (e) { debugLog(`[chef-alerts] balayage : ${e.message}`); }
 }
 setInterval(sweepChefAlerts, CHEF_ALERTS_SWEEP_MS).unref?.();
+
+// 0.142.0: the full non-regression AFTER the fact, launched by the program
+// during the user's idle hours only (scripts/idle-regression.mjs). Switch
+// idleRegression in model-routing.json (off by default: nothing is read).
+const IDLE_REGRESSION_SWEEP_MS = Number(process.env.ORCH_IDLE_REGRESSION_SWEEP_MS) || 60_000;
+const IDLE_REGRESSION_BOOT_AT = Date.now();
+function idleRegressionBusy(name) {
+  try {
+    const s = scanFleetMember(name, LOGS_DIR);
+    return !!s && (s.logState === 'live' || s.logState === 'think' || s.state === 'live' || s.state === 'think' || !!s.lingering);
+  } catch { return true; }
+}
+function sweepIdleRegression() {
+  try {
+    let enf = { projects: [] };
+    try { enf = readEnforcement(__dirname) || enf; } catch { /* unreadable: no project in service */ }
+    IdleRegression.sweep({
+      logsDir: LOGS_DIR, now: Date.now(), bootAt: IDLE_REGRESSION_BOOT_AT, log: (m) => debugLog(m),
+      settings: () => IdleRegression.readSettings(__dirname),
+      lastActivityAt: () => { try { return AutoAnswer.readActivity(LOGS_DIR)?.at || 0; } catch { return 0; } },
+      targets: (settings) => IdleRegression.targetsOf({ projects: config.projects, inService: enf.projects || [], conductor: conductorName(), settings }),
+      busy: idleRegressionBusy,
+      head: IdleRegression.gitHead, revList: IdleRegression.gitRevList, subject: IdleRegression.gitSubject,
+      launch: (step) => IdleRegression.launchRunner(step, { root: __dirname }),
+      alive: (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } },
+      kill: IdleRegression.killTree,
+      chefAlertsOn: () => ChefAlerts.readAlertSettings(__dirname).enabled,
+      alert: (alerts) => {
+        const text = ChefAlerts.buildAlertPrompt(alerts, { root: __dirname });
+        poolEnqueue({ obsId: observeEntry({ entry: 'alerte-chef', project: conductorName(), text }), class: 'decision', text,
+          displayText: `alerte : ${ChefAlerts.alertSummary(alerts)}`, chefAlert: true });
+      },
+      dispatchFix: (name, text) => spawnDirectDispatch(name, text, [], [], {
+        source: IdleRegression.LAUNCHER, callback: conductorName(), observeAs: 'idle-regression',
+        ...((enf.projects || []).includes(name) ? { pipeline: 'incident' } : {}),
+      }),
+    });
+  } catch (e) { debugLog(`[idle-regression] balayage : ${e.message}`); }
+}
+setInterval(sweepIdleRegression, IDLE_REGRESSION_SWEEP_MS).unref?.();
 
 function allowedToolsFor(name) {
   const project = config.projects.find(p => p.name === name);

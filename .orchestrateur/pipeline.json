@@ -31,5 +31,27 @@
       "{base}"
     ],
     "releaseCheckTimeoutMin": 60
+  },
+  "idleRegression": {
+    "full": [
+      "node",
+      "scripts/regression.mjs",
+      "--ref",
+      "{ref}",
+      "--out",
+      "{report}"
+    ],
+    "bisect": [
+      "node",
+      "scripts/regression.mjs",
+      "--ref",
+      "{ref}",
+      "--only-suites",
+      "{suites}",
+      "--out",
+      "{report}"
+    ],
+    "inPlace": true,
+    "timeoutMin": 120
   }
 }

@@ -17,6 +17,8 @@
 //
 // Usage:
 //   node scripts/delivery-gate.mjs check [--report <file>] [--tree <sha>]
+//   node scripts/delivery-gate.mjs prod-check <ref> [--prod <dépôt>|--base <c>] [--unit]
+//                                                    (--unit, 0.142.0: the task's tests only, idle-regression.mjs)
 //   node scripts/delivery-gate.mjs pre-commit        (run by the git hook)
 //   node scripts/delivery-gate.mjs install-hook      (writes .git/hooks/pre-commit)
 // ============================================================================
@@ -107,6 +109,28 @@ export function findProdReport(repo, tree, { plan = null, knownKo = [] } = {}) {
   const all = files.map(f => { try { return { f, r: JSON.parse(fs.readFileSync(f, 'utf8')), m: fs.statSync(f).mtimeMs }; } catch { return null; } })
     .filter(x => x && x.r.tree === tree && (x.r.mode === 'full' || x.r.mode === 'perimeter')).sort((a, b) => b.m - a.m);
   return all.find(x => checkProdReport(x.r, { tree, knownKo, plan }).ok) || all[0] || null;
+}
+
+/**
+ * Production gate under the idle-time policy (0.142.0, idle-regression.mjs):
+ * « la mise en prod ne dépend plus que des tests unitaires ». A green report of
+ * ANY mode (targeted, partial, perimeter, full) on exactly the jumped tree —
+ * the task's tests, i.e. the report the delivery commit was checked against.
+ * Stale or KO reports are still refused; no full run is ever required.
+ */
+export function checkUnitReport(report, { tree, knownKo = [] } = {}) {
+  return checkReport(report, { tree, knownKo });
+}
+
+/** The most recent report on `tree` checkUnitReport accepts, else the most recent one on `tree`, or null. */
+export function findUnitReport(repo, tree, { knownKo = [] } = {}) {
+  const dir = path.join(repo, '.regress');
+  let files = [];
+  try { files = fs.readdirSync(dir).filter(f => /^report-.*\.json$/.test(f)).map(f => path.join(dir, f)); } catch { return null; }
+  const all = files.map(f => { try { return { f, r: JSON.parse(fs.readFileSync(f, 'utf8')), m: fs.statSync(f).mtimeMs }; } catch { return null; } })
+    // A bisect step of the idle-time program (report-idle-*, only the KO suites) is not the task's tests.
+    .filter(x => x && x.r.tree === tree && !(path.basename(x.f).startsWith('report-idle-') && x.r.mode !== 'full')).sort((a, b) => b.m - a.m);
+  return all.find(x => checkUnitReport(x.r, { tree, knownKo }).ok) || all[0] || null;
 }
 
 /**
@@ -211,15 +235,22 @@ async function cli() {
     const file = opt('--report');
     // The production version a perimeter run starts from: --prod <checkout> or --base <commit>.
     const prodHead = opt('--base') || (opt('--prod') ? git(path.resolve(opt('--prod')), ['rev-parse', 'HEAD']).out : null);
-    const plan = prodPlan(repo, ref, prodHead);
     const knownKo = readKnownKo(repo);
+    // 0.142.0: --unit = the idle-time policy, the task's tests only (no full run required).
+    if (rest.includes('--unit')) {
+      const found = file ? { f: file, r: JSON.parse(fs.readFileSync(file, 'utf8')) } : findUnitReport(repo, tree, { knownKo });
+      const v = found ? checkUnitReport(found.r, { tree, knownKo }) : { ok: false, reasons: [`aucun rapport de tests vert sur ${ref} (arbre ${tree.slice(0, 10)}) : celui du commit de livraison (regression.mjs --targeted)`], accepted: [] };
+      printVerdict(v, found ? `${path.basename(found.f)}, mise en prod de ${ref} sur les tests de la tâche` : `mise en prod de ${ref}`);
+      process.exit(v.ok ? 0 : 1);
+    }
+    const plan = prodPlan(repo, ref, prodHead);
     const found = file ? { f: file, r: JSON.parse(fs.readFileSync(file, 'utf8')) } : findProdReport(repo, tree, { plan, knownKo });
     const v = found ? checkProdReport(found.r, { tree, knownKo, plan })
       : { ok: false, reasons: [`aucune non-régression COMPLÈTE ni PAR PÉRIMÈTRE sur ${ref} (arbre ${tree.slice(0, 10)}) : lancer node scripts/regression.mjs --ref ${ref} --perimeters --prod <dépôt de prod> dans orchestrateur-dev (jamais en prod)`], accepted: [] };
     printVerdict(v, found ? `${path.basename(found.f)}, mise en prod de ${ref}` : `mise en prod de ${ref}`);
     process.exit(v.ok ? 0 : 1);
   }
-  console.error('usage: delivery-gate.mjs check [--report <f>] [--tree <sha>] | prod-check <ref> [--prod <dépôt>|--base <commit>] | pre-commit | install-hook');
+  console.error('usage: delivery-gate.mjs check [--report <f>] [--tree <sha>] | prod-check <ref> [--prod <dépôt>|--base <commit>|--unit] | pre-commit | install-hook');
   process.exit(64);
 }
 

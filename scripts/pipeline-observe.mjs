@@ -105,6 +105,7 @@ export const ENTRY_KINDS = {
   'relais-vers-chef':    'Question NEEDS_CHEF_INPUT d’un musicien au chef',
   'relais-vers-musicien':'Réponse du chef relayée au musicien',
   'alerte-chef':         'Alerte du serveur au chef (non-régression, pause, musicien bloqué)',
+  'idle-regression':     'Correction d’une non-régression a posteriori rouge, lancée pendant l’inactivité (idle-regression.mjs)',
   'notify':              'notify.mjs / POST /api/notify',
   'session-neuve':       'Session neuve (POST /api/projects/:p/sessions/new)',
   'terminal':            'Terminal interactif (/ws/pty)',

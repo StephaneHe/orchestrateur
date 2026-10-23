@@ -20,7 +20,10 @@
 //     cover it plus TOOLING_SUITES, never the full run (0.73.0, user decision
 //     "B"); only a dependency change (FULL_TRIGGERS) still needs the full run;
 //   - the base (BASE_SUITES) always runs.
-// The full run stays mandatory before production (scripts/prod-jump.mjs).
+// The full run stays mandatory before production (scripts/prod-jump.mjs) —
+// except with the idle-time policy (0.142.0, idle-regression.mjs): `noFull`
+// never falls back to the full run; a file it would have needed is listed in
+// `deferred` and covered later by the full run after the fact, while idle.
 // ============================================================================
 
 import fs from 'node:fs';
@@ -123,8 +126,9 @@ export function versionOnlyPackageChange(repo, since = 'HEAD') {
  * Selection for a set of changed files.
  * → { full: false, suites: [{file, reasons}], http, browser, reasons: {http, browser}, docsOnly, outOfScope: [{file, reason}] }
  *   | { full: true, reason }
+ * With `noFull` (0.142.0): never `full`; `deferred: [{file, reason}]` instead.
  */
-export function selectTargets(repo, changed, { since = 'HEAD', files = repoFiles(repo) } = {}) {
+export function selectTargets(repo, changed, { since = 'HEAD', files = repoFiles(repo), noFull = false } = {}) {
   const graph = referenceGraph(repo, files);
   const suites = files.filter(f => /^scripts\/_test_[^/]+\.mjs$/.test(f));
   const coverage = new Map(suites.map(s => [s, coverageOf(graph, s)]));
@@ -133,29 +137,31 @@ export function selectTargets(repo, changed, { since = 'HEAD', files = repoFiles
   const add = (s, why) => { const k = path.posix.basename(s); if (!picked.has(k)) picked.set(k, new Set()); picked.get(k).add(why); };
   for (const b of BASE_SUITES) if (suites.some(s => s.endsWith(`/${b}`))) add(b, 'socle (toujours exécuté)');
   let http = false, browser = false;
-  const httpWhy = new Set(), browserWhy = new Set(), docsOnly = [], outOfScope = [];
+  const httpWhy = new Set(), browserWhy = new Set(), docsOnly = [], outOfScope = [], deferred = [];
+  const fullOr = (file, reason) => { if (!noFull) return { full: true, reason }; deferred.push({ file, reason: `${reason} — reportée à la non-régression complète a posteriori (inactivité)` }); return null; };
   for (const f of changed) {
     const oos = OUT_OF_SCOPE.find(o => o.re.test(f));
     if (oos) { outOfScope.push({ file: f, reason: oos.reason }); continue; }
-    if (FULL_TRIGGERS.includes(f)) return { full: true, reason: `${f} modifié (dépendances)` };
+    if (FULL_TRIGGERS.includes(f)) { const r = fullOr(f, `${f} modifié (dépendances)`); if (r) return r; continue; }
     if (TOOLING_FILES.includes(f)) {
       for (const s of TOOLING_SUITES) if (suites.some(x => x.endsWith(`/${s}`))) add(s, `outillage de la non-régression : ${f}`);
       if (f === 'scripts/regression.mjs') { http = true; httpWhy.add(`${f} (définit les parcours HTTP)`); }
     }
     if (f === 'package.json') {
       if (versionOnlyPackageChange(repo, since)) { docsOnly.push(f); continue; }
-      return { full: true, reason: 'package.json modifié au-delà du numéro de version (dépendances, scripts)' };
+      const r = fullOr(f, 'package.json modifié au-delà du numéro de version (dépendances, scripts)'); if (r) return r; continue;
     }
     if (DOC_RE.test(f)) { docsOnly.push(f); continue; }
     let covered = TOOLING_FILES.includes(f);   // its TOOLING_SUITES were added above
     for (const [s, cov] of coverage) if (cov.has(f)) { add(s, `couvre ${f}`); covered = true; }
     if (httpCover.has(f)) { http = true; httpWhy.add(f); covered = true; }
     if (f.startsWith('public/') || BROWSER_ROOTS.includes(f)) { browser = true; http = true; browserWhy.add(f); httpWhy.add(f); covered = true; }
-    if (!covered) return { full: true, reason: `${f} n'est couvert par aucune suite ni aucun étage : non-régression complète` };
+    if (!covered) { const r = fullOr(f, `${f} n'est couvert par aucune suite ni aucun étage : non-régression complète`); if (r) return r; }
   }
   return {
     full: false,
     suites: [...picked].map(([file, why]) => ({ file, reasons: [...why] })).sort((a, b) => a.file.localeCompare(b.file)),
     http, browser, reasons: { http: [...httpWhy], browser: [...browserWhy] }, docsOnly, outOfScope,
+    ...(noFull ? { deferred } : {}),
   };
 }

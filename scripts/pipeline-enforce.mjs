@@ -26,6 +26,10 @@
 //   node scripts/pipeline-enforce.mjs chef-alerts [on|off] [--stall-min N]
 //                                                     alertes du chef (0.138.0) : non-régression KO ou interrompue,
 //                                                     pause de processus, musicien bloqué → un réveil par événement
+//   node scripts/pipeline-enforce.mjs idle-regression [on|off] [<projet>] [--idle-min N]
+//                                                     non-régression a posteriori (0.142.0) : livraison et mise en prod
+//                                                     sur les tests de la tâche ; complète lancée par le programme
+//                                                     pendant l'inactivité de l'utilisateur (défaut 30 min)
 //   node scripts/pipeline-enforce.mjs chef-mode       mode du chef : off | routage (« v3 » : phase 4, bascule)
 //
 // Écrit model-routing.json → enforcement (temp + rename, historique), relu à
@@ -42,6 +46,7 @@ import { fileURLToPath } from 'node:url';
 import { readEnforcement, writeEnforcement, ENGINE_PIPELINES } from './pipeline-engine.mjs';
 import { readTuning, applyTuningChange, describeTuning, readChefV3, writeChefV3 } from './pipeline-tuning.mjs';
 import { readAlertSettings, writeAlertSettings, describeSettings as describeAlerts } from './chef-alerts.mjs';
+import { readSettings as readIdleRegression, writeSettings as writeIdleRegression, describeSettings as describeIdleRegression } from './idle-regression.mjs';
 import { readKgSettings, writeKgSettings, writeKgSwitch, KG_SWITCHES, MODES as KG_MODES } from './kg.mjs';
 
 
@@ -110,6 +115,20 @@ if (cmd === 'chef-alerts') {
   try { console.log(describeAlerts(writeAlertSettings(ROOT, { enabled: target === 'on', stallMin: sm !== -1 ? rest[sm + 1] : null, by: `pipeline-enforce chef-alerts ${target}` }))); } catch (e) { console.error(e.message); process.exit(64); }
   process.exit(0);
 }
+// idle-regression (0.142.0): full non-regression after the fact, idle hours only (scripts/idle-regression.mjs).
+if (cmd === 'idle-regression') {
+  if (!target) { console.log(describeIdleRegression(readIdleRegression(ROOT))); process.exit(0); }
+  const rest = process.argv.slice(4);
+  const im = rest.indexOf('--idle-min');
+  const project = rest.find((a, i) => !a.startsWith('--') && (im === -1 || i !== im + 1)) || null;
+  if (!['on', 'off'].includes(target) || (im !== -1 && !rest[im + 1])) { console.error('usage: node scripts/pipeline-enforce.mjs idle-regression [on|off] [<projet>] [--idle-min N]'); process.exit(64); }
+  if (project) {
+    const config = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
+    if (!config.projects.some(p => p.name === project)) { console.error(`projet inconnu : ${project}`); process.exit(64); }
+  }
+  try { console.log(describeIdleRegression(writeIdleRegression(ROOT, { enabled: target === 'on', idleMin: im !== -1 ? rest[im + 1] : null, project, by: `pipeline-enforce idle-regression ${target}${project ? ` ${project}` : ''}` }))); } catch (e) { console.error(e.message); process.exit(64); }
+  process.exit(0);
+}
 // chef-mode (ROUTAGE-SYNTHESE §3.9): « off » = ordinary chef turns, « routage » = the Routage pipeline.
 // « v3 » is the switch-over of phase 4 (a user decision): refused here.
 if (cmd === 'chef-mode') {
@@ -138,4 +157,5 @@ const tuning = cmd === 'off' && target === '--all' ? {} : undefined;
 show(writeEnforcement(ROOT, { projects, terminal, chef, pipelines: cur.pipelines.length ? cur.pipelines : ENGINE_PIPELINES, tuning, by: `pipeline-enforce ${cmd} ${target}` }));
 if (cmd === 'off' && target === '--all' && readKgSettings(ROOT).mode !== 'off') writeKgSettings(ROOT, { mode: 'off', by: 'pipeline-enforce off --all' });
 if (cmd === 'off' && target === '--all' && readAlertSettings(ROOT).enabled) writeAlertSettings(ROOT, { enabled: false, by: 'pipeline-enforce off --all' });
+if (cmd === 'off' && target === '--all' && readIdleRegression(ROOT).enabled) writeIdleRegression(ROOT, { enabled: false, by: 'pipeline-enforce off --all' });
 if (cmd === 'off' && target === '--all' && readChefV3(ROOT).shadow) writeChefV3(ROOT, { shadow: false, by: 'pipeline-enforce off --all' });

@@ -11,6 +11,56 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.142.0] - 2026-10-23
+
+User decision (2026-10-23): « non. la non régression ne serait plus une
+condition pour la mise en prod. la.mise en prod ne dépend plus que des tests
+unitaires et les non régression ne servent plus qu'à posteriori. Les non
+régressions et corrections ne sont lancées que pendant les heures
+d'inactivité » (≥ 16 full runs of 30–40 min in 1.5 day on orchestrateur-dev,
+the musician waiting for them). Everything below is behind the switch
+`idleRegression`, off by default: off = 0.141.1 exactly.
+
+### Added
+
+- (server) `scripts/idle-regression.mjs`: the full non-regression AFTER the
+  fact, launched by the program (never a musician) only when the user has been
+  idle for ≥ `idleMin` (30 min by default; dashboard / app presence) and no
+  musician is in a turn on the project; one at a time for the fleet; stopped
+  (process tree) as soon as activity resumes, a musician starts or the switch
+  is turned off, relaunched in a later window. It covers the checkout's head
+  since the last green full run — orchestrateur-dev for the orchestrator, never
+  a production checkout. Red ⇒ bisect of the culprit commit between the last
+  green and the red one (only the KO suites), alert to the chef, then the fix
+  dispatched to the project's musician (Incident) in an idle window, once;
+  right away only on request (`idle-regression.mjs fix <p> --now`).
+  `status` to read the state. Detached runner
+  `scripts/idle-regression-runner.mjs` (refuses a production, 65).
+- (server) Switch `node scripts/pipeline-enforce.mjs idle-regression on|off
+  [<projet>] [--idle-min N]` (model-routing.json → `idleRegression`), re-read
+  at every sweep and dispatch, frozen per pipeline run
+  (`run.json.idleRegression`); `off --all` turns it off.
+- (server) `regression.mjs --no-full` (also `ORCH_UNIT_DELIVERY=1`): the
+  targeted run never falls back to the full one; what would have needed it is
+  listed as deferred to the full run after the fact. `--only-suites a,b`
+  (partial mode) for the bisect.
+- (server) `chef-alerts.mjs`: alert kind `posteriori` (red full run after the
+  fact, culprit, deferred fix).
+- (server) `.orchestrateur/pipeline.json` → `idleRegression {full, bisect,
+  inPlace, timeoutMin}` declares how a project's full run is launched.
+
+### Changed
+
+- (server) With the switch on: musicians get « the task's tests only, never a
+  full run before nor after » (`dispatch.mjs`), `ORCH_UNIT_DELIVERY=1` in the
+  turn and in the engine's test command; `prod-jump.mjs` (switch read, never
+  written, in production's model-routing.json, or `--unit`) and
+  `delivery-gate.mjs prod-check --unit` accept a green report of any mode on
+  the tag's tree and print the state of the runs after the fact; the
+  `prod-before-…` point of return stays.
+- (server) The idle-time program's own runs (bisect steps) are never raised by
+  chef-alerts as a « non-regression KO ».
+
 ## [0.141.1] - 2026-10-23
 
 Defect seen in production (two complete Development runs of a project,

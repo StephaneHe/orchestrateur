@@ -2052,7 +2052,23 @@ function backgroundRule(notifyTo) {
 // demande spécifique à propos d'une fonctionnalité, il faut rajouter un test de
 // non-régression pour plus tard ». Même mécanisme que la règle de fin de tour :
 // dans le prompt de chaque musicien, jamais dans le texte affiché.
+// 0.142.0 (idle-regression.mjs): with the switch on, the task's tests only —
+// never a full run before nor after: the program runs it later, while idle.
+// The text with the switch off is the previous one, word for word. A pipeline
+// step keeps the value its run froze when it started.
+const IdleReg = await import('./idle-regression.mjs');
+const UNIT_DELIVERY = (() => {
+  try {
+    if (PIPE_STEP) {
+      const st = JSON.parse(fs.readFileSync(path.join(LOGS, 'runs', PIPE_STEP.run, 'run.json'), 'utf8'));
+      if (typeof st.idleRegression === 'boolean') return st.idleRegression;
+    }
+    const s = IdleReg.readSettings(ROOT);
+    return IdleReg.enabledFor(s, projectName) || (!!project?.devOf && IdleReg.enabledFor(s, project.devOf));
+  } catch { return false; }
+})();
 function userRequirementsRule() {
+  if (typeof UNIT_DELIVERY !== 'undefined' && UNIT_DELIVERY) return IdleReg.requirementsRuleText(true);
   return `\n\n---\nRÈGLE DES EXIGENCES UTILISATEUR : toute demande de l'utilisateur concernant une fonctionnalité ` +
     `(comportement voulu, réglage, correction signalée) doit être protégée par un TEST AUTOMATISÉ ajouté à la ` +
     `suite de non-régression du projet, rejouée à chaque évolution, et tracée dans docs/USER_REQUIREMENTS.md ` +
@@ -2226,6 +2242,8 @@ delete env.ORCH_TEST_LABEL;
 // Pipelines (0.48.0) : le tour sait de quel projet il est, et s'il est une
 // étape. Un dispatch.mjs lancé depuis ce tour est jugé là-dessus (refus).
 env.ORCH_TURN_PROJECT = projectName;
+// 0.142.0: the targeted run of this turn never falls back to the full one.
+if (UNIT_DELIVERY) env.ORCH_UNIT_DELIVERY = '1'; else delete env.ORCH_UNIT_DELIVERY;
 if (PIPE_STEP || STEP_GRANT) env.ORCH_TURN_STEP = PIPE_STEP ? `${PIPE_STEP.run}:${PIPE_STEP.key}` : `${STEP_GRANT.run}:${STEP_GRANT.key}`;
 else delete env.ORCH_TURN_STEP;
 delete env.ORCH_STEP_TOKEN;

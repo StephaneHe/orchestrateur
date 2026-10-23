@@ -108,7 +108,8 @@
         "scripts/readme-screenshots.mjs",
         "scripts/_bench_phase1_3.mjs",
         "scripts/instrumentation-report.mjs",
-        "scripts/dev-split.mjs"
+        "scripts/dev-split.mjs",
+        "scripts/idle-regression-runner.mjs"
       ],
       "suites": [
         "_test_delivery_gate.mjs",
@@ -126,7 +127,8 @@
         "_test_dev_split.mjs",
         "_test_regression_live.mjs",
         "_test_config_state_independence.mjs",
-        "_test_no_prod_regression.mjs"
+        "_test_no_prod_regression.mjs",
+        "_test_idle_regression.mjs"
       ],
       "uses": [
         {
@@ -140,13 +142,23 @@
           "suites": [
             "_test_config_state_independence.mjs",
             "_test_fixture_speed.mjs",
+            "_test_idle_regression.mjs",
+            "_test_no_prod_regression.mjs",
             "_test_regression_live.mjs",
-            "_test_stale_run.mjs"
+            "_test_stale_run.mjs",
+            "_test_todo_untracked.mjs"
+          ]
+        },
+        {
+          "perimeter": "kg",
+          "suites": [
+            "_test_idle_regression.mjs"
           ]
         },
         {
           "perimeter": "noyau",
           "suites": [
+            "_test_idle_regression.mjs",
             "_test_regression_live.mjs",
             "_test_stale_run.mjs"
           ]
@@ -154,6 +166,7 @@
         {
           "perimeter": "panneaux",
           "suites": [
+            "_test_idle_regression.mjs",
             "_test_regression_live.mjs",
             "_test_stale_run.mjs"
           ]
@@ -162,6 +175,7 @@
           "perimeter": "pipelines",
           "suites": [
             "_test_fixture_speed.mjs",
+            "_test_idle_regression.mjs",
             "_test_regression_live.mjs",
             "_test_stale_run.mjs"
           ]
@@ -170,6 +184,7 @@
           "perimeter": "routage",
           "suites": [
             "_test_fixture_speed.mjs",
+            "_test_idle_regression.mjs",
             "_test_regression_live.mjs",
             "_test_stale_run.mjs"
           ]
@@ -491,7 +506,8 @@
         "scripts/trust-projects.mjs",
         "templates/**",
         ".orchestrateur/**",
-        "scripts/output-format.mjs"
+        "scripts/output-format.mjs",
+        "scripts/idle-regression.mjs"
       ],
       "suites": [
         "_test_parallel_lanes.mjs",
@@ -775,7 +791,6 @@
           "perimeter": "client",
           "suites": [
             "_test_chef_process_pauses.mjs",
-            "_test_limit_pause_cause.mjs",
             "_test_model_reco.mjs",
             "_test_resume_clears_question.mjs",
             "_test_reunion_pipeline.mjs"
@@ -847,13 +862,12 @@
         {
           "perimeter": "noyau",
           "suites": [
+            "_test_aside_rework.mjs",
             "_test_chef_alerts.mjs",
             "_test_chef_pause_relay.mjs",
             "_test_chef_process_pauses.mjs",
-            "_test_limit_pause_cause.mjs",
             "_test_cited_paths_log.mjs",
             "_test_code_deliver.mjs",
-            "_test_version_mentions.mjs",
             "_test_defect_blocks.mjs",
             "_test_dev_instance_pipelines.mjs",
             "_test_exploitation.mjs",
@@ -863,9 +877,9 @@
             "_test_generic_operations.mjs",
             "_test_infra_retry.mjs",
             "_test_item_delivery.mjs",
-            "_test_aside_rework.mjs",
             "_test_item_review.mjs",
             "_test_item_tests.mjs",
+            "_test_limit_pause_cause.mjs",
             "_test_model_reco.mjs",
             "_test_model_routing.mjs",
             "_test_no_lexical_routing.mjs",
@@ -890,7 +904,8 @@
             "_test_smart_pause.mjs",
             "_test_step_key_3digits.mjs",
             "_test_suite_cache.mjs",
-            "_test_tests_per_item.mjs"
+            "_test_tests_per_item.mjs",
+            "_test_version_mentions.mjs"
           ]
         },
         {
@@ -906,13 +921,12 @@
         {
           "perimeter": "panneaux",
           "suites": [
+            "_test_aside_rework.mjs",
             "_test_chef_alerts.mjs",
             "_test_chef_pause_relay.mjs",
             "_test_chef_process_pauses.mjs",
-            "_test_limit_pause_cause.mjs",
             "_test_cited_paths_log.mjs",
             "_test_code_deliver.mjs",
-            "_test_version_mentions.mjs",
             "_test_defect_blocks.mjs",
             "_test_dev_instance_pipelines.mjs",
             "_test_exploitation.mjs",
@@ -922,9 +936,9 @@
             "_test_generic_operations.mjs",
             "_test_infra_retry.mjs",
             "_test_item_delivery.mjs",
-            "_test_aside_rework.mjs",
             "_test_item_review.mjs",
             "_test_item_tests.mjs",
+            "_test_limit_pause_cause.mjs",
             "_test_model_reco.mjs",
             "_test_model_routing.mjs",
             "_test_no_lexical_routing.mjs",
@@ -948,7 +962,8 @@
             "_test_smart_pause.mjs",
             "_test_step_key_3digits.mjs",
             "_test_suite_cache.mjs",
-            "_test_tests_per_item.mjs"
+            "_test_tests_per_item.mjs",
+            "_test_version_mentions.mjs"
           ]
         },
         {
@@ -1008,11 +1023,9 @@
             "_test_chef_alerts.mjs",
             "_test_chef_pause_relay.mjs",
             "_test_chef_process_pauses.mjs",
-            "_test_limit_pause_cause.mjs",
             "_test_exploitation.mjs",
             "_test_generic_operations.mjs",
             "_test_item_delivery.mjs",
-            "_test_aside_rework.mjs",
             "_test_model_reco.mjs",
             "_test_no_lexical_routing.mjs",
             "_test_pipeline_corpus.mjs",
@@ -1241,7 +1254,6 @@
             "_test_chef_typed_actions.mjs",
             "_test_report_truncation.mjs",
             "_test_request_map.mjs",
-            "_test_requests_pipeline_ack.mjs",
             "_test_requests_registry.mjs",
             "_test_routage_pending.mjs"
           ]

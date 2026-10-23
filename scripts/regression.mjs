@@ -134,14 +134,17 @@ if (flag('--targeted')) {
   const { changedFiles, selectTargets } = await import('./regression-targets.mjs');
   const since = opt('--since') || 'HEAD';
   const changed = changedFiles(REPO, since);
-  const sel = selectTargets(REPO, changed, { since });
-  console.log(`\n=== Non-régression CIBLÉE — ${changed.length} fichier(s) modifié(s) depuis ${since}`);
+  // 0.142.0 (idle-regression.mjs): never the full run during a task.
+  const noFull = flag('--no-full') || process.env.ORCH_UNIT_DELIVERY === '1';
+  const sel = selectTargets(REPO, changed, { since, noFull });
+  console.log(`\n=== Non-régression CIBLÉE — ${changed.length} fichier(s) modifié(s) depuis ${since}${noFull ? ' — jamais la complète (elle tourne a posteriori, pendant l’inactivité)' : ''}`);
   if (sel.full) console.log(`   → bascule sur la COMPLÈTE : ${sel.reason}`);
   else {
     for (const s of sel.suites) console.log(`   suite ${s.file} — ${s.reasons.slice(0, 3).join(' ; ')}${s.reasons.length > 3 ? ` (+${s.reasons.length - 3})` : ''}`);
     console.log(`   étage HTTP : ${sel.http ? `oui (${sel.reasons.http.slice(0, 4).join(', ')})` : 'non'} · navigateur : ${sel.browser ? `oui (${sel.reasons.browser.slice(0, 4).join(', ')})` : 'non'}`);
     if (sel.docsOnly.length) console.log(`   sans test propre (docs, version) : ${sel.docsOnly.join(', ')}`);
     for (const o of sel.outOfScope || []) console.log(`   ${o.file} — ${o.reason}`);
+    for (const o of sel.deferred || []) console.log(`   ${o.file} — ${o.reason}`);
   }
   selection = { since, changed, ...sel };
 }
@@ -163,6 +166,15 @@ if (flag('--perimeters')) {
   catch (e) { console.error(`[périmètres] ${e.message}`); process.exit(64); }
   console.log(`\n${planLines(plan).join('\n')}`);
   selection = { kind: 'perimeter', since: plan.base, ...plan };
+}
+// Only some suites (0.142.0): the bisect of a full run after the fact replays
+// only its KO suites, on each candidate commit (--ref). Mode « partial ».
+if (opt('--only-suites')) {
+  if (selection) { console.error('--only-suites est exclusif avec --targeted et --perimeters'); process.exit(64); }
+  const list = String(opt('--only-suites')).split(',').map(x => x.trim()).filter(x => /^_test_[\w.-]+\.mjs$/.test(x));
+  if (!list.length) { console.error('--only-suites : liste de suites _test_*.mjs séparées par des virgules'); process.exit(64); }
+  selection = { kind: 'only', since: null, changed: [], full: false, suites: list.map(file => ({ file, reasons: ['--only-suites'] })), http: false, browser: false };
+  console.log(`\n=== Non-régression PARTIELLE — suites : ${list.join(', ')}`);
 }
 const results = [];
 // Visible while it runs (0.119.0): progress in .regress/live/, read by the dashboard.
@@ -2315,7 +2327,7 @@ let sbPromise = null;
 let staleWatch = null;
 const t0 = Date.now();
 const reportOut = () => opt('--out') || path.join(REGRESS_DIR, `report-${safeLabel}.json`);
-const requestedMode = () => (selection && !selection.full ? (selection.kind === 'perimeter' ? 'perimeter' : 'targeted')
+const requestedMode = () => (selection && !selection.full ? (selection.kind === 'perimeter' ? 'perimeter' : selection.kind === 'only' ? 'partial' : 'targeted')
   : (flag('--no-suites') || flag('--no-browser')) ? 'partial' : 'full');
 function writeReport(tree, extra = {}) {
   const c = { OK: 0, KO: 0, NA: 0 };
@@ -2329,13 +2341,15 @@ function writeReport(tree, extra = {}) {
   const mode = narrowed ? 'targeted' : (flag('--no-suites') || flag('--no-browser')) ? 'partial' : 'full';
   // A perimeter run without a stage it needs is refused by reportCoversPlan.
   const runMode = mode === 'targeted' && selection.kind === 'perimeter' ? 'perimeter' : mode;
-  const report = { label, at: new Date().toISOString(), durationS: Math.round((Date.now() - t0) / 1000), tree, commit, mode: runMode,
+  // --only-suites (0.142.0): a few suites of a bisect step, never a targeted delivery run.
+  const reportMode = selection?.kind === 'only' ? 'partial' : runMode;
+  const report = { label, at: new Date().toISOString(), durationS: Math.round((Date.now() - t0) / 1000), tree, commit, mode: reportMode,
     ...(selection ? { selection: { since: selection.since, changed: selection.changed, full: !!selection.full, reason: selection.reason || null,
-      suites: selection.suites || null, http: selection.http ?? true, browser: selection.browser ?? true,
+      suites: selection.suites || null, http: selection.http ?? true, browser: selection.browser ?? true, ...(selection.deferred ? { deferred: selection.deferred } : {}),
       ...(selection.kind === 'perimeter' ? { kind: 'perimeter', base: selection.base, baseCommit: selection.baseCommit, target: selection.target, perimeters: selection.perimeters || null } : {}) } } : {}),
     ...extra, counts: c, results };
   fs.writeFileSync(out, JSON.stringify(report, null, 2));
-  return { report, out, c, mode: runMode };
+  return { report, out, c, mode: reportMode };
 }
 async function abortStale(info) {
   const diff = changedPaths(REPO, info.start, info.current);

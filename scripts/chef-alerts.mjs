@@ -36,7 +36,11 @@ import { pauseFamily } from './process-pause.mjs';
 
 export const DEFAULT_STALL_MIN = 10;
 export const MAX_FIRES_PER_HOUR = 6;
-export const KINDS = Object.freeze(['regression', 'pause', 'stall']);
+// 0.142.0: `posteriori` = a full run after the fact (idle-regression.mjs) found red, culprit searched.
+export const KINDS = Object.freeze(['regression', 'pause', 'stall', 'posteriori']);
+// Runs of the idle-time program: its bisect steps are red by design, its full
+// runs are raised as `posteriori` once the culprit is known.
+const IDLE_LAUNCHER = 'idle-regression';
 const SEEN_KEEP_MS = 30 * 24 * 3600_000;
 const REGRESSION_BAD = new Set(['ko', 'error', 'interrupted']);
 
@@ -112,6 +116,7 @@ export function regressionAlerts({ dirs, since, busy = () => null, now = Date.no
     const all = [...(v.running || []), ...(v.recent || [])];
     for (const r of v.recent || []) {
       if (!REGRESSION_BAD.has(r.status)) continue;
+      if (r.launcher?.by === IDLE_LAUNCHER) continue;
       const end = ts(r.endedAt || r.updatedAt || r.startedAt);
       if (!end || end < sinceT) continue;
       const after = all.filter(x => x.id !== r.id && ts(x.startedAt) > ts(r.startedAt))
@@ -211,6 +216,15 @@ export function alertLine(a, i, { root = '.' } = {}) {
       `   Prise en charge : ${a.handling?.length ? a.handling.join(' ; ') : 'aucune relance ni tour en cours vu par le serveur'}`,
     ].join('\n');
   }
+  if (a.kind === 'posteriori') {
+    const r = a.red;
+    return [
+      `${n} ✕ Non-régression complète A POSTERIORI rouge — ${a.project} · commit ${String(r.commit).slice(0, 7)} (lancée par le programme pendant l’inactivité)`,
+      `   KO : ${r.ko.length ? r.ko.join(' ; ') : '(aucun KO détaillé)'}${r.report ? ` · rapport ${r.report}` : ''}`,
+      `   Commit fautif : ${r.culprit ? `${String(r.culprit).slice(0, 7)}${r.subject ? ` « ${r.subject} »` : ''}` : `non isolé${r.why ? ` (${r.why})` : ''}`} — entre la dernière complète verte ${r.good ? String(r.good).slice(0, 7) : '(aucune)'} et ${String(r.commit).slice(0, 7)}`,
+      `   Correction : ${r.fix ? `lancée ${r.fix.at}` : 'lancée par le programme vers le musicien (voie Incident) à la prochaine période d’inactivité ; tout de suite seulement si l’utilisateur le demande'} : node "${S('idle-regression.mjs')}" fix ${a.project} --now`,
+    ].join('\n');
+  }
   if (a.kind === 'pause') {
     const p = a.pause;
     return [
@@ -241,9 +255,9 @@ export function buildAlertPrompt(alerts, { root = '.' } = {}) {
 }
 
 export function alertSummary(alerts) {
-  const c = { regression: 0, pause: 0, stall: 0 };
+  const c = { regression: 0, pause: 0, stall: 0, posteriori: 0 };
   for (const a of alerts) c[a.kind]++;
-  return [c.regression && `${c.regression} non-régression(s)`, c.pause && `${c.pause} pause(s)`, c.stall && `${c.stall} musicien(s) bloqué(s)`]
+  return [c.regression && `${c.regression} non-régression(s)`, c.posteriori && `${c.posteriori} complète(s) a posteriori rouge(s)`, c.pause && `${c.pause} pause(s)`, c.stall && `${c.stall} musicien(s) bloqué(s)`]
     .filter(Boolean).join(', ') + ` : ${[...new Set(alerts.map(a => a.project))].join(', ')}`;
 }
 
@@ -293,7 +307,7 @@ export function sweepAlerts(deps) {
   // A stall or a pause gone by itself before the chef is free is no longer news.
   const keep = [];
   for (const a of st.pending) {
-    if (a.kind === 'regression') { keep.push(byKey.get(a.key) || a); continue; }
+    if (a.kind === 'regression' || a.kind === 'posteriori') { keep.push(byKey.get(a.key) || a); continue; }
     if (byKey.has(a.key)) { keep.push(byKey.get(a.key)); continue; }
     changed = true;
     journal({ event: 'resolved', key: a.key, kind: a.kind, project: a.project });
