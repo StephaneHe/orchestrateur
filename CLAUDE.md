@@ -376,6 +376,20 @@ non visible » du journal d'activité).
   au moins 60 s (après un redémarrage, un result manqué…), jamais sous limite
   Claude. Il est journalisé `[queue-sweep]`. La file se gère avec
   `scripts/queue.mjs`, jamais en éditant `logs/queue/*.json`.
+- **Tâche de file jamais perdue au lancement** (0.144.0, défaut vu en prod :
+  deux tâches refusées « modifications non commitées » pendant la pause d'une
+  exécution, disparues de la file). `scripts/queue-requeue.mjs` : une nouvelle
+  exécution lancée par la file (ou `--queue-if-busy`) dans une copie qu'une
+  exécution en pause a laissée non propre revient **en tête** de file
+  (`heldBy {kind: 'paused-run', run}`), avant toute écriture dans le journal
+  (sauf `notification/queue_entry_held`) et avant le classement ; le serveur
+  ne lance pas une tête retenue tant que l'exécution est en pause (fin ou
+  `close-run.mjs` = libérée). Copie non propre sans exécution en pause :
+  `dirty`, durable, alerte `queue` de chefAlerts ; aucun couloir libre :
+  `capacity`. Nouvel essai sur un result ou après le délai
+  (`ORCH_QUEUE_HELD_RETRY_MS`). Une réponse à la pause n'est jamais retenue.
+  Redémarrage nécessaire (route, drain, alertes) ; `dispatch.mjs` est actif
+  tout de suite. Recette : `_test_queue_requeue.mjs`.
 - **Détail d'une entrée de file** (0.80.0, demande « Les éléments de la file
   d'attente doivent être clickable pour voir leurs détails ») : dans le volet
   d'un musicien, chaque `.dq-item` (clic, Entrée, Espace) ouvre

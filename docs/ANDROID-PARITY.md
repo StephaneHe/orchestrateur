@@ -107,6 +107,7 @@ Routes `/api` que l'app n'appelle pas directement, avec la raison (le test
 | `GET /api/model-tests/:name` | ouverte dans le navigateur par le lien « voir le journal du test » (URL construite à partir du nom) |
 | `GET /api/pipeline-enforcement` | état de mise en service lu par les scripts du chef ; non affiché par le web |
 | `GET /api/regressions/:project/report/:id` | URL fournie telle quelle par `/api/regressions` (champ `report`) et lue par l'écran Non-régressions |
+| `POST /api/queue-held` | appelée seulement par `dispatch.mjs` pour remettre en file une tâche que son couloir ne peut pas prendre (0.144.0) ; l'app lit `heldBy` dans `/api/queue/:project` |
 | `GET /api/sessions` | table nom → session pour les scripts ; l'écran Session Claude utilise `/api/projects/:name/sessions` |
 | `PATCH /api/projects/:name/tools` | réglage d'administration des outils d'un projet, sans écran dans le web |
 | `POST /api/permission/:id/expire` | appelée par le serveur MCP d'autorisation à l'échéance, jamais par une interface |

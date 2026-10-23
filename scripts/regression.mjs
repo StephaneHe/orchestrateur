@@ -670,6 +670,30 @@ async function apiChecks(sb) {
       await fetch(`${sb.url}/api/queue/eps/${encodeURIComponent(dj.id)}`, { method: 'DELETE', headers: H }).catch(() => {});
     }
   });
+  // Production defect (2026-10-23): queued tasks refused « modifications non
+  // commitées » during a paused run were lost (scripts/queue-requeue.mjs).
+  await check(S, 'queue-held', 'File : POST /api/queue-held remet une tâche EN TÊTE de file avec heldBy (validé ; invalide : 400) ; /api/dispatch seul ne prend jamais heldBy', async () => {
+    if (!fs.readFileSync(path.join(sb.root, 'server.js'), 'utf8').includes("'/api/queue-held'")) NA('remise en file retenue absente de cet état du code');
+    const heldBy = { kind: 'paused-run', run: 'p-20261023T153721-ec927d', lane: 0, why: 'exécution en pause (recette)', durable: false };
+    const ids = [];
+    try {
+      const r = await post('/api/queue-held', { project: 'eps', prompt: 'Recette : tâche retenue', heldBy, front: true, callback: 'chef', taskId: 'r-20261023T150628-291c4c#1' });
+      const j = await r.json();
+      if (j.id) ids.push(j.id);
+      assert(r.status === 202 && j.queued === true && j.held === true && j.position === 1, `remise en tête : ${r.status} ${JSON.stringify(j)}`);
+      const head = (await json('/api/queue/eps')).entries[0];
+      assert(head?.id === j.id && head.heldBy?.kind === 'paused-run' && head.heldBy.run === heldBy.run && head.callback === 'chef' && head.taskId === 'r-20261023T150628-291c4c#1', `tête de file : ${JSON.stringify(head).slice(0, 300)}`);
+      assert((await post('/api/queue-held', { project: 'eps', prompt: 'x', heldBy: { kind: 'paused-run', run: 'pas-un-run' } })).status === 400, 'heldBy invalide accepté');
+      const d = await post('/api/dispatch', { project: 'eps', prompt: 'Recette : heldBy ignoré', queueIfBusy: true, heldBy, front: true });
+      const dj = await d.json();
+      if (dj.id) ids.push(dj.id);
+      const e = (await json('/api/queue/eps')).entries.find(x => x.id === dj.id);
+      assert(dj.queued && !dj.held && e && !e.heldBy && e.position !== 1, `/api/dispatch a pris heldBy : ${JSON.stringify(e).slice(0, 200)}`);
+      return 'tâche retenue remise en tête (heldBy, rappel et tâche gardés) ; heldBy invalide : 400 ; ignoré par /api/dispatch';
+    } finally {
+      for (const id of ids) await fetch(`${sb.url}/api/queue/eps/${encodeURIComponent(id)}`, { method: 'DELETE', headers: H }).catch(() => {});
+    }
+  });
   // User request (2026-10-13): queue entries open a detail view with the whole entry.
   await check(S, 'queue-detail', 'File : GET /api/queue/:projet donne le texte INTÉGRAL de chaque entrée (sauts de ligne compris, jamais tronqué) et tous ses champs', async () => {
     const text = 'Recette du détail.\n\n' + 'ligne longue '.repeat(60) + '\nFIN';

@@ -30,6 +30,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { heldKey } from './queue-requeue.mjs';
 import { writeFileAtomic } from './atomic-file.mjs';
 import { readRuns } from './regression-live.mjs';
 import { pauseFamily } from './process-pause.mjs';
@@ -37,7 +38,8 @@ import { pauseFamily } from './process-pause.mjs';
 export const DEFAULT_STALL_MIN = 10;
 export const MAX_FIRES_PER_HOUR = 6;
 // 0.142.0: `posteriori` = a full run after the fact (idle-regression.mjs) found red, culprit searched.
-export const KINDS = Object.freeze(['regression', 'pause', 'stall', 'posteriori']);
+// 0.144.0: `queue` = a queued task kept at the head of its queue for a durable cause (queue-requeue.mjs).
+export const KINDS = Object.freeze(['regression', 'pause', 'stall', 'posteriori', 'queue']);
 // Runs of the idle-time program: its bisect steps are red by design, its full
 // runs are raised as `posteriori` once the culprit is known.
 const IDLE_LAUNCHER = 'idle-regression';
@@ -94,7 +96,7 @@ export function writeAlertSettings(root, { enabled, stallMin = null, by, now = n
 
 export function describeSettings(s) {
   return s.enabled
-    ? `chefAlerts = on depuis ${s.since}${s.by ? ` (${s.by})` : ''} — seuil « bloqué » : ${s.stallMin} min — non-régression KO/interrompue, pause de processus, musicien bloqué ou processus perdu`
+    ? `chefAlerts = on depuis ${s.since}${s.by ? ` (${s.by})` : ''} — seuil « bloqué » : ${s.stallMin} min — non-régression KO/interrompue, pause de processus, musicien bloqué ou processus perdu, tâche de file retenue pour une cause durable`
     : `chefAlerts = off (aucune alerte : comportement d’avant 0.138.0)${s.by ? ` — ${s.by}` : ''}`;
 }
 
@@ -200,6 +202,29 @@ export function stallAlerts({ snapshots, stallMin = DEFAULT_STALL_MIN, excluded 
   return out;
 }
 
+/**
+ * Queued tasks kept back for a DURABLE cause (0.144.0): the launch refused them
+ * (tree dirty with no paused run to explain it), they stay in the queue — never
+ * lost — and the chef is told once per task and cause.
+ * queues: [{project, entries}] — the server's in-memory queues.
+ */
+export function queueAlerts({ queues, since, now = Date.now() }) {
+  const out = [];
+  const sinceT = ts(since);
+  for (const { project, entries } of queues || []) {
+    (entries || []).forEach((e, i) => {
+      const h = e?.heldBy;
+      if (!h?.durable) return;
+      const at = ts(h.at);
+      if (!at || at < sinceT) return;
+      out.push({ kind: 'queue', key: heldKey(project, e), project, at: new Date(at).toISOString(),
+        queue: { id: e.id || null, position: i + 1, taskId: e.taskId || null, head: one(e.prompt, 160), heldKind: h.kind, why: one(h.why, 400),
+          enqueuedAt: e.enqueuedAt || null, waitingMs: now - at } });
+    });
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // The wake prompt
 // ---------------------------------------------------------------------------
@@ -234,6 +259,14 @@ export function alertLine(a, i, { root = '.' } = {}) {
       `   La question est posée à l’utilisateur. Pour la trancher : node "${S('dispatch.mjs')}" ${a.project} "<choix> ${p.run}" --pipeline-resume ${p.run} --source chef`,
     ].join('\n');
   }
+  if (a.kind === 'queue') {
+    const q = a.queue;
+    return [
+      `${n} ⏸ Tâche de file retenue — ${a.project} · ${q.id || '?'}${q.taskId ? ` (${q.taskId})` : ''} · position ${q.position} · « ${q.head} »`,
+      `   Cause durable : ${q.why || '(non précisée)'}`,
+      `   Elle reste dans la file (rien n’est perdu) et repartira d’elle-même quand la cause aura disparu. Voir : node "${S('queue.mjs')}" ; ranger la copie du projet (commit) ou retirer la tâche si elle n’a plus lieu d’être.`,
+    ].join('\n');
+  }
   const s = a.stall;
   return [
     s.dead
@@ -255,9 +288,9 @@ export function buildAlertPrompt(alerts, { root = '.' } = {}) {
 }
 
 export function alertSummary(alerts) {
-  const c = { regression: 0, pause: 0, stall: 0, posteriori: 0 };
+  const c = { regression: 0, pause: 0, stall: 0, posteriori: 0, queue: 0 };
   for (const a of alerts) c[a.kind]++;
-  return [c.regression && `${c.regression} non-régression(s)`, c.posteriori && `${c.posteriori} complète(s) a posteriori rouge(s)`, c.pause && `${c.pause} pause(s)`, c.stall && `${c.stall} musicien(s) bloqué(s)`]
+  return [c.regression && `${c.regression} non-régression(s)`, c.posteriori && `${c.posteriori} complète(s) a posteriori rouge(s)`, c.pause && `${c.pause} pause(s)`, c.stall && `${c.stall} musicien(s) bloqué(s)`, c.queue && `${c.queue} tâche(s) de file retenue(s)`]
     .filter(Boolean).join(', ') + ` : ${[...new Set(alerts.map(a => a.project))].join(', ')}`;
 }
 

@@ -69,6 +69,7 @@ import { laneDir as regressionLaneDir, HARD_CAP as LANES_HARD_CAP } from './scri
 import { queueHoldPolicy, holdReportDue, holdReport } from './scripts/queue-hold.mjs';
 import { chefAnswerRelay, unappliedChefAnswers, unappliedText } from './scripts/chef-relay.mjs';
 import * as ChefAlerts from './scripts/chef-alerts.mjs';
+import * as QueueRequeue from './scripts/queue-requeue.mjs';
 import * as IdleRegression from './scripts/idle-regression.mjs';
 // Registre /downloads relu à chaud depuis downloads.json (0.23.0).
 import { createDownloadsRegistry, VERSION_NAME_RE } from './scripts/downloads-registry.mjs';
@@ -380,13 +381,16 @@ function newQueueEntryId() {
   return `q-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
 }
 
-/** Le seul point d'entrée dans une file par musicien : l'id naît ici. */
-function queuePush(name, entry) {
+/** Le seul point d'entrée dans une file par musicien : l'id naît ici.
+ *  `front` (0.144.0) : une tâche tirée de la file que son couloir n'a pas pu
+ *  prendre y revient EN TÊTE (scripts/queue-requeue.mjs). Renvoie sa position. */
+function queuePush(name, entry, { front = false } = {}) {
   const q = dispatchQueue.get(name) ?? [];
-  q.push({ id: newQueueEntryId(), enqueuedAt: new Date().toISOString(), ...entry });
+  const e = { id: newQueueEntryId(), enqueuedAt: new Date().toISOString(), ...entry };
+  if (front) q.unshift(e); else q.push(e);
   dispatchQueue.set(name, q);
   persistQueue(name);
-  return q.length;
+  return front ? 1 : q.length;
 }
 
 function queueRemove(name, id) {
@@ -426,6 +430,7 @@ function queueEntryView(e, i) {
     pipeline: e.pipeline || null, pipelineResume: e.pipelineResume || null, horsPipeline: e.horsPipeline || null, pipelineMode: e.pipelineMode || null,
     lane: Number.isInteger(e.lane) ? e.lane : null, ressources: e.ressources || null, exclusive: e.exclusive || null,
     taskId: e.taskId || null,
+    heldBy: e.heldBy || null,
   };
 }
 
@@ -933,6 +938,7 @@ function drainQueue(name, reason = 'result') {
   if (drainPending.has(name)) return;       // un drain attend déjà la fin du processus
   const q = dispatchQueue.get(name);
   if (!q || q.length === 0) { dispatchQueue.delete(name); persistQueue(name); return; }
+  if (queueHeadHeld(name, q[0], reason)) return;
   drainPending.set(name, Date.now());
   setImmediate(() => drainAttempt(name, reason));
 }
@@ -960,6 +966,7 @@ function drainAttempt(name, reason) {
     return;
   }
   drainPending.delete(name);
+  if (queueHeadHeld(name, q[0], reason)) return;
   const { id, prompt, attachmentPaths, videoPaths, callback, source, model, provider, slot, ticket, newSession, sameTask, resumeSession, obsId, secondModel, secondProvider, dualMode, pipeline, pipelineResume, horsPipeline, pipelineMode, lane, ressources, taskId } = q.shift();
   if (q.length === 0) dispatchQueue.delete(name);
   persistQueue(name);
@@ -970,6 +977,25 @@ function drainAttempt(name, reason) {
   console.log(msg); debugLog(msg);
   spawnDirectDispatch(name, prompt, attachmentPaths, videoPaths,
     { callback, source, model, provider, slot, ticket, newSession, sameTask, resumeSession, obsId, secondModel, secondProvider, dualMode, pipeline, pipelineResume, horsPipeline, pipelineMode, lane, ressources, taskId, noQueueIfBusy: true });
+}
+
+// 0.144.0 (scripts/queue-requeue.mjs): a head put back by dispatch.mjs waits
+// while the paused run that dirtied its checkout is paused; another hold is
+// retried on the musician's next result or after its delay. Logged once per hold.
+const queueHeldLogged = new Map();   // name → id of the held head last reported
+function queueHeadHeld(name, head, reason) {
+  if (!head?.heldBy) return false;
+  const v = QueueRequeue.heldBlocks(head, { logsDir: LOGS_DIR, reason });
+  if (!v.blocked) {
+    if (queueHeldLogged.get(name) === head.id) queueHeldLogged.delete(name);
+    const m = `[queue-held] ${name} ${head.id} : tête libérée (${v.released})`; console.log(m); debugLog(m);
+    return false;
+  }
+  if (queueHeldLogged.get(name) !== head.id) {
+    queueHeldLogged.set(name, head.id);
+    const m = `[queue-held] ${name} ${head.id} : tête retenue — ${v.why}`; console.log(m); debugLog(m);
+  }
+  return true;
 }
 
 const DRAIN_WAIT_STEP_MS = 1000;
@@ -993,7 +1019,8 @@ function sweepQueues() {
     const st = musicianAutoStates.get(name)?.state ?? 'idle';
     const blocked = !q?.length || drainPending.has(name) ||
       now - (drainLaunchedAt.get(name) || 0) < QUEUE_STALL_MS ||
-      st === 'live' || st === 'think' || dispatchPidAlive(name);
+      st === 'live' || st === 'think' || dispatchPidAlive(name) ||
+      (q[0]?.heldBy && QueueRequeue.heldBlocks(q[0], { logsDir: LOGS_DIR, reason: 'sweep' }).blocked);
     if (blocked) { queueStalledSince.delete(name); continue; }
     if (!queueStalledSince.has(name)) { queueStalledSince.set(name, now); continue; }
     if (now - queueStalledSince.get(name) < QUEUE_STALL_MS) continue;
@@ -4444,6 +4471,7 @@ function chefAlertsCollect(settings) {
     ...ChefAlerts.pauseAlerts({ runsDir: path.join(LOGS_DIR, 'runs'), since: settings.since, conductor }),
     ...ChefAlerts.stallAlerts({ snapshots: musicians.map(name => ({ name, snap: snapOf(name) })), stallMin: settings.stallMin, excluded: [...chefNames] }),
     ...IdleRegression.posterioriAlerts({ logsDir: LOGS_DIR, since: settings.since }),
+    ...ChefAlerts.queueAlerts({ queues: [...dispatchQueue].map(([project, entries]) => ({ project, entries })), since: settings.since }),
   ];
 }
 function chefAlertsBusy() {
@@ -5861,6 +5889,18 @@ function killDispatchTree(name, pid) {
   catch { try { process.kill(pid, 'SIGKILL'); return true; } catch { return false; } }
 }
 
+// 0.144.0 (scripts/queue-requeue.mjs): dispatch.mjs puts a task its lane cannot
+// take back into the queue here, never through /api/dispatch — a server older
+// than 0.144.0 answers 404 (dispatch.mjs then keeps the old visible refusal)
+// instead of spawning the task again, which would loop. Same handler below,
+// with `heldBy` (required) and `front` honoured.
+app.post('/api/queue-held', express.json({ limit: '2mb' }), (req, res, next) => {
+  if (!QueueRequeue.cleanHeldBy(req.body?.heldBy)) return res.status(400).json({ error: 'heldBy invalide' });
+  req.body.queueIfBusy = true;
+  req.orchHeld = true;
+  req.url = '/api/dispatch';
+  next();
+});
 app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
   // Patch 1.3: handler is async so the hot-path I/O (dispatchPidAliveAsync,
   // captureInterruptStateAsync) doesn't block the event loop. Catch any
@@ -5958,14 +5998,19 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
       ...pipelineOptsFrom(req.body),
       ...laneOptsFrom(req.body),
       taskId: typeof req.body?.taskId === 'string' && /^r-\d{8}T\d{6}-[0-9a-f]{6}#\d{1,3}(\.\d{1,2})?$/.test(req.body.taskId) ? req.body.taskId : undefined,
+      // 0.144.0: refused at launch for a passing cause — kept, never lost.
+      heldBy: (req.orchHeld && QueueRequeue.cleanHeldBy(req.body?.heldBy)) || undefined,
     };
     // Lanes (0.101.0): a lane rule kept this task serial — it waits in the
     // queue, with its justification, even when lane 0 happens to be free.
-    if (busy || entry.exclusive) {
-      const len = queuePush(name, entry);
+    if (busy || entry.exclusive || entry.heldBy) {
+      const front = req.body?.front === true && !!entry.heldBy;
+      const len = queuePush(name, entry, { front });
       const id = dispatchQueue.get(name)[len - 1].id;
-      console.log(`[queue] ${name} ${busy ? `occupé (pid=${busy})` : `en série (règle ${entry.exclusive.rule})`} — dispatch mis en file (pos=${len}, id=${id})`);
-      return res.status(202).json({ ok: true, queued: true, project: name, queueLength: len, position: len, id });
+      const why = entry.heldBy ? `retenue (${entry.heldBy.kind}${entry.heldBy.run ? ` ${entry.heldBy.run}` : ''})${front ? ', remise en tête' : ''}` : busy ? `occupé (pid=${busy})` : `en série (règle ${entry.exclusive.rule})`;
+      console.log(`[queue] ${name} ${why} — dispatch mis en file (pos=${len}, id=${id})`);
+      if (entry.heldBy) debugLog(`[queue-held] ${name} ${id} : ${entry.heldBy.why}`);
+      return res.status(202).json({ ok: true, queued: true, project: name, queueLength: dispatchQueue.get(name).length, position: len, id, ...(entry.heldBy ? { held: true } : {}) });
     }
     const pid = spawnDirectDispatch(name, prompt, attachmentPaths, videoPaths, entry);
     return res.status(202).json({ ok: true, direct: true, project: name, pid });

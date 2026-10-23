@@ -399,6 +399,15 @@ export function isLocalOnly(f) {
   return p.startsWith(RUNS_PREFIX) || p === '.claude' || p === '.claude/' || p.startsWith('.claude/');
 }
 
+/** Preconditions of a pipeline (and mode): `clean` = a new run refuses an uncommitted tree. */
+export function pipelineNeeds(pipeline, mode) {
+  return pipeline === 'dev' ? { tests: true, clean: true } : { ...(catalogOf(pipeline)?.needs || {}), ...(catalogOf(pipeline)?.needsByMode?.[mode] || {}) };
+}
+/** Uncommitted files of a checkout, machine-local files excluded (the « clean tree » precondition). */
+export function uncommittedFiles(cwd) {
+  return git(cwd, ['status', '--porcelain']).out.split('\n').filter(l => l && !isLocalOnly(l.slice(3)));
+}
+
 // Un dépôt git ne cesse pas d'en être un pendant une exécution : la réponse
 // positive est gardée (0.73.3 ; ~28 appels git de moins par exécution, ~40 ms
 // chacun sous Windows). Un dossier hors git est toujours revérifié.
@@ -2808,7 +2817,7 @@ export async function runPipeline(o) {
   const pipeline = state?.pipeline || o.pipeline;
   if (!ENGINE_PIPELINES.includes(pipeline)) return refuse(64, `« ${pipeline} » n'est pas en service (${ENGINE_PIPELINES.join(', ')}).`);
   // A mode may have its own preconditions (Rédaction « document »: outside git, tree not clean).
-  const needs = pipeline === 'dev' ? { tests: true, clean: true } : { ...(catalogOf(pipeline)?.needs || {}), ...(catalogOf(pipeline)?.needsByMode?.[state?.mode || o.mode] || {}) };
+  const needs = pipelineNeeds(pipeline, state?.mode || o.mode);
   const isGit = git(cwd, ['rev-parse', '--is-inside-work-tree']).out === 'true';
   // Le Routage (dossier du chef, hors git) se juge sur une empreinte du dossier.
   if (!isGit && needs.git !== false) {
@@ -2820,7 +2829,7 @@ export async function runPipeline(o) {
   const base = state?.base || (isGit ? git(cwd, ['rev-parse', 'HEAD']).out : 'hors-git');
   if (!base) return refuse(65, 'dépôt sans commit.');
   if (!state && needs.clean) {
-    const dirty = git(cwd, ['status', '--porcelain']).out.split('\n').filter(l => l && !isLocalOnly(l.slice(3)));
+    const dirty = uncommittedFiles(cwd);
     if (dirty.length) return refuse(65, `modifications non commitées (${dirty.length} fichier(s)) — l'étape Livrer doit produire UN commit propre. Commite ou range d'abord.`);
   }
 

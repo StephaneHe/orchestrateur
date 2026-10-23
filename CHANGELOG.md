@@ -11,6 +11,39 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.144.0] - 2026-10-23
+
+Defect seen in production (2026-10-23): while the dev run
+p-20261023T153721-ec927d of a project was paused in its main checkout (a
+process pause waiting for the chef, its files uncommitted), the server drained
+the musician's queue; the head (task r-20261023T150628-291c4c#1) started a new
+dev run, was refused « modifications non commitées (1 fichier(s)) » and was gone
+from the queue — the next task too. The chef noticed by hand.
+
+### Fixed
+
+- (server) A new pipeline run launched from the queue (`--no-queue-if-busy`) or
+  with `--queue-if-busy`, whose main checkout a paused run left dirty, goes back
+  to the queue — at the HEAD when it came from it — held by that run
+  (`heldBy {kind: 'paused-run', run}`), before anything is written to the
+  musician's log (only a `notification/queue_entry_held`) and before the
+  classifier model is called. The server does not launch a held head while the
+  run is paused; its end or its closing (`close-run.mjs`) releases it
+  (`scripts/queue-requeue.mjs`, `queueHeadHeld` in the drain and the sweep).
+- (server) A queue head that finds no free lane goes back to the head of the
+  queue instead of waiting in place and dying after 4 h (`capacity`, retried on
+  the musician's next result or after 60 s).
+
+### Added
+
+- (server) A dirty checkout no paused run explains keeps the task at the head of
+  the queue (`dirty`, durable, retried on a result or every 10 min,
+  `ORCH_QUEUE_HELD_RETRY_MS`) and is raised once to the chef by `chefAlerts`
+  (new kind `queue`, key stable across requeues). `POST /api/dispatch` accepts
+  `heldBy` and `front`; `GET /api/queue/:project` shows `heldBy`.
+- Suite `_test_queue_requeue.mjs` (replay of the production case, real
+  dispatch.mjs) and the matching line of `docs/USER_REQUIREMENTS.md`.
+
 ## [0.143.0] - 2026-10-23
 
 User's « ok » (2026-10-23) to the chef's proposal to speed up the pipelines,

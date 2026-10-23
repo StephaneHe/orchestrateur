@@ -370,6 +370,8 @@ const CHEF_TICKET = process.env.DISPATCH_TICKET || null;
 // Les lancements internes du mode double ne passent jamais par la file : le
 // parent tient déjà la place du musicien.
 const queueIfBusy = (DUAL_BRANCH || dualSynthesis || PIPE_STEP) ? false : noQueueIdx !== -1 ? false : (queueIdx !== -1 || CHEF_SLOT != null);
+// Launched by the server's queue drain (0.144.0): a passing refusal puts the task back at the head.
+const FROM_QUEUE = noQueueIdx !== -1 && !DUAL_BRANCH && !dualSynthesis && !PIPE_STEP;
 // Une branche ne rend compte à personne : c'est la relecture qui rend compte.
 if (DUAL_BRANCH || PIPE_STEP) callbackProject = null;
 
@@ -1147,12 +1149,12 @@ function pidAliveFor(name) {
   } catch { return null; }
 }
 
-function postQueueIfBusy() {
+function postQueueIfBusy(extra = {}, route = '/api/dispatch') {
   return new Promise((resolve) => {
     let token;
     try { token = fs.readFileSync(path.join(ROOT, '.token'), 'utf8').trim(); }
     catch { return resolve(null); }
-    const payload = { project: projectName, prompt, queueIfBusy: true };
+    const payload = { project: projectName, prompt, queueIfBusy: true, ...extra };
     if (callbackProject)   payload.callback = callbackProject;
     if (sourceProject)     payload.source   = sourceProject;
     if (modelOverride)     payload.model    = modelOverride;
@@ -1188,7 +1190,7 @@ function postQueueIfBusy() {
     if (REQ?.task)         payload.taskId          = REQ.task;
     const body = Buffer.from(JSON.stringify(payload));
     const req = http.request({
-      hostname: '127.0.0.1', port: Number(process.env.ORCH_PORT) || 7777, path: '/api/dispatch', method: 'POST',
+      hostname: '127.0.0.1', port: Number(process.env.ORCH_PORT) || 7777, path: route, method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Orchestrator-Token': token,
@@ -1210,6 +1212,23 @@ function postQueueIfBusy() {
     req.setTimeout(5000, () => { try { req.destroy(); } catch {} resolve(null); });
     req.end(body);
   });
+}
+
+/**
+ * 0.144.0 (scripts/queue-requeue.mjs): a task launched from the queue (or with
+ * --queue-if-busy) that its lane cannot take right now goes back to the queue —
+ * at the head when it came from it — instead of being refused and lost. Called
+ * before anything is written to the musician's log; returns only when the
+ * server cannot take it back (then the old visible refusal follows).
+ */
+async function holdInQueue(heldBy) {
+  if (!FROM_QUEUE && !queueIfBusy) return;
+  const RQ = await import('./queue-requeue.mjs');
+  const r = await postQueueIfBusy({ heldBy, ...(FROM_QUEUE ? { front: true } : {}) }, '/api/queue-held');
+  if (!r?.queued || !r.held) { console.error(`[dispatch] ${projectName} : ${heldBy.why} — serveur injoignable ou antérieur à 0.144.0 (redémarrage nécessaire), la tâche ne peut pas être remise en file`); return; }
+  try { fs.appendFileSync(path.join(LOGS, `${projectName}.jsonl`), JSON.stringify({ orch_turn: TURN_ID, ...RQ.heldEvent(heldBy, { front: FROM_QUEUE, title: prompt }), queueId: r.id || null, ...(REQ?.task ? { taskId: REQ.task } : {}), timestamp: new Date().toISOString() }) + '\n'); } catch {}
+  console.log(`[dispatch] ${projectName} — ${heldBy.why} ; remise ${FROM_QUEUE ? 'en tête de' : 'dans la'} file (${r.id || '?'})`);
+  process.exit(0);
 }
 
 // ---------- requests registry (Routage v3, phase 1) --------------------------
@@ -1511,6 +1530,11 @@ if (TURN_LOCK && LANES_MAX > 1) {
       if (r?.queued) { console.log(`[dispatch] ${projectName} — mis en file (position ${r.position ?? r.queueLength})${got.rule ? `, justification : règle ${got.rule}` : ''}`); process.exit(0); }
       if (r?.direct) { console.log(`[dispatch] ${projectName} — lancé par le serveur (pid=${r.pid})`); process.exit(0); }
       console.error(`[dispatch] ${projectName} : serveur injoignable — attente sur place`);
+    } else if (FROM_QUEUE) {
+      // 0.144.0: a drained head that finds no lane goes back to the head of the
+      // queue (waiting here, it died after WAIT_MAX and was lost).
+      releaseAll();
+      await holdInQueue({ kind: 'capacity', lane: 0, durable: false, why: got.text });
     }
     const t0 = Date.now();
     while ((got = attempt()).lane == null) {
@@ -1777,6 +1801,16 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
       }
     }
   }
+  // 0.144.0: a NEW run from the queue never starts in a checkout a paused run
+  // left dirty — it waits for that run's end at the head of the queue (checked
+  // before the classifier model is called: no call per retry).
+  const holdable = !resumeRun && !CHEF_PAUSE && (FROM_QUEUE || queueIfBusy) && !(LANE && LANE.k >= 1) && !/^\s*\[CHEF_ANSWER\]/i.test(prompt);
+  if (holdable) {
+    const RQ = await import('./queue-requeue.mjs');
+    const pausedRun = lanesMod.pausedPipelineRuns(LOGS, projectName).find(c => c.lane === 0) || null;
+    const h = pausedRun ? RQ.startBlocker({ pausedRun, dirty: pipeEngine.uncommittedFiles(WORK_DIR) }) : null;
+    if (h) await holdInQueue(h);
+  }
   // Explicit --pipeline dev without its mode or nature: the model decides them.
   if (!resumeRun && (!pipe || (pipe === 'dev' && (!mode || !kind)))) {
     // Phase 5 (0.52.0), 0.66.0: classification by the MEANING, by the model of
@@ -1837,6 +1871,12 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
   if (NEW_SESSION) pipeNotes.push('--new-session sans effet : chaque exécution a ses propres sessions, par étape et par model');
   // --pipeline dev sans --mode : c'est le model de classement qui a choisi (Q9 : hésitation → léger, dans sa consigne).
   if (pipe === 'dev' && !mode && classification?.mode) mode = classification.mode;
+  // 0.144.0: a dirty tree nobody explains would refuse this run — the task is
+  // kept at the head of the queue and the chef alerted (durable), never lost.
+  if (holdable && pipe && !resumeRun && pipeEngine.pipelineNeeds(pipe, mode).clean) {
+    const h = (await import('./queue-requeue.mjs')).startBlocker({ dirty: pipeEngine.uncommittedFiles(WORK_DIR), needsClean: true });
+    if (h) await holdInQueue(h);
+  }
   if (pipe || resumeRun) {
     const code = await pipeEngine.runPipeline({
       root: ROOT, logsDir: LOGS, project, projectName,
