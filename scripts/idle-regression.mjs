@@ -54,6 +54,8 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { writeFileAtomic } from './atomic-file.mjs';
+import { describeFailures, failureLines } from './test-failures.mjs';
+import { declaredCommand, readCleanChecks, recordCleanCheck, cleanCheckNeeded, commandText, summarize } from './clean-copy-check.mjs';
 
 export const DEFAULT_IDLE_MIN = 30;
 export const MAX_IDLE_MIN = 24 * 60;
@@ -197,7 +199,7 @@ export function targetsOf({ projects = [], inService = [], conductor = 'chef', s
     if (prodNames.has(p.name) || prodLike(p.path)) continue;
     if (!fs.existsSync(path.join(p.path, '.git'))) continue;
     const plan = projectPlan(p.path);
-    if (plan) out.push({ name: p.name, path: p.path, plan });
+    if (plan) out.push({ name: p.name, path: p.path, plan, test: declaredCommand(p.path) });
   }
   return out;
 }
@@ -247,6 +249,8 @@ export function bisectRecord(b, commit, red) {
 /** A step stays red when one of the KOs of the full run is still KO there. */
 export function stillRed(fullKo, stepKo, code) {
   if (!Array.isArray(stepKo)) return code !== 0;
+  // A step whose command could not run (or named no test) is red as before (0.145.0).
+  if (stepKo.some(id => id.startsWith('testCommand'))) return code !== 0;
   if (!fullKo?.length) return code !== 0;
   return stepKo.some(id => fullKo.includes(id));
 }
@@ -256,10 +260,15 @@ export function stillRed(fullKo, stepKo, code) {
 // ---------------------------------------------------------------------------
 export function fixText(name, red) {
   const c = red.bisect?.culprit;
+  const what = describeFailures(red.failures);
   return [
-    `[NON-RÉGRESSION A POSTERIORI ROUGE] La non-régression complète lancée par l'orchestrateur pendant l'inactivité de l'utilisateur est rouge sur ${name} (commit ${short(red.commit)}).`,
-    `KO : ${red.ko?.length ? red.ko.join(' ; ') : '(code de sortie non nul, aucun KO détaillé)'}`,
-    c ? `Commit fautif (recherche entre la dernière complète verte ${short(red.good)} et ${short(red.commit)}) : ${short(c)}${red.bisect.subject ? ` « ${red.bisect.subject} »` : ''}.`
+    red.cleanCopy
+      ? `[COPIE PROPRE ROUGE] La commande de test de ${name} (« ${commandText(red.testCommand)} »), lancée par l'orchestrateur dans une copie propre du commit ${short(red.commit)} (git worktree), échoue alors qu'elle a changé depuis sa dernière validation.`
+      : `[NON-RÉGRESSION A POSTERIORI ROUGE] La non-régression complète lancée par l'orchestrateur pendant l'inactivité de l'utilisateur est rouge sur ${name} (commit ${short(red.commit)}).`,
+    what ? `Échec : ${what}` : `KO : ${red.ko?.length ? red.ko.join(' ; ') : '(code de sortie non nul, aucun KO détaillé)'}`,
+    ...failureLines(red.failures, { max: 10, indent: '  ' }),
+    red.ignored?.length ? `Fichier(s) ignoré(s) par git, donc absent(s) d'une copie propre, cité(s) par la sortie : ${red.ignored.map(i => i.file).join(', ')} — les versionner (ou une fixture), ou ne plus en dépendre.` : null,
+    red.cleanCopy ? null : c ?`Commit fautif (recherche entre la dernière complète verte ${short(red.good)} et ${short(red.commit)}) : ${short(c)}${red.bisect.subject ? ` « ${red.bisect.subject} »` : ''}.`
       : red.good ? `Commit fautif non isolé entre ${short(red.good)} et ${short(red.commit)}${red.bisect?.why ? ` (${red.bisect.why})` : ''}.` : 'Aucune complète verte connue avant : commit fautif non recherché.',
     red.report ? `Rapport : ${red.report}` : null,
     red.log ? `Sortie : ${red.log}` : null,
@@ -271,7 +280,8 @@ export function fixText(name, red) {
 export function posterioriAlert(name, r) {
   return { kind: 'posteriori', key: `posteriori:${name}:${r.commit}`, project: name, at: r.at,
     red: { commit: r.commit, good: r.good || null, ko: (r.ko || []).slice(0, 8), culprit: r.bisect?.culprit || null, subject: r.bisect?.subject || null,
-      why: r.bisect?.why || null, report: r.report || null, fix: r.fix || null } };
+      why: r.bisect?.why || null, report: r.report || null, fix: r.fix || null,
+      failures: r.failures || null, ignored: (r.ignored || []).slice(0, 5), cleanCopy: !!r.cleanCopy, testCommand: r.testCommand || null } };
 }
 export function posterioriAlerts({ logsDir, since }) {
   const st = readState(logsDir);
@@ -375,6 +385,13 @@ export function sweep(deps) {
     const head = deps.head(t.path);
     if (!head || head === p.lastGreen?.commit) continue;
     if (p.red && p.red.commit === head) continue; // red already known on this content: wait for a new commit
+    // 0.145.0: a declared full run does not use the testCommand; a changed
+    // testCommand is first run once in a clean copy (the undeclared full run
+    // is itself that check, recorded by applyResult).
+    if (t.plan.declared && t.test && cleanCheckNeeded(readCleanChecks(logsDir).projects[t.name], t.test.testCommand, head)) {
+      startStep(deps, st, t, { kind: 'clean-check', commit: head }, act);
+      saveState(logsDir, st); return out;
+    }
     startStep(deps, st, t, { kind: 'full', commit: head }, act);
     saveState(logsDir, st); return out;
   }
@@ -395,14 +412,20 @@ function startStep(deps, st, t, { kind, commit, ko = null }, act) {
   const dir = path.join(stepsDir(deps.logsDir), t.name);
   fs.mkdirSync(dir, { recursive: true });
   const suites = (ko || []).filter(x => x.startsWith('suite:')).map(x => x.slice(6));
+  const clean = kind === 'clean-check';
   const useBisect = kind === 'bisect' && t.plan.bisect && ko?.length && suites.length === ko.length;
-  const report = t.plan.inPlace ? `.regress/report-idle-${id}.json` : null;
-  const argv = fillArgv(useBisect ? t.plan.bisect : t.plan.full, { ref: commit, report: report || '', suites: suites.join(',') });
+  const inPlace = clean ? false : t.plan.inPlace;
+  const report = inPlace ? `.regress/report-idle-${id}.json` : null;
+  const tc = t.test?.testCommand;
+  const argv = clean ? (typeof tc === 'string' ? ['__shell__', tc] : tc)
+    : fillArgv(useBisect ? t.plan.bisect : t.plan.full, { ref: commit, report: report || '', suites: suites.join(',') });
   const step = {
-    id, project: t.name, path: t.path, kind, commit, argv, inPlace: t.plan.inPlace, report,
+    id, project: t.name, path: t.path, kind, commit, argv, inPlace, report,
     resultFile: path.join(dir, `${id}.result.json`), logFile: path.join(dir, `${id}.log`),
-    worktree: t.plan.inPlace ? null : path.join(dir, 'wt'),
-    timeoutMs: (t.plan.timeoutMin ? t.plan.timeoutMin * 60_000 * (t.plan.declared ? 1 : 2) : STEP_TIMEOUT_MS),
+    worktree: inPlace ? null : path.join(dir, 'wt'),
+    timeoutMs: clean ? (t.test?.timeoutMin ? t.test.timeoutMin * 60_000 * 2 : STEP_TIMEOUT_MS)
+      : (t.plan.timeoutMin ? t.plan.timeoutMin * 60_000 * (t.plan.declared ? 1 : 2) : STEP_TIMEOUT_MS),
+    ...(clean || (kind === 'full' && !t.plan.declared && tc) ? { testCommand: tc } : {}),
   };
   fs.writeFileSync(path.join(dir, `${id}.step.json`), JSON.stringify(step, null, 2));
   const { pid } = deps.launch(step);
@@ -413,6 +436,25 @@ function startStep(deps, st, t, { kind, commit, ko = null }, act) {
 function applyResult(deps, st, a, res, act) {
   const p = proj(st, a.project);
   const red = res.code !== 0;
+  const at = res.endedAt || isoNow(deps.now);
+  // 0.145.0: every run of the testCommand in a clean copy is recorded (clean-check.json).
+  if (a.testCommand) {
+    const c = { testCommand: a.testCommand, commit: a.commit, ok: !red, code: res.code, at, failures: res.failures || null, ignored: res.ignored || [], log: a.logFile, by: LAUNCHER };
+    c.summary = summarize(c);
+    try { recordCleanCheck(deps.logsDir, a.project, c); } catch { /* the state below still holds the result */ }
+  }
+  if (a.kind === 'clean-check') {
+    if (!red) {
+      if (p.red?.cleanCopy) { act({ event: 'repaired', project: a.project, commit: a.commit, was: p.red.commit }); p.red = null; }
+      act({ event: 'clean-green', project: a.project, commit: a.commit });
+      return;
+    }
+    p.red = { commit: a.commit, at, ko: res.ko || [], failures: res.failures || null, ignored: res.ignored || [], report: null, log: a.logFile, good: null, code: res.code,
+      cleanCopy: true, testCommand: a.testCommand, searchDone: true, bisect: { culprit: null, why: 'commande de test rouge dans une copie propre' } };
+    act({ event: 'red', project: a.project, commit: a.commit, ko: p.red.ko.slice(0, 8), why: 'copie propre' });
+    raiseRed(deps, a.project, p.red, act);
+    return;
+  }
   if (a.kind === 'full') {
     if (!red) {
       p.lastGreen = { commit: a.commit, at: res.endedAt || isoNow(deps.now), report: res.report || null };
@@ -422,7 +464,8 @@ function applyResult(deps, st, a, res, act) {
       return;
     }
     const good = p.lastGreen?.commit || null;
-    const r = { commit: a.commit, at: res.endedAt || isoNow(deps.now), ko: res.ko || [], report: res.report || null, log: a.logFile, good, code: res.code };
+    const r = { commit: a.commit, at, ko: res.ko || [], report: res.report || null, log: a.logFile, good, code: res.code,
+      ...(res.failures ? { failures: res.failures } : {}), ...(res.ignored?.length ? { ignored: res.ignored } : {}) };
     if (!good) { r.searchDone = true; r.bisect = { culprit: null, why: 'aucune complète verte connue avant' }; }
     else {
       const list = deps.revList(a.path, good, a.commit);

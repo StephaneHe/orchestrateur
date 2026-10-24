@@ -848,6 +848,45 @@ d'autoriser un lancement de non régression »).
   tout de suite.
 - Recette : `_test_idle_regression.mjs`.
 
+## Copie propre et alerte précise (0.145.0)
+
+Accord utilisateur (2026-10-24) : « oui », aux deux propositions du chef après
+la première nuit de complètes a posteriori (deux projets rouges seulement parce
+qu'un fichier ignoré par git manquait dans une copie propre ; une alerte « KO :
+testCommand » pour 1 test sur 559).
+
+- **Copie propre** (`scripts/clean-copy-check.mjs`, `checkCleanCopy`) : la
+  `testCommand` tourne une fois dans un `git worktree` détaché du commit courant
+  (liens de dépendances comme le runner a posteriori, rien d'autre). Rouge ⇒
+  raison avec les tests en échec (ou pourquoi la commande n'a pas pu tourner) et
+  les fichiers ignorés par git cités par la sortie. État `logs/clean-check.json`
+  (`recordCleanCheck` seul), sortie `logs/clean-check/<projet>.log`.
+  - `onboardProject` (donc `new-project.mjs`) : vérifiée avant toute écriture ;
+    rouge ⇒ pas en service, rien de commité (`details` affichés).
+  - `node scripts/pipeline-onboard.mjs --check-clean <projet>|--all|--changed` :
+    projets en service et instances de dev, jamais une prod ; rouge =
+    avertissement bloquant (exit 1), **jamais de retrait d'office** ;
+    `--changed` : testCommand changée, ou rouge sur un commit plus ancien
+    (`cleanCheckNeeded`), exit 2 s'il n'y a rien à vérifier.
+  - Balayage d'inactivité : un projet déclaré (`idleRegression.full`) dont la
+    testCommand a changé passe d'abord une étape `clean-check` ; rouge ⇒
+    `red.cleanCopy`, alerte `posteriori` et demande d'incident
+    `[COPIE PROPRE ROUGE]`. La complète d'un projet non déclaré vaut cette
+    vérification et est enregistrée comme telle.
+- **Alerte précise** (`scripts/test-failures.mjs`, `parseTestOutput`) : node
+  --test (spec, TAP), pytest, unittest, gradle/JUnit, dotnet test, sinon les
+  dernières lignes utiles ; `tests` (N en échec, nommés) / `not-run` (la
+  commande n'a pas pu tourner : environnement, fichier manquant, compilation,
+  collecte) / `unknown`. Le runner met `ko = test:<nom>` (ou
+  `testCommand:non-lancée`), `failures`, `ignored` ; l'alerte du chef et
+  `fixText` disent « Échec : … » avec une ligne par test, jamais « KO :
+  testCommand ». Lire la sortie d'une machine n'est pas du routage par
+  mots-clés.
+- Redémarrage nécessaire pour le balayage servi (`idle-regression.mjs`,
+  `chef-alerts.mjs`) ; le runner, `pipeline-onboard.mjs` et `new-project.mjs`
+  sont actifs tout de suite.
+- Recette : `_test_clean_copy_check.mjs`.
+
 ## Un test périmé s'arrête aussitôt (0.94.0)
 
 Demande utilisateur (2026-10-14) : « si un test est detecte comme inutile, on

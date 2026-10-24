@@ -34,6 +34,7 @@ import { heldKey } from './queue-requeue.mjs';
 import { writeFileAtomic } from './atomic-file.mjs';
 import { readRuns } from './regression-live.mjs';
 import { pauseFamily } from './process-pause.mjs';
+import { describeFailures, failureLines } from './test-failures.mjs';
 
 export const DEFAULT_STALL_MIN = 10;
 export const MAX_FIRES_PER_HOUR = 6;
@@ -243,10 +244,16 @@ export function alertLine(a, i, { root = '.' } = {}) {
   }
   if (a.kind === 'posteriori') {
     const r = a.red;
+    // 0.145.0: the failed tests (or why the command could not run), never just « KO : testCommand ».
+    const what = describeFailures(r.failures);
     return [
-      `${n} ✕ Non-régression complète A POSTERIORI rouge — ${a.project} · commit ${String(r.commit).slice(0, 7)} (lancée par le programme pendant l’inactivité)`,
-      `   KO : ${r.ko.length ? r.ko.join(' ; ') : '(aucun KO détaillé)'}${r.report ? ` · rapport ${r.report}` : ''}`,
-      `   Commit fautif : ${r.culprit ? `${String(r.culprit).slice(0, 7)}${r.subject ? ` « ${r.subject} »` : ''}` : `non isolé${r.why ? ` (${r.why})` : ''}`} — entre la dernière complète verte ${r.good ? String(r.good).slice(0, 7) : '(aucune)'} et ${String(r.commit).slice(0, 7)}`,
+      r.cleanCopy
+        ? `${n} ✕ Commande de test rouge en COPIE PROPRE — ${a.project} · commit ${String(r.commit).slice(0, 7)} (testCommand modifiée, validée par le programme pendant l’inactivité)`
+        : `${n} ✕ Non-régression complète A POSTERIORI rouge — ${a.project} · commit ${String(r.commit).slice(0, 7)} (lancée par le programme pendant l’inactivité)`,
+      what ? `   Échec : ${what}${r.report ? ` · rapport ${r.report}` : ''}` : `   KO : ${r.ko.length ? r.ko.join(' ; ') : '(aucun KO détaillé)'}${r.report ? ` · rapport ${r.report}` : ''}`,
+      ...failureLines(r.failures, { max: 6, indent: '     ' }),
+      ...(r.ignored?.length ? [`   Ignoré(s) par git, absent(s) d’une copie propre : ${r.ignored.map(i => i.file).join(', ')}`] : []),
+      r.cleanCopy ? `   Commande : ${Array.isArray(r.testCommand) ? r.testCommand.join(' ') : r.testCommand || '?'} — un fichier nécessaire n’est sans doute pas versionné` : `   Commit fautif : ${r.culprit ? `${String(r.culprit).slice(0, 7)}${r.subject ? ` « ${r.subject} »` : ''}` : `non isolé${r.why ? ` (${r.why})` : ''}`} — entre la dernière complète verte ${r.good ? String(r.good).slice(0, 7) : '(aucune)'} et ${String(r.commit).slice(0, 7)}`,
       `   Correction : ${r.fix ? `lancée ${r.fix.at}` : 'lancée par le programme vers le musicien (voie Incident) à la prochaine période d’inactivité ; tout de suite seulement si l’utilisateur le demande'} : node "${S('idle-regression.mjs')}" fix ${a.project} --now`,
     ].join('\n');
   }

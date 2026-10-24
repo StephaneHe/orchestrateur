@@ -5,6 +5,7 @@
 // ============================================================================
 //
 //   node scripts/pipeline-onboard.mjs --plan <plan.json> [--dry-run] [--apply]
+//   node scripts/pipeline-onboard.mjs --check-clean <projet>|--all|--changed
 //
 // plan.json: { "<project>": { "testCommand": "…", "verified": true|false,
 //              "why": "reason when not eligible" }, … }
@@ -22,6 +23,13 @@
 //      dedicated documented commit — except for a branch that diverged from
 //      its upstream: there the file stays local (`.git/info/exclude`) so the
 //      history is not touched at all.
+// 0.145.0 (user agreement « oui », 2026-10-24): before anything is written,
+// the test command is run once in a CLEAN copy of the current commit (git
+// worktree, clean-copy-check.mjs); red ⇒ excluded with the useful output (a
+// file ignored by git, absent from any clean copy, made two projects red the
+// first night of after-the-fact full runs). `--check-clean` re-checks the
+// projects in service on demand (`--changed`: only those whose testCommand
+// changed since its last check, also done by the idle sweep).
 // --apply also writes model-routing.json → enforcement (projects, generalSince).
 // Every action is recorded in logs/pipeline-onboarding.json and the table of
 // logs/pipeline-onboarding.md. Both are MERGED: only the projects named in the
@@ -34,6 +42,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readEnforcement, writeEnforcement, isEnforced, readVersion, isLocalOnly, ENGINE_PIPELINES } from './pipeline-engine.mjs';
+import { checkCleanCopy, recordCleanCheck, readCleanChecks, cleanCheckNeeded, declaredCommand, detailLines, DEFAULT_TIMEOUT_MIN } from './clean-copy-check.mjs';
 
 const ROOT = process.env.DISPATCH_ROOT_FOR_TESTS ? path.resolve(process.env.DISPATCH_ROOT_FOR_TESTS) : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const git = (cwd, ...a) => { const r = spawnSync('git', ['-C', cwd, ...a], { encoding: 'utf8', windowsHide: true }); return { ok: r.status === 0, out: (r.stdout || '').replace(/\s+$/, ''), err: (r.stderr || '').trim() }; };
@@ -129,7 +138,7 @@ function addExclude(dir, line) {
 }
 
 /** Onboards one project. Returns { name, status: 'service'|'exclu', why?, actions[], config? }. */
-export function onboardProject(project, entry, { dryRun = false } = {}) {
+export function onboardProject(project, entry, { dryRun = false, cleanCheck = true, logsDir = null } = {}) {
   const dir = project.path;
   const out = { name: project.name, actions: [] };
   const exclude = (why) => ({ ...out, status: 'exclu', why });
@@ -154,6 +163,20 @@ export function onboardProject(project, entry, { dryRun = false } = {}) {
   // 2. A clean tree is required (never commit someone else's work in progress).
   const dirty = git(dir, 'status', '--porcelain').out.split('\n').filter(l => l && !isLocalOnly(l.slice(3)));
   if (dirty.length && !dryRun) return exclude(`arbre non propre : ${dirty.slice(0, 5).map(l => l.slice(3)).join(', ')}`);
+  // 2b. The test command must pass in a clean copy of the current commit, not
+  // only in this checkout (where ignored files may exist): checked before
+  // anything is written, so a red check leaves the project untouched.
+  if (cleanCheck && !dryRun) {
+    const declared = declaredCommand(dir);
+    const tc = declared?.testCommand || entry.testCommand;
+    const c = checkCleanCopy({ dir, testCommand: tc, timeoutMs: (declared?.timeoutMin || DEFAULT_TIMEOUT_MIN) * 60_000,
+      logFile: logsDir ? path.join(logsDir, 'clean-check', `${project.name}.log`) : null });
+    c.by = 'pipeline-onboard';
+    try { recordCleanCheck(logsDir, project.name, c); } catch { /* the result is returned anyway */ }
+    out.cleanCheck = c;
+    if (!c.ok) return { ...exclude(`${c.summary} — corriger, puis relancer l’intégration`), details: detailLines(c) };
+    out.actions.push(`copie propre verte : ${typeof tc === 'string' ? tc : tc.join(' ')} (${String(c.commit).slice(0, 7)})`);
+  } else if (cleanCheck && dryRun) out.actions.push('(simulation) validation en copie propre non lancée');
   // 3. pipeline.json.
   const pj = path.join(dir, '.orchestrateur', 'pipeline.json');
   if (fs.existsSync(pj)) {
@@ -304,9 +327,9 @@ export function serviceNewProject(root, { name, dir, fresh = false, scaffolded =
   actions.push(`suite verte : ${testCommand}`);
 
   // 5. pipeline.json + local CLI files, then enforcement.
-  const r = onboardProject({ name, path: dir }, { testCommand, verified: true });
+  const r = onboardProject({ name, path: dir }, { testCommand, verified: true }, { logsDir: path.join(root, 'logs') });
   actions.push(...r.actions);
-  if (r.status !== 'service') return exclude(r.why);
+  if (r.status !== 'service') return { ...exclude(r.why), details: r.details || [] };
   const cur = readEnforcement(root);
   writeEnforcement(root, { projects: [...new Set([...cur.projects, name])], pipelines: cur.pipelines.length ? cur.pipelines : ENGINE_PIPELINES, by: `new-project ${name}` });
   actions.push('model-routing.json → enforcement.projects');
@@ -314,11 +337,62 @@ export function serviceNewProject(root, { name, dir, fresh = false, scaffolded =
 }
 
 // ---------------------------------------------------------------------------
+// --check-clean <project>|--all|--changed (0.145.0): the projects in service
+// (and dev instances) re-checked in a clean copy of their HEAD. Never takes a
+// project out of service by itself: a red check is a blocking warning (exit 1)
+// with the useful output; `pipeline-enforce.mjs off <projet>` removes it.
+// A production checkout is never checked here (its dev is).
+/** → {checked: [{name, ok, summary, details}], skipped: [{name, why}]} */
+export function checkCleanProjects(root, { names = null, changed = false, run = checkCleanCopy } = {}) {
+  const cfg = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));
+  const conductor = cfg.conductor || 'chef';
+  const enf = readEnforcement(root);
+  const prods = new Set(cfg.projects.filter(p => p.devOf).map(p => p.devOf));
+  const logsDir = path.join(root, 'logs');
+  const checks = readCleanChecks(logsDir).projects;
+  const out = { checked: [], skipped: [] };
+  for (const p of cfg.projects) {
+    if (p.name === conductor || new RegExp(`^${conductor}-\\d+$`).test(p.name)) continue;
+    if (names ? !names.includes(p.name) : !(isEnforced(enf, p.name) || p.devOf)) continue;
+    if (prods.has(p.name)) { out.skipped.push({ name: p.name, why: 'une prod : vérifiée dans sa dev, jamais ici' }); continue; }
+    const d = fs.existsSync(p.path) ? declaredCommand(p.path) : null;
+    if (!d) { out.skipped.push({ name: p.name, why: 'aucune testCommand dans .orchestrateur/pipeline.json' }); continue; }
+    const head = git(p.path, 'rev-parse', 'HEAD').out || null;
+    if (changed && !cleanCheckNeeded(checks[p.name], d.testCommand, head)) { out.skipped.push({ name: p.name, why: 'testCommand inchangée depuis sa dernière validation' }); continue; }
+    const c = run({ dir: p.path, testCommand: d.testCommand, timeoutMs: (d.timeoutMin || DEFAULT_TIMEOUT_MIN) * 60_000, logFile: path.join(logsDir, 'clean-check', `${p.name}.log`) });
+    c.by = 'pipeline-onboard --check-clean';
+    recordCleanCheck(logsDir, p.name, c);
+    out.checked.push({ name: p.name, ok: c.ok, summary: c.summary, details: detailLines(c) });
+  }
+  if (names) for (const n of names) if (!cfg.projects.some(p => p.name === n)) out.skipped.push({ name: n, why: 'absent de config.json' });
+  return out;
+}
+
+function checkCleanCli(args) {
+  const i = args.indexOf('--check-clean');
+  const target = args[i + 1];
+  const all = target === '--all' || args.includes('--all');
+  const changed = target === '--changed' || args.includes('--changed');
+  const names = !all && !changed && target && !target.startsWith('--') ? [target] : null;
+  if (!names && !all && !changed) { console.error('usage: node scripts/pipeline-onboard.mjs --check-clean <projet>|--all|--changed'); return 64; }
+  const r = checkCleanProjects(ROOT, { names, changed });
+  for (const c of r.checked) {
+    console.log(`${c.name.padEnd(18)} ${c.ok ? 'VERT ' : 'ROUGE'} ${c.summary}`);
+    for (const l of c.details) console.log(l);
+    if (!c.ok) console.log(`${' '.repeat(19)}⚠ à corriger : le projet reste en service tant qu’on ne le retire pas (node scripts/pipeline-enforce.mjs off ${c.name})`);
+  }
+  for (const s of r.skipped) console.log(`${s.name.padEnd(18)} —     ${s.why}`);
+  if (!r.checked.length) return 2;
+  return r.checked.every(c => c.ok) ? 0 : 1;
+}
+
+// ---------------------------------------------------------------------------
 if (path.resolve(process.argv[1] || '') === path.resolve(fileURLToPath(import.meta.url))) {
   const args = process.argv.slice(2);
   const flag = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : null; };
+  if (args.includes('--check-clean')) process.exit(checkCleanCli(args));
   const planFile = flag('--plan');
-  if (!planFile) { console.error('usage: node scripts/pipeline-onboard.mjs --plan <plan.json> [--dry-run] [--apply]'); process.exit(64); }
+  if (!planFile) { console.error('usage: node scripts/pipeline-onboard.mjs --plan <plan.json> [--dry-run] [--apply]\n       node scripts/pipeline-onboard.mjs --check-clean <projet>|--all|--changed'); process.exit(64); }
   const plan = JSON.parse(fs.readFileSync(planFile, 'utf8'));
   const dryRun = args.includes('--dry-run');
   const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
@@ -337,6 +411,7 @@ if (path.resolve(process.argv[1] || '') === path.resolve(fileURLToPath(import.me
     const r = busy && plan[p.name]?.verified ? { name: p.name, status: 'exclu', why: 'tour en cours : intégration reportée (relancer le script plus tard)', actions: [] } : onboardProject(p, plan[p.name], { dryRun });
     results.push(r);
     console.log(`${r.name.padEnd(18)} ${r.status === 'service' ? 'EN SERVICE' : 'EXCLU     '} ${r.why || r.config?.testCommand || ''}`);
+    for (const l of r.details || []) console.log(l);
   }
   const untouched = cfg.projects.filter(p => !isChef(p.name) && !Object.hasOwn(plan, p.name)).length;
   if (untouched) console.log(`(${untouched} autre(s) projet(s) hors de ce plan : relevé inchangé)`);

@@ -32,6 +32,8 @@
 // seulement), suite de tests vérifiée verte (générée si le projet n'en déclare
 // aucune et n'a pas d'autre pile), .orchestrateur/pipeline.json commité,
 // enforcement.projects. Impossible ⇒ « ⚠ HORS SERVICE » avec la raison, code 67.
+// Depuis 0.145.0, la commande de test doit aussi passer dans une copie propre
+// du commit (git worktree, clean-copy-check.mjs), sinon hors service.
 //
 // DESIGN — deterministic + idempotent:
 //   • No LLM in the loop. Pure mechanics, like restart-orchestrateur.mjs.
@@ -288,6 +290,7 @@ if (service.status === 'exclu') {
   console.error('');
   console.error(`[new-project] ⚠ HORS SERVICE : ${name} n'a PAS pu être mis en service dans les pipelines obligatoires.`);
   console.error(`[new-project]   raison : ${service.why}`);
+  for (const l of service.details || []) console.error(`[new-project] ${l}`);
   console.error('[new-project]   (règle : tout nouveau musicien est en service dès sa création — corriger puis relancer)');
   process.exit(67);
 }

@@ -508,7 +508,9 @@
         "templates/**",
         ".orchestrateur/**",
         "scripts/output-format.mjs",
-        "scripts/idle-regression.mjs"
+        "scripts/idle-regression.mjs",
+        "scripts/test-failures.mjs",
+        "scripts/clean-copy-check.mjs"
       ],
       "suites": [
         "_test_parallel_lanes.mjs",
@@ -537,13 +539,15 @@
         "_test_wake_report_only.mjs",
         "_test_busy_never_ready.mjs",
         "_test_workspace_trust.mjs",
-        "_test_new_project_service.mjs"
+        "_test_new_project_service.mjs",
+        "_test_clean_copy_check.mjs"
       ],
       "uses": [
         {
           "perimeter": "client",
           "suites": [
             "_test_busy_never_ready.mjs",
+            "_test_clean_copy_check.mjs",
             "_test_examine_after_chef.mjs",
             "_test_model_backoff.mjs",
             "_test_queue_held.mjs"
@@ -580,6 +584,7 @@
         {
           "perimeter": "outillage",
           "suites": [
+            "_test_clean_copy_check.mjs",
             "_test_lane_changelog_rule.mjs",
             "_test_queue_edit.mjs",
             "_test_queue_order.mjs"
@@ -619,6 +624,7 @@
             "_test_activity_journal.mjs",
             "_test_atomic_rename.mjs",
             "_test_busy_never_ready.mjs",
+            "_test_clean_copy_check.mjs",
             "_test_context_calibration.mjs",
             "_test_dev_pilot_first.mjs",
             "_test_dev_pipeline_lanes.mjs",
@@ -650,6 +656,7 @@
             "_test_activity_journal.mjs",
             "_test_atomic_rename.mjs",
             "_test_busy_never_ready.mjs",
+            "_test_clean_copy_check.mjs",
             "_test_context_calibration.mjs",
             "_test_dev_pilot_first.mjs",
             "_test_dev_pipeline_lanes.mjs",

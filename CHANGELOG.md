@@ -11,6 +11,54 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.145.0] - 2026-10-24
+
+User agreement (2026-10-24): « oui », to the chef's two proposals after the
+first night of after-the-fact full runs (three projects red, two of them only
+because files were missing from a clean copy — an AAR ignored by git, fixtures
+ignored by git —; another project's alert said « KO : testCommand » while one
+test out of 559 failed).
+
+### Added
+
+- (server) Clean-copy validation of a project's test command
+  (`scripts/clean-copy-check.mjs`): the `testCommand` runs once in a detached
+  `git worktree` of the current commit, dependency folders linked like the idle
+  runner (`node_modules`, `.venv`, `venv`; `local.properties` copied), nothing
+  else. Red ⇒ the reason names the failed tests (or why the command could not
+  run) and the git-ignored files the output points at (by path or by name).
+  Result kept in `logs/clean-check.json`, full output in
+  `logs/clean-check/<projet>.log`.
+  - `pipeline-onboard.mjs` (and so `new-project.mjs`, through
+    `serviceNewProject`): checked before anything is written; red ⇒ not put in
+    service (new-project exit 67, « HORS SERVICE » with the details), nothing
+    committed.
+  - `pipeline-onboard.mjs --check-clean <projet>|--all|--changed`: re-checks the
+    projects in service and the dev instances (never a production); a red check
+    is a blocking warning (exit 1) with the useful output, never a removal from
+    service; `--changed` = only a testCommand changed since its last check, or
+    red on an older commit (exit 2 when nothing to check).
+  - Idle sweep (`idleRegression` on): a declared project (whose full run does
+    not use the testCommand) gets a `clean-check` step before its full run when
+    its testCommand changed; red ⇒ alert to the chef and an Incident fix request
+    (`[COPIE PROPRE ROUGE]`). An undeclared project's full run is that check and
+    is recorded as such.
+- (server) `scripts/test-failures.mjs`: the failed tests read from a test
+  command's output — node --test (spec and TAP), pytest, unittest, gradle/JUnit,
+  dotnet test; otherwise the last useful lines — and « the command could not
+  run » (environment, missing file, build or collection error) told apart from
+  « N tests failed ».
+
+### Changed
+
+- (server) After-the-fact full runs of projects outside the orchestrator: the
+  runner's `ko` names the failed tests (`test:<name>`, or
+  `testCommand:non-lancée`), the result carries `failures` and `ignored`; the
+  chef's `posteriori` alert and the Incident request say « Échec : 1 test en
+  échec sur 559 (pytest) : « … » » with one line per test, never « KO :
+  testCommand ». The culprit search compares test by test; a step whose command
+  could not run stays red, as before.
+
 ## [0.144.1] - 2026-10-24
 
 The after-the-fact full non-regression (worktree of commit e8e0c6e) was red on
