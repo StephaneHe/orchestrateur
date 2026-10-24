@@ -1,0 +1,161 @@
+{
+  "defaults": {
+    "model": "claude-opus-5-5"
+  },
+  "projects": [
+    {
+      "name": "chef",
+      "path": "I:DevChef"
+    },
+    {
+      "name": "orchestrateur",
+      "path": "I:orchestrateur"
+    },
+    {
+      "name": "orchestrateur-dev",
+      "path": "I:Devorchestrateur-dev",
+      "devOf": "orchestrateur",
+      "port": 7778
+    },
+    {
+      "name": "boxapp",
+      "path": "I:Dev\boxapp"
+    },
+    {
+      "name": "shelfapp",
+      "path": "I:Devshelfapp"
+    },
+    {
+      "name": "basketapp",
+      "path": "I:Dev\basketapp"
+    },
+    {
+      "name": "liveapp",
+      "path": "I:Devliveapp"
+    },
+    {
+      "name": "projet-08",
+      "path": "I:Devprojet-08"
+    },
+    {
+      "name": "projet-09",
+      "path": "I:Devprojet-09"
+    },
+    {
+      "name": "projet-10",
+      "path": "I:Devprojet-10"
+    },
+    {
+      "name": "projet-11",
+      "path": "I:Devprojet-11"
+    },
+    {
+      "name": "projet-12",
+      "path": "I:Devprojet-12"
+    },
+    {
+      "name": "projet-13",
+      "path": "I:Devprojet-13"
+    },
+    {
+      "name": "projet-14",
+      "path": "I:Devprojet-14"
+    },
+    {
+      "name": "projet-15",
+      "path": "I:Devprojet-15"
+    },
+    {
+      "name": "projet-16",
+      "path": "I:Devprojet-16"
+    },
+    {
+      "name": "projet-17",
+      "path": "I:Devprojet-17"
+    },
+    {
+      "name": "projet-18",
+      "path": "I:Devprojet-18"
+    },
+    {
+      "name": "projet-19",
+      "path": "I:Devprojet-19"
+    },
+    {
+      "name": "projet-20",
+      "path": "I:Devprojet-20"
+    },
+    {
+      "name": "projet-21",
+      "path": "I:Devprojet-21"
+    },
+    {
+      "name": "projet-22",
+      "path": "I:Devprojet-22"
+    },
+    {
+      "name": "projet-23",
+      "path": "I:Devprojet-23"
+    },
+    {
+      "name": "projet-24",
+      "path": "I:Devprojet-24"
+    },
+    {
+      "name": "projet-25",
+      "path": "I:Devprojet-25"
+    },
+    {
+      "name": "projet-26",
+      "path": "I:Devprojet-26"
+    },
+    {
+      "name": "projet-27",
+      "path": "I:Devprojet-27"
+    },
+    {
+      "name": "projet-28",
+      "path": "I:Devprojet-28"
+    },
+    {
+      "name": "projet-29",
+      "path": "I:Devprojet-29"
+    },
+    {
+      "name": "projet-30",
+      "path": "I:Devprojet-30"
+    },
+    {
+      "name": "projet-31",
+      "path": "I:Devprojet-31"
+    },
+    {
+      "name": "projet-32",
+      "path": "I:Devprojet-32"
+    },
+    {
+      "name": "projet-33",
+      "path": "I:Devprojet-33"
+    },
+    {
+      "name": "projet-34",
+      "path": "I:Devprojet-34"
+    },
+    {
+      "name": "projet-35",
+      "path": "I:Devprojet-35"
+    },
+    {
+      "name": "projet-36",
+      "path": "I:Devprojet-36"
+    },
+    {
+      "name": "projet-37",
+      "path": "I:Devprojet-37"
+    },
+    {
+      "name": "projet-38",
+      "path": "I:Devprojet-38"
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "version": 2,
+  "assignments": {
+    "dev.comprendre": {
+      "provider": "claude",
+      "model": "claude-opus-5-5",
+      "at": "2026-10-08T10:00:00Z"
+    },
+    "dev.concevoir": {
+      "provider": "claude",
+      "model": "claude-opus-5-5",
+      "at": "2026-10-08T10:00:00Z"
+    },
+    "dev.liste-tests": {
+      "provider": "claude",
+      "model": "claude-opus-5-5",
+      "at": "2026-10-08T10:00:00Z"
+    },
+    "dev.rouge": {
+      "provider": "claude",
+      "model": "claude-opus-5-5",
+      "at": "2026-10-08T10:00:00Z"
+    },
+    "dev.refactor": {
+      "provider": "claude",
+      "model": "claude-opus-5-5",
+      "at": "2026-10-08T10:00:00Z"
+    },
+    "dev.livrer": {
+      "provider": "claude",
+      "model": "claude-opus-5-5",
+      "at": "2026-10-08T10:00:00Z"
+    },
+    "dev.vert.complexe": {
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "at": "2026-10-08T10:00:00Z"
+    },
+    "dev.vert.simple": {
+      "provider": "claude",
+      "model": "claude-sonnet-5-5",
+      "at": "2026-10-08T10:00:00Z"
+    },
+    "routage.classifier": {
+      "provider": "claude",
+      "model": "claude-sonnet-5",
+      "at": "2026-10-08T10:00:00Z"
+    },
+    "routage.decomposer": {
+      "provider": "claude",
+      "model": "claude-opus-5-5",
+      "at": "2026-10-08T10:00:00Z"
+    },
+    "discussion.repondre": {
+      "provider": "claude",
+      "model": "claude-haiku-5-5",
+      "at": "2026-10-08T10:00:00Z"
+    }
+  },
+  "enforcement": {
+    "projects": [
+      "boxapp"
+    ],
+    "pipelines": [
+      "discussion",
+      "dev"
+    ],
+    "since": "2026-10-19T18:27:54Z",
+    "by": "pipeline-enforce off --chef"
+  },
+  "history": []
+}

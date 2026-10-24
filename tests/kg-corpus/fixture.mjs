@@ -6,6 +6,9 @@
 // (before/runs-fixture.json) and laid out as <copy>/runs/<run>/run.json only
 // in the copy: a committed file named run.json would be « covered » by every
 // suite that mentions that name (regression-targets matches basenames).
+// Same for config.json and model-routing.json, which are also caught by the
+// global .gitignore rules and so were missing from every clean checkout
+// (0.144.1): kept as *-fixture.json, laid out under their real name in the copy.
 // ============================================================================
 
 import fs from 'node:fs';
@@ -17,6 +20,9 @@ export const CORPUS_BEFORE = path.join(path.dirname(fileURLToPath(import.meta.ur
 /** Copies the « before » corpus into `dir` with its runs laid out; returns `dir`. */
 export function corpusCopy(dir) {
   fs.cpSync(CORPUS_BEFORE, dir, { recursive: true });
+  for (const name of ['config', 'model-routing']) {
+    fs.renameSync(path.join(dir, `${name}-fixture.json`), path.join(dir, `${name}.json`));
+  }
   const runs = JSON.parse(fs.readFileSync(path.join(dir, 'runs-fixture.json'), 'utf8'));
   for (const r of runs) {
     fs.mkdirSync(path.join(dir, 'runs', r.run), { recursive: true });

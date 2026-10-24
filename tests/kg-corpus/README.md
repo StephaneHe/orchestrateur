@@ -13,6 +13,9 @@ Windows, `liveapp` = le projet hors pipelines.
   corrections du chef ; seule C3 reste (décision 3 en attente).
 
 Les exécutions passées sont dans `before/runs-fixture.json` ; `fixture.mjs` les
-range en `runs/<run>/run.json` dans une copie temporaire.
+range en `runs/<run>/run.json` dans une copie temporaire. De même,
+`before/config-fixture.json` et `before/model-routing-fixture.json` y
+deviennent `config.json` et `model-routing.json` (sous leur vrai nom, ils
+étaient ignorés par git et absents de tout checkout propre).
 
 Ce que vérifient `scripts/_test_kg_replay.mjs` (et `_test_kg_core`, `_test_kg_queries`) : voir leur en-tête.

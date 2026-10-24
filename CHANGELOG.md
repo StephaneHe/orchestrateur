@@ -11,6 +11,30 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.144.1] - 2026-10-24
+
+The after-the-fact full non-regression (worktree of commit e8e0c6e) was red on
+every knowledge-graph test: `_test_kg_facts`, `_test_kg_queries`,
+`_test_kg_replay`, HTTP `kg-review`, browser `kg-tab` and `kg-tab-mobile`.
+They were green in the dev checkout.
+
+### Fixed
+
+- The anonymised corpus files `tests/kg-corpus/before/config.json` and
+  `model-routing.json` were caught by the global `.gitignore` rules, so they
+  were never committed and were missing from any clean checkout (index of
+  37 nodes instead of 162, every corpus project unknown). They are now
+  committed as `config-fixture.json` / `model-routing-fixture.json` and laid
+  out under their real name by `corpusCopy` (same reason as
+  `runs-fixture.json`: a committed file under those names would be « covered »
+  by every suite that mentions them).
+
+### Added
+
+- `_test_repo_hygiene.mjs`: no file under `tests/` may be ignored by git (a
+  fixture caught by an ignore rule passes locally and breaks in a clean
+  checkout).
+
 ## [0.144.0] - 2026-10-23
 
 Defect seen in production (2026-10-23): while the dev run

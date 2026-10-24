@@ -49,5 +49,13 @@ for (const want of ['logs/*', '.token', '.env', 'secrets/', 'attachments/', 'bui
 }
 ok(files.includes('config.example.json'), 'config.example.json versionné à la place de config.json');
 
+// A test fixture caught by a global ignore rule (config.json, model-routing.json)
+// passes locally and breaks in any clean checkout (0.144.1: the after-the-fact
+// non-regression runs in a worktree of the commit).
+const ignored = spawnSync('git', ['-C', ROOT, 'ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--', 'tests/'], { encoding: 'utf8' });
+const ignoredFixtures = ignored.stdout.split('\0').filter(Boolean);
+ok(ignored.status === 0 && ignoredFixtures.length === 0,
+  `aucune fixture de tests/ ignorée par git${ignoredFixtures.length ? ` — ${ignoredFixtures.slice(0, 3).join(', ')}` : ''}`);
+
 console.log(`\n${pass} ok, ${fail} KO`);
 process.exit(fail ? 1 : 0);
