@@ -3588,8 +3588,9 @@ regarde jamais l'écran rendu).
   `operation` qui dit quoi déclarer.
 - **Le model voit les captures** : jointes en images au message de l'étape
   (enveloppe stdin de `dispatch.mjs` : blocs image pour Claude, `--image` pour
-  codex), 20 au plus et 2000 px ; les autres à ouvrir avec Read, vérifié dans
-  le journal du tour.
+  codex), 20 au plus et 2000 px, mobile et bureau en alternance ; les autres à
+  ouvrir avec Read, vérifié dans le journal de chaque essai de l'étape. Étape
+  servie par codex (pas d'outil Read) : toutes les captures jointes (0.146.1).
 - **Critères par le code** : chaque capture critiquée, gravité P1/P2/P3, critère
   d'arrêt du critique, `arret` cohérent ; la liste P1/P2 de la boucle est
   calculée par le code. Correction : affichage seulement, tests protégés et

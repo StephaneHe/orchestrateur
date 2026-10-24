@@ -11,6 +11,18 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.146.1] - 2026-10-24
+
+### Fixed
+
+- (server) Design pipeline: a step served by codex (the second opinion on
+  gpt-6-astra, its suggested model) receives ALL the captures as images. codex
+  has no Read tool, so the captures left beyond the 20-image cap (an Anthropic
+  API rule, with its 2000 px edge) could never be looked at: in the real replay
+  of 2026-10-24 the second opinion was refused twice for « captures not looked
+  at » (`attachPlan(shots, { provider })`). Once fixed, it judged the 40 final
+  captures and found 6 P2 the Opus critique had not flagged.
+
 ## [0.146.0] - 2026-10-24
 
 User agreement (2026-10-24): « ok » to the chef's proposal of a dedicated

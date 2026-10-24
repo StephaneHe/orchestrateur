@@ -309,7 +309,11 @@ function finishShots(shots, notes, dc) {
 }
 
 /** Which shots are joined as images (≤ MAX_ATTACH, ≤ MAX_EDGE px) and which are to be opened with Read. */
-export function attachPlan(shots) {
+export function attachPlan(shots, { provider = null } = {}) {
+  // codex has no Read tool (real replay, 2026-10-24: gpt-6-astra could not open the
+  // captures left out); the 20-image / 2000 px rule is the Anthropic API's: codex gets them all.
+  const max = provider === 'codex' ? MAX_SHOTS : MAX_ATTACH;
+  const edge = provider === 'codex' ? Infinity : MAX_EDGE;
   // Views alternate, mobile first (real replay, 2026-10-24: the first 20 in
   // name order were all desktop, and the critic skipped most mobile screens).
   const groups = new Map();
@@ -318,7 +322,7 @@ export function attachPlan(shots) {
   const mixed = [];
   for (let i = 0; mixed.length < (shots || []).length; i++) for (const k of order) if (groups.get(k)[i]) mixed.push(groups.get(k)[i]);
   const attach = [], read = [];
-  for (const s of mixed) (attach.length < MAX_ATTACH && s.width <= MAX_EDGE && s.height <= MAX_EDGE ? attach : read).push(s);
+  for (const s of mixed) (attach.length < max && s.width <= edge && s.height <= edge ? attach : read).push(s);
   return { attach, read };
 }
 

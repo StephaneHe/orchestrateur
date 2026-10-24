@@ -1004,7 +1004,7 @@ function catalogStepPrompt(L, ctx, step, art, T) {
 function designPromptLines(L, ctx, step, art) {
   const cap = parseJsonArtefact(readArtefact(ctx, 'captures.json') || '') || {};
   const shots = Array.isArray(cap.shots) ? cap.shots : [];
-  const plan = Design.attachPlan(shots);
+  const plan = Design.attachPlan(shots, { provider: ctx.stepProvider });
   ctx.designAttach = plan.attach.map(s => path.join(ctx.cwd, s.relPath));
   ctx.designAttachIds = plan.attach.map(s => s.id);
   L.push(`DESIGN=${step.checks?.design || 'critique'}`, `ECRANS=${shots.map(s => s.id).join('|')}`);
@@ -3737,7 +3737,7 @@ export async function runPipeline(o) {
     if (info.model) args.push('--model', info.model, '--provider', info.provider);
     if (info.model && info.second) args.push('--second-model', info.second.model, '--second-provider', info.second.provider, '--dual-mode', step.judge ? 'judge' : 'action');
     ctx.localTool = localToolFor(readAssignments(root), step.chain);
-    ctx.designAttach = null; ctx.designAttachIds = null;
+    ctx.designAttach = null; ctx.designAttachIds = null; ctx.stepProvider = info.provider;
     const text = stepPrompt(ctx, step, extra);
     const before = snapshot(cwd);
     current = { id: step.id, title: step.title, model: info.model, t0: Date.now() };

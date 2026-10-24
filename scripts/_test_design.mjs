@@ -78,6 +78,8 @@ ok(/non regardée/.test(D.checkCritique(crit3, { shots: SH3, attachedIds: SH.map
 const many = Array.from({ length: 23 }, (_, i) => ({ id: `s${i}`, width: 390, height: i === 1 ? 2500 : 844 }));
 const plan = D.attachPlan(many);
 ok(plan.attach.length === D.MAX_ATTACH && plan.read.length === 3 && plan.read.some(s => s.id === 's1'), `au plus ${D.MAX_ATTACH} images jointes, aucune au-delà de ${D.MAX_EDGE} px ; le reste à ouvrir avec Read`);
+const pc = D.attachPlan(many, { provider: 'codex' });
+ok(pc.attach.length === many.length && !pc.read.length, 'étape sur codex (pas d’outil Read) : toutes les captures jointes en images (rejeu réel : le second avis gpt-6-astra ne pouvait pas ouvrir les autres)');
 const both = [...Array.from({ length: 20 }, (_, i) => ({ id: `bureau/${i}`, viewport: 'bureau', width: 1280, height: 800 })), ...Array.from({ length: 20 }, (_, i) => ({ id: `mobile/${i}`, viewport: 'mobile', width: 390, height: 844 }))];
 const p2 = D.attachPlan(both);
 ok(p2.attach[0].viewport === 'mobile' && p2.attach.filter(s => s.viewport === 'mobile').length === 10 && p2.attach.filter(s => s.viewport === 'bureau').length === 10, 'images jointes : mobile et bureau en alternance, mobile d’abord (rejeu réel : les 20 premières par nom étaient toutes « bureau »)');
