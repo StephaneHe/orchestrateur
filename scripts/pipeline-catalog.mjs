@@ -35,6 +35,7 @@ import { MEDIA_PIPELINES } from './pipeline-catalog-media.mjs';
 import { operationsCatalogText } from './typed-operations.mjs';
 import { DOC_OPERATIONS, DOC_ALREADY } from './document-check.mjs';
 import { EXPLOIT_ARTEFACT, EXPLOIT_ROLE, EXPLOIT_SECTIONS } from './exploitation.mjs';
+import { CRITIQUE_ROLE, SECOND_ROLE, CORRECT_ROLE, CORRECT_SECTIONS, CRITIQUE_JSON } from './design.mjs';
 
 const DOC_GLOBS = ['**/*.md', 'docs/**', '**/*.txt', '**/*.rst', '**/*.adoc'];
 
@@ -380,6 +381,38 @@ S.exploitation = {
     { id: 'executer', title: '1 Exécuter et vérifier', chain: ['exploitation.executer'], group: 'exploitation', artefact: EXPLOIT_ARTEFACT, kind: 'action',
       role: EXPLOIT_ROLE, checks: { exploitation: true, sections: EXPLOIT_SECTIONS, artefactIsWork: true } },
     { id: 'livrer', title: '2 Livrer (par le programme)', chain: ['exploitation.livrer'], group: 'exploitation', artefact: 'rapport.md', kind: 'code', handler: 'exploitation-livrer' },
+  ],
+};
+
+// ── Design (0.146.0, scripts/design.mjs) ────────────────────────────────────
+// User agreement (2026-10-24): « ok » to a dedicated pipeline, after « l'ui de
+// psyProfile est vraiment moche ». Nobody looked at the rendered screen: the
+// program captures the REAL screens (headless browser, mobile and desktop), a
+// vision model critiques them (P1/P2/P3, its own stop criterion), another one
+// corrects the display, in a bounded loop (3 to 5 rounds), then an independent
+// second opinion of another family judges the final captures. `images`: the
+// step's captures are joined to the model's message as images. Offered only
+// with the switch `design`.
+const DESIGN_CRITIQUE_CHECKS = { json: { ecrans: 'array', critere_arret: 'string' }, design: 'critique' };
+// « Corriger » is not in the plan: the loop of a critique inserts it while P1/P2 remain.
+const DESIGN_PLAN = ['capturer', 'critiquer', 'second-avis', 'verifier', 'livrer'];
+S.design = {
+  needs: { git: true, clean: true },
+  final: 'verifier',
+  modes: { complet: DESIGN_PLAN, leger: DESIGN_PLAN },
+  steps: [
+    { id: 'capturer', title: '1 Capturer les écrans (par le programme)', chain: ['design.capturer'], group: 'design', artefact: 'captures.json', kind: 'code', handler: 'design-capturer' },
+    { id: 'critiquer', title: '2 Critiquer le rendu (vision)', chain: ['design.critiquer'], group: 'design', artefact: 'critique.json', kind: 'judge', images: true,
+      role: CRITIQUE_ROLE, checks: DESIGN_CRITIQUE_CHECKS, jsonExample: CRITIQUE_JSON,
+      loop: { field: 'importants', back: ['corriger', 'capturer', 'critiquer'], budget: 'design' } },
+    { id: 'corriger', title: '3 Corriger l’affichage', chain: ['design.corriger'], group: 'code', artefact: 'corrections.md', kind: 'action', images: true,
+      role: CORRECT_ROLE, checks: { design: 'correction', sections: CORRECT_SECTIONS, protectTests: true } },
+    { id: 'second-avis', title: '4 Second avis indépendant (vision)', chain: ['design.second-avis'], group: 'design-2', artefact: 'second-avis.json', kind: 'judge', images: true,
+      independent: ['critique.json', 'a-corriger.json', 'corrections.md'],
+      role: SECOND_ROLE, checks: DESIGN_CRITIQUE_CHECKS, jsonExample: CRITIQUE_JSON,
+      loop: { field: 'importants', back: ['corriger', 'capturer', 'second-avis'], budget: 'design' } },
+    { id: 'verifier', title: '5 Vérifier les tests (par le programme)', chain: ['design.verifier'], group: 'design', artefact: 'verification.md', kind: 'code', handler: 'design-verifier' },
+    { id: 'livrer', title: '6 Livrer', chain: ['design.livrer', 'dev.livrer.git', 'dev.livrer'], group: 'code', artefact: 'livraison.md', kind: 'deliver', crit: 'livrer', devRole: 'livrer', ifChanged: true },
   ],
 };
 

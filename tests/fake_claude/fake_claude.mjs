@@ -81,6 +81,7 @@ function hasFlag(name) { return argv.includes(name); }
 
 const resumeId = flag('--resume');
 const useStreamJsonInput = flag('--input-format') === 'stream-json';
+let IMAGE_COUNT = 0;
 let positionalPrompt = null;
 const printIdx = argv.indexOf('--print');
 // In dispatch.mjs's text-only mode, the prompt is the last positional arg
@@ -123,6 +124,8 @@ async function readUserTurn() {
         try {
           const ev = JSON.parse(line);
           if (ev.type === 'user' && ev.message?.content) {
+            // Design (0.146.0): how many images came with the message (the captures).
+            IMAGE_COUNT = ev.message.content.filter(b => b.type === 'image' && b.source?.data).length;
             // Pull out the first text block.
             const texts = ev.message.content.filter(b => b.type === 'text').map(b => b.text);
             return resolve(texts.join('\n') || '(empty)');
@@ -761,6 +764,8 @@ function catalogStep(text, step, artefact, bad, w, once) {
   // (FAKE_PIPE_JSON[step].artefact, else a short report) — action steps of the generics.
   let spec0 = {};
   try { spec0 = JSON.parse(process.env.FAKE_PIPE_JSON || '{}')[step] || {}; } catch { /* ignored */ }
+  const designKind = (/^DESIGN=(\S+)/m.exec(text) || [])[1];
+  if (designKind) return designStep(text, designKind, step, artefact, w);
   // Exploitation (0.141.0): spec.commands = [{command, output}] are logged as Bash
   // tool uses of the turn (the proofs the engine looks for); spec.artefact alone
   // writes the artefact without touching the project (an operations task).
@@ -866,6 +871,57 @@ function catalogStep(text, step, artefact, bad, w, once) {
 //              text); FAKE_PIPE_NOTHING=definitif → AUCUN_TEXTE_DEFINITIF
 //   ranger:    {"nom": "…", "index": "…", "moves": {"from": "to"}, "elements": [{role, chemin}]}
 //              moves the files, writes the index (bad: without the meeting name)
+// Design pipeline (0.146.0). « DESIGN=critique » (Critiquer, Second avis):
+// FAKE_DESIGN_IMPORTANT="2,1,0" = P1 problems of each successive critique,
+// FAKE_DESIGN_SECOND="0" the same for the second opinion (counters kept in
+// FAKE_DESIGN_STATE); every screen of « ECRANS= » gets an entry, plus one P3.
+// FAKE_DESIGN_BAD=missing|arret|gravite breaks the critique once. « DESIGN=correction »
+// appends a rule to FAKE_DESIGN_FILE (default site/style.css); FAKE_DESIGN_CDN=1
+// adds an undeclared external font, =declared declares it. FAKE_DESIGN_LOG gets
+// {step, images, ecrans} for each design turn.
+function designStep(text, kind, step, artefact, w) {
+  const screens = ((/^ECRANS=(.*)$/m.exec(text) || [])[1] || '').split('|').map(s => s.trim()).filter(Boolean);
+  if (process.env.FAKE_DESIGN_LOG) fs.appendFileSync(process.env.FAKE_DESIGN_LOG, `${JSON.stringify({ step, kind, images: IMAGE_COUNT, ecrans: screens })}\n`);
+  if (kind === 'correction') {
+    const rel = process.env.FAKE_DESIGN_FILE || 'site/style.css';
+    const abs = path.join(process.cwd(), rel);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    const cdn = process.env.FAKE_DESIGN_CDN;
+    fs.appendFileSync(abs, `${cdn ? '@import url("https://fonts.example.com/inter.css");\n' : ''}main { max-width: 40rem; margin: 0 auto; padding: 1rem; } /* ${Date.now()} */\n`);
+    w(artefact, `# Corrections\n\n## Corrections\n\n- colonne centrée et marges (\`${rel}\`)\n\n## Ressources externes\n\n${cdn === 'declared' ? '- https://fonts.example.com/inter.css — police Inter, aucune police locale équivalente' : 'aucune'}\n`);
+    return;
+  }
+  let st = {};
+  const sf = process.env.FAKE_DESIGN_STATE;
+  if (sf) { try { st = JSON.parse(fs.readFileSync(sf, 'utf8')); } catch { /* first call */ } }
+  // FAKE_DESIGN_READ=all opens every capture « À LIRE » with Read; =split opens
+  // the first half on the first attempt, the other half on the next one.
+  const toRead = [...text.matchAll(/`([^`]+\.png)` — À LIRE/g)].map(m => m[1]);
+  const mode = process.env.FAKE_DESIGN_READ;
+  if (mode && toRead.length) {
+    const half = Math.ceil(toRead.length / 2);
+    const pick = mode === 'split' ? ((st[`read:${step}`] || 0) === 0 ? toRead.slice(0, half) : toRead.slice(half)) : toRead;
+    st[`read:${step}`] = (st[`read:${step}`] || 0) + 1;
+    for (const f of pick) {
+      const id = newId('toolu');
+      emit({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'Read', input: { file_path: path.join(process.cwd(), f) } }] } });
+      emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: '[image]' }] } });
+    }
+  }
+  const n = st[step] || 0;
+  st[step] = n + 1;
+  const seq = String((step === 'second-avis' ? process.env.FAKE_DESIGN_SECOND : process.env.FAKE_DESIGN_IMPORTANT) || '0').split(',').map(Number);
+  const k = seq[Math.min(n, seq.length - 1)] || 0;
+  let bad = null;
+  if (process.env.FAKE_DESIGN_BAD && !st.badDone) { bad = process.env.FAKE_DESIGN_BAD; st.badDone = true; }
+  if (sf) fs.writeFileSync(sf, JSON.stringify(st));
+  const ecrans = screens.map((id, i) => ({ ecran: id, avis: `écran ${id} jugé`, problemes: [
+    ...(i === 0 ? Array.from({ length: k }, (_, j) => ({ gravite: 'P1', probleme: `le contenu colle au bord, aucune colonne (n° ${j + 1})`, correction: 'colonne centrée' })) : []),
+    { gravite: bad === 'gravite' ? 'grave' : 'P3', probleme: 'ombre des boutons un peu forte', correction: 'adoucir l’ombre' }] }));
+  if (bad === 'missing') ecrans.pop();
+  w(artefact, JSON.stringify({ ecrans, critere_arret: 'plus aucun P1 ni P2', arret: bad === 'arret' ? true : k === 0 }, null, 2));
+}
+
 function meetingStep(kind, step, artefact, bad, w, wantNothing) {
   let spec = {};
   try { spec = JSON.parse(process.env.FAKE_PIPE_JSON || '{}')[step] || {}; } catch { /* ignored */ }

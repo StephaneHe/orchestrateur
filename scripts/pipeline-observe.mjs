@@ -58,6 +58,8 @@ const GENERIC_PREFIXES = [
 ];
 // The light Exploitation lane (0.141.0): recognised only with its switch `exploitation` on.
 const EXPLOITATION_PREFIX = /^\/(exploitation|exploit)\b/i;
+// The Design pipeline (0.146.0): recognised only with its switch `design` on.
+const DESIGN_PREFIX = /^\/design\b/i;
 
 /** Texte utile d'une entrée : sans nos propres blocs de consignes injectées. */
 export function normalizeText(text) {
@@ -79,12 +81,13 @@ const has = (re, s) => new RegExp(stripAccents(re.source), re.flags).test(stripA
  * Renvoie {pipeline|null, mode|null, explicit, system}. pipeline null = « à
  * classer » : c'est au model de la case routage.classifier de décider.
  */
-export function explicitChoice({ text, entry, generic = false, exploitation = false } = {}) {
+export function explicitChoice({ text, entry, generic = false, exploitation = false, design = false } = {}) {
   if (SYSTEM_ENTRIES.has(entry)) return { pipeline: 'routage', mode: null, explicit: true, system: true };
   const raw = normalizeText(text);
   let mode = null;
   for (const [re, m] of MODE_PREFIX) if (has(re, raw)) mode = m;
   if (exploitation && has(EXPLOITATION_PREFIX, raw)) return { pipeline: 'exploitation', mode: 'complet', explicit: true, system: false };
+  if (design && has(DESIGN_PREFIX, raw)) return { pipeline: 'design', mode: 'complet', explicit: true, system: false };
   if (generic) for (const [re, p, m] of GENERIC_PREFIXES) if (has(re, raw)) return { pipeline: p, mode: m || mode, explicit: true, system: false };
   for (const [re, p] of PREFIXES) if (has(re, raw)) return { pipeline: p, mode, explicit: true, system: false };
   return { pipeline: null, mode, explicit: false, system: false };

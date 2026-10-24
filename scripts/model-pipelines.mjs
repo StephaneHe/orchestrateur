@@ -514,7 +514,39 @@ export const PIPELINES = [
     ],
   },
 
-  // ── 18. Mémoire (graphe de connaissances, phase 1, 0.131.0) ───────────────
+  // ── 18. Design (0.146.0, interrupteur `design`) ──────────────────────────
+  // User agreement (2026-10-24): « ok » to a dedicated pipeline, after « l'ui de
+  // [projet] est vraiment moche ». The critique and the second opinion SEE the
+  // real captures (vision), the correction too.
+  {
+    id: 'design', label: 'Design', icon: '🎨',
+    purpose: 'Rendre une interface présentable en REGARDANT l’écran rendu : captures réelles (mobile et bureau), critique par un model qui voit les images, corrections de l’affichage, en boucle bornée, puis un second avis indépendant. Le Développement vérifie que le code marche ; ici, on juge ce que l’utilisateur voit.',
+    when: 'Une interface jugée moche, vide, pas professionnelle, mal présentée ; refaire le style, la mise en page, la présentation, la lisibilité sur mobile — sans fonctionnalité nouvelle. Un écran, une fonction ou un comportement nouveau : Développement.',
+    advice: ['Conseil : le second avis par une autre famille de model que la critique (Claude ↔ GPT) — elle ne voit pas les mêmes défauts.'],
+    flow: [
+      { id: 'capturer', n: '1', title: 'Capturer les écrans (par le programme)', code: true, what: 'Le programme lance l’application (ou la commande de capture du projet, .orchestrateur/pipeline.json → design) et capture chaque écran et état avec un navigateur headless, en mobile 390×844 et en bureau 1280×800. Sans déclaration : la page d’accueil HTML statique du projet.',
+        example: 'design.capture = « node scripts/design-capture.mjs {out} » → 30 captures (accueil, question, enregistrement, erreurs…).' },
+      { kind: 'loop', id: 'boucle-design', n: '2', title: 'Critiquer → corriger, jusqu’à plus de problème important',
+        what: 'La critique classe chaque problème P1 (pas professionnel), P2 (gêne nettement), P3 (finition) et écrit son critère d’arrêt ; tant qu’il reste un P1 ou un P2, l’affichage est corrigé, recapturé et recritiqué. Au plus 3 à 5 tours (design.maxRounds, 4 par défaut), puis une pause.',
+        back: { from: 'corriger', to: 'critiquer', label: 'recapturer et recritiquer tant qu’il reste un P1 ou un P2' },
+        steps: [
+          { id: 'critiquer', n: '2a', title: 'Critiquer le rendu (vision)', need: { llm: 'vision', local: [] }, what: 'Le model reçoit les captures en images et critique chaque écran : mise en page, hiérarchie, typographie, espacements, contrastes, cohérence des composants, lisibilité mobile, états vides et d’erreur ; écart à la charte graphique du projet si elle existe.',
+            example: '« mobile/accueil — P1 — le contenu colle au bord, aucune colonne ; P2 — deux boutons principaux de même poids ».',
+            advice: 'Conseil : le meilleur model de vision disponible (ex. claude-opus-5-5).' },
+          { id: 'corriger', n: '2b', title: 'Corriger l’affichage', need: { llm: 'vision', local: [] }, what: 'Corriger chaque P1 et P2 : HTML, CSS, gabarits, textes affichés — aucun comportement, aucun test changé, la suite reste verte ; la charte du projet est le cadre ; aucune ressource externe (police, CDN) sans le dire.',
+            example: 'Une colonne centrée de 640 px, un seul bouton principal par écran, des encadrés d’erreur.' },
+        ] },
+      { id: 'second-avis', n: '3', title: 'Second avis indépendant (vision)', need: { llm: 'vision', local: [] }, what: 'Un model d’une autre famille juge les captures FINALES sans voir les critiques précédentes ; un P1 ou un P2 relevé relance une correction (même limite de tours).',
+        example: 'Une relecture visuelle par GPT après une critique par Claude.',
+        advice: 'Conseil : une autre famille de model que l’étape 2a (ex. gpt-6-astra).' },
+      { id: 'verifier', n: '4', title: 'Vérifier les tests (par le programme)', code: true, what: 'La suite de tests existante du projet doit rester verte (sa commande de test, ciblée si le projet le déclare) ; aucun test par détail de style n’est exigé. Les captures avant / après sont gardées hors dépôt et citées dans le compte rendu.',
+        example: '« npm test » vert ; captures avant/après dans logs/runs/<exécution>/captures/.' },
+      { id: 'livrer', n: '5', title: 'Livrer', what: 'Version, CHANGELOG et un commit des corrections d’affichage (rien s’il n’y a rien eu à corriger) ; jamais de push.',
+        example: '1.18.0 → 1.19.0, CHANGELOG « ### Changed — passe visuelle », un commit.' },
+    ],
+  },
+
+  // ── 19. Mémoire (graphe de connaissances, phase 1, 0.131.0) ───────────────
   // Not a pipeline a request is routed to (excluded from classification like
   // the Routage): the two model cases of the knowledge index (KG-SYNTHESE §3.4).
   {
@@ -575,6 +607,8 @@ export const JUDGE_STEPS = new Set([
   'images.cadrer',
   // Pipelines phase 1: read-only steps of the generics.
   'operations.preparer', 'fichiers.inventorier', 'discussion.verifier', 'redaction.cibler',
+  // Design (0.146.0): the critique and the second opinion only look.
+  'design.critiquer', 'design.second-avis',
 ]);
 for (const p of PIPELINES) {
   for (const n of p.flow) {

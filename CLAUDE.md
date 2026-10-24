@@ -3564,6 +3564,48 @@ un redémarrage refusés par Opérations).
 - Recette : `_test_exploitation.mjs` (3 cas réels rejoués, bascules,
   garde-fous, interrupteur).
 
+## Pipeline « Design » : regarder l'écran rendu (0.146.0)
+
+Accord utilisateur (2026-10-24) : « ok » à la proposition du chef, après
+« l'ui de [projet] est vraiment moche. quel model la fait » et « faut-il un
+pipeline dédié ? » (le Développement vérifie que le code marche, personne ne
+regarde jamais l'écran rendu).
+
+- **Pipeline `design`** (`scripts/design.mjs`, catalogue, onglet « Design » de la
+  page Models) : Capturer (programme) → Critiquer (case `design.critiquer`,
+  vision) → tant qu'il reste un P1/P2 : Corriger (`design.corriger`) → Capturer
+  → Critiquer → Second avis (`design.second-avis`, vision, autre famille) →
+  Vérifier (programme) → Livrer. « Corriger » n'entre au plan que par la boucle.
+- **Captures réelles** (mobile 390×844, bureau 1280×800, Edge/Chrome headless
+  par `playwright-core`) dans le dossier d'artefacts de l'exécution (exclu de
+  git), puis avant/après copiées dans `logs/runs/<run>/captures/`. Déclaration :
+  `.orchestrateur/pipeline.json` → `design` : `capture` (commande du projet qui
+  écrit ses PNG dans `{out}`), ou `start` (`command`, `url` avec `{port}`) +
+  `screens` (`[{id, path, actions}]`, actions en liste fermée), `maxRounds`
+  (3 à 5, défaut 4), `charte`, `viewports`, `schemes`, `timeoutSec` ; sans
+  déclaration, l'`index.html` statique du projet. Les fichiers écrits par
+  l'application pendant la capture sont remis. Capture impossible ⇒ pause
+  `operation` qui dit quoi déclarer.
+- **Le model voit les captures** : jointes en images au message de l'étape
+  (enveloppe stdin de `dispatch.mjs` : blocs image pour Claude, `--image` pour
+  codex), 20 au plus et 2000 px ; les autres à ouvrir avec Read, vérifié dans
+  le journal du tour.
+- **Critères par le code** : chaque capture critiquée, gravité P1/P2/P3, critère
+  d'arrêt du critique, `arret` cohérent ; la liste P1/P2 de la boucle est
+  calculée par le code. Correction : affichage seulement, tests protégés et
+  suite verte, charte du projet, toute ressource externe NOUVELLE déclarée dans
+  « ## Ressources externes ». Les problèmes d'une critique sont la liste de
+  travail du tour suivant (pas de `pipeline_defect` à chaque tour) ; à la borne,
+  pause `review` (pause de processus).
+- **Interrupteur** `design` (`pipeline-tuning.mjs`, coupé par défaut, figé dans
+  `run.json.tuning`) : coupé = 0.145.0 exact (non proposé, préfixe `/design`
+  ignoré, `--pipeline design` refusé 64). Allumé : en service sur tout projet
+  en service (`pipelineServed`). Mise en service par le chef : `node
+  scripts/pipeline-enforce.mjs tuning design on [<projet>]`, relu à chaque
+  dispatch, sans redémarrage.
+- Recette : `_test_design.mjs` (capture réelle headless, commande de capture
+  d'un projet, cas rejoué, anti-boucle, second avis, garde-fous, interrupteur).
+
 ## Leviers « vitesse » du Développement complet (0.143.0)
 
 Accord de l'utilisateur (2026-10-23) : « ok », sur la proposition du chef

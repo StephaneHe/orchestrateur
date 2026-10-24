@@ -301,6 +301,9 @@ export function diagnosePause(input = {}) {
     || (m = /fichiers de test modifiés \([^)]*\)\s*:\s*(.+)$/i.exec(motif))) {
     return withRepeat(out('scope_violation', `L’étape « ${step} » a modifié des fichiers hors de ce qu’elle a le droit de toucher : ${clean(m[1], 200)}.`, { files: clean(m[1], 200) }), input);
   }
+  // Design (0.146.0): a critique refused by the code (screen missing or not looked at, gravity,
+  // stop criterion) is the step's work to complete — never « a criterion too strict ».
+  if (/^(critique|second-avis)\.json : /.test(motif)) return withRepeat(out('bad_format', `La critique de l’étape « ${step} » est incomplète : ${clean(motif.replace(/^[\w-]+\.json : /, ''), 240)}.`), input);
   if (/\bJSON\b[^\n]*(invalide|illisible|attendu)|(invalide|illisible)[^\n]*\bJSON\b|n.est pas un JSON/i.test(motif)) return withRepeat(out('bad_format', `Le compte rendu de l’étape « ${step} » n’a pas le format exigé : ${clean(motif, 220)}.`), input);
   // An argument refusal of dispatch.mjs (exit 64/65), not a provider failure it relays.
   if (/\(code 6[45]\)/.test(why) && (m = /\[dispatch\]\s*(.+)$/.exec(why)) && !readProviderError(m[1])) return out('orchestrator', `L’orchestrateur (dispatch.mjs) a refusé de lancer l’étape « ${step} » avant d’appeler le model : ${clean(m[1], 200)}.`);

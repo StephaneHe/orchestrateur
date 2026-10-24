@@ -40,7 +40,7 @@ const stepsOf = (p) => p.flow.flatMap(n => (n.kind === 'loop' ? n.steps : [n]));
 
 console.log('\n── 1. Les 14 pipelines');
 // Pipelines phase 1 (decision 4 of 2026-10-20): the generics « operations » and « fichiers » come last.
-t('18 pipelines dans l’ordre demandé (reunion depuis 0.110.0, génériques depuis la phase 1 des pipelines, exploitation depuis 0.141.0, mémoire depuis la phase 1 du graphe)', PIPELINES.map(p => p.id).join() === 'dev,discussion,routage,incident,recherche,audit,maintenance,nouveau,donnees,redaction,reunion,images,video,audio,operations,fichiers,exploitation,kg');
+t('19 pipelines dans l’ordre demandé (reunion depuis 0.110.0, génériques depuis la phase 1 des pipelines, exploitation depuis 0.141.0, design depuis 0.146.0, mémoire depuis la phase 1 du graphe)', PIPELINES.map(p => p.id).join() === 'dev,discussion,routage,incident,recherche,audit,maintenance,nouveau,donnees,redaction,reunion,images,video,audio,operations,fichiers,exploitation,design,kg');
 t('chaque pipeline a un bandeau (à quoi il sert, quand)', PIPELINES.every(p => p.purpose && p.when));
 const incomplete = PIPELINES.flatMap(p => stepsOf(p).filter(s => !s.title || !s.what || !s.example || !s.n).map(s => `${p.id}.${s.id}`));
 t('chaque étape a numéro, titre, quand/quoi et exemple', !incomplete.length, incomplete.join(', '));

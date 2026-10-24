@@ -67,6 +67,7 @@ import { releasePlan, parseDeliveryText, deliverRelease, deliverCommit, staleVer
 import { cachedSuite } from './suite-cache.mjs';
 import * as Rework from './aside-rework.mjs';
 import * as Exploit from './exploitation.mjs';
+import * as Design from './design.mjs';
 
 /** Changelog fragment a lane task delivers (P9; same slug as the integrator's, scripts/lanes.mjs). */
 export function laneFragmentPath(task) { return `changelog.d/${String(task).replace(/[^\w.-]/g, '_')}.md`; }
@@ -153,7 +154,8 @@ export function readEnforcement(root) {
 }
 /** In service: listed in enforcement.pipelines, or the Exploitation lane (offered only with its switch, 0.141.0). */
 export function pipelineServed(enf, pipeline) {
-  return enf.pipelines.includes(pipeline) || pipeline === Exploit.EXPLOIT_PIPELINE;
+  // Design (0.146.0): likewise, wherever its switch lets the classifier choose it.
+  return enf.pipelines.includes(pipeline) || pipeline === Exploit.EXPLOIT_PIPELINE || pipeline === Design.DESIGN_PIPELINE;
 }
 export function isEnforced(enf, project) {
   return enf.projects.includes(project) || enf.projects.includes('*');
@@ -959,6 +961,7 @@ function catalogStepPrompt(L, ctx, step, art, T) {
   L.push(...machine);
   // Exploitation (0.141.0): what the user authorized at the pause (« autoriser »), and only that.
   if (c.exploitation && ctx.exploitAuthorized?.length) L.push(`AUTORISÉ par la réponse « autoriser » de l’utilisateur à la pause (et rien d’autre) : ${ctx.exploitAuthorized.join(' ; ')}. Fais-le, puis vérifie son effet ; jamais de --force.`);
+  if (step.images) designPromptLines(L, ctx, step, art);
   L.push('');
   if (step.kind === 'judge') {
     L.push(`Écris ${art(step.artefact)}${c.json ? ', et UNIQUEMENT ce JSON' : ''}. Ne modifie AUCUN fichier du projet (lecture seule : l’orchestrateur compare les empreintes).`);
@@ -991,6 +994,23 @@ function catalogStepPrompt(L, ctx, step, art, T) {
   if (step.id === 'rapporter' && /^\s*\[NEEDS_CHEF_INPUT_FROM:/.test(ctx.request || '')) {
     L.push('Cette demande est la QUESTION D’UN MUSICIEN (relais automatique) : le rapport doit commencer par « [ANSWER] » suivi de ta décision, ou par « NEEDS_USER_INPUT: » si la décision revient à l’utilisateur — l’orchestrateur relaie selon ce préfixe.');
   }
+}
+
+/**
+ * Design (0.146.0): the captures of the last round, joined as images (the
+ * first MAX_ATTACH of them) or to open with Read, the charter, the problems to
+ * correct. Sets ctx.designAttach (absolute paths sent with the prompt).
+ */
+function designPromptLines(L, ctx, step, art) {
+  const cap = parseJsonArtefact(readArtefact(ctx, 'captures.json') || '') || {};
+  const shots = Array.isArray(cap.shots) ? cap.shots : [];
+  const plan = Design.attachPlan(shots);
+  ctx.designAttach = plan.attach.map(s => path.join(ctx.cwd, s.relPath));
+  ctx.designAttachIds = plan.attach.map(s => s.id);
+  L.push(`DESIGN=${step.checks?.design || 'critique'}`, `ECRANS=${shots.map(s => s.id).join('|')}`);
+  L.push(...Design.captureLines(shots, plan, { round: cap.round || 0, charte: Design.findCharte(ctx.cwd, ctx.cfg) }));
+  if (step.checks?.design === 'correction') L.push(`Problèmes à corriger (écrits par l’orchestrateur d’après la dernière critique) : ${art('a-corriger.json')}.`);
+  if (cap.dropped?.length) L.push(`(${cap.dropped.length} capture(s) au-delà de ${Design.MAX_SHOTS} non soumise(s) à la critique : ${cap.dropped.slice(0, 10).join(', ')}.)`);
 }
 
 const fold = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
@@ -1688,6 +1708,72 @@ const CODE_STEPS = {
     return { ok: true };
   },
 
+  // ── Design (0.146.0, design.mjs) ───────────────────────────────────────
+  /**
+   * Capture the REAL screens (headless browser, mobile and desktop, or the
+   * project's own capture command) into the run's artefact folder (git
+   * excluded): « avant », then « tour-n » after each correction. Files the
+   * application itself wrote while it ran are put back (said). Impossible →
+   * a pause that names the cause and the declaration to add; on resume the
+   * capture is tried again.
+   */
+  async 'design-capturer'({ ctx, state, run, writeEvent }) {
+    const n = (state.designCaptures || []).length;
+    const label = n === 0 ? 'avant' : `tour-${n}`;
+    const outDir = path.join(ctx.artDir, Design.CAPTURE_DIR, label);
+    const before = snapshot(ctx.cwd);
+    const r = await Design.captureScreens({ cwd: ctx.cwd, cfg: ctx.cfg, outDir, env: ctx.testEnv });
+    const after = snapshot(ctx.cwd);
+    const written = changedFiles(before, after);
+    if (written.length) restoreFiles(ctx.cwd, before, after, null);
+    if (!r.ok) {
+      return { pause: { limit: 'operation', notice: `⏸ ${state.project} : capture des écrans impossible`,
+        what: `le pipeline Design capture les écrans réellement rendus avant de les faire critiquer ; cette capture a échoué : ${r.why}`,
+        input: { why: r.why, extra: { stage: 'precondition', operation: 'capture des écrans' } } } };
+    }
+    const notes = [...r.notes, ...(written.length ? [`fichiers écrits par l’application pendant la capture, remis comme avant : ${written.slice(0, 8).join(', ')}`] : [])];
+    const shots = r.shots.map(x => ({ id: x.id, relPath: path.relative(ctx.cwd, x.file).replace(/\\/g, '/'), width: x.width, height: x.height, viewport: x.viewport }));
+    fs.writeFileSync(path.join(ctx.artDir, 'captures.json'), `${JSON.stringify({ round: n, label, mode: r.mode, shots, dropped: r.dropped || [], notes }, null, 2)}\n`);
+    state.designCaptures = [...(state.designCaptures || []), { round: n, label, dir: outDir, shots: shots.length, mode: r.mode, notes }];
+    writeEvent({ type: 'system', subtype: 'pipeline_design_capture', pipeline: { run, step: 'capturer' }, round: n, label, mode: r.mode, shots: shots.length,
+      text: `📸 ${shots.length} capture(s) réelle(s) — ${label} (${r.mode === 'command' ? 'commande de capture du projet' : r.mode === 'serve' ? 'application lancée, navigateur headless' : 'pages statiques, navigateur headless'})${notes.length ? ` ; ${notes.join(' ; ').slice(0, 400)}` : ''}` });
+    return { ok: true };
+  },
+  /**
+   * The project's tests after the corrections (its testCommand: the targeted
+   * selection where the project declares it — orchestrateur-dev), the first
+   * and last captures copied out of the project, and the report (the result).
+   */
+  async 'design-verifier'({ ctx, state, run, writeEvent, root }) {
+    const rounds = state.designCaptures || [];
+    const corrected = rounds.length > 1;
+    let test = null;
+    if (!ctx.cfg.testCommand) test = { skipped: 'aucune commande de test déclarée (.orchestrateur/pipeline.json)' };
+    else if (!corrected) test = { skipped: 'aucune correction : rien à retester' };
+    else {
+      const t = runSuite(ctx);
+      test = { command: ctx.cfg.testCommand, ok: t.ok, code: t.code, ms: t.ms };
+      if (!t.ok) {
+        return { pause: { limit: 'operation', notice: `⏸ ${state.project} : les tests du projet échouent après les corrections d’affichage`,
+          what: `les corrections d’affichage sont faites, mais la suite du projet échoue (${ctx.cfg.testCommand}, code ${t.code}) : ${String(t.out || '').trim().split('\n').slice(-8).join(' | ').slice(0, 600)}`,
+          input: { why: `la suite échoue (${ctx.cfg.testCommand}, code ${t.code})`, testOutput: t.out, extra: { stage: 'postcondition', operation: 'tests du projet' } } } };
+      }
+    }
+    const kept = Design.keepCaptures(rounds, path.join(ctx.runDir, 'captures'));
+    const crit = state.designCritiques || [];
+    const second = state.designSecond || null;
+    const critModel = crit.at(-1)?.model || null;
+    const sameFamily = second?.model && critModel && Design.familyOf(second.model) === Design.familyOf(critModel)
+      ? `même famille de model que la critique (${critModel}, ${second.model}) : un second avis d’une autre famille voit d’autres défauts (case design.second-avis)` : null;
+    const md = Design.designReport({ rounds: rounds.map(r => ({ label: r.label, shots: r.shots })), critiques: crit, second, maxRounds: ctx.designMax || Design.ROUNDS.default, test, kept,
+      relKept: (p) => path.relative(root, p).replace(/\\/g, '/'), notes: rounds.flatMap(r => r.notes || []).filter((x, i, a) => a.indexOf(x) === i).slice(0, 6), charte: Design.findCharte(ctx.cwd, ctx.cfg), sameFamily });
+    fs.writeFileSync(path.join(ctx.artDir, 'verification.md'), md);
+    state.designKept = Object.fromEntries(Object.entries(kept).map(([k, v]) => [k, path.relative(root, v.dir).replace(/\\/g, '/')]));
+    writeEvent({ type: 'system', subtype: 'pipeline_design_verified', pipeline: { run, step: 'verifier' }, test, kept: state.designKept,
+      text: `🎨 design vérifié : ${Math.max(0, rounds.length - 1)} tour(s) de correction ; tests ${test.skipped ? `non lancés (${test.skipped})` : test.ok ? 'verts' : 'rouges'} ; captures avant/après gardées hors dépôt` });
+    return { ok: true };
+  },
+
   // ── Rédaction « document » (pipelines phase 1, document-check.mjs) ─────
   /**
    * codeFirst of « Cibler »: the request names ONE existing document (path
@@ -2375,6 +2461,17 @@ function checkCatalogCriteria(ctx, step, before, after) {
     if (reported.length) ctx.citedReported = reported;
   }
   let json = null;
+  let design = null;
+  // Design (0.146.0): no external resource added without saying so (fonts, CDN, images of another site).
+  if (c.design === 'correction') {
+    const refs = Design.newExternalRefs(changed.filter(f => !isLocalOnly(f)), {
+      before: (f) => (before.get(f) ? git(cwd, ['cat-file', '-p', before.get(f)]).out : ''),
+      after: (f) => { try { return fs.readFileSync(path.join(cwd, f), 'utf8'); } catch { return ''; } },
+    });
+    const v = Design.checkExternalDeclared(art, refs);
+    if (!v.ok) return fail(v.why);
+    design = { kind: 'correction', external: refs };
+  }
   if (c.json) {
     json = parseJsonArtefact(art);
     if (!json || typeof json !== 'object') return fail(`${step.artefact} n’est pas un JSON valide`);
@@ -2394,6 +2491,21 @@ function checkCatalogCriteria(ctx, step, before, after) {
     if (c.files === 'plan') { const pl = Files.checkFilesPlan(cwd, json, { demande: readArtefact(ctx, 'demande.md') || '' }); if (!pl.ok) return fail(`${step.artefact} : ${pl.why}`); }
     if (c.document === 'cible') { const v = Doc.checkTarget(cwd, json, { demande: readArtefact(ctx, 'demande.md') || '', protectedFn: (f) => isTestFile(f, ctx.cfg.testGlobs || []) }); if (!v.ok) return fail(`${step.artefact} : ${v.why}`); }
     if (c.verification) { const v = checkVerification(ctx, json); if (!v.ok) return fail(`${step.artefact} : ${v.why}`); }
+    // Design (0.146.0): every capture judged (and seen), gravities, a stop criterion consistent with them.
+    if (c.design === 'critique') {
+      const cap = parseJsonArtefact(readArtefact(ctx, 'captures.json') || '') || {};
+      // Every attempt of THIS step counts (same session: a retry keeps what it already opened —
+      // real replay of 2026-10-24); a capture path is unique to its round.
+      let logs = [];
+      try { logs = fs.readdirSync(ctx.runDir).filter(f => f.endsWith(`-${step.id}.jsonl`)).map(f => path.join(ctx.runDir, f)); } catch { /* none */ }
+      if (ctx.stepLogFile && !logs.includes(ctx.stepLogFile)) logs.push(ctx.stepLogFile);
+      const reads = logs.flatMap(f => toolUsesInTurn(f)).filter(u => u.name === 'Read' && u.ok !== false).map(u => String(u.input?.file_path || ''));
+      const v = Design.checkCritique(json, { shots: cap.shots || [], readInTurn: reads, attachedIds: ctx.designAttachIds || [] });
+      if (!v.ok) return fail(`${step.artefact} : ${v.why}`);
+      // The loop runs on the list the CODE computed (P1 and P2), never on the model's own list.
+      json.importants = v.importants;
+      design = { kind: 'critique', round: cap.round || 0, counts: v.counts, critere: v.critere, problems: v.problems };
+    }
     if (c.tasks) {
       const why = validateTasks(ctx.root, json.taches);
       if (why) return fail(`${step.artefact} : ${why}`);
@@ -2413,7 +2525,7 @@ function checkCatalogCriteria(ctx, step, before, after) {
       }
     }
   }
-  return { ok: true, changed, json, ...(external ? { externalChanges: external } : {}), ...(c.media ? { media: ctx.lastCheck?.media || null, wer: ctx.lastCheck?.wer ?? null } : {}) };
+  return { ok: true, changed, json, ...(design ? { design } : {}), ...(external ? { externalChanges: external } : {}), ...(c.media ? { media: ctx.lastCheck?.media || null, wer: ctx.lastCheck?.wer ?? null } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -2866,6 +2978,10 @@ export async function runPipeline(o) {
   if (!state && pipeline === Exploit.EXPLOIT_PIPELINE && !startTuning.exploitation) {
     return refuse(64, 'la voie « Exploitation » est coupée pour ce projet (interrupteur « exploitation » : node scripts/pipeline-enforce.mjs tuning exploitation on [<projet>])');
   }
+  // The Design pipeline likewise (0.146.0, switch `design`).
+  if (!state && pipeline === Design.DESIGN_PIPELINE && !startTuning.design) {
+    return refuse(64, 'le pipeline « Design » est coupé pour ce projet (interrupteur « design » : node scripts/pipeline-enforce.mjs tuning design on [<projet>])');
+  }
   if (!state) {
     state = {
       run, project: projectName, pipeline, mode, kind, base, status: 'running',
@@ -3001,7 +3117,8 @@ export async function runPipeline(o) {
       state.itemReviewBudgets = { ...(state.itemReviewBudgets || {}), [g]: (state.itemReviewRounds?.[g] || 0) + limits.reviewRounds };
       extended = { limit: L, to: state.itemReviewBudgets[g], item: g };
     } else {
-      if (L === 'review') state.budgets.review = (state.reviewRounds || 0) + limits.reviewRounds;
+      // Design (0.146.0): one more allocation of its own rounds.
+      if (L === 'review') state.budgets.review = (state.reviewRounds || 0) + (pipeline === Design.DESIGN_PIPELINE ? Design.maxRounds(cfg) : limits.reviewRounds);
       extended = { limit: L, to: state.budgets[L] };
     }
   }
@@ -3087,6 +3204,8 @@ export async function runPipeline(o) {
   let stepDefs = pipeline === 'dev' ? devCatalog({ mode: state.mode, kind }) : Object.fromEntries(planSteps(pipeline, { mode: state.mode, kind, tuning: state.tuning }).map(s => [s.id, s]));
   // Discussion in one call: its research step is inserted only when the answer asks for it.
   if (pipeline === 'discussion' && stepDefs.repondre?.checks?.researchMark) stepDefs.rechercher = DISCUSSION_RESEARCH;
+  // Design (0.146.0): « Corriger » enters the plan only through a critique's loop.
+  if (pipeline === Design.DESIGN_PIPELINE) for (const s of catalogSteps(pipeline)) stepDefs[s.id] ||= s;
   const catalog = catalogOf(pipeline);
   // Variante d'étape (média, 0.55.0) : sa case passe en tête de la chaîne, et le
   // type de fichier attendu peut en dépendre. Depuis 0.66.0 elle est choisie par
@@ -3186,6 +3305,8 @@ export async function runPipeline(o) {
   if (ctx.idleRegression) testEnv.ORCH_UNIT_DELIVERY = '1'; else delete testEnv.ORCH_UNIT_DELIVERY;
   // Exploitation (0.141.0): the operations the user authorized by « autoriser » at the pause.
   ctx.exploitAuthorized = pipeline === Exploit.EXPLOIT_PIPELINE ? (state.authorizedOps || []).filter(x => typeof x === 'string') : [];
+  // Design (0.146.0): rounds of correction allowed (design.maxRounds of the project, 3 to 5).
+  ctx.designMax = pipeline === Design.DESIGN_PIPELINE ? Design.maxRounds(cfg) : null;
   saveState();
   ctx.suiteCacheFile = path.join(logsDir, 'suite-cache', `${projectName}.json`);
   ctx.suiteCacheIndex = path.join(runDir, 'suite-cache.idx');
@@ -3616,6 +3737,7 @@ export async function runPipeline(o) {
     if (info.model) args.push('--model', info.model, '--provider', info.provider);
     if (info.model && info.second) args.push('--second-model', info.second.model, '--second-provider', info.second.provider, '--dual-mode', step.judge ? 'judge' : 'action');
     ctx.localTool = localToolFor(readAssignments(root), step.chain);
+    ctx.designAttach = null; ctx.designAttachIds = null;
     const text = stepPrompt(ctx, step, extra);
     const before = snapshot(cwd);
     current = { id: step.id, title: step.title, model: info.model, t0: Date.now() };
@@ -3640,7 +3762,8 @@ export async function runPipeline(o) {
       c.stderr.on('data', (d) => { errOut.write(d); try { process.stderr.write(d); } catch {} });
       c.on('error', () => { errOut.end(); resolve(127); });
       c.on('close', (cc) => { errOut.end(() => resolve(cc ?? 1)); });
-      c.stdin.end(text);
+      // Design (0.146.0): the step's captures go with the prompt as images (stdin envelope of dispatch.mjs).
+      c.stdin.end(step.images && ctx.designAttach?.length ? JSON.stringify({ prompt: text, attachmentPaths: ctx.designAttach }) : text);
     });
     const log = readBranchLog(path.join(runDir, `${key}.jsonl`));
     const after = snapshot(cwd);
@@ -4521,22 +4644,40 @@ export async function runPipeline(o) {
     // Security findings of the audit (manual review, independent second opinion):
     // every severity is a defect, reported at once (0.65.0).
     if (Array.isArray(last.crit?.json?.findings) && last.crit.json.findings.length) await reportDefects(step, last.crit.json.findings, 'faille');
+    // Design (0.146.0): each critique is kept (counts, stop criterion, model) for the report.
+    if (last.crit?.design?.kind === 'critique') {
+      const entry = { step: step.id, round: last.crit.design.round, counts: last.crit.design.counts, critere: last.crit.design.critere, problems: last.crit.design.problems.slice(0, 80), model: last.rec.served || last.rec.model || null };
+      if (step.id === 'second-avis') state.designSecond = entry;
+      else state.designCritiques = [...(state.designCritiques || []), entry];
+      writeEvent({ type: 'system', subtype: 'pipeline_design_critique', pipeline: { run, step: step.id }, round: entry.round, counts: entry.counts, critere: entry.critere,
+        text: `🎨 ${step.id === 'second-avis' ? 'second avis' : 'critique'} du tour ${entry.round} : P1 ${entry.counts.P1}, P2 ${entry.counts.P2}, P3 ${entry.counts.P3} — critère d’arrêt : « ${String(entry.critere).slice(0, 160)} »` });
+    }
     if (step.loop && Array.isArray(last.crit?.json?.[step.loop.field]) && last.crit.json[step.loop.field].length) {
       const left = last.crit.json[step.loop.field];
       const leftTxt = left.slice(0, 5).map(x => (typeof x === 'string' ? x : x.issue || JSON.stringify(x))).join(' ; ');
+      // Design: the critique's problems are the work list of the next round, not
+      // defects of a delivery (said at each round; the pause at the bound reports them).
+      const designLoop = step.loop.budget === 'design';
+      const max = state.budgets?.review || (designLoop ? ctx.designMax || Design.ROUNDS.default : limits.reviewRounds);
       state.lastDefects = { ...(state.lastDefects || {}), global: left.map(x => (typeof x === 'string' ? x : x.issue || JSON.stringify(x))) };
-      await reportDefects(step, left, 'restant');
+      if (!designLoop) await reportDefects(step, left, 'restant');
       if ((state.acceptReview || []).includes('global')) {
         // « accepter » after the pause: the user takes the remaining points as they are.
         acceptDefects('global', step);
       } else {
-      if (state.reviewRounds >= (state.budgets?.review || limits.reviewRounds)) {
-        return pauseForLimit({ limit: 'review', value: state.reviewRounds, step, why: `la revue relève encore : ${leftTxt}` });
+      if (state.reviewRounds >= max) {
+        return pauseForLimit({ limit: 'review', value: state.reviewRounds, step, why: designLoop
+          ? `après ${state.reviewRounds} tour(s) de correction (maximum ${max}), ${step.id === 'second-avis' ? 'le second avis' : 'la critique'} relève encore ${left.length} problème(s) P1/P2 : ${leftTxt}`
+          : `la revue relève encore : ${leftTxt}` });
       }
       state.reviewRounds++;
+      if (designLoop) {
+        const probs = last.crit.design?.problems || [];
+        fs.writeFileSync(path.join(artDir, 'a-corriger.json'), `${JSON.stringify({ source: step.id, round: last.crit.design?.round ?? null, problemes: probs.filter(p => p.gravite !== 'P3'), finition: probs.filter(p => p.gravite === 'P3') }, null, 2)}\n`);
+      }
       state.plan.splice(state.index + 1, 0, ...step.loop.back);
       writeEvent({ type: 'system', subtype: 'pipeline_loop', pipeline: { run, from: id, to: step.loop.back[0], round: state.reviewRounds },
-        text: `${step.title} : ${left.length} point(s) restant(s) → retour à « ${stepDefs[step.loop.back[0]].title} » (tour ${state.reviewRounds}/${limits.reviewRounds})` });
+        text: `${step.title} : ${left.length} ${designLoop ? 'problème(s) P1/P2' : 'point(s) restant(s)'} → retour à « ${stepDefs[step.loop.back[0]].title} » (tour ${state.reviewRounds}/${max})` });
       }
     }
     if ((step.id === 'rouge' || step.id === 'rouge-vert') && last.crit?.covered) {

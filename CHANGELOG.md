@@ -11,6 +11,82 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.146.0] - 2026-10-24
+
+User agreement (2026-10-24): « ok » to the chef's proposal of a dedicated
+« Design » pipeline, after « l'ui de [projet] est vraiment moche. quel model la
+fait » and « faut-il un pipeline dédié ? ». The Development checks that the code
+works (DOM, texts, contrasts) but nobody ever looked at the rendered screen:
+interfaces were judged « vides », « pas pro », « moches » several times.
+
+### Added
+
+- (server) Pipeline `design` (`scripts/design.mjs`, catalogue, Models tab
+  « Design »): Capturer (program) → Critiquer (vision) → [Corriger → Capturer →
+  Critiquer] while a P1/P2 remains → Second avis (vision, another family) →
+  Vérifier (program) → Livrer.
+  - **Real captures**: every screen and state in mobile 390×844 and desktop
+    1280×800, rendered by headless Edge/Chrome (playwright-core), into the run's
+    artefact folder (git-excluded). The project declares how in
+    `.orchestrateur/pipeline.json` → `design`: `capture` (its own command
+    writing PNG files into `{out}`, the most faithful: fake engines, error
+    states), or `start` (`command`, `url` with `{port}`) + `screens`
+    (`[{id, path, actions}]`, closed list of actions: click, fill, press, wait,
+    waitFor, hash, eval); without a declaration, the project's static
+    `index.html` and its sibling pages. Files the application writes while it
+    runs are put back. Impossible capture ⇒ a pause that names the cause and
+    the declaration to add (« relancer l’opération » tries again).
+  - **The model sees the screens**: the captures are joined to the step's
+    message as images (stdin envelope of `dispatch.mjs`: native image blocks
+    for Claude, `--image` for codex), at most 20 per turn and 2000 px, mobile
+    and desktop alternating (mobile first); any other capture must be opened
+    with Read (checked in the logs of every attempt of that step: a retry in the
+    same session keeps what it already opened). Both rules come from the real
+    replay below: with the first 20 captures in name order (all desktop), the
+    critic opened only 7 of the 20 mobile screens, and on its retry only the 13
+    others. A refused critique is diagnosed by the code as an incomplete
+    critique (« corriger le format »), never « a criterion too strict » with
+    « abandonner » as the only choice.
+  - **Critique checked by the code**: one entry per capture, each problem P1
+    (not professional), P2 (clearly bothers) or P3 (finish), the critic's own
+    stop criterion (`critere_arret`) and `arret` consistent with the problems;
+    the list of P1/P2 driving the loop is computed by the code, never taken
+    from the model.
+  - **Correction**: display only (HTML, CSS, templates, displayed texts), the
+    project's graphic charter as the frame (`design.charte`, else a known name
+    such as `docs/CHARTE-GRAPHIQUE.md`), tests unchanged (protected) and the
+    suite green; a NEW external resource (font, stylesheet, script or image of
+    another site, CDN) is refused unless declared in « ## Ressources
+    externes ». The problems to fix are written by the orchestrator
+    (`a-corriger.json`).
+  - **Anti-loop**: at most `design.maxRounds` correction rounds (3 to 5, 4 by
+    default), then a pause « review » (a process pause: the chef settles it
+    under `chefPauses`); the critique's problems are the next round's work
+    list, not delivery defects.
+  - **Independent second opinion** on the final captures (previous critiques,
+    work list and corrections hidden during its turn); its P1/P2 send the run
+    back to a correction within the same round budget. Same model family as the
+    critique ⇒ said in the report.
+  - **Vérifier**: the project's test command (its targeted selection where the
+    project declares it — orchestrateur-dev; no style-detail test asked), the
+    captures before/after copied to `logs/runs/<run>/captures/{avant,apres}`
+    (outside the repository) and cited in the result with the rounds, counts
+    and stop criterion.
+  - **Livrer**: version, CHANGELOG, one commit (by the program under
+    `codeDeliver`), never a push; skipped when nothing was corrected.
+- (server) Classification: rule of MEANING `DESIGN_RULE` (« ugly, empty,
+  unprofessional, redo the style, presentation, UI polish » → design; a new
+  screen, function or behaviour → dev); prefix `/design`; `--pipeline design`.
+- (server) Switch `design` (`pipeline-tuning.mjs`), off by default, frozen per
+  run: off = 0.145.0 exactly (not offered, prefix ignored, `--pipeline design`
+  refused 64). On: in service on every project in service, without being
+  listed in `enforcement.pipelines` (`pipelineServed`).
+- (server) Models page: cases `design.critiquer`, `design.corriger`,
+  `design.second-avis` (vision required) and `design.livrer`; suggestions
+  Opus 5.5 (critique, correction) and gpt-6-astra (second opinion).
+- Tests: `_test_design.mjs` (real headless capture, a project's capture
+  command, the replayed case, anti-loop, second opinion, guardrails, switch).
+
 ## [0.145.0] - 2026-10-24
 
 User agreement (2026-10-24): « oui », to the chef's two proposals after the

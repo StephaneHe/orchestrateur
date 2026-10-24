@@ -36,6 +36,8 @@ export const TUNING_LEVERS = {
   asideGroup: 'les items mis de côté dont le correctif ne s’applique plus font une seule pause groupée, pas une pause par item',
   // 0.141.0 (exploitation.mjs), « Je ferai passer ce genre de petites tâches d'exploitation par une voie plus légère ».
   exploitation: 'voie légère « Exploitation » : petite tâche d’exploitation en un seul tour de model, sans TDD, check-list vérifiée par le code (proposée au classement, préfixe /exploitation, --pipeline exploitation)',
+  // 0.146.0 (design.mjs), « ok » to a dedicated pipeline after « l'ui de [projet] est vraiment moche ».
+  design: 'pipeline « Design » : captures réelles des écrans (mobile et bureau), critique par un model qui voit les images, corrections de l’affichage en boucle bornée, second avis indépendant, tests du projet verts (proposé au classement, préfixe /design, --pipeline design)',
   // 0.143.0, « vitesse » phase (pipeline-speed.mjs), user's « ok » of 2026-10-23.
   limits: 'limites d’une exécution réglables à chaud (tests par exécution, durée de travail ; défaut 25 tests, 150 min ; pipeline-enforce.mjs tuning-values)',
   redGreen: 'test + code en un appel pour un petit item (≤ 2 tests annoncés) : le programme prouve le rouge (test qui échoue sans le code, sortie gardée) puis le vert',
