@@ -11,6 +11,17 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.149.2] - 2026-10-26
+
+Incident reported by the chef on the production server (7777, v0.148.0): the watchdog restarted a server that was only frozen, killing every running turn (restarts #4 to #8 on 2026-10-26). Run p-20261026T161242-466928. Partial delivery: only the watchdog is fixed, the periodic task that blocks the event loop is NOT yet fixed.
+
+### Fixed
+- (server) Watchdog: the port regex of `portIsListening` (`scripts/server-watchdog.mjs`) was built in a template literal, so `s` became `s` and netstat lines never matched. A frozen-but-listening server was classed DOWN after 2 expired probes (about 20 s) and restarted; it is now classed SLOW and needs the 18 probes (about 3 min) planned for a frozen server. New suite `_test_watchdog_frozen.mjs` replays a frozen server that still listens (no restart), attached to its regression perimeter.
+
+### Known, not yet fixed
+- (server) Cause of the freezes, found by measurement on production data (dry run): the 60 s `sweepRequests` -> `reconcile` (`scripts/requests.mjs`) re-reads up to 32 MB of each project journal for every stale `a_traiter` task (45 tasks, 1.5 GB per pass, 4.4 s synchronous). It is not corrected here.
+- (server) Still to do: incremental reconciliation, event-loop latency monitor, watchdog heartbeat check before killing, `server-crash.log` rotation (61 MB).
+
 ## [0.149.1] - 2026-10-26
 
 After-the-fact full non-regression of 6a111c2 (idle run `report-idle-full-6a111c2-mvph2sez`) was red on four entries; Incident fix.

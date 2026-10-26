@@ -70,7 +70,7 @@ function portIsListening(port) {
   const r = spawnSync('netstat', ['-ano', '-p', 'TCP'], { encoding: 'utf8', timeout: 5000 });
   // If netstat itself fails, assume bound: the SLOW path is the cautious one.
   if (r.status !== 0 || !r.stdout) return true;
-  const portMatcher = new RegExp(`:${port}\s`);
+  const portMatcher = new RegExp(`:${port}\\s`);
   return r.stdout.split('\n').some(l => /LISTENING/.test(l) && portMatcher.test(l));
 }
 

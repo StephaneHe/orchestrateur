@@ -231,6 +231,7 @@
       ],
       "suites": [
         "_test_network_guard.mjs",
+        "_test_watchdog_frozen.mjs",
         "_test_downloads_hot.mjs",
         "_test_mail_draft_page.mjs",
         "_test_api_keys.mjs",
