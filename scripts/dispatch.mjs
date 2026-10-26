@@ -551,6 +551,7 @@ function dropStaleChefAnswer(why) {
 let CHEF_PAUSE = chefAnswerTarget();
 if (CHEF_PAUSE?.stale) dropStaleChefAnswer(CHEF_PAUSE.stale);
 if (CHEF_PAUSE) pipelineResumeArg = CHEF_PAUSE.run;
+let PIPE_RESUME = null;    // { run, lane } — paused pipeline run this request resumes (P9)
 // 0.137.0: a pause answer that CITES a paused run of this project (« livrer
 // sans eux p-… ») answers that run — even when a newer run of the main copy
 // hides it, even when the pause waits for the chef. Sent by the chef (its turn,
@@ -1188,6 +1189,8 @@ function postQueueIfBusy(extra = {}, route = '/api/dispatch') {
     if (ressourcesArg)     payload.ressources      = ressourcesArg;
     if (QUEUE_EXCLUSIVE)   payload.exclusive       = QUEUE_EXCLUSIVE;
     if (REQ?.task)         payload.taskId          = REQ.task;
+    // 0.148.0: an answer to a pause passes before the ordinary tasks of the queue.
+    if (!extra.heldBy && queuedPauseReply()) payload.pauseReply = true;
     const body = Buffer.from(JSON.stringify(payload));
     const req = http.request({
       hostname: '127.0.0.1', port: Number(process.env.ORCH_PORT) || 7777, path: route, method: 'POST',
@@ -1212,6 +1215,20 @@ function postQueueIfBusy(extra = {}, route = '/api/dispatch') {
     req.setTimeout(5000, () => { try { req.destroy(); } catch {} resolve(null); });
     req.end(body);
   });
+}
+
+/**
+ * 0.148.0: is this dispatch an answer to a paused pipeline run? The chef's relay
+ * of a pause, --pipeline-resume (also set by [CHEF_ANSWER]), the lane resume
+ * decided above, or a menu word while a run of this project waits for it. Such
+ * an answer queued behind a busy lane goes before the ordinary tasks: queued at
+ * the end, the paused run stayed paused for hours (production, 2026-10-26).
+ */
+function queuedPauseReply() {
+  if (RELAY_TAG?.kind === 'question') return false;
+  if (pipelineResumeArg || CHEF_PAUSE || PIPE_RESUME || RELAY_TAG?.kind === 'pause') return true;
+  if (!pausedReplyKind(prompt)) return false;
+  try { return lanesMod.pausedPipelineRuns(LOGS, projectName).some(c => c.held); } catch { return false; }
 }
 
 /**
@@ -1422,7 +1439,6 @@ if (TURN_LOCK && LANES_MAX <= 1) {
 // serial is written to the musician's log (system/lane_exclusive) and travels
 // with its queue entry: justified, never silent.
 let LANE = null;           // { k, dir?, task?, branch?, title, rule }
-let PIPE_RESUME = null;    // { run, lane } — paused pipeline run this request resumes (P9)
 let laneMainLog = () => {};
 if (TURN_LOCK && LANES_MAX > 1) {
   const rulesMod = await import('./lane-rules.mjs');
@@ -1553,6 +1569,15 @@ if (TURN_LOCK && LANES_MAX > 1) {
     if (pipelineish) {
       const pv = lanesMod.provisionPipelineLane(project.path, dir);
       if (pv.length) console.log(`[dispatch] couloir ${k} : ${pv.join(', ')} (exécution de pipeline)`);
+      // 0.147.0: the project's setup step (postinstall / setupCommand) — files it
+      // generates are ignored by git, so absent from the lane until it runs.
+      const su = (await import('./copy-setup.mjs')).runCopySetup(dir, { stamp: true, logFile: path.join(path.dirname(files(k).log), `${k}.setup.log`) });
+      if (su.ran && su.ok) console.log(`[dispatch] couloir ${k} : préparation « ${su.command} » faite (${su.log || 'sans journal'})`);
+      else if (su.ran) {
+        const text = `Préparation du couloir ${k} en échec — « ${su.command} » (${su.source}) : ${su.reason}. Les tests de cette exécution tourneront sans les fichiers qu'elle génère. Sortie : ${su.log || '(non journalisée)'}`;
+        console.error(`[dispatch] ${text}`);
+        laneMainLog({ type: 'system', subtype: 'lane_setup_failed', lane: k, command: su.command, source: su.source, code: su.code, log: su.log || null, tail: su.tail || [], text });
+      }
     }
     const rec = lanesMod.recoverLane({ logsDir: LOGS, project, k, dir });
     if (rec) laneMainLog({ type: 'system', subtype: 'lane_task', lane: k, task: rec.task, branch: rec.branch, state: 'interrupted', text: rec.text });

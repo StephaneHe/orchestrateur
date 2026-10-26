@@ -387,10 +387,16 @@ function newQueueEntryId() {
 function queuePush(name, entry, { front = false } = {}) {
   const q = dispatchQueue.get(name) ?? [];
   const e = { id: newQueueEntryId(), enqueuedAt: new Date().toISOString(), ...entry };
-  if (front) q.unshift(e); else q.push(e);
+  // 0.148.0: an answer to a pause passes before the ordinary tasks, after the
+  // answers already waiting; a held head goes back right after them. Same rule
+  // as queueInsertIndex of scripts/queue-requeue.mjs (inlined: the queue code is
+  // evaluated on its own by the queue suites).
+  let i = q.length;
+  if (front || e.pauseReply) { i = 0; while (i < q.length && q[i]?.pauseReply) i++; }
+  q.splice(i, 0, e);
   dispatchQueue.set(name, q);
   persistQueue(name);
-  return front ? 1 : q.length;
+  return i + 1;
 }
 
 function queueRemove(name, id) {
@@ -431,6 +437,7 @@ function queueEntryView(e, i) {
     lane: Number.isInteger(e.lane) ? e.lane : null, ressources: e.ressources || null, exclusive: e.exclusive || null,
     taskId: e.taskId || null,
     heldBy: e.heldBy || null,
+    pauseReply: !!e.pauseReply,
   };
 }
 
@@ -6000,6 +6007,8 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
       taskId: typeof req.body?.taskId === 'string' && /^r-\d{8}T\d{6}-[0-9a-f]{6}#\d{1,3}(\.\d{1,2})?$/.test(req.body.taskId) ? req.body.taskId : undefined,
       // 0.144.0: refused at launch for a passing cause — kept, never lost.
       heldBy: (req.orchHeld && QueueRequeue.cleanHeldBy(req.body?.heldBy)) || undefined,
+      // 0.148.0: an answer to a pause (relay, --pipeline-resume, menu word) jumps the ordinary tasks.
+      pauseReply: req.body?.pauseReply === true && !req.orchHeld ? true : undefined,
     };
     // Lanes (0.101.0): a lane rule kept this task serial — it waits in the
     // queue, with its justification, even when lane 0 happens to be free.
@@ -6007,7 +6016,7 @@ app.post('/api/dispatch', express.json({ limit: '2mb' }), async (req, res) => {
       const front = req.body?.front === true && !!entry.heldBy;
       const len = queuePush(name, entry, { front });
       const id = dispatchQueue.get(name)[len - 1].id;
-      const why = entry.heldBy ? `retenue (${entry.heldBy.kind}${entry.heldBy.run ? ` ${entry.heldBy.run}` : ''})${front ? ', remise en tête' : ''}` : busy ? `occupé (pid=${busy})` : `en série (règle ${entry.exclusive.rule})`;
+      const why = entry.heldBy ? `retenue (${entry.heldBy.kind}${entry.heldBy.run ? ` ${entry.heldBy.run}` : ''})${front ? ', remise en tête' : ''}` : entry.pauseReply ? `réponse à une pause, prioritaire (${busy ? `occupé pid=${busy}` : 'en série'})` : busy ? `occupé (pid=${busy})` : `en série (règle ${entry.exclusive.rule})`;
       console.log(`[queue] ${name} ${why} — dispatch mis en file (pos=${len}, id=${id})`);
       if (entry.heldBy) debugLog(`[queue-held] ${name} ${id} : ${entry.heldBy.why}`);
       return res.status(202).json({ ok: true, queued: true, project: name, queueLength: dispatchQueue.get(name).length, position: len, id, ...(entry.heldBy ? { held: true } : {}) });

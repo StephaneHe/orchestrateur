@@ -8,7 +8,9 @@
 //   node scripts/idle-regression-runner.mjs <step.json>
 // Runs one full or bisect run of one commit — in the checkout itself when the
 // project declares `inPlace` (regression.mjs --ref extracts the commit), else
-// in a detached git worktree of the commit, dependency folders linked — and
+// in a detached git worktree of the commit, dependency folders linked and the
+// project's setup step replayed (0.147.0, copy-setup.mjs; failure = code 71,
+// ko `setup:échec`, the tests are not run) — and
 // writes {code, ko, report, failures?, ignored?, endedAt} to step.resultFile
 // (0.145.0: without a report, `ko` names the failed tests read from the output,
 // test-failures.mjs; `ignored` = git-ignored files the output points at,
@@ -25,6 +27,7 @@ import { isProdRoot } from './prod-guard.mjs';
 import { LAUNCHER } from './idle-regression.mjs';
 import { addCleanWorktree, removeWorktree, ignoredHints } from './clean-copy-check.mjs';
 import { parseTestOutput, compactFailures, koIds } from './test-failures.mjs';
+import { setupFailures } from './copy-setup.mjs';
 
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
 // The command's own output (the log is appended to): read back from `from`, at most 4 MB from its end.
@@ -50,6 +53,8 @@ export async function runStep(step) {
       const w = addCleanWorktree(step.path, step.worktree, step.commit);
       write(w.out);
       if (!w.ok) { finish({ code: 70, ko: null, why: 'worktree impossible' }); return 70; }
+      // 0.147.0: setup (postinstall / setupCommand) failed — a named failure, the tests are not run.
+      if (w.setup && !w.setup.ok) { finish({ code: 71, ko: koIds({ kind: 'setup' }, 71), failures: setupFailures(w.setup), why: 'préparation de la copie propre en échec' }); return 71; }
       cwd = step.worktree;
     }
     const [cmd, ...args] = step.argv[0] === '__shell__' ? [step.argv[1]] : step.argv;

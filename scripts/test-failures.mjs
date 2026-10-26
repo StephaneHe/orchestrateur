@@ -222,6 +222,8 @@ export function describeFailures(f) {
   if (f.kind === 'passed') return 'tests verts';
   const miss = f.missing?.length ? ` — fichier(s) manquant(s) : ${f.missing.slice(0, 3).join(', ')}` : '';
   if (f.kind === 'not-run') return `la commande de test n’a pas pu tourner : ${f.reason || 'raison inconnue'}${miss}`;
+  // 0.147.0: the clean copy's setup step (copy-setup.mjs) failed; no test ran.
+  if (f.kind === 'setup') return `tests non lancés : ${f.reason || 'préparation de la copie propre en échec'}`;
   if (f.kind === 'tests') {
     const n = f.counts?.failed ?? f.failed.length;
     const names = f.failed.slice(0, 3).map(t => `« ${t.name} »`).join(', ');
@@ -247,12 +249,13 @@ export function koIds(f, code) {
   if (code === 0) return [];
   if (f?.kind === 'tests') return f.failed.map(t => `test:${t.name}`);
   if (f?.kind === 'not-run') return ['testCommand:non-lancée'];
+  if (f?.kind === 'setup') return ['setup:échec'];
   return ['testCommand'];
 }
 
 /** A compact copy for state files and alerts. */
 export function compactFailures(f) {
   if (!f) return null;
-  return { kind: f.kind, runner: f.runner, counts: f.counts, reason: f.reason, missing: (f.missing || []).slice(0, 5),
+  return { kind: f.kind, runner: f.runner, counts: f.counts, reason: f.reason, ...(f.command ? { command: f.command } : {}), missing: (f.missing || []).slice(0, 5),
     failed: (f.failed || []).slice(0, 10), truncated: Math.max(0, (f.failed || []).length - 10) + (f.truncated || 0), tail: (f.tail || []).slice(-8) };
 }

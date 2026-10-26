@@ -16,7 +16,8 @@
 //
 // The clean copy is what the idle runner uses (idle-regression-runner.mjs):
 // a detached worktree, dependency folders linked (provisionPipelineLane:
-// node_modules, .venv, venv; local.properties copied), nothing else.
+// node_modules, .venv, venv; local.properties copied), then the project's
+// setup step (0.147.0, copy-setup.mjs: postinstall or setupCommand).
 //
 // State: logs/clean-check.json → {projects: {<name>: {testCommand, commit, ok,
 // at, summary, failures, ignored}}}, written by recordCleanCheck only.
@@ -29,6 +30,7 @@ import { spawnSync } from 'node:child_process';
 import { writeFileAtomic } from './atomic-file.mjs';
 import { provisionPipelineLane, PIPELINE_LINKS } from './lanes.mjs';
 import { parseTestOutput, describeFailures, failureLines, compactFailures } from './test-failures.mjs';
+import { runCopySetup, setupFailures } from './copy-setup.mjs';
 
 export const USER_AGREEMENT = 'oui';
 export const DEFAULT_TIMEOUT_MIN = 30;
@@ -50,15 +52,23 @@ export function removeWorktree(main, wt) {
   git(main, ['worktree', 'prune']);
 }
 
-/** A detached worktree of `commit`, dependency folders linked. → {ok, out, provisioned[]} */
-export function addCleanWorktree(main, wt, commit) {
+/**
+ * A detached worktree of `commit`, dependency folders linked, then the
+ * project's setup step (0.147.0, copy-setup.mjs: postinstall or setupCommand).
+ * → {ok, out, provisioned[], setup?} — `setup.ok === false`: the copy is not
+ * usable, callers report a `setup` failure instead of running the tests.
+ */
+export function addCleanWorktree(main, wt, commit, { setup = true, env = process.env } = {}) {
   removeWorktree(main, wt);
   const r = spawnSync('git', ['-C', main, 'worktree', 'add', '--detach', wt, commit], { encoding: 'utf8', windowsHide: true });
-  const out = `${r.stdout || ''}${r.stderr || ''}`;
+  let out = `${r.stdout || ''}${r.stderr || ''}`;
   if (r.status !== 0) return { ok: false, out };
   let provisioned = [];
-  try { provisioned = provisionPipelineLane(main, wt); } catch (e) { return { ok: true, out: `${out}[clean-copy] liens : ${e.message}\n`, provisioned }; }
-  return { ok: true, out, provisioned };
+  try { provisioned = provisionPipelineLane(main, wt); } catch (e) { out += `[clean-copy] liens : ${e.message}\n`; }
+  if (!setup) return { ok: true, out, provisioned };
+  const s = runCopySetup(wt, { env });
+  if (s.ran) out += `${s.output}${s.ok ? '' : `\n[clean-copy] préparation en échec : ${s.reason}\n`}`;
+  return { ok: true, out, provisioned, ...(s.ran ? { setup: { ok: s.ok, code: s.code, command: s.command, source: s.source, reason: s.reason || null, tail: s.tail || [] } } : {}) };
 }
 
 // Ignored folders that never explain a missing file (build outputs, caches).
@@ -126,8 +136,9 @@ export function checkCleanCopy({ dir, testCommand, commit = 'HEAD', timeoutMs = 
   const wt = fs.mkdtempSync(path.join(tmpRoot, 'orch-clean-'));
   fs.rmSync(wt, { recursive: true, force: true });
   try {
-    const w = addCleanWorktree(dir, wt, sha);
+    const w = addCleanWorktree(dir, wt, sha, { env });
     if (!w.ok) return done({ ok: false, code: 70, why: `copie propre impossible (git worktree) : ${w.out.trim().slice(0, 200)}`, failures: null, ignored: [], output: w.out });
+    if (w.setup && !w.setup.ok) return done({ ok: false, code: w.setup.code, failures: setupFailures(w.setup), ignored: [], output: w.out });
     const t = spawnSync(a.shell ? a.cmd : (a.cmd === 'node' ? process.execPath : a.cmd), a.shell ? [] : a.args,
       { cwd: wt, shell: a.shell, encoding: 'utf8', windowsHide: true, timeout: timeoutMs, maxBuffer: 256 * 1024 * 1024, env: { ...env, ORCH_REGRESS_LIVE: '0' } });
     const output = `${w.out}$ ${commandText(testCommand)}   (copie propre ${wt}, commit ${sha})\n${t.stdout || ''}${t.stderr || ''}${t.error ? `\n[clean-copy] ${t.error.message}\n` : ''}`;
@@ -147,6 +158,7 @@ export function checkCleanCopy({ dir, testCommand, commit = 'HEAD', timeoutMs = 
 export function summarize(res) {
   if (res.ok) return `vert en copie propre (${String(res.commit).slice(0, 7)})`;
   if (res.why) return `copie propre : ${res.why}`;
+  if (res.failures?.kind === 'setup') return `copie propre du commit ${String(res.commit).slice(0, 7)} non préparée — ${res.failures.reason} ; la commande de test « ${commandText(res.testCommand)} » n’a pas été lancée`;
   const head = `la commande de test « ${commandText(res.testCommand)} » échoue dans une copie propre du commit ${String(res.commit).slice(0, 7)} (git worktree, code ${res.code})`;
   const what = describeFailures(res.failures);
   const ign = res.ignored?.length ? ` — fichier(s) ignoré(s) par git, donc absents d’une copie propre : ${res.ignored.map(i => i.file).join(', ')} (les versionner, ou une fixture, ou ne plus en dépendre)` : '';

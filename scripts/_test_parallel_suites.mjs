@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runPool, runSuite, SERIAL_SUITES, defaultJobs } from './suite-runner.mjs';
+import { runPool, runSuite, SERIAL_SUITES, SUITE_TIMEOUT_MS, defaultJobs } from './suite-runner.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -80,6 +80,11 @@ try {
   ok(/record\('suite', f, f, r\.ok \? 'OK' : 'KO', `\$\{r\.tail\} \(\$\{r\.durationS\} s, exit \$\{r\.code\}\)`, output \? \{ output \} : null\)/.test(src), 'entrée du rapport inchangée (même detail, même champ output)');
   for (const s of ['_test_model_backoff.mjs', '_test_permission_prompt.mjs', '_test_neutral_stop.mjs', '_test_responses_shim.mjs', '_test_pool_chef_dispatch.mjs', '_test_pool_p0a.mjs', '_test_queue_api.mjs'])
     ok(SERIAL_SUITES.has(s) && fs.existsSync(path.join(ROOT, 'scripts', s)), `${s} reste en série (suite existante)`);
+  // 0.148.0: own cap of the suites known to run close to the default 300 s.
+  for (const [s, ms] of Object.entries(SUITE_TIMEOUT_MS))
+    ok(ms > 300_000 && SERIAL_SUITES.has(s) && fs.existsSync(path.join(ROOT, 'scripts', s)), `${s} : délai propre ${ms / 1000} s, en série, suite existante`);
+  const runnerSrc = fs.readFileSync(path.join(ROOT, 'scripts', 'suite-runner.mjs'), 'utf8');
+  ok(/runNode\(file, cwd, timeoutMs \?\? SUITE_TIMEOUT_MS\[path\.basename\(file\)\]\)/.test(runnerSrc), 'runSuite applique ce délai propre (sinon 300 s)');
 } finally {
   fs.rmSync(T, { recursive: true, force: true });
 }

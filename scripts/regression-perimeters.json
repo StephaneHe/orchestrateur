@@ -510,7 +510,8 @@
         "scripts/output-format.mjs",
         "scripts/idle-regression.mjs",
         "scripts/test-failures.mjs",
-        "scripts/clean-copy-check.mjs"
+        "scripts/clean-copy-check.mjs",
+        "scripts/copy-setup.mjs"
       ],
       "suites": [
         "_test_parallel_lanes.mjs",
@@ -540,7 +541,8 @@
         "_test_busy_never_ready.mjs",
         "_test_workspace_trust.mjs",
         "_test_new_project_service.mjs",
-        "_test_clean_copy_check.mjs"
+        "_test_clean_copy_check.mjs",
+        "_test_copy_setup.mjs"
       ],
       "uses": [
         {
@@ -559,6 +561,7 @@
             "_test_activity_journal.mjs",
             "_test_busy_never_ready.mjs",
             "_test_context_calibration.mjs",
+            "_test_copy_setup.mjs",
             "_test_dev_pilot_first.mjs",
             "_test_dev_pipeline_lanes.mjs",
             "_test_dual_model.mjs",
@@ -585,6 +588,7 @@
           "perimeter": "outillage",
           "suites": [
             "_test_clean_copy_check.mjs",
+            "_test_copy_setup.mjs",
             "_test_lane_changelog_rule.mjs",
             "_test_queue_edit.mjs",
             "_test_queue_order.mjs"
@@ -596,6 +600,7 @@
             "_test_activity_journal.mjs",
             "_test_busy_never_ready.mjs",
             "_test_context_calibration.mjs",
+            "_test_copy_setup.mjs",
             "_test_dev_pilot_first.mjs",
             "_test_dev_pipeline_lanes.mjs",
             "_test_dual_model.mjs",
@@ -626,6 +631,7 @@
             "_test_busy_never_ready.mjs",
             "_test_clean_copy_check.mjs",
             "_test_context_calibration.mjs",
+            "_test_copy_setup.mjs",
             "_test_dev_pilot_first.mjs",
             "_test_dev_pipeline_lanes.mjs",
             "_test_dual_model.mjs",
@@ -658,6 +664,7 @@
             "_test_busy_never_ready.mjs",
             "_test_clean_copy_check.mjs",
             "_test_context_calibration.mjs",
+            "_test_copy_setup.mjs",
             "_test_dev_pilot_first.mjs",
             "_test_dev_pipeline_lanes.mjs",
             "_test_dual_model.mjs",

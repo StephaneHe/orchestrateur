@@ -390,6 +390,15 @@ non visible » du journal d'activité).
   (`ORCH_QUEUE_HELD_RETRY_MS`). Une réponse à la pause n'est jamais retenue.
   Redémarrage nécessaire (route, drain, alertes) ; `dispatch.mjs` est actif
   tout de suite. Recette : `_test_queue_requeue.mjs`.
+  **Copie propre comprise, réponses de pause prioritaires** (0.148.0, défaut
+  vu en prod sur [projet] : pause de processus avec le dernier item commité,
+  copie propre, tête de file lancée par-dessus, réponse du chef mise en fin de
+  file) : une exécution en pause retient la file de son couloir même copie
+  propre ; une réponse à une pause mise en file (`pauseReply` : relais du chef,
+  `--pipeline-resume`, mot du menu) passe après les réponses déjà en attente,
+  avant une tête retenue et les tâches ordinaires (`queueInsertIndex`). Jamais
+  pour une tâche ordinaire ni une réponse du chef à une question ordinaire.
+  Redémarrage nécessaire (file du serveur). Recette : `_test_queue_requeue.mjs` §7.
 - **Détail d'une entrée de file** (0.80.0, demande « Les éléments de la file
   d'attente doivent être clickable pour voir leurs détails ») : dans le volet
   d'un musicien, chaque `.dq-item` (clic, Entrée, Espace) ouvre
@@ -886,6 +895,21 @@ testCommand » pour 1 test sur 559).
   `chef-alerts.mjs`) ; le runner, `pipeline-onboard.mjs` et `new-project.mjs`
   sont actifs tout de suite.
 - Recette : `_test_clean_copy_check.mjs`.
+- **Préparation de la copie propre** (0.147.0, post-mortem de
+  p-20261024T033920-3a0055 : fichier généré par `postinstall`, ignoré par git,
+  absent ⇒ faux rouge 404). `scripts/copy-setup.mjs` (`runCopySetup`), juste
+  après la liaison des dépendances : `.orchestrateur/pipeline.json` →
+  `setupCommand` (chaîne = shell, ou argv ; `false` la coupe ;
+  `setupTimeoutMin`, 10 par défaut), sinon `npm run postinstall --if-present`
+  si package.json déclare un `postinstall`, sinon rien. Partout où une copie
+  propre est faite : `addCleanWorktree` (validation de l'onboarding,
+  `--check-clean`, runner a posteriori : code 71, ko `setup:échec`) et couloirs
+  de pipeline (`dispatch.mjs`, tampon dans le dossier git du worktree : rejouée
+  seulement si commande, package.json, package-lock.json ou pipeline.json
+  changent ; journal `logs/lanes/<p>/<k>.setup.log` ; échec ⇒
+  `system/lane_setup_failed`, l'exécution continue). Échec = nature `setup`
+  (« tests non lancés : préparation … en échec »), tests jamais lancés.
+  Recette : `_test_copy_setup.mjs`.
 
 ## Un test périmé s'arrête aussitôt (0.94.0)
 

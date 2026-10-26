@@ -11,6 +11,75 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.148.0] - 2026-10-26
+
+Defect seen in production (v0.146.1, a project, 2026-10-26), under the user
+rule « arrête de poser des questions de découpage. tu sais comment est organisé
+le process mieux que moi » (process pauses settled by the chef): the dev run
+p-20261026T054929-0a9af5 paused on its items limit, its last item committed
+(provisional commit of the grouped review), so the main checkout was CLEAN —
+and 0.144.0 held the queue only for a checkout left dirty. Six seconds later
+the head of the queue (a Rédaction task) started p-20261026T071728-dc2b31 in
+that checkout; the chef's relayed answer « découper » then found lane 0 busy
+and was queued at the END (and again, given by hand with `--pipeline-resume`,
+in position 3): the run stayed paused for hours until the chef reordered the
+queue by hand.
+
+### Fixed
+
+- (server) A paused run holds its lane for any new pipeline run, clean checkout
+  included (`startBlocker` of `scripts/queue-requeue.mjs`): the drained head
+  goes back to the head of the queue, `heldBy {kind: 'paused-run'}`, until the
+  run ends or is closed — exactly as for a dirty checkout. No paused run and a
+  clean checkout: nothing held, as before.
+- (server) An answer to a pause passes before the ordinary tasks of the queue:
+  `dispatch.mjs` (`queuedPauseReply`) marks `pauseReply` on a queued dispatch
+  that answers a paused run — the chef's relay of a pause, `--pipeline-resume`
+  (also set by `[CHEF_ANSWER]`), the lane resume, or a menu word while a run of
+  the project waits — and the server (`queuePush`, `queueInsertIndex`) inserts
+  it after the answers already waiting, before a held head and the ordinary
+  tasks. An ordinary task, or the chef's answer to an ordinary question
+  (`[RELAIS: question]`), is never prioritised. `pauseReply` is shown in
+  `GET /api/queue/:project`. Restart needed (server queue); `dispatch.mjs` is
+  active at once.
+- Recipe: `_test_queue_requeue.mjs` §7 replays the production case; its §1
+  check « paused run, clean checkout ⇒ nothing held » now expects the hold
+  (behaviour revised by this request).
+- (server) Non-regression tooling: `_test_pipeline_gates.mjs` (231 to 292 s over
+  the last releases, already run alone) was killed at the 300 s suite cap with
+  all its checks green so far; `SUITE_TIMEOUT_MS` of `scripts/suite-runner.mjs`
+  gives it 600 s (`_test_parallel_suites.mjs` checks it).
+
+## [0.147.0] - 2026-10-24
+
+Complement to the user agreement « oui » (2026-10-24, clean-copy validation and
+precise alerts), from the post-mortem of p-20261024T033920-3a0055: a clean copy
+linked `node_modules` by a junction but never replayed the project's
+`postinstall` script, so the files it generates — ignored by git, e.g. a
+vendored `frontend/vendor/vue.global.prod.js` — were missing and the project's
+tests failed (404) for no reason of the code under test.
+
+### Added
+
+- (server) `scripts/copy-setup.mjs`: the project's setup step in a clean copy,
+  run right after the dependency folders are linked — `.orchestrateur/
+  pipeline.json` → `setupCommand` (string = shell, or argv array; for non-npm
+  projects; `false` disables the step; `setupTimeoutMin`, default 10), else
+  `npm run postinstall --if-present` when package.json declares a
+  `postinstall`, else nothing. Output logged; a failure is a named failure of
+  kind `setup` (« tests non lancés : préparation « … » en échec : code N — … »,
+  KO id `setup:échec`), the tests are not run.
+- (server) Applied to every clean copy: the clean-copy validation of the
+  onboarding (`pipeline-onboard.mjs`, `new-project.mjs`, `--check-clean`, red ⇒
+  not put in service with that reason), the after-the-fact runner
+  (`idle-regression-runner.mjs`: code 71, ko `setup:échec`) and pipeline lanes
+  (`dispatch.mjs`, after `provisionPipelineLane`; replayed only when the
+  command, package.json, package-lock.json or pipeline.json change — stamp in
+  the worktree's own git dir; log `logs/lanes/<p>/<k>.setup.log`; failure ⇒
+  `system/lane_setup_failed` in the musician's log, the run goes on).
+- Test `_test_copy_setup.mjs` (replay of the case: generated file absent → setup
+  → present; failing setup; declared setupCommand; lane stamp; real runner).
+
 ## [0.146.1] - 2026-10-24
 
 ### Fixed

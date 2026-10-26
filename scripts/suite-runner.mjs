@@ -75,6 +75,13 @@ export const SERIAL_SUITES = new Set([
   '_test_pipeline_speed.mjs',      // ~20 sequential full-Development runs, levers off then on (0.143.0)
 ]);
 
+// Suites known to run close to the default 300 s cap even alone get their own
+// cap (0.148.0): _test_pipeline_gates.mjs took 231 to 292 s over the last
+// releases and was killed at 300 s, alone, with all its checks green so far.
+export const SUITE_TIMEOUT_MS = Object.freeze({
+  '_test_pipeline_gates.mjs': 600_000,
+});
+
 /** Default parallelism: ORCH_REGRESS_JOBS, else a quarter of the CPUs, 1 to 4. */
 export function defaultJobs(env = process.env, cpus = os.cpus().length) {
   const n = Number(env.ORCH_REGRESS_JOBS);
@@ -108,7 +115,7 @@ export async function runPool(tasks, { jobs = 1, serial = new Set(), onResult = 
  */
 export async function runSuite(file, cwd, { failedOutputDir, timeoutMs } = {}) {
   const t0 = Date.now();
-  const r = await runNode(file, cwd, timeoutMs);
+  const r = await runNode(file, cwd, timeoutMs ?? SUITE_TIMEOUT_MS[path.basename(file)]);
   const durationS = Math.round((Date.now() - t0) / 1000);
   const tail = r.out.trim().split('\n').slice(-1)[0] || '';
   const ok = r.code === 0;

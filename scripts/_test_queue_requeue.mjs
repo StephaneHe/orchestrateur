@@ -100,8 +100,9 @@ const env = { ...process.env, DISPATCH_ROOT_FOR_TESTS: T, CLAUDE_BIN: FAKE, FAKE
 for (const k of ['ANTHROPIC_API_KEY', 'ORCH_TURN_PROJECT', 'ORCH_TURN_STEP', 'ORCH_STEP_TOKEN', 'ORCH_OBS_ID', 'DISPATCH_SLOT', 'DISPATCH_TICKET', 'DISPATCH_REPORT_ONLY', 'ORCH_TEST_LABEL', 'ORCH_REQUEST_ID', 'FAKE_CLAUDE_CLASSIFY_MAP']) delete env[k];
 const logOf = () => { try { return fs.readFileSync(path.join(LOGS, 'P.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)); } catch { return []; } };
 // Asynchronous: the stand-in server answers from this process's event loop.
-const drain = (text, extra = []) => new Promise((resolve) => {
-  const c = spawn(process.execPath, [path.join(ROOT, 'scripts', 'dispatch.mjs'), 'P', text, '--no-queue-if-busy', '--source', 'chef', ...extra], { env, windowsHide: true });
+// `fromQueue` false: a dispatch of the chef (--queue-if-busy in `extra`), not a drained head.
+const drain = (text, extra = [], { fromQueue = true } = {}) => new Promise((resolve) => {
+  const c = spawn(process.execPath, [path.join(ROOT, 'scripts', 'dispatch.mjs'), 'P', text, ...(fromQueue ? ['--no-queue-if-busy'] : []), '--source', 'chef', ...extra], { env, windowsHide: true });
   let stderr = '';
   c.stderr.on('data', d => { stderr += d; });
   c.stdout.resume();
@@ -116,7 +117,10 @@ try {
     const dirty = [' M app.mjs'];
     const h = RQ.startBlocker({ pausedRun: { run: RUN }, dirty });
     ok(h?.kind === 'paused-run' && h.run === RUN && h.durable === false && /en pause/.test(h.why), 'exécution en pause + copie non propre ⇒ retenue (passagère)', JSON.stringify(h));
-    ok(RQ.startBlocker({ pausedRun: { run: RUN }, dirty: [] }) === null, 'exécution en pause, copie propre ⇒ rien n’est retenu');
+    // 0.148.0 (production, 2026-10-26): a CLEAN checkout is held too — the paused run's work is committed there.
+    const hc = RQ.startBlocker({ pausedRun: { run: RUN }, dirty: [] });
+    ok(hc?.kind === 'paused-run' && hc.run === RUN && hc.files === 0 && /copie propre/.test(hc.why), 'exécution en pause, copie propre ⇒ retenue aussi (0.148.0)', JSON.stringify(hc));
+    ok(RQ.startBlocker({ dirty: [] }) === null && RQ.startBlocker({ dirty: [], needsClean: true }) === null, 'aucune exécution en pause, copie propre ⇒ rien n’est retenu');
     const d = RQ.startBlocker({ dirty, needsClean: true });
     ok(d?.kind === 'dirty' && d.durable === true && /app\.mjs/.test(d.why), 'copie non propre sans exécution en pause, pipeline qui l’exige ⇒ retenue durable', JSON.stringify(d));
     ok(RQ.startBlocker({ dirty, needsClean: false }) === null && RQ.startBlocker({ dirty }) === null, 'pipeline qui n’exige pas une copie propre ⇒ rien');
@@ -219,11 +223,68 @@ try {
   section('6. server.js : file, route et drain');
   {
     const s = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
-    ok(/function queuePush\(name, entry, \{ front = false \} = \{\}\)/.test(s) && /q\.unshift\(e\)/.test(s), 'queuePush({front}) : remise en tête');
+    ok(/function queuePush\(name, entry, \{ front = false \} = \{\}\)/.test(s) && /if \(front \|\| e\.pauseReply\) \{ i = 0; while \(i < q\.length && q\[i\]\?\.pauseReply\) i\+\+; \}/.test(s) && /q\.splice\(i, 0, e\)/.test(s), 'queuePush({front}) : remise en tête, réponses de pause prioritaires (queueInsertIndex)');
+    ok(/pauseReply: req\.body\?\.pauseReply === true && !req\.orchHeld/.test(s) && /pauseReply: !!e\.pauseReply/.test(s), 'POST /api/dispatch : pauseReply reçu (jamais pour une tâche retenue), visible dans la file');
     ok(/app\.post\('\/api\/queue-held'/.test(s) && /heldBy: \(req\.orchHeld && QueueRequeue\.cleanHeldBy\(req\.body\?\.heldBy\)\)/.test(s) && /busy \|\| entry\.exclusive \|\| entry\.heldBy/.test(s),
       'POST /api/queue-held : heldBy validé, toujours mis en file ; /api/dispatch seul ne le prend jamais');
     ok((s.match(/queueHeadHeld\(name, q\[0\], reason\)/g) || []).length === 2 && /QueueRequeue\.heldBlocks\(q\[0\]/.test(s), 'drain et balayage : la tête retenue ne part pas');
     ok(/ChefAlerts\.queueAlerts\(/.test(s), 'balayage des alertes du chef : tâches retenues');
+  }
+
+  // -------------------------------------------------------------------------
+  // 0.148.0 — real production case replayed (2026-10-26, anonymized): the dev
+  // run p-20261026T054929-0a9af5 paused on its items limit (process pause, sent
+  // to the chef), its last item committed (provisional commit 37d03fe): the main
+  // checkout was CLEAN. 6 s later the queue's head (a Rédaction task) started a
+  // new run there (p-20261026T071728-dc2b31); the chef's relayed answer
+  // « découper » then found lane 0 busy and was queued at the END (position 3).
+  section('7. Rejeu du cas de prod : copie propre, la file attend la pause ; la réponse passe devant');
+  const RUN2 = 'p-20261026T054929-0a9af5';
+  // The runs of the sections above are newer: only the latest main-checkout run counts (pausedPipelineRuns).
+  for (const d of fs.readdirSync(path.join(LOGS, 'runs'))) fs.rmSync(path.join(LOGS, 'runs', d), { recursive: true, force: true });
+  fs.writeFileSync(path.join(P, 'app.mjs'), 'export const v = 3; // item 25, commit provisoire\n');
+  g('add', '-A'); g('commit', '-q', '-m', 'item 25 (provisoire)');
+  fs.mkdirSync(path.join(LOGS, 'runs', RUN2), { recursive: true });
+  fs.writeFileSync(path.join(LOGS, 'runs', RUN2, 'run.json'), JSON.stringify({ run: RUN2, project: 'P', pipeline: 'dev', mode: 'complet', kind: 'simple', status: 'paused',
+    pausedLimit: 'items', itemDelivery: true, base: g('rev-parse', 'HEAD~1').stdout.trim(), lastDelivered: g('rev-parse', 'HEAD~1').stdout.trim(), plan: [], index: 0, steps: [],
+    chefPause: { status: 'pending', n: 1, at: new Date().toISOString(), limit: 'items', options: ['découper'], recommend: { key: 'découper' } } }));
+  ok(!g('status', '--porcelain').stdout.trim(), 'copie principale propre au moment de la pause (comme en prod)');
+  {
+    const n0 = logOf().length, before = posted.length;
+    const r = await drain('Consigne les détails et les étapes de la base de connaissances', ['--pipeline', 'redaction']);
+    const p = posted.at(-1);
+    ok(r.status === 0 && posted.length === before + 1 && p?.url === '/api/queue-held' && p.front === true && p.heldBy?.kind === 'paused-run' && p.heldBy.run === RUN2,
+      'la tête de file (Rédaction) revient EN TÊTE, retenue par l’exécution en pause, copie propre', `${r.status} ${JSON.stringify(p)}\n${r.stderr}`);
+    ok(!logOf().slice(n0).some(e => e.type === 'user_prompt' || e.subtype === 'pipeline_start'), 'aucune nouvelle exécution lancée dans la copie de l’exécution en pause');
+  }
+  // The musician is busy (another turn): every answer to the pause is queued with priority.
+  fs.writeFileSync(path.join(LOGS, 'P.pid'), String(process.pid));
+  const queued = (text, extra) => { const n = posted.length; return drain(text, extra, { fromQueue: false }).then((r) => ({ r, p: posted.length > n ? posted.at(-1) : null })); };
+  {
+    const { r, p } = await queued(`[CHEF_ANSWER] découper — 25 tests sont faits, livrer maintenant\n[RELAIS: pause ${RUN2} n° 1]`, ['--queue-if-busy']);
+    ok(r.status === 0 && p?.url === '/api/dispatch' && p.pauseReply === true && p.pipelineResume === RUN2, 'réponse du chef relayée, musicien occupé ⇒ mise en file PRIORITAIRE (pauseReply), pour cette exécution', `${r.status} ${JSON.stringify(p)}\n${r.stderr}`);
+  }
+  {
+    const { r, p } = await queued('découper', ['--pipeline-resume', RUN2, '--queue-if-busy']);
+    ok(r.status === 0 && p?.pauseReply === true && p.pipelineResume === RUN2, '--pipeline-resume à la main ⇒ prioritaire aussi', `${r.status} ${JSON.stringify(p)}\n${r.stderr}`);
+  }
+  {
+    const { r, p } = await queued('Ajoute une option', ['--pipeline', 'dev', '--mode', 'leger', '--kind', 'simple', '--queue-if-busy']);
+    ok(r.status === 0 && p?.url === '/api/dispatch' && !p.pauseReply && !p.heldBy, 'tâche ordinaire mise en file : jamais prioritaire', `${r.status} ${JSON.stringify(p)}\n${r.stderr}`);
+  }
+  {
+    const { p } = await queued(`[CHEF_ANSWER] la question porte sur autre chose\n[RELAIS: question]`, ['--queue-if-busy']);
+    ok(p && !p.pauseReply, 'réponse du chef à une question ordinaire : pas une réponse de pause, pas prioritaire', JSON.stringify(p));
+  }
+  fs.rmSync(path.join(LOGS, 'P.pid'), { force: true });
+  {
+    // Server side: where each entry lands (queuePush → queueInsertIndex).
+    const push = (q, e, o) => { q.splice(RQ.queueInsertIndex(q, e, o), 0, e); return q; };
+    let q = [{ id: 'held', heldBy: { kind: 'paused-run' } }, { id: 'o1' }, { id: 'o2' }];
+    push(q, { id: 'answer', pauseReply: true });
+    ok(q.map(e => e.id).join() === 'answer,held,o1,o2', 'la réponse passe devant la tête retenue et les tâches ordinaires (prod : elle était 3ᵉ)', q.map(e => e.id).join());
+    push(q, { id: 'answer2', pauseReply: true }); push(q, { id: 'o3' }); push(q, { id: 'held2' }, { front: true });
+    ok(q.map(e => e.id).join() === 'answer,answer2,held2,held,o1,o2,o3', 'réponses dans leur ordre d’arrivée, puis une tête retenue remise devant, puis les ordinaires', q.map(e => e.id).join());
   }
 } finally {
   srv.close();

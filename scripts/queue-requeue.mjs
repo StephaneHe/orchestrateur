@@ -51,11 +51,19 @@ const one = (s, n = 400) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0,
  * it clean, and is durable.
  */
 export function startBlocker({ pausedRun = null, dirty = [], needsClean = null, lane = 0 }) {
-  if (!dirty.length) return null;
+  // 0.148.0: a paused run holds its lane even when the tree is clean — its last
+  // item may be committed (provisional commit of a grouped review, or already
+  // delivered) and its answer resumes it right there; a new run started on top
+  // of it took the lane and the answer went to the end of the queue (production,
+  // p-20261026T054929-0a9af5 / p-20261026T071728-dc2b31).
   if (pausedRun?.run) {
+    const where = lane ? `le couloir ${lane}` : 'la copie principale';
     return { kind: 'paused-run', run: pausedRun.run, lane, durable: false, files: dirty.length,
-      why: `l’exécution ${pausedRun.run} est en pause dans ${lane ? `le couloir ${lane}` : 'la copie principale'} et y laisse ${dirty.length} fichier(s) non commité(s) : la tâche attend sa fin ou sa clôture` };
+      why: dirty.length
+        ? `l’exécution ${pausedRun.run} est en pause dans ${where} et y laisse ${dirty.length} fichier(s) non commité(s) : la tâche attend sa fin ou sa clôture`
+        : `l’exécution ${pausedRun.run} est en pause dans ${where} (copie propre, son travail commité y attend sa reprise) : la tâche attend sa fin ou sa clôture` };
   }
+  if (!dirty.length) return null;
   if (needsClean) {
     return { kind: 'dirty', lane, durable: true, files: dirty.length,
       why: `${lane ? `le couloir ${lane}` : 'la copie principale'} a ${dirty.length} fichier(s) non commité(s) qu’aucune exécution en pause n’explique (${dirty.slice(0, 4).map(l => l.slice(3)).join(', ')}${dirty.length > 4 ? '…' : ''}) : à commiter ou ranger` };
@@ -96,6 +104,20 @@ export function heldBlocks(entry, { logsDir, now = Date.now(), reason = 'sweep',
   const delay = Number.isFinite(wait) && wait > 0 ? wait : (RETRY_MS[h.kind] || 60_000);
   const at = Date.parse(h.at || '') || 0;
   return now - at < delay ? { blocked: true, why: h.why || h.kind } : { blocked: false, released: 'nouvel essai' };
+}
+
+/**
+ * Where a queued entry goes (0.148.0). An answer to a pause (`pauseReply`: the
+ * chef's relay, --pipeline-resume, a menu word for a paused run) always passes
+ * before the ordinary tasks — after the answers already waiting, in their order;
+ * a held head (front) goes back right after those answers; anything else at the
+ * end. Returns the index to insert at.
+ */
+export function queueInsertIndex(queue, entry, { front = false } = {}) {
+  if (!front && !entry?.pauseReply) return queue.length;
+  let i = 0;
+  while (i < queue.length && queue[i]?.pauseReply) i++;
+  return i;
 }
 
 /** Stable identity of a held task across its requeues (the queue id changes each time). */
