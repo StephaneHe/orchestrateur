@@ -73,6 +73,8 @@ refuseInProd({ root: OWN_ROOT });
 
 // Exit code of a run stopped because the tested content changed (0.94.0).
 const STALE_EXIT = 3;
+const TIMEOUT_EXIT = 5;
+let plannedSuites = [];
 
 // Marqueurs du tour qui lance la recette (0.48.0) : jamais transmis aux suites
 // ni à l'instance de test, sinon leurs dispatches passeraient pour ce tour.
@@ -128,10 +130,11 @@ const label = opt('--ref') || (opt('--dir') ? path.basename(path.resolve(opt('--
 const safeLabel = label.replace(/[^A-Za-z0-9._-]/g, '_');
 // Targeted run (0.72.0): only the suites and stages touched by the changed
 // files; null = full run. A change covered by nothing falls back to full.
+const RT = await import('./regression-targets.mjs');
 let selection = null;
 if (flag('--targeted')) {
   if (!source.worktree) { console.error('--targeted ne vaut que pour l’état de travail (pas avec --ref / --dir)'); process.exit(64); }
-  const { changedFiles, selectTargets } = await import('./regression-targets.mjs');
+  const { changedFiles, selectTargets } = RT;
   const since = opt('--since') || 'HEAD';
   const changed = changedFiles(REPO, since);
   // 0.142.0 (idle-regression.mjs): never the full run during a task.
@@ -144,7 +147,7 @@ if (flag('--targeted')) {
     console.log(`   étage HTTP : ${sel.http ? `oui (${sel.reasons.http.slice(0, 4).join(', ')})` : 'non'} · navigateur : ${sel.browser ? `oui (${sel.reasons.browser.slice(0, 4).join(', ')})` : 'non'}`);
     if (sel.docsOnly.length) console.log(`   sans test propre (docs, version) : ${sel.docsOnly.join(', ')}`);
     for (const o of sel.outOfScope || []) console.log(`   ${o.file} — ${o.reason}`);
-    for (const o of sel.deferred || []) console.log(`   ${o.file} — ${o.reason}`);
+    for (const l of RT.selectionLines(sel)) console.log(l);   // deferred AND dropped by the cap: never silent
   }
   selection = { since, changed, ...sel };
 }
@@ -262,6 +265,7 @@ async function runSuites() {
     } });
   }
   const jobs = Number(opt('--jobs')) >= 1 ? Number(opt('--jobs')) : defaultJobs();
+  plannedSuites = tasks.map(t => t.name);
   live?.stage('suites', { total: tasks.length });
   const t0 = Date.now();
   await runPool(tasks, { jobs, serial: SERIAL_SUITES, onResult: (i, r) => {
@@ -2058,7 +2062,8 @@ async function apiChecks(sb) {
     const streamed = await send(MAX + 1, { declare: false }).catch(e => ({ status: 0, body: e.message }));
     assert(streamed.status === 413 && /500 Mo/.test(streamed.body), `> 500 Mo en flux : ${streamed.status} ${streamed.body}`);
     const mkvLeft = () => fs.readdirSync(path.join(sb.root, 'attachments')).filter(f => f.endsWith('.mkv'));
-    await until(async () => mkvLeft().length === 0, 5000);
+    // The server deletes a refused 500 MB partial file after the socket closes: slower than 5 s on a loaded disk (flaky 2026-10-26).
+    await until(async () => mkvLeft().length === 0, 20_000);
     assert(!mkvLeft().length, `fichiers refusés laissés sur le disque : ${mkvLeft().join(', ')}`);
     return '.mkv + 7 types, 500 Mo acceptés, 500 Mo + 1 refusé (annoncé et en flux)';
   });
@@ -2370,7 +2375,7 @@ function writeReport(tree, extra = {}) {
   const reportMode = selection?.kind === 'only' ? 'partial' : runMode;
   const report = { label, at: new Date().toISOString(), durationS: Math.round((Date.now() - t0) / 1000), tree, commit, mode: reportMode,
     ...(selection ? { selection: { since: selection.since, changed: selection.changed, full: !!selection.full, reason: selection.reason || null,
-      suites: selection.suites || null, http: selection.http ?? true, browser: selection.browser ?? true, ...(selection.deferred ? { deferred: selection.deferred } : {}),
+      ...RT.selectionSummary(selection),
       ...(selection.kind === 'perimeter' ? { kind: 'perimeter', base: selection.base, baseCommit: selection.baseCommit, target: selection.target, perimeters: selection.perimeters || null } : {}) } } : {}),
     ...extra, counts: c, results };
   fs.writeFileSync(out, JSON.stringify(report, null, 2));
@@ -2388,6 +2393,21 @@ async function abortStale(info) {
   process.exit(STALE_EXIT);
 }
 
+// A targeted pass has a deadline (2026-10-26, p-20261026T090638-774755: passes of
+// 20-30 min ended as « code null, no KO »). Past it: an explicit account of the
+// suites passed, failed and not played, a report refused at delivery, code 5.
+async function abortTimeout(limitMin) {
+  const bilan = RT.timeoutBilan({ planned: plannedSuites, results, limitMin });
+  console.log(`\n${RT.timeoutLines(bilan).join('\n')}`);
+  for (const c of liveSuites) killOwnTree(c.pid);
+  try { const sb = await sbPromise; if (sb && !flag('--keep')) await sb.stop(); } catch { /* not started */ }
+  const { out, c, report: rep } = writeReport(worktreeTree(REPO), { timeout: { ...bilan, httpNotRun: !results.some(r => r.stage === 'http'), browserNotRun: !results.some(r => r.stage === 'browser') } });
+  live?.finish({ status: 'timeout', counts: c, reportAt: rep.at, durationS: Math.round((Date.now() - t0) / 1000) });
+  console.log(`=== DÉLAI DÉPASSÉ : arrêtée après ${Math.round((Date.now() - t0) / 1000)} s — rapport (refusé à la livraison) : ${out}`);
+  console.log('=== LIVRAISON : REFUSÉE — passage incomplet, augmenter --timeout-min ou réduire la sélection');
+  process.exit(TIMEOUT_EXIT);
+}
+
 async function main() {
   fs.mkdirSync(REGRESS_DIR, { recursive: true });
   console.log(`\n=== Non-régression — état testé : ${label} ===\n`);
@@ -2399,6 +2419,9 @@ async function main() {
       process.on('exit', (code) => { if (!live.finished) live.finish({ status: code === 0 ? 'ok' : 'error', durationS: Math.round((Date.now() - t0) / 1000) }); });
     } catch (e) { console.log(`   (suivi en direct indisponible : ${e.message})`); }
   }
+  const deadlineMin = RT.targetedDeadlineMin({ targeted: flag('--targeted'), timeoutMin: opt('--timeout-min'), envMin: process.env.ORCH_REGRESS_TIMEOUT_MIN,
+    noFull: flag('--no-full') || process.env.ORCH_UNIT_DELIVERY === '1' });
+  if (deadlineMin) setTimeout(() => { abortTimeout(deadlineMin); }, deadlineMin * 60_000).unref?.();
   if (source.worktree && !flag('--no-stale-stop')) {
     staleWatch = createStaleWatch({ read: () => worktreeTree(REPO), onStale: (info) => { abortStale(info); } });
     if (staleWatch.start) console.log(`   contenu testé : arbre ${staleWatch.start.slice(0, 10)} — arrêt immédiat s’il change en cours de route`);

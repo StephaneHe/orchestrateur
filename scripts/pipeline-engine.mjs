@@ -30,6 +30,7 @@
 // ============================================================================
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -456,8 +457,51 @@ export function globToRe(glob) {
 }
 export function isTestFile(f, globs) { return (globs || []).some(g => globToRe(g).test(f)); }
 
-function runCommand(cwd, command, env, timeoutMs = TEST_TIMEOUT_MS) {
+// spawnSync freezes the event loop: during a test pass of 20-30 min the engine's
+// pipeline_progress interval never fired and the server alerted « musician
+// blocked » (2026-10-26, p-20261026T090638-774755). A pass that has a tick runs
+// in a child that writes its result to a file, and this process polls it
+// (synchronously, so callers are unchanged) while emitting its own ticks.
+const TICK_CHILD = `const cp=require('node:child_process'),fs=require('node:fs');const [cmd,to,file]=process.argv.slice(1);
+const r=cp.spawnSync(cmd,{shell:true,encoding:'utf8',windowsHide:true,timeout:Number(to),env:process.env,maxBuffer:32*1024*1024});
+fs.writeFileSync(file+'.tmp',JSON.stringify({code:r.status,out:((r.stdout||'')+(r.stderr||'')).slice(-12000),timedOut:!!r.error&&r.error.code==='ETIMEDOUT'}));fs.renameSync(file+'.tmp',file);`;
+const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+export function runCommandTicking(cwd, command, env, timeoutMs, { tickMs = PROGRESS_MS, pollMs = 500, onTick } = {}) {
+  const t0 = Date.now();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orch-cmd-'));
+  const file = path.join(dir, 'status.json');
+  const child = spawn(process.execPath, ['-e', TICK_CHILD, command, String(timeoutMs), file], { cwd, env, stdio: 'ignore', windowsHide: true });
+  child.unref();
+  let nextTick = t0 + tickMs, res = null;
+  const alive = () => { try { process.kill(child.pid, 0); return true; } catch { return false; } };
+  for (;;) {
+    if (fs.existsSync(file)) { try { res = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* being renamed */ } if (res) break; }
+    if (!alive() && !fs.existsSync(file)) break;
+    if (Date.now() - t0 > timeoutMs + 20_000) { try { if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }); else child.kill('SIGKILL'); } catch { /* gone */ } res = { code: null, out: '', timedOut: true }; break; }
+    if (onTick && Date.now() >= nextTick) { nextTick += tickMs; try { onTick(Date.now() - t0); } catch { /* never breaks the run */ } }
+    sleepSync(pollMs);
+  }
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* temp */ }
+  if (!res) res = { code: null, out: 'le processus de test s’est arrêté sans bilan', timedOut: false };
+  return { ok: res.code === 0, code: res.code, out: String(res.out || '').slice(-12_000), ms: Date.now() - t0, timedOut: !!res.timedOut };
+}
+
+/** « n/N suites » of the regression running in `cwd` (its .regress/live record), '' when there is none. */
+export function suiteProgressText(cwd) {
+  try {
+    const dir = path.join(cwd, '.regress', 'live');
+    const runs = fs.readdirSync(dir).filter(f => /^r-[\w-]+\.json$/.test(f)).map(f => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')))
+      .filter(r => r.status === 'running').sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+    const r = runs[0];
+    if (!r) return '';
+    const su = r.suites || {};
+    return ` — ${su.total != null ? `${su.done}/${su.total} suites` : 'préparation'} (étage ${r.stage}${su.ko ? `, ${su.ko} KO` : ''})`;
+  } catch { return ''; }
+}
+
+function runCommand(cwd, command, env, timeoutMs = TEST_TIMEOUT_MS, tick = null) {
   if (!command) return { ok: true, code: 0, out: '' };
+  if (tick) return runCommandTicking(cwd, command, env, timeoutMs, { onTick: tick });
   const t0 = Date.now();
   // La commande vient du fichier VERSIONNÉ du projet (.orchestrateur/pipeline.json),
   // jamais d'une entrée réseau : un shell est nécessaire (« npm test »).
@@ -473,7 +517,7 @@ function runCommand(cwd, command, env, timeoutMs = TEST_TIMEOUT_MS) {
  */
 function runSuite(ctx) {
   const { cwd, cfg } = ctx;
-  let run = () => runCommand(cwd, cfg.testCommand, ctx.testEnv, testTimeoutMs(cfg));
+  let run = () => runCommand(cwd, cfg.testCommand, ctx.testEnv, testTimeoutMs(cfg), ctx.testTick);
   let command = cfg.testCommand;
   // Lever targetedTests (0.143.0): a TDD step runs the item's tests and those
   // its changes reach; anything uncertain runs the full suite, said.
@@ -482,7 +526,7 @@ function runSuite(ctx) {
     ctx.onSuiteTargeted?.(sel);
     if (sel.targeted) {
       command = sel.command;
-      run = () => ({ ...runCommand(cwd, sel.command, ctx.testEnv, testTimeoutMs(cfg)), targeted: { files: sel.files.length, total: sel.total } });
+      run = () => ({ ...runCommand(cwd, sel.command, ctx.testEnv, testTimeoutMs(cfg), ctx.testTick), targeted: { files: sel.files.length, total: sel.total } });
     }
   }
   if (!ctx.tuning?.suiteCache || !command || !ctx.suiteCacheFile) return run();
@@ -2436,7 +2480,7 @@ function checkCatalogCriteria(ctx, step, before, after) {
     // verte ; les étapes d'avant ne peuvent pas être jugées sur elle.
     if (ctx.cfg.testCommand && changed.length && !ctx.suiteRedAtStart) {
       for (let i = 0; i < (c.suiteTwice ? 2 : 1); i++) {
-        const t = runCommand(cwd, ctx.cfg.testCommand, ctx.testEnv, testTimeoutMs(ctx.cfg));
+        const t = runCommand(cwd, ctx.cfg.testCommand, ctx.testEnv, testTimeoutMs(ctx.cfg), ctx.testTick);
         if (!t.ok) return fail(`la suite échoue${c.suiteTwice ? ` (passage ${i + 1}/2)` : ''} (${ctx.cfg.testCommand}, code ${t.code}) :\n${t.out.slice(-1500)}`, { test: t });
       }
     }
@@ -3292,6 +3336,8 @@ export async function runPipeline(o) {
   // Phase 0 switches, frozen in run.json when the run starts (pipeline-tuning.mjs).
   ctx.tuning = runTuning(state, root, projectName, { resumed: !!o.resumeRun });
   ctx.speed = speedValues;
+  ctx.testTick = (ms) => writeEvent({ type: 'system', subtype: 'pipeline_progress', pipeline: { run, step: current?.id || null, tests: true },
+    text: `vérification par les tests en cours depuis ${fmtDur(ms)}${suiteProgressText(ctx.cwd)}` });
   // Lever targetedTests: where the item's changes are measured from (its last delivery).
   ctx.targetFrom = () => (state.itemDelivery ? state.lastDelivered || base : base);
   ctx.onSuiteTargeted = (sel) => {

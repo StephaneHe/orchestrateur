@@ -52,6 +52,16 @@ export const TOOLING_SUITES = ['_test_failed_suite_output.mjs', '_test_targeted_
  * triggers the full run.
  */
 export const OUT_OF_SCOPE = [{ re: /^android\//, reason: 'code Android : hors périmètre de la non-régression' }];
+/**
+ * Cap on the suites chosen only because they cover a changed file (2026-10-26,
+ * p-20261026T090638-774755: one script change selected 69 suites, 20-30 min per
+ * pass). It applies only with `noFull` (the idle-time policy): what is dropped
+ * is then covered by the full run after the fact. Only suites that name or
+ * import a changed file directly, or are its dedicated test, are kept, the
+ * closest first; the rest is listed in `dropped`, never silent. The base and
+ * tooling suites count toward the cap but are never dropped.
+ */
+export const MAX_COVERING_SUITES = 15;
 const DOC_RE = /(^docs\/|\.md$|^\.gitignore$|^LICENSE)/i;
 const CODE_RE = /\.(mjs|js|cjs)$/i;
 const REF_RE = /[\w.-]+\.(?:mjs|cjs|js|json|html|css)\b/g;
@@ -113,6 +123,70 @@ export function coverageOf(graph, root) {
   return new Set([root, ...node.mentions, ...importClosure(graph, [...node.imports])]);
 }
 
+/** Closeness of a suite to a changed file: -1 dedicated test (`_test_<name>`), 0 names/imports it, 1 transitive only. */
+export function closeness(suite, file, direct) {
+  const stem = path.posix.basename(file).replace(/\.[^.]+$/, '').replace(/-/g, '_');
+  if (suite.startsWith(`_test_${stem}`)) return -1;
+  return direct.has(file) ? 0 : 1;
+}
+
+/**
+ * Applies the cap. `picked`: Map<suite, Set<reason>> (mutated); `rank`: Map<suite, closeness>
+ * for the suites chosen by coverage; `weight(suite)`: direct references (more = more integrated).
+ * Transitive suites (closeness 1) are always dropped, then the farthest beyond the cap.
+ * → dropped [{file, reason}].
+ */
+export function capSuites(picked, rank, weight) {
+  const covering = [...picked].filter(([k, why]) => rank.has(k) && [...why].every(w => w.startsWith('couvre ')))
+    .sort((a, b) => rank.get(a[0]) - rank.get(b[0]) || weight(b[0]) - weight(a[0]) || a[0].localeCompare(b[0]));
+  const room = Math.max(0, MAX_COVERING_SUITES - (picked.size - covering.length));
+  const dropped = [];
+  covering.forEach(([k], i) => {
+    const transitive = rank.get(k) > 0;
+    if (!transitive && i < room) return;
+    picked.delete(k);
+    dropped.push({ file: k, reason: `${transitive ? 'couverture transitive seulement (n’importe ni ne nomme le fichier modifié)' : `plafond de ${MAX_COVERING_SUITES} suites ciblées dépassé`} — reportée à la non-régression complète a posteriori` });
+  });
+  return dropped;
+}
+
+/** Default deadline (minutes) of a targeted pass under the idle-time policy (`noFull`). */
+export const DEFAULT_TARGETED_DEADLINE_MIN = 25;
+/**
+ * Deadline of a targeted pass, in minutes (null = none). An explicit value (`--timeout-min`,
+ * ORCH_REGRESS_TIMEOUT_MIN) wins; the default applies only under `noFull`, where the selection is
+ * capped: without it the selection is not capped and a long but healthy pass must not be cut.
+ */
+export function targetedDeadlineMin({ targeted, timeoutMin, envMin, noFull } = {}) {
+  if (!targeted) return null;
+  const n = Number(timeoutMin || envMin);
+  if (n > 0) return n;
+  return noFull ? DEFAULT_TARGETED_DEADLINE_MIN : null;
+}
+
+/** What the report keeps of a selection, and what the console prints. */
+export function selectionSummary(sel) {
+  return { suites: sel.suites || null, http: sel.http ?? true, browser: sel.browser ?? true, ...(sel.deferred ? { deferred: sel.deferred } : {}), ...(sel.dropped?.length ? { dropped: sel.dropped } : {}) };
+}
+export function selectionLines(sel) {
+  return [...(sel.deferred || []), ...(sel.dropped || [])].map(o => `   ${o.file} — ${o.reason}`);
+}
+
+/**
+ * Account of a run stopped by its deadline (never « code null, no KO »):
+ * suites passed, failed, and not played (planned minus finished).
+ */
+export function timeoutBilan({ planned = [], results = [], limitMin }) {
+  const done = results.filter(r => r.stage === 'suite');
+  const passed = done.filter(r => r.status === 'OK').map(r => r.name);
+  const failed = done.filter(r => r.status === 'KO').map(r => r.name);
+  const seen = new Set(done.map(r => r.name));
+  return { limitMin, passed, failed, notRun: planned.filter(n => !seen.has(n)) };
+}
+export function timeoutLines(b) {
+  return [`DÉLAI DÉPASSÉ (${b.limitMin} min) — ${b.passed.length} suite(s) passée(s), ${b.failed.length} échouée(s)${b.failed.length ? ` (${b.failed.join(', ')})` : ''}, ${b.notRun.length} non jouée(s) ou interrompue(s)${b.notRun.length ? ` (${b.notRun.join(', ')})` : ''}`];
+}
+
 /** True when package.json differs from `since` only by its "version" field. */
 export function versionOnlyPackageChange(repo, since = 'HEAD') {
   let before = null, after = null;
@@ -134,6 +208,7 @@ export function selectTargets(repo, changed, { since = 'HEAD', files = repoFiles
   const coverage = new Map(suites.map(s => [s, coverageOf(graph, s)]));
   const httpCover = new Set(HTTP_ROOTS.filter(f => files.includes(f)).flatMap(r => [...coverageOf(graph, r), ...importClosure(graph, [r])]));
   const picked = new Map();
+  const rank = new Map();
   const add = (s, why) => { const k = path.posix.basename(s); if (!picked.has(k)) picked.set(k, new Set()); picked.get(k).add(why); };
   for (const b of BASE_SUITES) if (suites.some(s => s.endsWith(`/${b}`))) add(b, 'socle (toujours exécuté)');
   let http = false, browser = false;
@@ -153,13 +228,20 @@ export function selectTargets(repo, changed, { since = 'HEAD', files = repoFiles
     }
     if (DOC_RE.test(f)) { docsOnly.push(f); continue; }
     let covered = TOOLING_FILES.includes(f);   // its TOOLING_SUITES were added above
-    for (const [s, cov] of coverage) if (cov.has(f)) { add(s, `couvre ${f}`); covered = true; }
+    for (const [s, cov] of coverage) if (cov.has(f)) {
+      add(s, `couvre ${f}`); covered = true;
+      const k = path.posix.basename(s), c = closeness(k, f, new Set([...graph.get(s).mentions, ...graph.get(s).imports]));
+      rank.set(k, Math.min(rank.get(k) ?? 9, c));
+    }
     if (httpCover.has(f)) { http = true; httpWhy.add(f); covered = true; }
     if (f.startsWith('public/') || BROWSER_ROOTS.includes(f)) { browser = true; http = true; browserWhy.add(f); httpWhy.add(f); covered = true; }
     if (!covered) { const r = fullOr(f, `${f} n'est couvert par aucune suite ni aucun étage : non-régression complète`); if (r) return r; }
   }
+  const weight = (k) => { const n = graph.get(suites.find(x => x.endsWith(`/${k}`))); return n ? new Set([...n.mentions, ...n.imports]).size : 0; };
+  const dropped = noFull ? capSuites(picked, rank, weight) : [];
   return {
     full: false,
+    dropped,
     suites: [...picked].map(([file, why]) => ({ file, reasons: [...why] })).sort((a, b) => a.file.localeCompare(b.file)),
     http, browser, reasons: { http: [...httpWhy], browser: [...browserWhy] }, docsOnly, outOfScope,
     ...(noFull ? { deferred } : {}),

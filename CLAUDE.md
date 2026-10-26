@@ -857,6 +857,39 @@ d'autoriser un lancement de non régression »).
   tout de suite.
 - Recette : `_test_idle_regression.mjs`.
 
+## Passage ciblé borné : plafond, délai, signal de vie (0.148.1)
+
+Demande utilisateur du chef (exécution p-20261026T090638-774755 : passages
+ciblés de 20 à 30 min, « code null / aucun KO », alerte « musicien bloqué » à
+tort).
+
+- **Plafond** (`MAX_COVERING_SUITES` = 15, `capSuites` de
+  `regression-targets.mjs`) : **seulement avec `noFull`** (`--no-full`,
+  `ORCH_UNIT_DELIVERY=1`, politique d'inactivité de 0.142.0), car seule la
+  complète a posteriori rattrape ce qui est écarté. Sans `noFull` : comportement
+  d'avant, rien d'écarté. Gardées : le socle, l'outillage, les suites qui
+  nomment ou importent **directement** le fichier modifié, plus son test dédié
+  (`_test_<nom>`), les plus proches d'abord ; les suites à couverture
+  transitive seule sont écartées. `selectTargets` renvoie `dropped [{file,
+  reason}]` ; `regression.mjs` les imprime et les écrit dans
+  `report.selection.dropped` (`selectionLines`, `selectionSummary`).
+  L'impact du graphe de connaissances (`kg.mjs impact`) reproduit
+  `selectTargets` **sans** `noFull` : il n'est pas concerné.
+- **Délai** : `regression.mjs --targeted` a un délai (`--timeout-min N` ou
+  `ORCH_REGRESS_TIMEOUT_MIN`, logique pure `targetedDeadlineMin` de `regression-targets.mjs`) ; **par défaut 25 min seulement avec `noFull`**
+  (inférieur au `testTimeoutMin` du projet), pas de délai sans `noFull` ni option
+  explicite (`lanes.releaseCheck`, lancement à la main : sélection non plafonnée). Dépassé : bilan « DÉLAI DÉPASSÉ » (suites passées, échouées, non
+  jouées : `timeoutBilan`), arbre des suites tué, rapport `timeout` **refusé
+  à la livraison** (`checkReport`), sortie **5**.
+- **Signal de vie** : `spawnSync` gelait la boucle d'événements du moteur, donc
+  aucun `pipeline_progress` pendant les tests. `runCommandTicking`
+  (`pipeline-engine.mjs`) lance la commande dans un enfant et sonde son
+  résultat de façon synchrone en émettant `pipeline_progress` (« vérification
+  par les tests en cours depuis … — n/N suites », lu dans `.regress/live/`) ;
+  utilisé par `runSuite` et le contrôle de suite des étapes.
+- Recettes : `_test_targeted_regression.mjs` (plafond, rejeu du cas réel,
+  bilan, refus), `_test_pipeline_engine.mjs` §11 (signal de vie).
+
 ## Copie propre et alerte précise (0.145.0)
 
 Accord utilisateur (2026-10-24) : « oui », aux deux propositions du chef après

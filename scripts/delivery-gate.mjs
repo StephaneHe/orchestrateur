@@ -69,6 +69,7 @@ export function checkReport(report, { tree, knownKo = [] } = {}) {
   const reasons = [];
   if (!report || !Array.isArray(report.results)) return { ok: false, reasons: ['rapport de non-régression illisible'], accepted: [] };
   if (report.stale) reasons.push(`rapport périmé : le contenu a changé pendant l'exécution (${report.label || '?'}, ${report.at || '?'}) — relancer la non-régression sur le contenu final`);
+  if (report.timeout) reasons.push(`rapport incomplet : délai dépassé (${report.timeout.limitMin} min), ${report.timeout.notRun?.length ?? '?'} suite(s) non jouée(s) (${report.label || '?'}, ${report.at || '?'})`);
   if (tree && report.tree !== tree) reasons.push(`le rapport (${report.label || '?'}, ${report.at || '?'}) n'a pas été fait sur ce contenu (arbre ${String(report.tree || 'absent').slice(0, 10)} ≠ ${String(tree).slice(0, 10)})`);
   // An entry without a reason accepts nothing, whoever passes the list.
   const known = new Map(knownKo.filter(k => k && typeof k.reason === 'string' && k.reason.trim()).map(k => [k.id, k]));

@@ -26,7 +26,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as T from './regression-targets.mjs';
-import { checkProdReport } from './delivery-gate.mjs';
+import { checkProdReport, checkReport } from './delivery-gate.mjs';
 import { preflight, applyJump } from './prod-jump.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -153,6 +153,49 @@ ok(j.ok && g(PROD, 'rev-parse', 'HEAD').stdout.trim() === g(DEV, 'rev-parse', 'v
   'avance rapide de la prod sur le tag, avec le tag de retour prod-before-v2.0.0', JSON.stringify(j));
 const cli = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'prod-jump.mjs'), '--tag', 'v9.9.9', '--prod', PROD], { encoding: 'utf8', cwd: ROOT });
 ok(cli.status === 1 && /MISE EN PROD REFUSÉE/.test(cli.stderr), 'CLI : tag inconnu ou sans complète → refus, code 1');
+
+// ---------------------------------------------------------------------------
+section('Plafond de la sélection ciblée (cas réel p-20261026T090638-774755)');
+// User request (2026-10-26): a change of scripts/idle-regression.mjs selected
+// 69 suites and each targeted pass took 20-30 min. In the idle-time policy
+// (noFull) only suites that import or name the file directly (and its dedicated
+// tests) are kept, capped; what is dropped is logged, never silent.
+const IDLE = 'scripts/idle-regression.mjs';
+const idle = T.selectTargets(ROOT, [IDLE], { files, noFull: true });
+const MAX_TARGETED = 15;
+ok(names(idle).length <= MAX_TARGETED, `idle-regression.mjs : au plus ${MAX_TARGETED} suites ciblées`, `${names(idle).length} suites sélectionnées`);
+ok(Array.isArray(idle.dropped) && idle.dropped.length > 0 && idle.dropped.every(d => d.file && d.reason),
+  'les suites écartées sont journalisées (file + reason), pas de troncature silencieuse', JSON.stringify(idle.dropped));
+const idleGraph = T.referenceGraph(ROOT, files);
+const direct = (n) => { const g = idleGraph.get(`scripts/${n}`); return !!g && (g.mentions.has(IDLE) || g.imports.has(IDLE)); };
+const transitive = names(idle).filter(n => !T.BASE_SUITES.includes(n) && !direct(n) && !n.startsWith('_test_idle_regression'));
+ok(!transitive.length, 'seulement des suites qui nomment ou importent directement le fichier (ou son test dédié)', transitive.join(', '));
+ok(names(idle).includes('_test_idle_regression.mjs'), 'le test dédié du fichier est gardé');
+const wide = T.selectTargets(ROOT, [IDLE], { files });
+ok(!wide.dropped.length && names(wide).length > names(idle).length, 'sans noFull, rien n’est écarté (la complète a posteriori n’existe pas pour ce projet) : comportement d’avant');
+const sum = T.selectionSummary(idle);
+ok(sum.dropped?.length === idle.dropped.length && sum.suites.length === idle.suites.length, 'le rapport garde les suites écartées (selection.dropped)');
+ok(T.selectionLines(idle).length === idle.dropped.length && T.selectionLines(idle).every(l => /plafond|transitive/.test(l)), 'la console imprime chaque suite écartée avec sa raison');
+const regSrc = fs.readFileSync(path.join(ROOT, 'scripts', 'regression.mjs'), 'utf8');
+ok(/RT\.selectionLines\(sel\)/.test(regSrc) && /RT\.selectionSummary\(selection\)/.test(regSrc), 'regression.mjs imprime et enregistre la sélection via selectionLines / selectionSummary (contrôle statique du source : un renommage le casse sans défaut réel)');
+
+section('Délai dépassé : bilan explicite (jamais « code null / aucun KO »)');
+const dl = (o) => T.targetedDeadlineMin({ targeted: true, ...o });
+ok(dl({ noFull: true }) === 25 && dl({ noFull: true }) === T.DEFAULT_TARGETED_DEADLINE_MIN, 'sous noFull (--no-full / ORCH_UNIT_DELIVERY=1) : délai par défaut de 25 min');
+ok(dl({ noFull: false }) === null && dl({}) === null, 'sans noFull : aucun délai par défaut (sélection non plafonnée, un passage long mais sain n’est pas coupé)');
+ok(dl({ noFull: false, timeoutMin: '40' }) === 40 && dl({ noFull: true, timeoutMin: '40' }) === 40, '--timeout-min explicite : valable avec ou sans noFull');
+ok(dl({ noFull: false, envMin: '30' }) === 30 && dl({ noFull: true, timeoutMin: '10', envMin: '30' }) === 10, 'ORCH_REGRESS_TIMEOUT_MIN explicite ; --timeout-min prime');
+ok(dl({ noFull: true, timeoutMin: 'abc', envMin: '0' }) === 25 && dl({ noFull: false, timeoutMin: '-5' }) === null, 'valeur invalide ou nulle : comme si absente');
+ok(T.targetedDeadlineMin({ targeted: false, noFull: true, timeoutMin: '40' }) === null, 'sans --targeted : jamais de délai');
+ok(/RT\.targetedDeadlineMin\(/.test(fs.readFileSync(path.join(ROOT, 'scripts', 'regression.mjs'), 'utf8')), 'regression.mjs utilise targetedDeadlineMin de regression-targets.mjs (contrôle statique du branchement : un renommage le casse sans défaut réel)');
+const bilan = T.timeoutBilan({ planned: ['_a.mjs', '_b.mjs', '_c.mjs', '_d.mjs'], limitMin: 25, results: [
+  { stage: 'suite', name: '_a.mjs', status: 'OK' }, { stage: 'suite', name: '_b.mjs', status: 'KO' }, { stage: 'http', name: 'x', status: 'OK' }] });
+ok(bilan.passed.join() === '_a.mjs' && bilan.failed.join() === '_b.mjs' && bilan.notRun.join() === '_c.mjs,_d.mjs', 'suites passées, échouées et non jouées');
+const tl = T.timeoutLines(bilan).join(' | ');
+ok(/DÉLAI DÉPASSÉ \(25 min\)/.test(tl) && /1 suite\(s\) passée/.test(tl) && /_b\.mjs/.test(tl) && /_c\.mjs, _d\.mjs/.test(tl), 'le message nomme la limite et les trois listes', tl);
+ok(/abortTimeout/.test(regSrc) && /TIMEOUT_EXIT = 5/.test(regSrc) && /--timeout-min/.test(regSrc) && /ORCH_REGRESS_TIMEOUT_MIN/.test(regSrc), 'regression.mjs : surveillance du délai (--timeout-min, ORCH_REGRESS_TIMEOUT_MIN), sortie 5 (contrôle statique du source : un renommage le casse sans défaut réel)');
+const gated = checkReport({ results: [], timeout: { limitMin: 25, notRun: ['_c.mjs'] } });
+ok(!gated.ok && gated.reasons.some(r => /délai dépassé/.test(r)), 'un rapport « délai dépassé » est refusé à la livraison');
 
 fs.rmSync(R, { recursive: true, force: true });
 console.log(`\n${pass} ok, ${fail} KO`);

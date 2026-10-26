@@ -271,6 +271,23 @@ ok(r.code === 0 && !since('P', n0).some(e => e.type === 'user_prompt' && e.pipel
 r = dispatch(['P', 'Pourquoi la suite de tests passe-t-elle ?', '--pipeline', 'discussion']);
 ok(r.code === 0, '--pipeline explicite marche aussi hors service');
 
+section('11. Vérification longue : le moteur continue d’émettre sa progression (cas p-20261026T090638-774755)');
+{
+  const ticks = [];
+  const t = E.runCommandTicking(ROOT, 'node -e "setTimeout(()=>{},2600)"', { ...process.env }, 30_000, { tickMs: 600, pollMs: 100, onTick: (ms) => ticks.push(ms) });
+  ok(t.ok && t.code === 0 && ticks.length >= 3, `commande de 2,6 s : ${ticks.length} signaux de vie pendant l’attente (≥ 3), résultat intact`);
+  const slow = E.runCommandTicking(ROOT, 'node -e "setTimeout(()=>{},20000)"', { ...process.env }, 1500, { tickMs: 500, pollMs: 100 });
+  ok(!slow.ok && slow.timedOut === true, 'délai de la commande dépassé : timedOut, jamais « ok »');
+  const failing = E.runCommandTicking(ROOT, 'node -e "console.error(1234567);process.exit(3)"', { ...process.env }, 30_000, { tickMs: 600, pollMs: 100 });
+  ok(!failing.ok && failing.code === 3 && /1234567/.test(failing.out), 'code de sortie et sortie conservés');
+  const W = fs.mkdtempSync(path.join(os.tmpdir(), 'engine-live-'));
+  fs.mkdirSync(path.join(W, '.regress', 'live'), { recursive: true });
+  fs.writeFileSync(path.join(W, '.regress', 'live', 'r-20261026T120000-1.json'), JSON.stringify({ status: 'running', stage: 'suites', updatedAt: '2026-10-26T12:00:00Z', suites: { total: 15, done: 6, ko: 1 } }));
+  ok(/6\/15 suites/.test(E.suiteProgressText(W)) && /1 KO/.test(E.suiteProgressText(W)), 'la progression lit n/N suites de la non-régression en cours', E.suiteProgressText(W));
+  ok(E.suiteProgressText(path.join(W, 'absent')) === '', 'sans non-régression en cours : rien');
+  fs.rmSync(W, { recursive: true, force: true });
+}
+
 fs.rmSync(T, { recursive: true, force: true });
 console.log(`\n${pass} ok, ${fail} KO`);
 process.exit(fail ? 1 : 0);

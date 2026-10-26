@@ -11,6 +11,18 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.149.0] - 2026-10-26
+
+Defect reported by the chef on run p-20261026T090638-774755: each targeted check (`regression.mjs --targeted --no-browser`) lasted 20 to 30 minutes, the engine then ended with `code null / no KO`, and the server raised a false « musician stuck » alert.
+
+### Fixed
+- (server) Targeted non-regression pass is bounded: with `--no-full` / `ORCH_UNIT_DELIVERY=1` the selection is capped (15 suites at most: those that name or directly import a changed file plus its dedicated test, closest first) and every suite dropped is listed in the output and in `report.selection.dropped`; the rest is left to the after-the-fact full run.
+- (server) A targeted pass exceeding its deadline (`--timeout-min` / `ORCH_REGRESS_TIMEOUT_MIN`, 25 min by default only with `--no-full`) ends with an explicit « DÉLAI DÉPASSÉ » report (suites passed, failed, not run), exit code 5, and a `timeout` report refused at delivery.
+- (server) The pipeline engine emits `pipeline_progress` heartbeats while a test command runs (`runCommandTicking`).
+
+### Changed
+- The deadline decision is a pure function, `targetedDeadlineMin` in `scripts/regression-targets.mjs`, tested on its behaviour with and without `--no-full` / `ORCH_UNIT_DELIVERY`.
+
 ## [0.148.0] - 2026-10-26
 
 Defect seen in production (v0.146.1, a project, 2026-10-26), under the user
