@@ -96,8 +96,9 @@ section('1. Délai de la commande de test : testTimeoutMin du projet');
   const calls = src.match(/runCommand\([^;\n]*\.(testCommand|buildCommand)[^;\n]*\)/g) || [];
   // 0.120.0 (phase 0 c): the test suite goes through runSuite(ctx), whose own
   // runCommand passes the project's delay (checked just above, with the others).
+  // 0.149.0: an optional trailing ctx.testTick (progress heartbeat) is allowed.
   const viaSuite = (src.match(/\brunSuite\(ctx\)/g) || []).length;
-  ok(calls.length + viaSuite >= 8 && calls.every(c => /testTimeoutMs\(/.test(c)) && /function runSuite\(ctx\)[\s\S]{0,200}runCommand\(cwd, cfg\.testCommand, ctx\.testEnv, testTimeoutMs\(cfg\)\)/.test(src),
+  ok(calls.length + viaSuite >= 8 && calls.every(c => /testTimeoutMs\(/.test(c)) && /function runSuite\(ctx\)[\s\S]{0,200}runCommand\(cwd, cfg\.testCommand, ctx\.testEnv, testTimeoutMs\(cfg\)(, ctx\.testTick)?\)/.test(src),
     `chaque lancement de la commande de test ou de build passe le délai du projet (${calls.length} appels directs, ${viaSuite} par runSuite)`,
     calls.filter(c => !/testTimeoutMs\(/.test(c)).join('\n'));
 }

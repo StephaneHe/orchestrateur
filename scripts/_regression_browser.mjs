@@ -856,7 +856,11 @@ export async function browserChecks(sb, t) {
         await page.keyboard.press('Alt+ArrowDown');
         const want2 = [want[1], want[0], ...want.slice(2)];
         assert(await until(async () => (await serverOpen()).join(' ') === want2.join(' '), 5000), `Alt+↓ : ${(await serverOpen()).join(' ')}`);
-        assert(await page.evaluate((k) => document.activeElement?.dataset?.key === k, want[0]), 'focus perdu après Alt+↓');
+        assert(await until(() => page.evaluate((k) => document.activeElement?.dataset?.key === k, want[0]), 3000), 'focus perdu après Alt+↓');
+        // A list refresh (15 s timer) rebuilds the items: the focus stays on the same one.
+        await page.evaluate(() => window.TodoPanel.reload());
+        await sleep(500);
+        assert(await page.evaluate((k) => document.activeElement?.dataset?.key === k, want[0]), 'focus perdu au rafraîchissement de la liste');
         // 5. A done item dragged into the open part stays among the done ones.
         const done0 = await keysIn(page, 'done');
         if (done0.length) {

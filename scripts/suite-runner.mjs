@@ -73,13 +73,19 @@ export const SERIAL_SUITES = new Set([
   '_test_pipeline_gates.mjs',      // ~240 s alone, 278 s then > 300 s (suite timeout) under parallel load (0.138.0)
   '_test_aside_rework.mjs',        // ~90 s alone: nine sequential full-Development runs (0.139.0)
   '_test_pipeline_speed.mjs',      // ~20 sequential full-Development runs, levers off then on (0.143.0)
+  '_test_item_delivery.mjs',       // ~225 s alone, > 300 s (suite timeout) under parallel load (0.149.1)
 ]);
 
 // Suites known to run close to the default 300 s cap even alone get their own
 // cap (0.148.0): _test_pipeline_gates.mjs took 231 to 292 s over the last
 // releases and was killed at 300 s, alone, with all its checks green so far.
+// 0.149.1: the after-the-fact full run of 6a111c2 killed two more at 300 s with
+// every check green so far; measured alone: _test_pipeline_speed.mjs 283 s,
+// _test_item_delivery.mjs 224 s.
 export const SUITE_TIMEOUT_MS = Object.freeze({
   '_test_pipeline_gates.mjs': 600_000,
+  '_test_pipeline_speed.mjs': 600_000,
+  '_test_item_delivery.mjs': 600_000,
 });
 
 /** Default parallelism: ORCH_REGRESS_JOBS, else a quarter of the CPUs, 1 to 4. */

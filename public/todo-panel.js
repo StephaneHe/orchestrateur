@@ -434,10 +434,15 @@
     const items = d.items.filter(i => !project || i.project === project);
     const orderMsg = d.orderError ? `<p class="todo-order-msg is-error" role="status">Ordre personnalisé illisible : ${esc(d.orderError)}</p>` : (st.orderMsg ? `<p class="todo-order-msg${st.orderBad ? " is-error" : ""}" role="status">${esc(st.orderMsg)}</p>` : "");
     const done = items.filter(i => i.status === "done"), open = items.filter(i => i.status !== "done");
+    // Rebuilding the list would drop the keyboard focus on every refresh
+    // (15 s timer, save of the order): give it back to the same item.
+    const focused = document.activeElement;
+    const focusKey = focused && pane.contains(focused) && focused.classList.contains("todo-item") ? focused.dataset.key : null;
     pane.querySelector(".todo-body").innerHTML = orderMsg + (!items.length
       ? `<p class="todo-empty">Aucun item${project ? ` pour ${esc(project)}` : ""}.</p>`
       : `<section class="todo-sec" data-sec="open"><h3 class="todo-sec-h">Non faits <span class="todo-n">${open.length}</span></h3><ul class="todo-list">${open.map(itemHtml).join("")}</ul></section>
          <section class="todo-sec" data-sec="done"><h3 class="todo-sec-h">Faits <span class="todo-n">${done.length}</span></h3><ul class="todo-list">${done.map(itemHtml).join("")}</ul></section>`);
+    if (focusKey) pane.querySelector(`.todo-item[data-key="${CSS.escape(focusKey)}"]`)?.focus();
     // Keep an open overlay in step with the 15 s refresh (an item that left
     // the list stays shown as it was).
     if (ov.el && !ov.el.hidden) { const i = findItem(ov.id); if (i) fillOverlay(i); }

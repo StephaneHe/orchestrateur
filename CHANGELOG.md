@@ -11,6 +11,15 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.149.1] - 2026-10-26
+
+After-the-fact full non-regression of 6a111c2 (idle run `report-idle-full-6a111c2-mvph2sez`) was red on four entries; Incident fix.
+
+### Fixed
+- (server) TODO panel keeps the keyboard focus on the same item when the list is rebuilt (15 s refresh, order save): `render()` gave it back only after its own save, so Alt+↑/↓ users lost their place on every refresh (`navigateur:todo-item-drag`, « focus perdu après Alt+↓ »). The browser path now also checks the focus across a list refresh.
+- (server) `_test_dev_instance_pipelines.mjs`: the static check that `runSuite` passes the project's test delay accepts the optional `ctx.testTick` argument added in 0.149.0 (the delay was still passed; only the pattern was stale).
+- (server) `_test_item_delivery.mjs` (≈225 s alone) and `_test_pipeline_speed.mjs` (≈283 s alone) get their own 600 s suite cap; `_test_item_delivery.mjs` also runs serially. Both were killed at 300 s under the full run's parallel load with every check green so far.
+
 ## [0.149.0] - 2026-10-26
 
 Defect reported by the chef on run p-20261026T090638-774755: each targeted check (`regression.mjs --targeted --no-browser`) lasted 20 to 30 minutes, the engine then ended with `code null / no KO`, and the server raised a false « musician stuck » alert.
