@@ -11,6 +11,12 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.151.0] - 2026-10-27
+
+### Fixed
+
+- (server) Parallel lanes: a dispatch made from a chef or slot turn, a request replayed from the queue and a pool slot fill are no longer treated as the user's direct dialogue. When lane 0 is busy and a lane k >= 1 is free they now run in a lane instead of being serialised by rule `lane0-direct`. Only the user's own message keeps `lane0-direct`. The decision is extracted into the pure `isDirectDialogue` (`scripts/lane-rules.mjs`) and used by `dispatch.mjs`; the rule text now states what it covers, so the logged serialisation reason is the real one.
+
 ## [0.150.0] - 2026-10-27
 
 ### Added

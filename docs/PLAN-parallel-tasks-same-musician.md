@@ -378,7 +378,7 @@ detected since 0.101.0; `planned` = documented, detector not written yet.
 | `no-git` | project not a git repo, or no commit | project | active | `git rev-parse --is-inside-work-tree`, `HEAD` exists | no worktree, no isolation possible |
 | `git-unsupported` | submodules, LFS without the filter installed, sparse checkout, detached HEAD, git < 2.20 | project | active | `.gitmodules`, `.gitattributes filter=lfs` + `git lfs version`, `core.sparseCheckout`, `git symbolic-ref HEAD`, `git --version` | worktree content would differ from the checkout; a detached HEAD has no integration branch |
 | `same-task` | answer/resume of a task already holding a lane (`--lane k`, `[CHEF_ANSWER]`, `--meme-tache`, `--resume-session`) | lane | active | task affinity: `logs/lanes/<p>/<k>.task.json` in state `input`; two such lanes without `--lane` ⇒ refused (64), never guessed | session and work tree belong to that lane |
-| `lane0-direct` | direct user dialogue | lane0 | active | no `--source` | the user works in their own checkout by definition |
+| `lane0-direct` | direct user dialogue | lane0 | active | the user's own message only: no `--source`, not launched from a chef or slot turn, not from the queue, not a pool-slot fill | the user works in their own checkout by definition |
 | `pipeline-engine` | resume of a pipeline run that started in the main checkout (paused before 0.115.0, or run in lane 0) | lane0 | active | `lanes.mjs pausedPipelineRuns`: the paused run has no lane (or lane 0) | its files are in the main checkout; since P9 (0.114.0) a NEW run goes to a lane (§12) |
 | `pipeline-pilot` | new pipeline run of a project that is not a P9 pilot: only a dev instance (`devOf`) runs its pipelines in lanes; any other project needs `"pipelineLanes": true` (its entry or `defaults`) | lane0 | active | `lanes.mjs pipelineLanesInfo` (`PIPELINE_LANES_PILOT_ONLY`) | user request 2026-10-18 « orchestrateur-dev : il faut activer P9 », with the 2026-10-15 rule that the dev instance pilots lanes first (§12) |
 | `dual-mode` | `--second-model` on an ordinary dispatch (outside a pipeline) | lane0 | active | flag | `dual-run.mjs` branches its worktrees off the main checkout; inside a pipeline step in a lane, the dual mode works from the lane (§12) |
@@ -706,7 +706,7 @@ keeps its branch and diff, nothing to undo. Code: `git revert` to the tag
   a free worktree lane first, lane 0 last and only when the main checkout is
   clean (`git status --untracked-files=no`), so that a run that pauses never
   leaves the user's checkout dirty. No free lane ⇒ wait or queue, as any task.
-  `lane0-direct` still comes first (a direct dialogue stays in lane 0).
+  `lane0-direct` still comes first (a direct dialogue stays in lane 0; since the 2026-10-27 fix a chef or slot dispatch, a queued request or a pool-slot fill is no longer a direct dialogue).
 - **Affinity of a paused run** (`dispatch.mjs`, before the lane choice): a
   reply offered by the pause (« continuer », « accepter », « tout supprimer »,
   « abandonner », « simplifier », « changer le model », « tester le model »,

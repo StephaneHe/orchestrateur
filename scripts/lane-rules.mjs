@@ -46,7 +46,7 @@ export const RULES = [
   { id: 'same-task', scope: 'lane', status: 'active',
     text: 'suite de la même tâche : elle reprend le couloir, la session et la copie de cette tâche' },
   { id: 'lane0-direct', scope: 'lane0', status: 'active',
-    text: "dialogue direct de l'utilisateur : il travaille dans sa propre copie du projet" },
+    text: "dialogue direct de l'utilisateur : il travaille dans sa propre copie du projet (seul le message de l'utilisateur lui-même : pas un dispatch lancé depuis un tour du chef ou d'un slot, ni une demande venue de la file, ni un remplissage de slot)" },
   // P9 (0.115.0): a NEW pipeline run goes to a lane (worktree); only a run that
   // started in the main checkout resumes there, where its files are.
   { id: 'pipeline-engine', scope: 'lane0', status: 'active',
@@ -143,6 +143,12 @@ export function parseResources(arg) {
   if (!arg) return { list: [], unknown: [] };
   const items = String(arg).split(/[,\s]+/).map(s => s.trim().toLowerCase()).filter(Boolean);
   return { list: [...new Set(items.filter(i => DECLARED_RESOURCES.includes(i)))], unknown: items.filter(i => !DECLARED_RESOURCES.includes(i)) };
+}
+
+// Only the user's own message is a direct dialogue: a dispatch made from a
+// chef/slot turn, replayed from the queue or filling a pool slot is a task.
+export function isDirectDialogue({ sourceProject, laneArg, pipelineResume, turnOf, fromQueue, poolAssign }) {
+  return !sourceProject && laneArg == null && !pipelineResume && !turnOf && !fromQueue && !poolAssign;
 }
 
 /**

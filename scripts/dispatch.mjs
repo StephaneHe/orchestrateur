@@ -1481,7 +1481,7 @@ if (TURN_LOCK && LANES_MAX > 1) {
     PIPE_RESUME = cands[0] || null;
   }
   const decision = rulesMod.decide({
-    project, conductor: CONDUCTOR, direct: !sourceProject && LANE_ARG == null && !PIPE_RESUME,
+    project, conductor: CONDUCTOR, direct: rulesMod.isDirectDialogue({ sourceProject, laneArg: LANE_ARG, pipelineResume: !!PIPE_RESUME, turnOf: TURN_OF, fromQueue: FROM_QUEUE, poolAssign: POOL_ASSIGN }),
     laneArg: PIPE_RESUME?.lane >= 1 ? PIPE_RESUME.lane : LANE_ARG,
     ...(PIPE_RESUME?.lane >= 1 ? { laneWhy: `reprise de l'exécution ${PIPE_RESUME.run}, en pause dans le couloir ${PIPE_RESUME.lane}` } : {}),
     pipelineResumeLane0: PIPE_RESUME?.lane === 0 ? PIPE_RESUME.run : null,

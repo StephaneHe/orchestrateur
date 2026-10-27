@@ -114,6 +114,24 @@ section('4. Limite de concurrence');
   ok(L.bumpVersion('0.100.3', 'minor') === '0.101.0' && L.bumpVersion('1.2.3', 'patch') === '1.2.4' && L.bumpVersion('1.2.3', 'major') === '2.0.0', 'bump de version');
 }
 
+section('5. Un dispatch du chef ou de la file n’est pas un dialogue direct (demande du 2026-10-27)');
+{
+  // Real case (2026-10-27, BookHaven): the chef's dispatches carry no --source,
+  // so dispatch.mjs took them for the user's direct dialogue (lane0-direct).
+  const direct = (o) => (typeof R.isDirectDialogue === 'function' ? R.isDirectDialogue(o) : 'fonction absente');
+  const user = { sourceProject: null, laneArg: null, pipelineResume: false, turnOf: null, fromQueue: false, poolAssign: false };
+  ok(direct(user) === true, 'message de l’utilisateur (sans source, hors tour, hors file) : dialogue direct');
+  ok(direct({ ...user, turnOf: 'chef' }) === false, 'dispatch lancé depuis le tour du chef (ORCH_TURN_PROJECT) : pas direct');
+  ok(direct({ ...user, turnOf: 'chef-2' }) === false, 'dispatch lancé depuis le tour d’un slot du chef : pas direct');
+  ok(direct({ ...user, fromQueue: true }) === false, 'demande venue de la file (--no-queue-if-busy) : pas direct');
+  ok(direct({ ...user, poolAssign: true }) === false, 'remplissage de slot par le serveur : pas direct');
+  ok(direct({ ...user, sourceProject: 'chef' }) === false, 'avec --source : pas direct');
+  ok(direct({ ...user, laneArg: 1 }) === false && direct({ ...user, pipelineResume: true }) === false, '--lane ou reprise de pause : pas direct');
+  // And with the lane-0 rule no longer firing, a busy lane 0 + clean tree means a parallel lane.
+  const clean = { name: 'P', path: repo('chefcase') };
+  ok(decide(clean, { direct: direct({ ...user, turnOf: 'chef' }) }).mode === 'parallel', 'dispatch du chef, copie propre : mode parallèle (couloir k ≥ 1 si le 0 est occupé)');
+}
+
 try { fs.rmSync(T, { recursive: true, force: true }); } catch {}
 console.log(`\n${fail === 0 ? '✓' : '✗'} ${pass} réussis, ${fail} échoués`);
 process.exitCode = fail ? 1 : 0;
