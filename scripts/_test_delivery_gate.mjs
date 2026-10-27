@@ -27,6 +27,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as G from './delivery-gate.mjs';
+import { deliverRelease } from './code-delivery.mjs';
+import { diagnosePause, smartMenu } from './pause-diagnosis.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -104,6 +106,38 @@ ok(cmp2.status === 0 && /Livraison : AUTORISÉE/.test(cmp2.stdout), 'tout vert a
 section('5. La cause du KO est réparée : _test_pool_chef_dispatch.mjs ne dépend plus du log de la prod');
 const src = fs.readFileSync(path.join(ROOT, 'scripts', '_test_pool_chef_dispatch.mjs'), 'utf8');
 ok(!/fs\.statSync\(path\.join\(ROOT, 'logs', 'orchestrateur\.jsonl'\)\)/.test(src) && /const sizeOf = \(f\) => \{ try \{ return fs\.statSync\(f\)\.size; \} catch \{ return 0; \} \};/.test(src), 'plus de statSync direct sur logs/orchestrateur.jsonl (absent d’un clone neuf)');
+
+section('6. Livrer refusé par le hook pre-commit : raison complète gardée, fichiers modifiés listés (cas réels du 26-27/10)');
+{
+  // Real runs (p-20261026T120753-6a19c6…): the hook refused the commit with a
+  // multi-line report; only its first line reached the pause, and the empty
+  // `changed` was read as « l’étape n’a modifié aucun fichier ».
+  const R = path.join(T, 'gate-release'); fs.mkdirSync(R, { recursive: true });
+  const gg = (...a) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@localhost', ...a], { cwd: R, encoding: 'utf8' });
+  gg('init', '-q');
+  fs.writeFileSync(path.join(R, 'package.json'), JSON.stringify({ name: 'g', version: '1.0.0' }, null, 2) + '\n');
+  fs.writeFileSync(path.join(R, 'CHANGELOG.md'), '# Changelog\n\n## [1.0.0] - 2026-10-01\n- début\n');
+  gg('add', '-A'); gg('commit', '-q', '-m', 'init');
+  const hook = path.join(R, '.git', 'hooks', 'pre-commit');
+  fs.writeFileSync(hook, "#!/bin/sh\necho '[delivery-gate] LIVRAISON REFUSÉE (report-worktree.json) :' >&2\necho '  - le rapport ne porte pas sur cet arbre exact' >&2\nexit 1\n");
+  try { fs.chmodSync(hook, 0o755); } catch {}
+  fs.writeFileSync(path.join(R, 'work.txt'), 'travail des étapes précédentes\n');
+  const d = deliverRelease(R, { versionFiles: ['package.json'], changelog: 'CHANGELOG.md' }, { bump: 'patch', changelog: '### Fixed\n\n- x', requirement: '' }, { date: '2026-10-27', run: 'p-test' });
+  ok(!d.ok && /commit impossible/.test(d.why || ''), 'le hook refuse : la livraison échoue', d.why);
+  ok(/ne porte pas sur cet arbre exact/.test(d.why || ''), 'la raison du hook (ligne suivante) figure dans le motif du refus', d.why);
+  ok(Array.isArray(d.changed) && d.changed.includes('work.txt'), 'les fichiers modifiés par les étapes précédentes sont listés dans « changed »', JSON.stringify(d.changed));
+
+  // Real hook: accepts only once the checks left a report in .git (here a marker).
+  fs.writeFileSync(hook, "#!/bin/sh\n[ -f .git/gate-ok ] && exit 0\necho '[delivery-gate] LIVRAISON REFUSÉE (report-worktree.json) :' >&2\nexit 1\n");
+  const d2 = deliverRelease(R, { versionFiles: ['package.json'], changelog: 'CHANGELOG.md' }, { bump: 'patch', changelog: '### Fixed\n\n- x', requirement: '' },
+    { date: '2026-10-27', run: 'p-test', gateCheck: (dir) => fs.writeFileSync(path.join(dir, '.git', 'gate-ok'), 'ok') });
+  ok(d2.ok && d2.commit, 'hook refuse puis vérification lancée : le commit du travail des étapes précédentes réussit', d2.why);
+  ok(/work\.txt/.test(gg('show', '--stat', '--format=', 'HEAD').stdout), 'le commit contient le travail des étapes précédentes');
+
+  const dg = diagnosePause({ limit: 'criteria', step: { id: 'livrer', label: 'Livrer' }, why: d.why, changed: d.changed });
+  ok(dg.kind === 'delivery_gate', 'le diagnostic reconnaît le refus du hook (pas « aucun fichier modifié »)', dg.kind);
+  ok(smartMenu(dg, {}).options.some(o => o.key === 'confier au model'), 'le menu propose une action utile');
+}
 
 fs.rmSync(T, { recursive: true, force: true });
 console.log(`\n${pass} ok, ${fail} KO`);

@@ -922,8 +922,9 @@ function releaseFromText(ctx, step, before, after) {
   if (git(cwd, ['rev-parse', 'HEAD']).out !== ctx.headAtStep) return { ok: false, textProblem: true, changed: [], why: 'étape de texte : le model ne commite pas, le programme fait le commit' };
   const text = parseDeliveryText(readArtefact(ctx, step.artefact), { needBump: !ctx.prebump || !!ctx.lane, needRequirement: !!cfg.requirements });
   if (text.error) return { ok: false, textProblem: true, changed: [], why: `${step.artefact} : ${text.error}` };
-  const d = deliverRelease(cwd, cfg, text, { prebump: ctx.lane ? null : ctx.prebump, versionBase: ctx.versionBase, lane: ctx.lane, run: ctx.run });
-  return d.ok ? d : { ...d, changed: [] };
+  const d = deliverRelease(cwd, cfg, text, { prebump: ctx.lane ? null : ctx.prebump, versionBase: ctx.versionBase, lane: ctx.lane, run: ctx.run,
+    gateCheck: cfg.testCommand ? (dir) => runCommand(dir, cfg.testCommand, ctx.testEnv, testTimeoutMs(cfg), ctx.testTick) : null });
+  return d.ok ? d : { changed: [], ...d };
 }
 
 /**
@@ -3495,7 +3496,7 @@ export async function runPipeline(o) {
     // mention and a red suite after the delivery are one cause (0.141.1).
     const prev = state.diagnosis;
     const deliverStep = sid && (sid === 'livrer' || stepDefs[sid]?.crit === 'livrer' || stepDefs[sid]?.kind === 'deliver');
-    const family = (k) => (k === 'version_stale' ? 'code_delivery' : k);
+    const family = (k) => (k === 'version_stale' || k === 'delivery_gate' ? 'code_delivery' : k);
     const answered = deliverStep && prev && prev.step === sid && family(prev.kind) === family(d.kind) && (prev.limit || null) === (input.limit || null)
       ? [...(prev.excluded || []), ...(prev.answered || [])] : [];
     let excluded = [];

@@ -3591,6 +3591,22 @@ organisé le process mieux que moi ».
   (`diagnosis.answered`) n'est plus proposée (`excludeAnswered`,
   `diagnosis.excluded`).
 - Recette : `_test_version_mentions.mjs` (rejeu de p-20261023T044621-dc1385).
+- **Refus du hook `delivery-gate` au commit de Livrer** (0.151.1, demande
+  2026-10-27 : Livrer répondait « L'étape n'a modifié aucun fichier » alors que
+  la copie contenait le travail des étapes précédentes, 6 fois les 26-27/10) :
+  - `deliverRelease` (option `gateCheck`, fournie par le moteur =
+    `testCommand` du projet) : si le commit est refusé par un hook dont la
+    sortie cite `delivery-gate`, la `testCommand` est lancée sur l'arbre de la
+    release (elle écrit le rapport que lit le hook), puis **un seul** nouvel
+    essai de commit. Jamais `--no-verify`.
+  - Refus maintenu : `why` garde la raison complète du hook (12 lignes au
+    plus) et `changed` liste les fichiers non commités (`git status
+    --porcelain -z`), jamais `[]`.
+  - Cause de pause `delivery_gate` (`pause-diagnosis.mjs`, motif « commit
+    impossible : … delivery-gate ») : menu « confier au model » (lancer la
+    `testCommand`, puis commiter) ; famille anti-boucle `code_delivery` ;
+    pause de processus (chef, `process-pause.mjs`).
+  - Recette : `_test_delivery_gate.mjs` §6.
 
 ## Voie légère « Exploitation » (0.141.0)
 

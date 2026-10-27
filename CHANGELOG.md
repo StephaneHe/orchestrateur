@@ -11,6 +11,14 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.151.1] - 2026-10-27
+
+### Fixed
+
+- (server) Livrer no longer reports "the step modified no file" when the pre-commit `delivery-gate` hook refuses the release commit. `deliverRelease` keeps the hook's whole report (12 lines at most) in `why` and lists the uncommitted files in `changed` (`git status --porcelain -z`) instead of an empty list; the engine no longer overwrites `changed` with `[]`.
+- (server) When the hook refuses the commit with a `delivery-gate` message, the project's `testCommand` is run once on the release tree (it writes the report the hook reads) and the commit is retried once. `--no-verify` is never used.
+- (server) New pause cause `delivery_gate` (`pause-diagnosis.mjs`): the menu offers "confier au model" (run the test command, then make the single delivery commit) instead of the ineffective "changer d'approche"; same anti-loop family as `code_delivery`; settled by the chef like the other process pauses.
+
 ## [0.151.0] - 2026-10-27
 
 ### Fixed

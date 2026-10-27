@@ -34,7 +34,7 @@ export const PROCESS_LIMITS = Object.freeze(['items', 'items_blocked', 'aside_co
 /** Diagnosed causes the chef can settle (an environment, a model or an unknown cause: the user). */
 export const PROCESS_KINDS = Object.freeze(['too_big', 'items_blocked', 'aside_conflict', 'criterion_strict', 'test_passes', 'no_test', 'test_wrong', 'code_wrong',
   'no_change', 'missing_sections', 'scope_violation', 'bad_format', 'cited_paths', 'missing_file', 'no_commit', 'review_defects', 'interrupted',
-  'version_stale', 'code_delivery']);
+  'version_stale', 'code_delivery', 'delivery_gate']);
 
 /**
  * Menu words the chef may choose. Never: closing the work (abandonner,

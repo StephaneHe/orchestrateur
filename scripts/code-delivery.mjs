@@ -236,7 +236,7 @@ const subjectOf = (changelog) => (String(changelog).split('\n').map(l => l.repla
  *   lane: {fragment} — in a lane, a changelog.d fragment instead (0.102.0)
  * → { ok, version, commit, noCommit?, files } | { ok: false, why }
  */
-export function deliverRelease(cwd, cfg, text, { prebump = null, versionBase = null, lane = null, date = new Date().toISOString().slice(0, 10), run = '' } = {}) {
+export function deliverRelease(cwd, cfg, text, { prebump = null, versionBase = null, lane = null, date = new Date().toISOString().slice(0, 10), run = '', gateCheck = null } = {}) {
   const cl = path.join(cwd, cfg.changelog || 'CHANGELOG.md');
   const req = cfg.requirements ? path.join(cwd, cfg.requirements) : null;
   let version = null, from = null;
@@ -281,8 +281,27 @@ export function deliverRelease(cwd, cfg, text, { prebump = null, versionBase = n
   const message = lane
     ? `docs(changelog): fragment for ${path.basename(lane.fragment, '.md')}${subject ? ` — ${subject}` : ''}`
     : `chore(release): ${version ? `v${version}` : 'delivery'}${subject ? ` — ${subject}` : ''}`;
-  const c = commitWork(cwd, `${message}\n\nDelivered by the orchestrator (pipeline run ${run}): version, CHANGELOG and commit written by the program.`);
-  if (!c.ok) return { ok: false, version, from, why: `commit impossible : ${String(c.err).split('\n')[0]}` };
+  const commitMessage = `${message}\n\nDelivered by the orchestrator (pipeline run ${run}): version, CHANGELOG and commit written by the program.`;
+  let c = commitWork(cwd, commitMessage);
+  // The pre-commit delivery gate wants a green report for the exact release tree,
+  // which only exists once the project's checks ran on it: run them, retry once.
+  if (!c.ok && gateCheck && /delivery-gate/.test(String(c.err))) {
+    try { gateCheck(cwd); } catch {}
+    c = commitWork(cwd, commitMessage);
+  }
+  if (!c.ok) {
+    // Keep the hook's whole report and the files left uncommitted: a bare first line
+    // made the pause read "the step modified no file" (runs of 26-27/10).
+    // -z: exact paths; a rename/copy entry is followed by its origin path, skipped.
+    const parts = git(cwd, ['status', '--porcelain', '-z']).out.split('\0').filter(Boolean);
+    const changed = [];
+    for (let i = 0; i < parts.length; i++) {
+      changed.push(parts[i].slice(3));
+      if (/^[RC]/.test(parts[i])) i++;
+    }
+    const reason = String(c.err).split('\n').map(l => l.trim()).filter(Boolean).slice(0, 12).join(' | ');
+    return { ok: false, version, from, changed, why: `commit impossible : ${reason}` };
+  }
   return { ok: true, version, from, mentions, commit: c.commit || null, noCommit: !!c.empty };
 }
 

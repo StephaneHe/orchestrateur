@@ -70,6 +70,7 @@ export const CAUSE_KINDS = Object.freeze({
   missing_file: 'un fichier ou un compte rendu attendu est absent',
   no_commit: 'la livraison n’a créé aucun commit',
   version_stale: 'la livraison par le programme a laissé une mention de version à l’ancienne valeur',
+  delivery_gate: 'le hook pre-commit de livraison (delivery-gate) a refusé le commit : aucun rapport de non-régression vert pour l’arbre exact de la release',
   code_delivery: 'tests rouges après livraison : la livraison casse un test du projet',
   criterion_strict: 'un critère automatique est plus strict que le travail ne le justifie',
   too_big: 'la demande est trop grosse pour une seule exécution',
@@ -266,6 +267,12 @@ export function diagnosePause(input = {}) {
       return withRepeat(out('code_delivery', `Tests rouges après livraison : la suite échoue après la livraison faite par le programme (version ${cd.from || '?'} → ${cd.to || '?'}, CHANGELOG, exigence, commit) : ${t.line || 'test en échec'}. Le travail était vert avant Livrer : c’est la livraison qui casse ce test, et la refaire à l’identique échouerait encore.`,
         { failure: t.line, from: cd.from || null, to: cd.to || null }), input);
     }
+  }
+  // Livrer refused by the pre-commit hook (runs of 26-27/10): not « no file changed »,
+  // the work is there but no green report covers the release tree.
+  if (/^commit impossible\s*:.*delivery-gate/i.test(motif)) {
+    ev.push({ source: 'hook pre-commit', text: clean(motif, 300) });
+    return withRepeat(out('delivery_gate', `Le hook pre-commit de livraison a refusé le commit de l’étape « ${step} » : ${clean(motif.replace(/^commit impossible\s*:\s*/i, ''), 220)}. Le travail des étapes précédentes est bien présent dans la copie (non commité) ; il manque un rapport de non-régression vert sur l’arbre exact de la release.`, { }), input);
   }
   // Livrer refused because the suite is red after the delivery (whoever wrote
   // it): a deterministic cause, never an outage nor « continuer » (2026-10-23).
@@ -524,6 +531,11 @@ export function smartMenu(d, ctx = {}) {
       add('refaire le commit', 'je relance la livraison avec la consigne : faire réellement le commit (git add des fichiers du travail, puis git commit) et vérifier qu’il existe.',
         { message: `REFAIRE LE COMMIT : ${d.cause} Fais réellement le commit (git add puis git commit), puis vérifie avec git log qu’il existe.` });
       rec = ['refaire le commit', 'le travail est fait, seul le commit manque.'];
+      break;
+    case 'delivery_gate':
+      add('confier au model', 'je relance Livrer, confiée au model : il lance d’abord la commande de test du projet (celle qui écrit le rapport lu par le hook) sur l’arbre de la release, puis fait le commit unique de livraison.',
+        { modelDeliver: true, message: `LIVRAISON REFUSÉE PAR LE HOOK : ${d.cause} Lance la commande de test du projet (testCommand) pour produire le rapport vert sur l’arbre exact de la release, puis fais le commit unique de livraison ; ne contourne jamais le hook (pas de --no-verify).` });
+      rec = ['confier au model', 'le travail est fait ; seule la vérification exigée par le hook manque, et refaire la même livraison échouerait à l’identique.'];
       break;
     case 'version_stale':
     case 'code_delivery': {
