@@ -113,7 +113,9 @@ export function readTail(file, maxBytes = 2 * 1024 * 1024) {
 /**
  * Process pauses the chef has answered but that are still waiting after
  * graceMs: the answer was not applied (lost relay, refused launch, server
- * not restarted…). → [{ run, project, n, answer, answeredAt, waitingMs, options }]
+ * not restarted…). → [{ run, project, n, answer, answeredAt, waitingMs, options,
+ * queued }] where queued is { id, enqueuedAt } when the answer was applied and waits in
+ * the musician's queue, else null.
  */
 export function unappliedChefAnswers({ logsDir, conductor, now = Date.now(), graceMs = ANSWER_GRACE_MS, chefEvents = null, maxRuns = 300 }) {
   const runsDir = path.join(logsDir, 'runs');
@@ -146,15 +148,32 @@ export function unappliedChefAnswers({ logsDir, conductor, now = Date.now(), gra
     const at = Date.parse(answer.timestamp || '') || 0;
     if (!at || now - at < graceMs) continue;
     out.push({ run, project: state.project, n: state.chefPause.n, answer: one(String(answer.result || '').replace(/^\s*\[ANSWER\]\s*/i, ''), 300),
-      answeredAt: answer.timestamp, waitingMs: now - at, options: state.chefPause.options || [] });
+      answeredAt: answer.timestamp, waitingMs: now - at, options: state.chefPause.options || [],
+      queued: queuedAnswer(logsDir, state.project, run) });
   }
   return out;
+}
+
+/** The answer already applied with --pipeline-resume that waits in the musician's queue, or null. */
+function queuedAnswer(logsDir, project, run) {
+  if (!project) return null;
+  let q;
+  try { q = JSON.parse(fs.readFileSync(path.join(logsDir, 'queue', `${project}.json`), 'utf8')); } catch { return null; }
+  const list = Array.isArray(q) ? q : (Array.isArray(q?.entries) ? q.entries : []);
+  const e = list.find(x => x && x.pipelineResume === run);
+  return e ? { id: e.id, enqueuedAt: e.enqueuedAt || null } : null;
 }
 
 /** The message that tells the chef its answer was not applied — a new question it can answer. */
 export function unappliedText(u, { orchestratorRoot = null } = {}) {
   const min = Math.max(1, Math.round(u.waitingMs / 60000));
   const script = orchestratorRoot ? path.join(orchestratorRoot, 'scripts', 'dispatch.mjs').split(path.sep).join('/') : 'scripts/dispatch.mjs';
+  if (u.queued) {
+    // No NEEDS_CHEF_INPUT_FROM marker: this is information, its reply must never be relayed to the musician.
+    return `[${u.run} · pause ${u.n}] ⏳ Ta réponse à la pause de processus n° ${u.n} de ${u.project} (exécution ${u.run}) est appliquée et attend en file (entrée ${u.queued.id}) depuis ${min} min : le musicien a un tour en cours, elle part dès qu’il est libre.\n\n` +
+      `Ta réponse : « ${u.answer} »\n\n` +
+      'Aucune action requise : ne réponds pas de nouveau, une seconde réponse créerait un doublon en file.';
+  }
   return `[NEEDS_CHEF_INPUT_FROM:${u.project}] [${u.run} · pause ${u.n}] ⚠ Ta réponse à la pause de processus n° ${u.n} de ${u.project} (exécution ${u.run}) n’est pas appliquée depuis ${min} min : l’exécution est toujours en pause.\n\n` +
     `Ta réponse : « ${u.answer} »\n\n` +
     `Réponds de nouveau, exactement « [ANSWER] <choix> — <raison> » (choix proposés : ${u.options.map(o => `« ${o} »`).join(', ') || '—'}), ` +

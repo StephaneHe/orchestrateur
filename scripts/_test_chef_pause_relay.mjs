@@ -210,7 +210,18 @@ section('4. Réponse non appliquée sous 2 min : signalée au chef');
   ok(text.startsWith(`[NEEDS_CHEF_INPUT_FROM:P] [${RUN} · pause 3]`) && /n’est pas appliquée depuis 2 min/.test(text) && /--pipeline-resume/.test(text) && !/NEEDS_USER_INPUT:/.test(text.split('\n')[0]), 'le signalement va au CHEF : une question qui nomme la pause, la réponse et la commande', text.slice(0, 300));
   const reask = chefTurn(chefLog, { turn: 'c-4', text, answer: '[ANSWER] livrer sans eux — répété' });
   ok(chefAnswerRelay({ lines: chefLog, result: reask }).pause?.n === 3, 'la réponse du chef à ce signalement est relayée en nommant la pause n° 3');
-  ok(/sweepUnappliedChefAnswers/.test(SERVER) && /class: 'decision', text,\s*displayText: `réponse non appliquée/.test(SERVER) && /pipeline_chef_answer_unapplied/.test(SERVER), 'server.js : balayage, ticket de décision au chef, trace dans le journal du musicien');
+  ok(/sweepUnappliedChefAnswers/.test(SERVER) && /class: 'decision', text,\s*displayText: u\.queued \? `réponse en file[^\n]*`réponse non appliquée/.test(SERVER) && /pipeline_chef_answer_unapplied/.test(SERVER), 'server.js : balayage, ticket de décision au chef, trace dans le journal du musicien');
+
+  // Defect (a), 2026-10-26/27: the answer was applied with --pipeline-resume but waits in the
+  // musician's queue (answers to a pause go first, 0.148.0, yet the lane is busy). The watch
+  // must see it and say so, not ask the chef to answer again (duplicates in the queue).
+  fs.mkdirSync(path.join(T, 'logs', 'queue'), { recursive: true });
+  fs.writeFileSync(path.join(T, 'logs', 'queue', 'P.json'), JSON.stringify([{ id: 'q-1', prompt: 'livrer sans eux', pipelineResume: RUN, pauseReply: true, enqueuedAt: new Date(at + 20_000).toISOString() }]));
+  const waiting = unappliedChefAnswers({ logsDir: path.join(T, 'logs'), conductor: 'chef', chefEvents: chefLog, now: at + 125_000 });
+  ok(waiting.length === 1 && waiting[0].queued?.id === 'q-1', 'la réponse déjà en file (pipelineResume = l’exécution) est relevée comme « en file », avec son entrée', waiting);
+  const qtext = waiting[0] ? unappliedText(waiting[0], { orchestratorRoot: ROOT }) : '';
+  ok(/en file/.test(qtext) && !/Réponds de nouveau/.test(qtext), 'le signalement dit que la réponse attend en file et ne demande pas de répondre de nouveau', qtext.slice(0, 400));
+  fs.rmSync(path.join(T, 'logs', 'queue', 'P.json'), { force: true });
 }
 
 section('5. « livrer sans eux <run> » envoyé par le chef : la pause citée, malgré une Discussion plus récente');

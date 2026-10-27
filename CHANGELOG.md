@@ -11,6 +11,11 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.152.1] - 2026-10-28
+
+### Fixed
+- (server) Chef-answer relay: an answer already applied with `--pipeline-resume` that waits in the musician's queue (pause replies go first, 0.148.0) is now reported as "applied, queued" instead of "not applied". The message no longer carries the relay marker nor asks the chef to answer again, so it no longer creates duplicates in the queue. The alert has its own key (`run:n:queued:id`): if the entry disappears without the pause being settled, the pause is reported again as not applied, never lost silently.
+
 ## [0.152.0] - 2026-10-27
 
 ### Fixed

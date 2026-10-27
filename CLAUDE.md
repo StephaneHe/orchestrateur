@@ -3513,6 +3513,12 @@ du chef à l'utilisateur relayées au musicien → Discussions parasites).
   `--pipeline-resume`), une fois par pause, et
   `system/pipeline_chef_answer_unapplied` dans le journal du musicien. Jamais
   à l'utilisateur.
+  **Réponse en file** (défaut vu les 26-27/10) : si l'entrée `pipelineResume` =
+  l'exécution attend dans `logs/queue/<projet>.json` (`queued`), le message dit
+  « appliquée, en file », sans marqueur `NEEDS_CHEF_INPUT_FROM` ni « Réponds de
+  nouveau » (plus de doublons en file) ; clé d'alerte propre (`run:n:queued:id`) :
+  si l'entrée disparaît sans que la pause soit tranchée, la pause est de nouveau
+  signalée comme non appliquée.
 - Redémarrage nécessaire (relais, balayage) ; `dispatch.mjs` est actif tout de
   suite. Recette : `_test_chef_pause_relay.mjs`.
 

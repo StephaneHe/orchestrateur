@@ -153,5 +153,26 @@ if (fs.existsSync(cfgPath)) {
 ok(reg.split('\n').some(l => /anti-boucle/i.test(l) && l.includes('`suite:_test_idle_regression.mjs`')),
   'registre des exigences : la ligne anti-boucle des corrections a posteriori renvoie à _test_idle_regression.mjs');
 
+// 2026-10-27 chef-answer relay (defect a): an answer already applied by --pipeline-resume that waits in the
+// musician's queue must be reported as queued, not re-asked. Asserted here because this suite always runs,
+// even in a capped targeted pass (a modified suite alone is dropped as "transitive").
+{
+  const { unappliedChefAnswers, unappliedText } = await import('../scripts/chef-relay.mjs');
+  const L = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'orch-ureq-relay-')), 'logs');
+  const RUN = 'p-20261027T100000-abc123';
+  fs.mkdirSync(path.join(L, 'runs', RUN), { recursive: true });
+  fs.mkdirSync(path.join(L, 'queue'), { recursive: true });
+  fs.writeFileSync(path.join(L, 'runs', RUN, 'run.json'), JSON.stringify({ project: 'P', status: 'paused', chefPause: { n: 3, status: 'pending', at: '2026-10-27T10:00:00Z', options: ['livrer sans eux'] } }));
+  fs.writeFileSync(path.join(L, 'queue', 'P.json'), JSON.stringify([{ id: 'q-1', prompt: 'livrer sans eux', pipelineResume: RUN, pauseReply: true }]));
+  const evs = [
+    { type: 'user_prompt', orch_turn: 'c-1', text: `[NEEDS_CHEF_INPUT_FROM:P] [${RUN} · pause 3] P — pause`, timestamp: '2026-10-27T10:00:10Z' },
+    { type: 'result', orch_turn: 'c-1', result: '[ANSWER] livrer sans eux — raison', timestamp: '2026-10-27T10:00:20Z' },
+  ];
+  const u = unappliedChefAnswers({ logsDir: L, conductor: 'chef', chefEvents: evs, now: Date.parse('2026-10-27T10:03:00Z') });
+  const text = u[0] ? unappliedText(u[0]) : '';
+  ok(u.length === 1 && u[0].queued?.id === 'q-1' && /en file/.test(text) && !/Réponds de nouveau/.test(text),
+    'réponse du chef en file (pipelineResume = l’exécution) : relevée « en file », sans redemander de répondre (chef-relay.mjs)');
+}
+
 console.log(`\n${pass} ok, ${fail} KO`);
 process.exit(fail ? 1 : 0);

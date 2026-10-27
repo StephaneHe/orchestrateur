@@ -4455,7 +4455,9 @@ function maybeRelayChefAnswer(parsedEv) {
 
 // 0.137.0: a chef answer to a process pause that is still not applied after
 // 2 min is told to the chef (never to the user), once per pause, as a new
-// question it can answer — the relay then names that pause again.
+// question it can answer — the relay then names that pause again. An answer
+// that already waits in the musician's queue (u.queued) is told as information
+// only: no NEEDS_CHEF_INPUT_FROM marker, nothing to answer, so no duplicate.
 const CHEF_ANSWER_WATCH_MS = Number(process.env.ORCH_CHEF_ANSWER_WATCH_MS) || 30_000;
 const CHEF_ANSWER_GRACE_MS = Number(process.env.ORCH_CHEF_ANSWER_GRACE_MS) || 120_000;
 const alertedChefAnswers = new Set();
@@ -4463,18 +4465,23 @@ function sweepUnappliedChefAnswers() {
   let list = [];
   try { list = unappliedChefAnswers({ logsDir: LOGS_DIR, conductor: conductorName(), graceMs: CHEF_ANSWER_GRACE_MS }); } catch (e) { debugLog(`[chef-answer-watch] ${e.message}`); return; }
   for (const u of list) {
-    const key = `${u.run}:${u.n}`;
+    // A queued answer has its own key: if its entry vanishes without the pause being
+    // decided, the plain key is still free and the pause is reported as unapplied.
+    const key = u.queued ? `${u.run}:${u.n}:queued:${u.queued.id}` : `${u.run}:${u.n}`;
     if (alertedChefAnswers.has(key) || !config.projects.find(p => p.name === u.project)) continue;
     alertedChefAnswers.add(key);
     const text = unappliedText(u, { orchestratorRoot: __dirname });
+    const min = Math.round(u.waitingMs / 60000);
     appendLogEvent(u.project, { type: 'system', subtype: 'pipeline_chef_answer_unapplied', pipeline: { run: u.run }, n: u.n, answer: u.answer, answeredAt: u.answeredAt,
-      text: `⚠ réponse du chef à la pause n° ${u.n} non appliquée après ${Math.round(u.waitingMs / 60000)} min — signalée au chef`, timestamp: new Date().toISOString() });
+      queued: u.queued || undefined,
+      text: u.queued ? `⏳ réponse du chef à la pause n° ${u.n} appliquée, en file depuis ${min} min (entrée ${u.queued.id}) — chef informé`
+        : `⚠ réponse du chef à la pause n° ${u.n} non appliquée après ${min} min — signalée au chef`, timestamp: new Date().toISOString() });
     poolEnqueue({
       obsId: observeEntry({ entry: 'relais-vers-chef', project: conductorName(), text, caller: u.project }),
       class: 'decision', text,
-      displayText: `réponse non appliquée — pause n° ${u.n} de ${u.project} (${u.run})`,
+      displayText: u.queued ? `réponse en file — pause n° ${u.n} de ${u.project} (${u.run})` : `réponse non appliquée — pause n° ${u.n} de ${u.project} (${u.run})`,
     });
-    const m = `[chef-answer-watch] ${u.project} ${u.run} pause ${u.n} : réponse du chef non appliquée depuis ${Math.round(u.waitingMs / 1000)} s — signalée au chef`;
+    const m = `[chef-answer-watch] ${u.project} ${u.run} pause ${u.n} : réponse du chef ${u.queued ? 'en file' : 'non appliquée'} depuis ${Math.round(u.waitingMs / 1000)} s — signalée au chef`;
     console.log(m); debugLog(m);
   }
 }
