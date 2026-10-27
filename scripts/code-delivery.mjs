@@ -234,9 +234,11 @@ const subjectOf = (changelog) => (String(changelog).split('\n').map(l => l.repla
  *   prebump: {from, to} — the version was already bumped by an item of the run
  *   versionBase: commit the run's version is measured from (prebump only)
  *   lane: {fragment} — in a lane, a changelog.d fragment instead (0.102.0)
+ *   only: the run's own files; the commit carries just these plus the CHANGELOG,
+ *     register, version files and version mentions (null = everything changed)
  * → { ok, version, commit, noCommit?, files } | { ok: false, why }
  */
-export function deliverRelease(cwd, cfg, text, { prebump = null, versionBase = null, lane = null, date = new Date().toISOString().slice(0, 10), run = '', gateCheck = null } = {}) {
+export function deliverRelease(cwd, cfg, text, { prebump = null, versionBase = null, lane = null, date = new Date().toISOString().slice(0, 10), run = '', gateCheck = null, only = null } = {}) {
   const cl = path.join(cwd, cfg.changelog || 'CHANGELOG.md');
   const req = cfg.requirements ? path.join(cwd, cfg.requirements) : null;
   let version = null, from = null;
@@ -282,12 +284,16 @@ export function deliverRelease(cwd, cfg, text, { prebump = null, versionBase = n
     ? `docs(changelog): fragment for ${path.basename(lane.fragment, '.md')}${subject ? ` — ${subject}` : ''}`
     : `chore(release): ${version ? `v${version}` : 'delivery'}${subject ? ` — ${subject}` : ''}`;
   const commitMessage = `${message}\n\nDelivered by the orchestrator (pipeline run ${run}): version, CHANGELOG and commit written by the program.`;
-  let c = commitWork(cwd, commitMessage);
+  // `only` (the run's own files) gains the files the release itself wrote.
+  const paths = Array.isArray(only)
+    ? [...new Set([...only, ...[cfg.changelog || 'CHANGELOG.md', ...(cfg.requirements ? [cfg.requirements] : []), ...(cfg.versionFiles || []), ...mentions, ...(lane ? [lane.fragment] : [])].filter(f => fs.existsSync(path.join(cwd, f)))])]
+    : null;
+  let c = commitWork(cwd, commitMessage, paths);
   // The pre-commit delivery gate wants a green report for the exact release tree,
   // which only exists once the project's checks ran on it: run them, retry once.
   if (!c.ok && gateCheck && /delivery-gate/.test(String(c.err))) {
     try { gateCheck(cwd); } catch {}
-    c = commitWork(cwd, commitMessage);
+    c = commitWork(cwd, commitMessage, paths);
   }
   if (!c.ok) {
     // Keep the hook's whole report and the files left uncommitted: a bare first line

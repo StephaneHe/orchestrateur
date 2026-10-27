@@ -820,6 +820,7 @@
         "_test_generic_document.mjs",
         "_test_generic_modes.mjs",
         "_test_exploitation.mjs",
+        "_test_exploitation_scope.mjs",
         "_test_design.mjs",
         "_test_pipeline_corpus.mjs",
         "_test_pipeline_speed.mjs"

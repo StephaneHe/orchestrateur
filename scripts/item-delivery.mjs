@@ -42,10 +42,12 @@ function identity(cwd) {
 
 /**
  * Commits everything in the work tree except local-only paths.
+ * `only` (array): stage just these paths instead; an empty list stages nothing.
  * → {ok:true, commit} | {ok:true, empty:true} | {ok:false, err}
  */
-export function commitWork(cwd, message) {
-  const add = git(cwd, ['add', '-A']);
+export function commitWork(cwd, message, only = null) {
+  // `only`: stage just these paths (a delivery must not carry another run's files).
+  const add = Array.isArray(only) ? (only.length ? git(cwd, ['add', '-A', '--', ...only]) : { ok: true }) : git(cwd, ['add', '-A']);
   if (!add.ok) return { ok: false, err: add.err || 'git add a échoué' };
   // One call per path: a pathspec unknown to the index makes the whole call fail.
   for (const p of LOCAL_ONLY) git(cwd, ['restore', '-q', '--staged', '--', p]);

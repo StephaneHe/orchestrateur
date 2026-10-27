@@ -1735,11 +1735,14 @@ const CODE_STEPS = {
   async 'exploitation-livrer'({ ctx, state, run, writeEvent }) {
     const p = Exploit.parseExploitation(readArtefact(ctx, Exploit.EXPLOIT_ARTEFACT) || '');
     const inGit = isGitWorkTree(ctx.cwd);
-    const changed = inGit ? git(ctx.cwd, ['status', '--porcelain']).out.split('\n').filter(l => l && !isLocalOnly(l.slice(3))).map(l => l.slice(3).replace(/^"|"$/g, '')) : [];
+    const dirty = inGit ? git(ctx.cwd, ['status', '--porcelain']).out.split('\n').filter(l => l && !isLocalOnly(l.slice(3))).map(l => l.slice(3).replace(/^"|"$/g, '')) : [];
+    // Only the files this run's turn changed (state.exploitChanged); others stay uncommitted.
+    const own = Array.isArray(state.exploitChanged) ? new Set(state.exploitChanged.map(f => String(f).replace(/\\/g, '/'))) : null;
+    const changed = own ? dirty.filter(f => own.has(f.replace(/\\/g, '/'))) : dirty;
     let line = inGit ? 'Aucun fichier du dépôt modifié : ni version ni commit.' : 'Dossier hors git : rien à commiter.';
     if (changed.length) {
       // The CHANGELOG text is the model's; no requirement line (an operations task is not a feature).
-      const d = deliverRelease(ctx.cwd, { ...ctx.cfg, requirements: null }, { bump: 'patch', changelog: p.changelog || '### Changed\n\n- exploitation', requirement: '', summary: p.report || '' }, { lane: ctx.lane, run });
+      const d = deliverRelease(ctx.cwd, { ...ctx.cfg, requirements: null }, { bump: 'patch', changelog: p.changelog || '### Changed\n\n- exploitation', requirement: '', summary: p.report || '' }, { lane: ctx.lane, run, only: own ? changed : null });
       if (!d.ok) return { ok: false, why: `livraison par le programme : ${d.why} — les fichiers modifiés restent dans le projet, non commités (${changed.slice(0, 6).join(', ')})` };
       state.exploitDelivery = { version: d.version || null, from: d.from || null, commit: d.commit || null };
       line = d.noCommit ? 'Rien de nouveau à commiter.' : `Commit ${String(d.commit || '').slice(0, 12)} fait par le programme (aucun model)${d.version ? ` : version ${d.from} → ${d.version} (patch)` : ''}, entrée du CHANGELOG${d.mentions?.length ? `, mentions de version (${d.mentions.join(', ')})` : ''} ; fichiers : ${changed.slice(0, 8).map(f => `\`${f}\``).join(', ')}. Pas de push.`;
@@ -2352,7 +2355,8 @@ function checkExploitation(ctx, step, before, after) {
   if (unauth.length && !quoteOk && !byAnswer) return fail(`garde-fou : opération irréversible (${unauth[0].label}) lancée sans les mots exacts de l’utilisateur ni sa réponse « autoriser » — ${unauth[0].cmd}`, { noRetry: true, guardrail: true });
   if (p.bascule) return { ok: true, changed, bascule: { why: p.bascule, by: 'model' } };
   if (p.authRequired.length && !byAnswer) return { ok: true, changed, authorize: p.authRequired };
-  const code = Exploit.behaviourFiles(changed, ctx.cfg);
+  const versionOnly = (f) => isGitWorkTree(ctx.cwd) && Exploit.isVersionOnlyDiff(git(ctx.cwd, ['diff', '-U0', 'HEAD', '--', f]).out);
+  const code = Exploit.behaviourFiles(changed, ctx.cfg, { versionOnly });
   if (code.length) return { ok: true, changed, bascule: { why: `fichier(s) de code ou de test modifié(s) : ${code.slice(0, 6).join(', ')} — un changement de comportement passe par le Développement`, by: 'code', files: code } };
   // A red suite means the task touched behaviour: the Development takes it.
   if (changed.length && ctx.cfg.testCommand && !ctx.suiteRedAtStart) {
@@ -4633,6 +4637,8 @@ export async function runPipeline(o) {
     }
     // Exploitation (0.141.0): handed over to the Development, or paused for the user's authorization.
     if (last.crit?.bascule) return basculeToDev(step, last);
+    // Files of THIS run only: the delivery must not carry another run's work left in the same copy.
+    if (step.checks?.exploitation && last.crit?.changed) { state.exploitChanged = last.crit.changed; saveState(); }
     if (last.crit?.authorize?.length) {
       if (last.before && last.after) restoreFiles(cwd, last.before, last.after, null);
       state.pendingAuth = last.crit.authorize.map(x => String(x).slice(0, 300));
