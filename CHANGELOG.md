@@ -11,6 +11,15 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.149.3] - 2026-10-27
+
+### Added
+- (server) After-the-fact full runs: anti-loop for automatic fixes. A red full run that follows an automatic fix no longer triggers a second automatic fix. The project is marked "to examine" (`toExamine`, visible in `idle-regression.mjs status`), an identical or different failure is told apart (`failureSignature`), the chef is alerted once with the failing tests, then the sweep waits. A new attempt happens only through `node scripts/idle-regression.mjs fix <project> --now` or after a new commit.
+
+### Changed
+- (server) The hold is stricter than "same suite": a DIFFERENT failure right after an automatic fix is also held. `lastFix` is cleared only by a green full run (not by a green clean-check), so a later red run after a clean-copy fix is held "to examine" too.
+- `CLAUDE.md` (section 0.142.0) documents the anti-loop rule; `holdAfterAutoFix` comment clarified.
+
 ## [0.149.2] - 2026-10-26
 
 Incident reported by the chef on the production server (7777, v0.148.0): the watchdog restarted a server that was only frozen, killing every running turn (restarts #4 to #8 on 2026-10-26). Run p-20261026T161242-466928. Partial delivery: only the watchdog is fixed, the periodic task that blocks the event loop is NOT yet fixed.

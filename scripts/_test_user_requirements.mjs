@@ -148,5 +148,10 @@ if (fs.existsSync(cfgPath)) {
   ok(leaked.length === 0, `aucun nom de projet privé dans le registre${leaked.length ? ' — ' + leaked.join(', ') : ''}`);
 }
 
+// 2026-10-26 anti-loop requirement (idle-regression.mjs): the row must exist and point at the suite that
+// replays the Ayor sequence. Asserted here because this suite always runs, even in a capped targeted pass.
+ok(reg.split('\n').some(l => /anti-boucle/i.test(l) && l.includes('`suite:_test_idle_regression.mjs`')),
+  'registre des exigences : la ligne anti-boucle des corrections a posteriori renvoie à _test_idle_regression.mjs');
+
 console.log(`\n${pass} ok, ${fail} KO`);
 process.exit(fail ? 1 : 0);

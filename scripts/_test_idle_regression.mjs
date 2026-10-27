@@ -338,5 +338,66 @@ section('7. Jamais dans une prod ; essais du programme hors des alertes « non-r
   ok(reg.includes(IR.USER_DECISION) && reg.includes(IR.USER_CONTEXT), 'registre des exigences : les deux citations de l’utilisateur');
 }
 
+// ---------------------------------------------------------------------------
+section('8. Anti-boucle : pas de 2ᵉ correction automatique à la suite d’une correction (séquence Ayor)');
+{
+  const L = tmp('orch-idle-loop-');
+  let now = Date.parse('2026-10-24T03:00:00Z');
+  let head = 'a'.repeat(40);
+  let ko = ['suite:_test_x.mjs'];
+  const failures = () => ({ nature: 'tests', tests: ko.map(k => ({ name: k })) });
+  const launched = [], fixes = [], alerts = [];
+  const deps = () => ({
+    logsDir: L, now, bootAt: 0,
+    settings: () => IR.cleanSettings({ enabled: true, since: '2026-10-01T00:00:00Z', idleMin: 30 }),
+    lastActivityAt: () => 0,
+    targets: () => [{ name: 'Ayor', path: L, plan: { full: ['run'], bisect: null, inPlace: false } }],
+    busy: () => false, head: () => head, revList: () => [], subject: () => null,
+    launch: (step) => { launched.push(step); return { pid: 4000 + launched.length }; },
+    alive: () => true, kill: () => {},
+    dispatchFix: (name, text) => fixes.push({ name, text }), alert: (a) => alerts.push(...a), chefAlertsOn: () => false,
+  });
+  const finishRed = () => {
+    const step = launched[launched.length - 1];
+    fs.writeFileSync(step.resultFile, JSON.stringify({ code: 1, ko, failures: failures(), endedAt: new Date(now).toISOString() }));
+    now += MIN; IR.sweep(deps());
+  };
+  const P = () => IR.readState(L).projects.Ayor;
+
+  // c895433: red, no green known → culprit search over → fix dispatched once.
+  now += 31 * MIN; IR.sweep(deps()); finishRed();
+  now += MIN; IR.sweep(deps());
+  ok(fixes.length === 1 && P().red.fix?.by === 'inactivité', 'rouge initial : UNE correction automatique lancée');
+
+  // 1ad1874: the fix was delivered, the next full run is red again with the SAME failure.
+  head = 'b'.repeat(40);
+  now += 31 * MIN; IR.sweep(deps()); finishRed();
+  now += 31 * MIN; IR.sweep(deps());
+  ok(fixes.length === 1, 'rouge après la correction : AUCUNE 2ᵉ correction automatique à la suite');
+  const ex = P().red?.toExamine;
+  ok(ex && ex.sameFailure === true, 'projet marqué « à examiner », échec identique relevé');
+  ok(alerts.length === 2 && alerts[1].red.toExamine?.sameFailure === true && alerts[1].red.failures, 'chef alerté avec la sortie utile (tests en échec) et le marquage « à examiner »');
+  ok(/à examiner/.test(IR.statusLines(L, deps().settings()).join('\n')), 'status : « à examiner » affiché');
+  now += 5 * 60 * MIN; IR.sweep(deps());
+  ok(fixes.length === 1, 'les balayages suivants ne relancent rien tout seuls');
+
+  // Only on request.
+  const req = IR.markFixRequested(L, 'Ayor', { now });
+  ok(req.ok === true && /Ayor/.test(req.text || ''), 'fix Ayor --now : accepté sur un projet « à examiner »');
+
+  // A new commit after the examination, red again: an automatic correction is allowed again.
+  head = 'd'.repeat(40); ko = ['suite:_test_y.mjs'];
+  now += 31 * MIN; IR.sweep(deps()); finishRed(); now += MIN; IR.sweep(deps());
+  ok(fixes.length === 2, 'nouveau commit après l’examen, de nouveau rouge : une correction automatique est permise');
+
+  // Different failure right after an automatic fix: still held, told apart.
+  head = 'e'.repeat(40); ko = ['suite:_test_z.mjs'];
+  now += 31 * MIN; IR.sweep(deps()); finishRed(); now += MIN; IR.sweep(deps());
+  ok(fixes.length === 2 && P().red.toExamine?.sameFailure === false, 'échec différent après une correction : retenu « à examiner », distingué de l’échec identique');
+  fs.rmSync(L, { recursive: true, force: true });
+  const reg = fs.readFileSync(path.join(ROOT, 'docs', 'USER_REQUIREMENTS.md'), 'utf8');
+  ok(reg.split('\n').some(l => /anti-boucle/i.test(l) && /à examiner/.test(l) && l.includes('Les non régressions et corrections ne sont lancées que pendant les heures d')),'registre des exigences : ligne anti-boucle citant « Les non régressions et corrections ne sont lancées que pendant les heures d’inactivité »');
+}
+
 console.log(`\n${pass} OK, ${fail} KO`);
 process.exit(fail ? 1 : 0);

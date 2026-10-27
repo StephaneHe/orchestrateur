@@ -276,12 +276,31 @@ export function fixText(name, red) {
   ].filter(Boolean).join('\n');
 }
 
+/** What a red run fails on, comparable between runs (failed test names, else the KO ids). */
+export function failureSignature(r) {
+  const names = (r?.failures?.tests || []).map(t => (typeof t === 'string' ? t : t?.name || '')).filter(Boolean);
+  return [...new Set(names.length ? names : (r?.ko || []))].sort().join('\n');
+}
+/**
+ * Anti-loop: a red run right after an AUTOMATIC fix is not fixed again by itself.
+ * Marks it toExamine (same or different failure) and disarms the automatic flag,
+ * so only `fix --now` or a later commit lets the sweep fix automatically again.
+ * `lastFix` is cleared only by a GREEN full run (not by a green clean-check), so a later red
+ * run after a clean-copy fix is held toExamine too.
+ */
+function holdAfterAutoFix(p, r) {
+  const lf = p.lastFix;
+  if (!lf?.auto || lf.commit === r.commit) return;
+  r.toExamine = { sameFailure: lf.sig === failureSignature(r), fixedCommit: lf.commit, fixAt: lf.at, at: r.at };
+  p.lastFix = { ...lf, auto: false };
+}
+
 /** Alerts for chef-alerts.mjs (kind `posteriori`): one per red run, once its culprit search is over. */
 export function posterioriAlert(name, r) {
   return { kind: 'posteriori', key: `posteriori:${name}:${r.commit}`, project: name, at: r.at,
     red: { commit: r.commit, good: r.good || null, ko: (r.ko || []).slice(0, 8), culprit: r.bisect?.culprit || null, subject: r.bisect?.subject || null,
       why: r.bisect?.why || null, report: r.report || null, fix: r.fix || null,
-      failures: r.failures || null, ignored: (r.ignored || []).slice(0, 5), cleanCopy: !!r.cleanCopy, testCommand: r.testCommand || null } };
+      failures: r.failures || null, ignored: (r.ignored || []).slice(0, 5), cleanCopy: !!r.cleanCopy, testCommand: r.testCommand || null, toExamine: r.toExamine || null } };
 }
 export function posterioriAlerts({ logsDir, since }) {
   const st = readState(logsDir);
@@ -368,9 +387,10 @@ export function sweep(deps) {
     const p = proj(st, t.name);
     if (deps.busy(t.name)) continue;
     const r = p.red;
-    if (r && r.searchDone && !r.fix) {
+    if (r && r.searchDone && !r.fix && !r.toExamine) {
       deps.dispatchFix(t.name, fixText(t.name, r));
       r.fix = { at: isoNow(now), by: 'inactivité' };
+      p.lastFix = { at: r.fix.at, commit: r.commit, sig: failureSignature(r), auto: true };
       act({ event: 'fix-dispatched', project: t.name, commit: r.commit });
       saveState(logsDir, st); return out;
     }
@@ -451,6 +471,7 @@ function applyResult(deps, st, a, res, act) {
     }
     p.red = { commit: a.commit, at, ko: res.ko || [], failures: res.failures || null, ignored: res.ignored || [], report: null, log: a.logFile, good: null, code: res.code,
       cleanCopy: true, testCommand: a.testCommand, searchDone: true, bisect: { culprit: null, why: 'commande de test rouge dans une copie propre' } };
+    holdAfterAutoFix(p, p.red);
     act({ event: 'red', project: a.project, commit: a.commit, ko: p.red.ko.slice(0, 8), why: 'copie propre' });
     raiseRed(deps, a.project, p.red, act);
     return;
@@ -459,7 +480,7 @@ function applyResult(deps, st, a, res, act) {
     if (!red) {
       p.lastGreen = { commit: a.commit, at: res.endedAt || isoNow(deps.now), report: res.report || null };
       if (p.red) act({ event: 'repaired', project: a.project, commit: a.commit, was: p.red.commit });
-      p.red = null;
+      p.red = null; p.lastFix = null;
       act({ event: 'green', project: a.project, commit: a.commit });
       return;
     }
@@ -473,6 +494,7 @@ function applyResult(deps, st, a, res, act) {
       if (!b) { r.searchDone = true; r.bisect = { culprit: null, why: 'aucun commit entre la dernière verte et la rouge' }; }
       else { r.bisect = b; r.searchDone = b.done; if (b.done) r.bisect.subject = deps.subject(a.path, b.culprit); }
     }
+    holdAfterAutoFix(p, r);
     p.red = r;
     act({ event: 'red', project: a.project, commit: a.commit, ko: r.ko.slice(0, 8) });
     if (r.searchDone) { act({ event: 'culprit', project: a.project, commit: r.bisect?.culprit || null, why: r.bisect?.why || null }); raiseRed(deps, a.project, r, act); }
@@ -530,7 +552,7 @@ export function statusLines(logsDir, settings) {
   if (st.active) L.push(`en cours : ${st.active.kind} de ${st.active.project} sur ${short(st.active.commit)} (processus ${st.active.pid}, depuis ${st.active.startedAt})`);
   for (const [name, p] of Object.entries(st.projects)) {
     L.push(`${name} : dernière complète verte ${p.lastGreen ? `${short(p.lastGreen.commit)} (${p.lastGreen.at})` : 'aucune'}${p.interrupted ? ` · ${p.interrupted} arrêt(s)` : ''}`);
-    if (p.red) L.push(`   ROUGE sur ${short(p.red.commit)} — KO : ${(p.red.ko || []).slice(0, 6).join(' ; ') || '?'} — ${p.red.searchDone ? `fautif : ${p.red.bisect?.culprit ? short(p.red.bisect.culprit) : `non isolé (${p.red.bisect?.why || '?'})`}` : 'recherche du commit fautif en cours'} — correction : ${p.red.fix ? `lancée ${p.red.fix.at}` : 'à lancer pendant l’inactivité'}`);
+    if (p.red) L.push(`   ROUGE sur ${short(p.red.commit)} — KO : ${(p.red.ko || []).slice(0, 6).join(' ; ') || '?'} — ${p.red.searchDone ? `fautif : ${p.red.bisect?.culprit ? short(p.red.bisect.culprit) : `non isolé (${p.red.bisect?.why || '?'})`}` : 'recherche du commit fautif en cours'} — correction : ${p.red.fix ? `lancée ${p.red.fix.at}` : p.red.toExamine ? `projet à examiner (${p.red.toExamine.sameFailure ? 'échec identique' : 'échec différent'} après la correction automatique sur ${short(p.red.toExamine.fixedCommit)}) — pas de nouvelle correction automatique ; fix ${name} --now, ou un nouveau commit` : 'à lancer pendant l’inactivité'}`);
   }
   return L;
 }
@@ -542,6 +564,7 @@ export function markFixRequested(logsDir, name, { now = Date.now() } = {}) {
   if (!p?.red) return { ok: false, why: `aucune non-régression a posteriori rouge pour ${name}` };
   if (p.red.fix) return { ok: false, why: `correction déjà lancée le ${p.red.fix.at}` };
   p.red.fix = { at: isoNow(now), by: 'utilisateur (--now)' };
+  p.lastFix = { at: p.red.fix.at, commit: p.red.commit, sig: failureSignature(p.red), auto: false };
   saveState(logsDir, st);
   journal(logsDir, now, { event: 'fix-dispatched', project: name, commit: p.red.commit, by: 'utilisateur' });
   return { ok: true, text: fixText(name, p.red), red: p.red };

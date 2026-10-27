@@ -850,6 +850,16 @@ d'autoriser un lancement de non régression »).
   pendant l'inactivité, une fois ; tout de suite seulement à la demande :
   `node scripts/idle-regression.mjs fix <projet> --now`. Les essais du
   programme ne sont pas signalés comme « non-régression KO ».
+- **Anti-boucle** (0.149.3) : une complète rouge qui suit une correction
+  automatique ne déclenche PAS une 2ᵉ correction automatique. Le projet passe
+  « à examiner » (`toExamine`, visible dans `status`), l'échec identique ou
+  différent est distingué (`failureSignature`), le chef est alerté une seule
+  fois avec les tests en échec, puis on attend : relance seulement par
+  `idle-regression.mjs fix <projet> --now` ou après un nouveau commit. Plus
+  strict que la demande (« même suite ») : un échec DIFFÉRENT juste après une
+  correction automatique est aussi retenu. `lastFix` n'est effacé que par une
+  complète verte (pas par un clean-check vert) : une rouge ultérieure après une
+  correction de copie propre est donc elle aussi retenue « à examiner ».
 - État : `logs/idle-regression.json` (ce module seul l'écrit), journal
   `logs/idle-regression.ndjson`, sorties `logs/idle-regression/<projet>/`.
   Lecture : `node scripts/idle-regression.mjs status`. Redémarrage nécessaire
