@@ -11,6 +11,17 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.152.0] - 2026-10-27
+
+### Fixed
+
+- (server) Exploitation lane: a version-only change in a code file (e.g. `__version__ = "2.13.0"` in `bookhaven.py`) is no longer treated as a change of behaviour. `isVersionOnlyDiff` recognises a diff made only of plain version-literal assignments, so the release files are kept and delivered instead of being reverted and the request re-run in the Development.
+- (server) Exploitation delivery only commits the files changed by its own turn (`state.exploitChanged`), plus the CHANGELOG, register, version files and version mentions. Uncommitted work of another run paused in the same copy is no longer swept into the commit (psyProfile, commit 3ab9bd8). `commitWork` and `deliverRelease` gain an optional `only` list; without it the behaviour is unchanged.
+
+### Changed
+
+- (server) `behaviourFiles` accepts a `versionOnly` predicate. `isVersionOnlyDiff` is still permissive for a line that mentions "version" with an X.Y.Z literal; a tighter check is left for a separate small task.
+
 ## [0.151.1] - 2026-10-27
 
 ### Fixed
