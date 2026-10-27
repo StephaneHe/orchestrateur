@@ -66,6 +66,8 @@ import { detectOverride } from './src/message_router.mjs';
 import { scanProject as scanFleetMember, isPhantomResult, awaitedWake, isQuestionResolved, isAcknowledged, isConductorStop, stopInfo, createJournal } from './scripts/fleet-status-core.mjs';
 import { readRuns as readRegressionRuns, progressText as regressionProgressText, reportPath as regressionReportPath } from './scripts/regression-live.mjs';
 import { laneDir as regressionLaneDir, HARD_CAP as LANES_HARD_CAP } from './scripts/lanes.mjs';
+import { createLoopMonitor } from './scripts/loop-lag.mjs';
+import { rotateIfBig } from './scripts/log-rotate.mjs';
 import { queueHoldPolicy, holdReportDue, holdReport } from './scripts/queue-hold.mjs';
 import { chefAnswerRelay, unappliedChefAnswers, unappliedText } from './scripts/chef-relay.mjs';
 import * as ChefAlerts from './scripts/chef-alerts.mjs';
@@ -159,8 +161,13 @@ fs.mkdirSync(SECRETS_DIR,     { recursive: true });
 // SYNCHRONOUSLY to logs/server-crash.log so even a crash mid-write leaves
 // a usable trace, and is also mirrored to stderr/server.out.
 
+// 0.150.0: the crash log is rotated by size (5 MiB, 3 generations), checked at
+// most every 30 s so a burst of lines costs no extra stat.
+let _crashRotateAt = 0;
 function crashLog(line) {
   const stamped = `[${new Date().toISOString()}] ${line}\n`;
+  const _t = Date.now();
+  if (_t - _crashRotateAt >= 30_000) { _crashRotateAt = _t; rotateIfBig(CRASH_LOG, { maxBytes: 5 * 1024 * 1024, keep: 3 }); }
   try { fs.appendFileSync(CRASH_LOG, stamped); } catch {}
   try { process.stderr.write(stamped); } catch {}
 }
@@ -175,6 +182,15 @@ function debugLog(line) {
   try { fs.appendFileSync(DEBUG_LOG, stamped); } catch {}
 }
 debugLog(`==== boot pid=${process.pid} ====`);
+
+// Event-loop latency (0.150.0, incident « serveur figé »): a block of 2 s or more
+// is logged with its duration and its origin — the sweeps wrapped in
+// loopMon.tracked() and the routes that started meanwhile.
+const loopMon = createLoopMonitor({
+  thresholdMs: Number(process.env.ORCH_LOOP_LAG_MS) || 2000,
+  log: (line) => { debugLog(line); crashLog(line); },
+});
+loopMon.start();
 
 crashLog(`==== boot pid=${process.pid} node=${process.version} platform=${process.platform} ====`);
 
@@ -828,7 +844,7 @@ function sweepGaps(notify) {
   } catch (e) { debugLog(`[pipeline-gap] balayage : ${e.message}`); }
 }
 sweepGaps(false);   // au démarrage : ce qui est déjà connu n'est pas re-signalé
-setInterval(() => sweepGaps(true), 60_000).unref?.();
+setInterval(() => loopMon.tracked('sweepGaps', () => sweepGaps(true)), 60_000).unref?.();
 function clientOf(req) {
   return /okhttp|dalvik|android/i.test(req.get('user-agent') || '') ? 'android' : 'dashboard';
 }
@@ -1038,6 +1054,7 @@ function sweepQueues() {
     drainQueue(name, 'sweep');
   }
 }
+sweepQueues = loopMon.wrap('sweepQueues', sweepQueues);
 setInterval(sweepQueues, QUEUE_SWEEP_MS).unref();
 
 // ---------- Queue held by a process that outlived its turn (0.82.0) ---------
@@ -1084,6 +1101,7 @@ function sweepQueueHolds() {
     console.log(m); debugLog(m);
   }
 }
+sweepQueueHolds = loopMon.wrap('sweepQueueHolds', sweepQueueHolds);
 setInterval(sweepQueueHolds, QUEUE_HOLD_SWEEP_MS).unref();
 
 // ---------- Tâches du Routage en attente : filet de sécurité (0.58.0) ---------
@@ -1106,6 +1124,7 @@ function sweepRoutagePending() {
     debugLog(`[routage-pending] signalé : ${stale.map(t => `${pendingLabel(t).text} ${t.projet}`).join(', ')}`);
   } catch (e) { debugLog(`[routage-pending] balayage : ${e.message}`); }
 }
+sweepRoutagePending = loopMon.wrap('sweepRoutagePending', sweepRoutagePending);
 setInterval(sweepRoutagePending, 60_000).unref();
 
 // Pipeline runs held by an infrastructure failure (Routage v3 phase 0 a):
@@ -1115,9 +1134,10 @@ async function sweepInfraRetries() {
   try {
     const ip = await import('./scripts/infra-retry.mjs');
     if (!ip.readRetries(LOGS_DIR).length) return;
-    for (const l of ip.sweepRetries({ root: __dirname, logsDir: LOGS_DIR }).launched) { const m = `[infra-retry] ${l.run} (${l.project}) relancée — ${l.why}`; console.log(m); debugLog(m); }
+    for (const l of loopMon.tracked('sweepInfraRetries/sweep', () => ip.sweepRetries({ root: __dirname, logsDir: LOGS_DIR })).launched) { const m = `[infra-retry] ${l.run} (${l.project}) relancée — ${l.why}`; console.log(m); debugLog(m); }
   } catch (e) { debugLog(`[infra-retry] balayage : ${e.message}`); }
 }
+sweepInfraRetries = loopMon.wrap('sweepInfraRetries', sweepInfraRetries);
 setInterval(sweepInfraRetries, 60_000).unref();
 
 // Requests registry (Routage v3, phase 1, scripts/requests.mjs): chef turns
@@ -1127,12 +1147,15 @@ setInterval(sweepInfraRetries, 60_000).unref();
 async function sweepRequests() {
   try {
     const rq = await import('./scripts/requests.mjs');
-    if (!rq.listRequests(LOGS_DIR).some(r => !rq.TERMINAL.has(r.state))) return;
-    const r = rq.reconcile({ root: __dirname, logsDir: LOGS_DIR });
+    // The wrapper only times the code before the first await; the synchronous work
+    // after it is timed here so a block is attributed to this sweep (0.150.0).
+    if (!loopMon.tracked('sweepRequests/list', () => rq.listRequests(LOGS_DIR)).some(r => !rq.TERMINAL.has(r.state))) return;
+    const r = loopMon.tracked('sweepRequests/reconcile', () => rq.reconcile({ root: __dirname, logsDir: LOGS_DIR }));
     for (const l of r.launched) { const m = `[requests] ${l.id} lancée (dépendance satisfaite)`; console.log(m); debugLog(m); }
     if (r.stale.length) { const m = `[requests] sans activité depuis 2 h : ${r.stale.join(', ')} — node scripts/requests.mjs show <id>`; console.log(m); debugLog(m); }
   } catch (e) { debugLog(`[requests] balayage : ${e.message}`); }
 }
+sweepRequests = loopMon.wrap('sweepRequests', sweepRequests);
 setInterval(sweepRequests, Number(process.env.ORCH_REQUESTS_SWEEP_MS) || 60_000).unref();
 
 // 0.101.1 — finished lane task branches are deleted one week after the end of
@@ -1781,6 +1804,7 @@ _expressWsInstance.getWss().on('error', () => {});
 // (scripts/network-guard.mjs); anything else gets 403, before any route.
 // Emergency widening: ORCH_ALLOW_CIDRS (add-only, server env).
 app.use(networkGuard.middleware);
+app.use((req, res, next) => { loopMon.noteRoute(`${req.method} ${req.path}`); next(); });
 
 // ---------- Public routes (no token gate) ------------------------------------
 
@@ -4454,6 +4478,7 @@ function sweepUnappliedChefAnswers() {
     console.log(m); debugLog(m);
   }
 }
+sweepUnappliedChefAnswers = loopMon.wrap('sweepUnappliedChefAnswers', sweepUnappliedChefAnswers);
 setInterval(sweepUnappliedChefAnswers, CHEF_ANSWER_WATCH_MS).unref?.();
 
 // 0.138.0: the chef's alerts (scripts/chef-alerts.mjs) — a red or interrupted
@@ -4498,6 +4523,7 @@ function sweepChefAlerts() {
     });
   } catch (e) { debugLog(`[chef-alerts] balayage : ${e.message}`); }
 }
+sweepChefAlerts = loopMon.wrap('sweepChefAlerts', sweepChefAlerts);
 setInterval(sweepChefAlerts, CHEF_ALERTS_SWEEP_MS).unref?.();
 
 // 0.142.0: the full non-regression AFTER the fact, launched by the program
@@ -4538,6 +4564,7 @@ function sweepIdleRegression() {
     });
   } catch (e) { debugLog(`[idle-regression] balayage : ${e.message}`); }
 }
+sweepIdleRegression = loopMon.wrap('sweepIdleRegression', sweepIdleRegression);
 setInterval(sweepIdleRegression, IDLE_REGRESSION_SWEEP_MS).unref?.();
 
 function allowedToolsFor(name) {
@@ -5172,6 +5199,7 @@ configWatcher.on('change', scheduleConfigReload);
 configWatcher.on('unlink', () => console.error('[config-reload] config.json disappeared — keeping current list'));
 configWatcher.on('error', (e) => console.error(`[config-reload] watch error: ${e.message}`));
 // Fallback poll (reliable even if fs events are missed on some filesystems).
+reloadConfigFromDisk = loopMon.wrap('reloadConfigFromDisk', reloadConfigFromDisk);
 setInterval(reloadConfigFromDisk, 3000).unref();
 
 app.get('/api/sse/fleet', (req, res) => {

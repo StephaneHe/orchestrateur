@@ -295,6 +295,42 @@ function tail(file, bytes = 32 * 1024 * 1024) {
     return buf.toString('utf8');
   } catch { return ''; }
 }
+// Work done by one reconcile() pass is capped (0.150.0, incident « serveur figé »):
+// every log byte read for the facts below is charged to this budget, and a task
+// that cannot be examined because it ran out is simply left for the next pass —
+// never concluded on (no « sans-accusé » / « sans-résultat » from a partial read).
+// The budget bounds the NUMBER of reads, not the exact bytes: it is checked before
+// a read starts, and a read already started runs to its end — up to 32 MiB for
+// scanTail, 64 MiB for offsetAtTime (which is not charged to it), 16 MiB per
+// dependencyResult call (which does honour what is left). A pass can therefore
+// overshoot the remaining budget by one such read.
+const sweepBudgetBytes = () => Number(process.env.ORCH_RECONCILE_BUDGET_BYTES) || 64 * 1024 * 1024; // read per pass (tests)
+let sweepBudget = null;
+const budgetSpent = () => !!sweepBudget && sweepBudget.left <= 0;
+const SCAN_OVERLAP = 1024 * 1024;
+const missMemo = new Map(); // "kind|id|file" -> log size at which nothing was found
+/**
+ * Looks for something in the tail of a log. A miss is remembered with the size it
+ * was made at: the next pass only reads what was appended since (plus an overlap
+ * for a line cut at the boundary); an unchanged log is not read at all.
+ * `find(text)` returns the hit or null. Returns the hit, or null.
+ */
+function scanTail(file, memoKey, find) {
+  let size; try { size = fs.statSync(file).size; } catch { return null; }
+  const seen = missMemo.get(memoKey);
+  if (seen != null && seen === size) return null;
+  if (sweepBudget && sweepBudget.left <= 0) return null;
+  const from = seen != null && seen < size ? Math.max(0, seen - SCAN_OVERLAP) : Math.max(0, size - 32 * 1024 * 1024);
+  const want = size - from;
+  let text = '';
+  try {
+    const fd = fs.openSync(file, 'r');
+    try { const buf = Buffer.alloc(want); const n = fs.readSync(fd, buf, 0, want, from); text = buf.toString('utf8', 0, n); if (sweepBudget) sweepBudget.left -= n; } finally { fs.closeSync(fd); }
+  } catch { return null; }
+  const hit = find(text);
+  if (hit == null) { missMemo.delete(memoKey); missMemo.set(memoKey, size); if (missMemo.size > 2000) missMemo.delete(missMemo.keys().next().value); }
+  return hit;
+}
 /** Logs where a turn of `project` may write its user_prompt (main log, lane logs). */
 export function projectLogs(logsDir, project) {
   const out = [path.join(logsDir, `${project}.jsonl`)];
@@ -305,12 +341,15 @@ export function projectLogs(logsDir, project) {
 export function taskSeen(logsDir, project, taskId) {
   const needle = `"taskId":${JSON.stringify(taskId)}`;
   for (const log of projectLogs(logsDir, project)) {
-    const text = tail(log);
-    if (!text.includes(needle)) continue;
-    for (const l of text.split('\n')) {
-      if (!l.includes(needle)) continue;
-      try { const e = JSON.parse(l); if (e.type === 'user_prompt' && e.taskId === taskId) return { where: 'log', log, turn: e.orch_turn || null }; } catch {}
-    }
+    const hit = scanTail(log, `seen|${taskId}|${log}`, (text) => {
+      if (!text.includes(needle)) return null;
+      for (const l of text.split('\n')) {
+        if (!l.includes(needle)) continue;
+        try { const e = JSON.parse(l); if (e.type === 'user_prompt' && e.taskId === taskId) return { where: 'log', log, turn: e.orch_turn || null }; } catch {}
+      }
+      return null;
+    });
+    if (hit) return hit;
   }
   const q = readJson(path.join(logsDir, 'queue', `${project}.json`));
   const entries = Array.isArray(q) ? q : Array.isArray(q?.queue) ? q.queue : Array.isArray(q?.entries) ? q.entries : [];
@@ -322,7 +361,7 @@ const pidAlive = (pid) => { if (!Number.isFinite(pid) || pid <= 0) return false;
 
 /** The chef turn's own result line in its log (non-phantom), or null. */
 export function turnResult(logFile, turn, offset = null) {
-  const text = Number.isFinite(offset) ? (() => { try { const size = fs.statSync(logFile).size; const fd = fs.openSync(logFile, 'r'); const from = Math.min(offset, size); const buf = Buffer.alloc(size - from); fs.readSync(fd, buf, 0, buf.length, from); fs.closeSync(fd); return buf.toString('utf8'); } catch { return ''; } })() : tail(logFile, 8 * 1024 * 1024);
+  const text = Number.isFinite(offset) ? (() => { try { const size = fs.statSync(logFile).size; const fd = fs.openSync(logFile, 'r'); const from = Math.max(Math.min(offset, size), size - 8 * 1024 * 1024); const buf = Buffer.alloc(size - from); fs.readSync(fd, buf, 0, buf.length, from); fs.closeSync(fd); return buf.toString('utf8'); } catch { return ''; } })() : tail(logFile, 8 * 1024 * 1024);
   let res = null;
   for (const l of text.split('\n')) {
     if (!l.includes(turn) || !l.includes('"result"')) continue;
@@ -344,18 +383,47 @@ export function turnResult(logFile, turn, offset = null) {
  */
 export const MISSED_ACK_CODES = new Set(['sans-accusé', 'lancement']);
 
-/** Byte offset of the first line of `file` timestamped at or after `iso` (end of file if none). */
+// Searched backwards from the end (0.150.0): the wanted line is near the end of a
+// log that can weigh a gigabyte. Timestamps grow along the file, so the answer is
+// the line after the last one stamped before `iso`. Past OFFSET_SCAN_MAX bytes
+// the scan stops and answers where it stopped: earlier than the truth, which is
+// harmless (the awaited prompt is matched by fingerprint anyway).
+const OFFSET_BLOCK = 1024 * 1024;
+const OFFSET_SCAN_MAX = 64 * 1024 * 1024;
+/**
+ * Byte offset of the first line of `file` timestamped at or after `iso` (end of
+ * file if none). The answer may be EARLIER than the truth (scan cap, or a start
+ * that is not aligned on a line); never later.
+ */
 function offsetAtTime(file, iso) {
-  let buf; try { buf = fs.readFileSync(file); } catch { return null; }
-  let pos = 0;
-  while (pos < buf.length) {
-    const nl = buf.indexOf(10, pos);
-    const end = nl === -1 ? buf.length : nl;
-    const m = /"timestamp":"([^"]+)"/.exec(buf.toString('utf8', pos, end));
-    if (m && m[1] >= iso) return pos;
-    pos = end + 1;
-  }
-  return buf.length;
+  let fd; try { fd = fs.openSync(file, 'r'); } catch { return null; }
+  try {
+    const size = fs.fstatSync(fd).size;
+    let answer = size;         // start of the earliest line seen at or after `iso`
+    let carry = Buffer.alloc(0); // bytes from `pos` to the end of the line that begins in the block
+    let pos = size;
+    while (pos > 0) {
+      if (size - pos >= OFFSET_SCAN_MAX) return pos;
+      const start = Math.max(0, pos - OFFSET_BLOCK);
+      const block = Buffer.alloc(pos - start);
+      fs.readSync(fd, block, 0, block.length, start);
+      const data = Buffer.concat([block, carry]);
+      // Without the file start, the first line may be cut: keep it for the next block.
+      const firstNl = start > 0 ? data.indexOf(10) : -1;
+      const from = start > 0 ? (firstNl === -1 ? data.length : firstNl + 1) : 0;
+      let end = data.length;
+      while (end > from) {
+        const prevNl = end >= 2 ? data.lastIndexOf(10, end - 2) : -1;
+        const ls = Math.max(prevNl + 1, from);
+        const m = /"timestamp":"([^"]+)"/.exec(data.toString('utf8', ls, end));
+        if (m) { if (m[1] < iso) return start + end; answer = start + ls; }
+        end = ls;
+      }
+      carry = data.subarray(0, from);
+      pos = start;
+    }
+    return answer;
+  } finally { fs.closeSync(fd); }
 }
 
 /**
@@ -371,18 +439,22 @@ export function recoverAck(logsDir, t, tid = null) {
   const hash = textHash(t.demande);
   const main = path.join(logsDir, `${t.projet}.jsonl`);
   for (const log of projectLogs(logsDir, t.projet)) {
-    const text = tail(log);
-    if (!text.includes('"user_prompt"')) continue;
-    for (const l of text.split('\n')) {
-      if (!l.includes('"user_prompt"')) continue;
-      let e; try { e = JSON.parse(l); } catch { continue; }
-      if (e.type !== 'user_prompt' || typeof e.text !== 'string' || !(e.timestamp >= since)) continue;
-      if (e.taskId && tid && e.taskId !== tid) continue;
-      if (textHash(e.text) !== hash) continue;
-      const offset = offsetAtTime(main, log === main ? e.timestamp : since);
-      if (offset == null) return null;
-      return { where: 'log', log, offset, hash, turn: e.orch_turn || null, run: e.pipeline?.run || null, recovered: true };
-    }
+    const found = scanTail(log, `ack|${tid || hash}|${since}|${log}`, (text) => {
+      if (!text.includes('"user_prompt"')) return null;
+      for (const l of text.split('\n')) {
+        if (!l.includes('"user_prompt"')) continue;
+        let e; try { e = JSON.parse(l); } catch { continue; }
+        if (e.type !== 'user_prompt' || typeof e.text !== 'string' || !(e.timestamp >= since)) continue;
+        if (e.taskId && tid && e.taskId !== tid) continue;
+        if (textHash(e.text) !== hash) continue;
+        return e;
+      }
+      return null;
+    });
+    if (!found) continue;
+    const offset = offsetAtTime(main, log === main ? found.timestamp : since);
+    if (offset == null) return null;
+    return { where: 'log', log, offset, hash, turn: found.orch_turn || null, run: found.pipeline?.run || null, recovered: true };
   }
   return null;
 }
@@ -407,6 +479,7 @@ function followTask(r, t, { logsDir, now, alive, toLaunch = [], pending = () => 
   if (t.state === 'à_traiter') {
     // Only a missed acknowledgement is caught up; any other error waits for a decision.
     if (t.ack?.where === 'log' || !MISSED_ACK_CODES.has(t.error?.code)) return;
+    if (budgetSpent()) return;
     const ack = recoverAck(logsDir, t, tid);
     if (!ack) return;
     t.ack = { ...ack, at: nowIso(now) };
@@ -414,11 +487,14 @@ function followTask(r, t, { logsDir, now, alive, toLaunch = [], pending = () => 
     setTaskState(t, 'en_cours', `accusé rattrapé : demande retrouvée dans ${path.basename(ack.log)}${ack.run ? ` (exécution ${ack.run})` : ''}`, now);
   }
   if (t.ack?.where !== 'log') {
+    if (budgetSpent()) return; // not examined this pass: no verdict on a partial look
     const seen = taskSeen(logsDir, t.projet, tid);
     if (seen?.where === 'log') { t.ack = { ...(t.ack || {}), where: 'log', log: seen.log, turn: seen.turn, at: nowIso(now) }; setTaskState(t, 'en_cours', 'demande relue dans le journal', now); }
     else if (seen?.where === 'queue') { if (t.ack?.where !== 'queue') { t.ack = { where: 'queue', queueId: seen.queueId, at: nowIso(now) }; setTaskState(t, 'en_file', 'relue dans la file', now); } return; }
     else {
       const ack = t.ack?.where !== 'queue' ? recoverAck(logsDir, t, tid) : null;
+      // The budget may have run out DURING the look (a log, or the lane logs after it, skipped): no « sans-accusé » verdict.
+      if (!ack && budgetSpent()) return;
       if (ack) { t.ack = { ...ack, at: nowIso(now) }; setTaskState(t, 'en_cours', `accusé rattrapé : demande retrouvée dans ${path.basename(ack.log)}${ack.run ? ` (exécution ${ack.run})` : ''}`, now); }
       else {
         const since = Date.parse(t.ack?.at || t.launchedAt || r.createdAt);
@@ -432,13 +508,14 @@ function followTask(r, t, { logsDir, now, alive, toLaunch = [], pending = () => 
     }
   }
   // acknowledged in a log: follow its result (pauses and questions keep it running)
-  const info = {};
+  const info = { budget: sweepBudget };
   const res = t.ack.hash ? dependencyResult(logsDir, { projet: t.projet, offset: t.ack.offset, hash: t.ack.hash }, info) : null;
   if (res) {
     if (res.is_error) { t.error = { code: 'échec', why: String(res.result || res.subtype || '').replace(/\s+/g, ' ').slice(0, 300), at: nowIso(now) }; t.actions = [`node scripts/requests.mjs retry ${r.id}#${t.n}`, `node scripts/requests.mjs fix ${r.id}#${t.n} --pipeline …`, `node scripts/requests.mjs cancel ${r.id}#${t.n}`]; setTaskState(t, 'à_traiter', t.error.why, now); }
     else { t.result = { at: nowIso(now), text: String(res.result || '').slice(0, 300) }; setTaskState(t, 'réussie', null, now); }
     delete t.waiting;
   } else if (info.held) t.waiting = info.held.run ? { pause: info.held.run } : { question: true };
+  else if (info.behind) { /* log not read to its end yet: a result may lie further on, no verdict */ }
   else if (t.ack.pid && !alive(t.ack.pid) && now - Date.parse(t.ack.at) >= ACK_TIMEOUT_MS) {
     t.error = { code: 'sans-résultat', why: 'le tour s’est arrêté sans résultat', at: nowIso(now) };
     t.actions = [`node scripts/requests.mjs retry ${r.id}#${t.n}`, `node scripts/requests.mjs cancel ${r.id}#${t.n}`];
@@ -455,7 +532,12 @@ function followTask(r, t, { logsDir, now, alive, toLaunch = [], pending = () => 
  * l'opération existante », never a blind relaunch), dependencies set by `fix
  * --after`. Returns { changed, launched, stale }.
  */
-export function reconcile({ root, logsDir = path.join(root, 'logs'), now = Date.now(), launch = launchTaskProcess, dryRun = false, staleMs = STALE_MS, alive = pidAlive }) {
+export function reconcile(opts) {
+  const own = !sweepBudget && !opts.dryRun;
+  if (own) sweepBudget = { left: sweepBudgetBytes() };
+  try { return reconcileSweep(opts); } finally { if (own) sweepBudget = null; }
+}
+function reconcileSweep({ root, logsDir = path.join(root, 'logs'), now = Date.now(), launch = launchTaskProcess, dryRun = false, staleMs = STALE_MS, alive = pidAlive }) {
   const out = { changed: [], launched: [], stale: [] };
   let pendingNow = null;
   for (const r0 of listRequests(logsDir)) {

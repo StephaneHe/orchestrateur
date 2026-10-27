@@ -293,23 +293,52 @@ export function duplicatesText(duplicates) {
  */
 const QUESTION_RE = /(^|\n)\s*NEEDS_(USER|CHEF)_INPUT\s*:/;
 const isPauseResult = (e) => !e.is_error && (e.pipeline_paused === true || e.pipeline?.status === 'paused' || QUESTION_RE.test(String(e.result || '')));
+// Incremental follow (0.150.0, incident « serveur figé »): the 60 s sweep used to
+// re-read every awaited log from the task's offset to its end. Each awaited task
+// now remembers how far its log has been parsed, with the arming/pause state at
+// that point; a pass reads only what was appended, at most DEP_PASS_BYTES (and
+// at most what is left of `info.budget`, shared by all the tasks of one sweep).
+// The cache belongs to the process: a short-lived CLI process starts cold and
+// catches up at most DEP_PASS_BYTES per call, while the server keeps it across
+// sweeps. A result found is remembered for good under its key (the key holds
+// the awaited task's log, offset and fingerprint, so it cannot change).
+// `info.behind` is set when the log has not been read to its end: the caller
+// must not conclude « no result » from a null in that case.
+const DEP_PASS_BYTES = 16 * 1024 * 1024;
+const DEP_CACHE_MAX = 500;
+const depCache = new Map();
 export function dependencyResult(logsDir, after, info = {}) {
   if (!after?.projet) return null;
   const file = path.join(logsDir, `${after.projet}.jsonl`);
+  const legacy = !Number.isFinite(after.offset);
+  const ckey = `${file}|${after.offset}|${after.hash || ''}|${after.key || ''}|${after.since || ''}`;
+  let st = depCache.get(ckey);
   let text = '';
   try {
     const size = fs.statSync(file).size;
-    const from = Number.isFinite(after.offset) ? Math.min(after.offset, size) : Math.max(0, size - 4 * 1024 * 1024);
-    const fd = fs.openSync(file, 'r');
-    const buf = Buffer.alloc(size - from);
-    fs.readSync(fd, buf, 0, buf.length, from);
-    fs.closeSync(fd);
-    text = buf.toString('utf8');
+    const from0 = legacy ? Math.max(0, size - 4 * 1024 * 1024) : Math.min(after.offset, size);
+    if (!st || size < st.pos) st = { pos: from0, armed: legacy || !(after.key || after.hash), held: null, res: null };
+    depCache.delete(ckey); depCache.set(ckey, st);
+    if (depCache.size > DEP_CACHE_MAX) depCache.delete(depCache.keys().next().value);
+    if (st.res) return st.res;
+    const budget = info.budget || null;
+    const want = Math.min(size - st.pos, DEP_PASS_BYTES, budget ? Math.max(0, budget.left) : Infinity);
+    if (want > 0) {
+      const fd = fs.openSync(file, 'r');
+      let buf, n;
+      try { buf = Buffer.alloc(want); n = fs.readSync(fd, buf, 0, want, st.pos); } finally { fs.closeSync(fd); }
+      buf = buf.subarray(0, n);
+      // Only whole lines are parsed; a partial last line waits for its end.
+      let cut = buf.lastIndexOf(10) + 1;
+      if (cut === 0 && n >= DEP_PASS_BYTES) cut = n; // one giant line: do not stall
+      text = buf.toString('utf8', 0, cut);
+      st.pos += cut;
+      if (budget) budget.left -= n;
+    }
+    if (st.pos < size) info.behind = true;
   } catch { return null; }
-  const legacy = !Number.isFinite(after.offset);
-  let armed = legacy || !(after.key || after.hash);
   // The awaited task paused: { run } (pipeline run) or { question } (ordinary turn).
-  let held = null;
+  const finish = (r) => { st.res = r; return r; };
   for (const l of text.split('\n')) {
     if (!l.includes('"type"')) continue;
     let e; try { e = JSON.parse(l); } catch { continue; }
@@ -320,16 +349,16 @@ export function dependencyResult(logsDir, after, info = {}) {
     // (state input) has not finished: its work is not integrated yet.
     if (after.hash && e.type === 'system' && e.subtype === 'lane_task' && e.promptHash === after.hash && ['done', 'paused', 'abandoned'].includes(e.state)) {
       const okEnd = e.state === 'done' && e.turnEnd !== 'error';
-      return { type: 'result', subtype: okEnd ? 'success' : 'error_lane', is_error: !okEnd, lane: e.lane ?? null, outcome: e.outcome || e.state,
-        result: e.why || e.text || `${after.projet}, couloir ${e.lane} : ${e.outcome || e.state}`, timestamp: e.timestamp || null, fromLane: true };
+      return finish({ type: 'result', subtype: okEnd ? 'success' : 'error_lane', is_error: !okEnd, lane: e.lane ?? null, outcome: e.outcome || e.state,
+        result: e.why || e.text || `${after.projet}, couloir ${e.lane} : ${e.outcome || e.state}`, timestamp: e.timestamp || null, fromLane: true });
     }
     // A paused run closed by command (close-run.mjs) writes no result.
-    if (held?.run && e.type === 'system' && e.subtype === 'pipeline_summary' && e.pipeline?.run === held.run && e.pipeline?.status === 'abandoned' && e.closed) {
-      return { type: 'result', subtype: 'error_run_abandoned', is_error: true, pipeline: e.pipeline, result: e.text || `exécution ${held.run} close`, timestamp: e.timestamp || null };
+    if (st.held?.run && e.type === 'system' && e.subtype === 'pipeline_summary' && e.pipeline?.run === st.held.run && e.pipeline?.status === 'abandoned' && e.closed) {
+      return finish({ type: 'result', subtype: 'error_run_abandoned', is_error: true, pipeline: e.pipeline, result: e.text || `exécution ${st.held.run} close`, timestamp: e.timestamp || null });
     }
     // « Marquer comme répondue »: the question is settled, the task is over.
-    if (held?.question && e.type === 'notification' && e.subtype === 'question_resolved') {
-      return { type: 'result', subtype: 'success', is_error: false, result: `question marquée répondue${e.note ? ` : ${e.note}` : ''}`, timestamp: e.timestamp || null, resolved: true };
+    if (st.held?.question && e.type === 'notification' && e.subtype === 'question_resolved') {
+      return finish({ type: 'result', subtype: 'success', is_error: false, result: `question marquée répondue${e.note ? ` : ${e.note}` : ''}`, timestamp: e.timestamp || null, resolved: true });
     }
     // Only a prompt that opens a turn re-arms (a notify message is no turn).
     // 0.67.0: the awaited task is recognised by the fingerprint of its whole
@@ -339,21 +368,21 @@ export function dependencyResult(logsDir, after, info = {}) {
       const own = after.hash ? textHash(e.text) === after.hash : (taskKey(e.text).startsWith(after.key.slice(0, 60)) || taskKey(e.text) === after.key);
       // After a pause, the turns that continue the awaited task count: its run
       // resumed or answered, or the answer to its question.
-      const continues = held?.run ? e.pipeline?.run === held.run
-        : held?.question ? (e.context?.resume === true || /^\s*\[CHEF_ANSWER\]/.test(e.text)) : false;
-      armed = own || continues;
+      const continues = st.held?.run ? e.pipeline?.run === st.held.run
+        : st.held?.question ? (e.context?.resume === true || /^\s*\[CHEF_ANSWER\]/.test(e.text)) : false;
+      st.armed = own || continues;
       continue;
     }
     if (e.type !== 'result') continue;
-    const sameRun = held?.run && e.pipeline?.run === held.run;
-    if (!armed && !sameRun) continue;
+    const sameRun = st.held?.run && e.pipeline?.run === st.held.run;
+    if (!st.armed && !sameRun) continue;
     if (!e.synthetic && e.num_turns === 0 && e.duration_api_ms === 0) continue;
     if (legacy && (!e.timestamp || e.timestamp <= after.since)) continue;
-    if (isPauseResult(e)) { held = e.pipeline?.run ? { run: e.pipeline.run } : { question: true }; continue; }
-    if (e.pipeline?.status === 'abandoned') return { ...e, is_error: true, subtype: 'error_run_abandoned' };
-    return e;
+    if (isPauseResult(e)) { st.held = e.pipeline?.run ? { run: e.pipeline.run } : { question: true }; continue; }
+    if (e.pipeline?.status === 'abandoned') return finish({ ...e, is_error: true, subtype: 'error_run_abandoned' });
+    return finish(e);
   }
-  if (held) info.held = held;
+  if (st.held) info.held = st.held;
   return null;
 }
 

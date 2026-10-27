@@ -42,6 +42,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const LOG_FILE = path.join(ROOT, 'logs', 'watchdog.log');
 const STOP_FILE = path.join(ROOT, 'logs', 'watchdog.stop');
+const CRASH_LOG = path.join(ROOT, 'logs', 'server-crash.log');
 const RESTART_SCRIPT = path.join(ROOT, 'scripts', 'restart-orchestrateur.mjs');
 const PORT = 7777;
 const HEALTH_URL = `http://127.0.0.1:${PORT}/`;
@@ -52,6 +53,10 @@ const STARTUP_GRACE_MS = 90_000;
 const CONSEC_DOWN_TO_RESTART = 2;         // ≈ 20s
 const CONSEC_SLOW_TO_RESTART = 18;        // ≈ 3 min of unbroken freeze
 const RESTART_COOLDOWN_MS = 60_000;       // don't restart more than once per minute
+// The server writes a heartbeat line to server-crash.log every 60 s from its own
+// event loop. A heartbeat younger than this means the process is alive and was
+// working a moment ago: failed probes are then a stall, not a death.
+const HEARTBEAT_FRESH_MS = 3 * 60_000;
 
 const startedAt = Date.now();
 let consecDown = 0;
@@ -86,8 +91,46 @@ async function probe() {
   }
 }
 
+/**
+ * Age of the server's last heartbeat, or null when none is trustworthy: the log is
+ * unreadable, no heartbeat in its last 32 KB, or a line that says the process is
+ * gone (boot, signal, exit, uncaught exception) came after it. Other lines
+ * (warnings, [loop-lag] reports written right after a freeze) say nothing about
+ * life or death and are skipped.
+ *
+ * Caveat: server-crash.log is shared by EVERY server instance started in this
+ * folder. An instance refused with EADDRINUSE also writes "==== boot" and
+ * "exit code=" there, which invalidates the heartbeat of the live server. That is
+ * harmless while probes answer (the refused instance only exits because the
+ * server in place is healthy), and when probes fail the guard simply does not
+ * apply and the usual DOWN/SLOW rules decide.
+ */
+const DEATH_LINE = /(==== boot |signal received|beforeExit|\] exit code=|UNCAUGHT EXCEPTION)/;
+function heartbeatAgeMs(now = Date.now()) {
+  try {
+    const size = fs.statSync(CRASH_LOG).size;
+    const fd = fs.openSync(CRASH_LOG, 'r');
+    const len = Math.min(size, 32 * 1024);
+    const buf = Buffer.alloc(len);
+    try { fs.readSync(fd, buf, 0, len, size - len); } finally { fs.closeSync(fd); }
+    const lines = buf.toString('utf8').split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const l = lines[i];
+      const m = /^\[([^\]]+)\] heartbeat /.exec(l);
+      if (m) { const at = Date.parse(m[1]); return Number.isFinite(at) ? now - at : null; }
+      if (DEATH_LINE.test(l)) return null;
+    }
+    return null;
+  } catch { return null; }
+}
+
 function triggerRestart(reason) {
   const now = Date.now();
+  const hb = heartbeatAgeMs(now);
+  if (hb != null && hb < HEARTBEAT_FRESH_MS) {
+    log(`restart skipped — server heartbeat ${Math.round(hb / 1000)}s old (< ${HEARTBEAT_FRESH_MS / 1000}s): ${reason} probes are a stall, not a death`);
+    return;
+  }
   if (now - lastRestartTs < RESTART_COOLDOWN_MS) {
     log(`restart skipped — cooldown (${Math.round((now - lastRestartTs) / 1000)}s since last)`);
     return;

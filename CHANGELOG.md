@@ -11,6 +11,20 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.150.0] - 2026-10-27
+
+### Added
+- (server) Event-loop lag monitor (`scripts/loop-lag.mjs`, wired in `server.js`): any stall above 2 s is logged with its duration and the sweep or route that was running. Test: `_test_loop_lag.mjs`.
+- (server) `server-crash.log` rotation (`scripts/log-rotate.mjs`). Test: `_test_crash_log_rotation.mjs`.
+- (watchdog) Heartbeat guard: no restart while the server heartbeat is less than 3 minutes old, even if the probes report "down". Real case replayed in `_test_watchdog_heartbeat.mjs`.
+
+### Fixed
+- (server) The 60 s requests reconcile (`sweepRequests` / `reconcile` in `scripts/requests.mjs`) no longer re-reads up to 1.5 GB of logs synchronously: per-task offset and size already scanned are remembered, only appended bytes are read, `offsetAtTime` searches from the end, and the work of one pass is bounded by a budget. Test: `_test_reconcile_incremental.mjs`.
+- (server) Other log-reading intervals of the server (`routage-pending.mjs`, `server.js`) read incrementally or asynchronously.
+
+### Changed
+- (watchdog) Comments document that `server-crash.log` is shared by every server instance started in the folder (`DEATH_LINE`), and that `scanTail` / `offsetAtTime` can exceed the remaining pass budget by one read (comments only, no logic change).
+
 ## [0.149.3] - 2026-10-27
 
 ### Added
