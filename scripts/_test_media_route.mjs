@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 // ============================================================================
 // scripts/_test_media_route.mjs — GET /api/media serves an image (200) and a
-// video as a partial response to a Range request (206)
+// video as a partial response to a Range request (206); refuses paths outside
+// the fleet roots (direct and via `../`) and non-media extensions
 // ============================================================================
 // User request (2026-10-29, verbatim): « Il faut que l'orchestrateur puisse
 // afficher des images ou des videos. Web et mobile ». This suite covers the
 // serving side: on a PRIVATE instance of the real server.js, an image under a
 // fleet root comes back whole with its content type, a video comes back as
-// 206 with the exact bytes of the requested Range.
+// 206 with the exact bytes of the requested Range. Refusals (404, empty body):
+// an image outside every root, a path that starts in a root and leaves it by
+// `../`, and a non-media extension under a root.
 // ============================================================================
 
 import fs from 'node:fs';
@@ -48,7 +51,11 @@ try {
 
   console.log('── refus');
   // An allowed extension outside every fleet root, asked directly and through `../`.
-  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'media-out-'));
+  // Same drive as the uploads (a relative `../` path cannot cross drives): the
+  // drive root is outside every fleet root; os.tmpdir() serves other platforms.
+  const driveRoot = path.parse(imgPath).root;
+  const outBase = path.parse(os.tmpdir()).root === driveRoot ? os.tmpdir() : driveRoot;
+  const outDir = fs.mkdtempSync(path.join(outBase, 'media-out-'));
   const outPng = path.join(outDir, 'secret.png');
   fs.writeFileSync(outPng, png);
   // A file under a fleet root whose extension is neither image nor video.
@@ -57,9 +64,14 @@ try {
   try {
     const direct = await media(outPng);
     ok(direct.status === 404 && (await direct.arrayBuffer()).byteLength === 0, 'hors racine : refusé sans rien servir', direct.status);
-    const viaDots = `${outDir}${path.sep}..${path.sep}${path.basename(outDir)}${path.sep}secret.png`;
+    // Starts INSIDE a fleet root and climbs out with `../`, built as a plain
+    // string (no normalisation): a prefix check on the raw path would accept it,
+    // only resolving the path first refuses it.
+    const rootDir = path.dirname(imgPath);
+    const viaDots = `${rootDir}${path.sep}${path.relative(rootDir, outDir)}${path.sep}secret.png`;
+    ok(viaDots.startsWith(rootDir) && viaDots.includes('..'), 'chemin ../ construit depuis une racine du parc', viaDots);
     const dotdot = await media(viaDots);
-    ok(dotdot.status === 404, 'hors racine par ../ : refusé', `${viaDots} → ${dotdot.status}`);
+    ok(dotdot.status === 404 && (await dotdot.arrayBuffer()).byteLength === 0, 'sortie d’une racine par ../ : refusée, rien servi', `${viaDots} → ${dotdot.status}`);
     const txt = await media(txtPath);
     ok(txt.status === 404 && (await txt.text()) === '', 'extension non autorisée sous une racine : refusée', txt.status);
   } finally {
