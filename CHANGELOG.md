@@ -11,6 +11,12 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.154.0] - 2026-10-29
+
+### Added
+- (server) Read-only media route (`server.js`): serves an image (png, jpg, jpeg, gif, webp) or a video (mp4, webm, mov) located under a fleet root (`I:\Dev`, `I:\orchestrateur` and its attachments), with the right content type. Video supports `Range` requests (206, correct `Content-Range`, exact bytes). A path outside the roots (including via `../` or a link) and any other extension are refused without serving anything. That refusal (item 3) was already ensured by existing code (commit 3dd2872, `server.js`); the added test (`_test_media_route.mjs`) serves as documentation.
+- (web) Preview in the thread: a `[[fichier:…]]` link or a path naming an image shows a thumbnail that enlarges on click, a video shows a `<video controls>` player; a missing or refused file keeps its plain link, without error. Works on a 390 px mobile screen (`public/id-links.js`, `public/id-links.css`).
+
 ## [0.153.0] - 2026-10-29
 
 ### Added
