@@ -251,6 +251,7 @@
         "_test_queue_api.mjs",
         "_test_queue_sidecar_sweep.mjs",
         "_test_attach_policy.mjs",
+        "_test_media_route.mjs",
         "_test_auto_answer.mjs",
         "_test_android_parity.mjs",
         "_test_pipeline_run_view.mjs",
@@ -276,6 +277,7 @@
             "_test_auto_answer.mjs",
             "_test_downloads_hot.mjs",
             "_test_mail_draft_page.mjs",
+            "_test_media_route.mjs",
             "_test_network_guard.mjs",
             "_test_permission_prompt.mjs",
             "_test_phase1_backpressure.mjs",
@@ -299,6 +301,7 @@
             "_test_auto_answer.mjs",
             "_test_downloads_hot.mjs",
             "_test_mail_draft_page.mjs",
+            "_test_media_route.mjs",
             "_test_network_guard.mjs",
             "_test_permission_prompt.mjs",
             "_test_phase1_backpressure.mjs",
@@ -316,6 +319,7 @@
         {
           "perimeter": "outillage",
           "suites": [
+            "_test_media_route.mjs",
             "_test_permission_prompt.mjs",
             "_test_phase2_5_integrated.mjs"
           ]
@@ -329,6 +333,7 @@
             "_test_auto_answer.mjs",
             "_test_downloads_hot.mjs",
             "_test_mail_draft_page.mjs",
+            "_test_media_route.mjs",
             "_test_network_guard.mjs",
             "_test_permission_prompt.mjs",
             "_test_phase1_backpressure.mjs",
@@ -352,6 +357,7 @@
             "_test_auto_answer.mjs",
             "_test_downloads_hot.mjs",
             "_test_mail_draft_page.mjs",
+            "_test_media_route.mjs",
             "_test_network_guard.mjs",
             "_test_permission_prompt.mjs",
             "_test_phase1_backpressure.mjs",
@@ -375,6 +381,7 @@
             "_test_auto_answer.mjs",
             "_test_downloads_hot.mjs",
             "_test_mail_draft_page.mjs",
+            "_test_media_route.mjs",
             "_test_network_guard.mjs",
             "_test_permission_prompt.mjs",
             "_test_phase1_backpressure.mjs",
