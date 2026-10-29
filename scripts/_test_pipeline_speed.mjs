@@ -149,9 +149,10 @@ fs.writeFileSync(path.join(T, 'config.json'), JSON.stringify({
   conductor: 'chef', defaults: { model: 'claude-haiku-5-5', allowedTools: 'Read,Edit,Write,Bash', provider: 'claude' },
   projects: [{ name: 'chef', path: path.join(T, 'chef') }, { name: 'P', path: P }],
 }));
-const routing = (tuning, tuningValues = null) => fs.writeFileSync(path.join(T, 'model-routing.json'), JSON.stringify({
+const routing = (tuning, tuningValues = null, idle = false) => fs.writeFileSync(path.join(T, 'model-routing.json'), JSON.stringify({
   version: 2, assignments: { 'routage.classifier': { provider: 'anthropic', model: 'claude-haiku-5-5' }, ...Object.fromEntries(['comprendre', 'concevoir', 'liste-tests', 'rouge', 'vert', 'refactor', 'revue', 'livrer'].map(s => [`dev.${s}`, { provider: 'anthropic', model: 'claude-sonnet-5-5' }])) },
   history: [], enforcement: { projects: ['P'], pipelines: ['discussion', 'dev'], ...(tuning ? { tuning } : {}), ...(tuningValues ? { tuningValues } : {}) },
+  ...(idle ? { idleRegression: { enabled: true } } : {}),
 }));
 const g = gitIn(P);
 const MARK = path.join(T, 'suite-runs.txt');
@@ -340,9 +341,17 @@ reset();
 routing({ targetedTests: true });
 r = await go(REQ(2), { FAKE_PIPE_ITEMS: '2' });
 s = r.run ? runState(r.run) : {};
+ok(r.code === 0 && s.status === 'done' && marks() === 2, `allumé, inactivité coupée : la suite complète deux fois — au départ et à Livrer, comme avant (${marks()}) : rien ne la rattraperait a posteriori`, r.out.slice(-800));
+reset();
+// 2026-10-29 (point 7): with the idle regression on, the full suite no longer runs at the start nor at Livrer.
+routing({ targetedTests: true }, null, true);
+r = await go(REQ(2), { FAKE_PIPE_ITEMS: '2' });
+s = r.run ? runState(r.run) : {};
 const tg = r.evs.filter(e => e.subtype === 'pipeline_suite_targeted');
-ok(r.code === 0 && s.status === 'done' && marks() === 2, `allumé : la suite complète deux fois seulement — au départ et à Livrer (${marks()})`, r.out.slice(-800));
-ok(tg.length >= 4 && tg.every(e => e.files.every(f => /pipe-\d\.test\.mjs$/.test(f)) && e.total >= 3), `chaque contrôle de 4a/4b ne lance que les tests de l’item (${tg.map(e => e.files.join('+')).join(' | ')})`);
+ok(r.code === 0 && s.status === 'done' && marks() === 0, `allumé : aucune suite complète, ni au départ ni à Livrer (${marks()}) — reportée a posteriori`, r.out.slice(-800));
+ok(tg.some(e => /reportée a posteriori/.test(e.why || '')), 'le départ annonce que la suite complète est reportée a posteriori');
+const tgItems = tg.filter(e => e.files.length);
+ok(tgItems.length >= 4 && tgItems.every(e => e.files.every(f => /pipe-\d\.test\.mjs$/.test(f)) && e.total >= 3), `chaque contrôle de 4a/4b ne lance que les tests de l’item (${tgItems.map(e => e.files.join('+')).join(' | ')})`);
 reset();
 
 }
@@ -386,6 +395,134 @@ section('8. Banc (pipeline-speed-bench.mjs) : profil, rejeu, estimation, anonyma
   try { names = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8')).projects.map(x => x.name).filter(n => n.length > 3); } catch {}
   ok(cases.length >= 2 && cases.every(x => /^p-\d{8}T\d{6}-[0-9a-f]{6}$/.test(x.run) && x.items.length && x.steps.rouge) && !names.some(n => raw.includes(n)) && !/"request"|"text"/.test(raw),
     `${cases.length} exécutions réelles anonymisées (aucun nom de projet, aucun texte de demande)`);
+}
+}
+
+if (want(9)) {
+// ---------------------------------------------------------------------------
+// 9. Areas — user's request (2026-10-29), verbatim: « vérifie qu'il n'y a pas de
+// besoin de lancer des tests de non régression côté serveur quand le serveur
+// (tel qu'ici) n'est pas du tout impacté. ce n'est que l'apk »
+section('9. Zones (areas) : seules les zones touchées lancent leurs tests');
+{
+  const A = fs.mkdtempSync(path.join(os.tmpdir(), 'orch-areas-'));
+  const wa = (f, s) => { fs.mkdirSync(path.dirname(path.join(A, f)), { recursive: true }); fs.writeFileSync(path.join(A, f), s); };
+  wa('server.py', 'def f():\n    return 1\n');
+  wa('tests/test_server.py', 'from server import f\n\ndef test_f():\n    assert f() == 1\n');
+  wa('android/app/src/main/java/Foo.kt', 'class Foo { fun x() = 1 }\n');
+  wa('android/app/src/test/java/FooTest.kt', 'class FooTest { @Test fun x() { Foo().x() } }\n');
+  const cfgA = {
+    testCommand: 'python -m pytest -q',
+    testGlobs: ['tests/**'],
+    areas: [{ name: 'android', paths: ['android/**'], testCommand: 'gradlew testDebugUnitTest', targetedTestCommand: 'gradlew testDebugUnitTest {files}', testGlobs: ['android/app/src/test/**'], versionFiles: ['android/app/build.gradle.kts'] }],
+  };
+  ok(typeof S.selectAreaTests === 'function', 'pipeline-speed.mjs exporte selectAreaTests');
+  if (typeof S.selectAreaTests === 'function') {
+    const sel = (changed, c = cfgA) => S.selectAreaTests({ cwd: A, cfg: c, changed });
+    const names = (r) => r.commands.map(c => c.area ?? 'main').join();
+    let r = sel(['android/app/src/main/java/Foo.kt']);
+    ok(names(r) === 'android' && !r.commands.some(c => /pytest/.test(c.command)), 'diff android seul ⇒ seule la commande android, pas pytest', JSON.stringify(r));
+    r = sel(['server.py']);
+    ok(names(r) === 'main' && /pytest/.test(r.commands[0].command), 'diff serveur seul ⇒ pytest seul', JSON.stringify(r));
+    r = sel(['server.py', 'android/app/src/main/java/Foo.kt']);
+    ok(['main,android', 'android,main'].includes(names(r)), 'diff mixte ⇒ les deux commandes', JSON.stringify(r));
+    ok(names(sel(['server.py'], { ...cfgA, areas: undefined })) === 'main', 'pas d’« areas » ⇒ inchangé (suite principale)');
+    ok(JSON.stringify(sel(['android/app/build.gradle.kts']).versionFiles) === JSON.stringify(['android/app/build.gradle.kts']), 'version montée = celle des zones touchées');
+  }
+  fs.rmSync(A, { recursive: true, force: true });
+}
+}
+
+if (want(10)) {
+// ---------------------------------------------------------------------------
+// 10. Targeted selection without the full suite — user's rule (2026-10-29), verbatim:
+// « tu ne refais pas tous les tests de l'application à chaque petite modification.
+// tu ne le fais qu'une fois toutes les modifications et seulement les tests
+// correspondant sont passés. il faut y passer beaucoup moins de temps »
+section('10. Sélection ciblée sans suite complète : .kt, pytest, Gradle, tests de zone');
+{
+  const K = fs.mkdtempSync(path.join(os.tmpdir(), 'orch-lean-'));
+  const wk = (f, c) => { fs.mkdirSync(path.dirname(path.join(K, f)), { recursive: true }); fs.writeFileSync(path.join(K, f), c); };
+  const gk = (...a) => spawnSync('git', ['-C', K, '-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { encoding: 'utf8' });
+  wk('android/app/src/main/java/Foo.kt', 'class Foo { fun x() = 1 }\n');
+  wk('android/app/src/main/java/Lonely.kt', 'class Lonely { fun y() = 2 }\n');
+  wk('android/app/src/test/java/FooTest.kt', 'class FooTest { @Test fun x() { Foo().x() } }\n');
+  wk('server.py', 'def f():\n    return 1\n');
+  wk('tests/test_server.py', 'from server import f\n\ndef test_f():\n    assert f() == 1\n');
+  gk('init', '-q'); gk('add', '-A'); gk('commit', '-q', '-m', 'i');
+  const H = gk('rev-parse', 'HEAD').stdout.trim();
+  const area = { name: 'android', paths: ['android/**'], testCommand: 'gradlew testDebugUnitTest', testGlobs: ['android/app/src/test/**'], versionFiles: ['android/app/build.gradle.kts'] };
+  const cfgK = { testCommand: 'python -m pytest -q', testGlobs: ['tests/**'], areas: [area] };
+
+  // point 5 — a .kt that no import reaches no longer forces the full suite
+  wk('android/app/src/main/java/Foo.kt', 'class Foo { fun x() = 2 }\n');
+  const isAndroidTest = (f) => isTestFile(f, area.testGlobs);
+  let sel = S.selectTargetedTests({ cwd: K, cfg: { ...cfgK, areas: undefined, testCommand: 'gradlew testDebugUnitTest', testGlobs: area.testGlobs }, from: H, isTest: isAndroidTest, lean: true });
+  ok(sel.targeted && sel.files.join() === 'android/app/src/test/java/FooTest.kt' && /classe Foo/.test(sel.reasons['android/app/src/test/java/FooTest.kt']), '.kt sans import : le test de la même zone qui nomme la classe, pas la suite complète', JSON.stringify(sel));
+  wk('android/app/src/main/java/Foo.kt', 'class Foo { fun x() = 1 }\n');
+  wk('android/app/src/main/java/Lonely.kt', 'class Lonely { fun y() = 3 }\n');
+  sel = S.selectTargetedTests({ cwd: K, cfg: { ...cfgK, areas: undefined, testCommand: 'gradlew testDebugUnitTest', testGlobs: area.testGlobs }, from: H, isTest: isAndroidTest, lean: true });
+  ok(sel.targeted && sel.empty && sel.files.length === 0 && sel.uncovered.join() === 'android/app/src/main/java/Lonely.kt', '.kt qu’aucun test ne nomme : rien à lancer à cette étape (suite complète a posteriori)', JSON.stringify(sel));
+  sel = S.selectTargetedTests({ cwd: K, cfg: { ...cfgK, areas: undefined, testCommand: 'gradlew testDebugUnitTest', testGlobs: area.testGlobs }, from: H, isTest: isAndroidTest });
+  ok(!sel.targeted && /couvert par aucun test/.test(sel.why), 'levier coupé (lean absent) : le repli en suite complète reste');
+  gk('checkout', '-q', '--', '.');
+
+  // lever off (lean false): the whole area command, never a --tests selection
+  wk('android/app/src/main/java/Foo.kt', 'class Foo { fun x() = 7 }\n');
+  wk('android/app/src/test/java/FooTest.kt', 'class FooTest { @Test fun x() { Foo().x(); Foo().x() } }\n');
+  const full = S.selectAreaTests({ cwd: K, cfg: { ...cfgK, areas: [{ ...area, targetedTestCommand: 'gradlew testDebugUnitTest {files}' }] }, changed: S.changedSince(K, H) });
+  ok(full.commands.length === 1 && full.commands[0].command === 'gradlew testDebugUnitTest' && !full.commands[0].files, 'levier coupé : la testCommand entière de la zone touchée, sans --tests', JSON.stringify(full));
+  gk('checkout', '-q', '--', '.');
+
+  // after-the-fact run: the area commands are part of the full run
+  const PR = fs.mkdtempSync(path.join(os.tmpdir(), 'orch-plan-'));
+  fs.mkdirSync(path.join(PR, '.orchestrateur'));
+  fs.writeFileSync(path.join(PR, '.orchestrateur', 'pipeline.json'), JSON.stringify(cfgK));
+  const IR = await import('./idle-regression.mjs');
+  const idlePlan = IR.projectPlan(PR);
+  ok(idlePlan && idlePlan.full[0] === '__shell__' && idlePlan.full[1] === '(python -m pytest -q) && (gradlew testDebugUnitTest)', 'complète a posteriori : la commande principale ET celle de chaque zone', JSON.stringify(idlePlan));
+  fs.writeFileSync(path.join(PR, '.orchestrateur', 'pipeline.json'), JSON.stringify({ testCommand: 'npm test' }));
+  ok(IR.projectPlan(PR).full[1] === 'npm test', 'sans zones : la commande principale seule, inchangée');
+  // a DECLARED full run carries the areas' commands too, and the runner runs them after it
+  fs.writeFileSync(path.join(PR, '.orchestrateur', 'pipeline.json'), JSON.stringify({ ...cfgK, idleRegression: { full: ['node', '-e', 'process.exit(0)'] } }));
+  const declared = IR.projectPlan(PR);
+  ok(declared.declared && declared.areaCommands?.join() === 'gradlew testDebugUnitTest', 'complète déclarée : les commandes de zone sont portées par le plan', JSON.stringify(declared));
+  const RUN = await import('./idle-regression-runner.mjs');
+  const runStepWith = async (areaCommands) => {
+    const id = 'z' + areaCommands.length + Math.abs(areaCommands.join().length);
+    const st = { id, project: 'P', path: PR, kind: 'full', commit: 'c0ffee', argv: ['__shell__', 'node -e "process.exit(0)"'], inPlace: true, report: null,
+      resultFile: path.join(PR, id + '.result.json'), logFile: path.join(PR, id + '.log'), worktree: null, areaCommands };
+    const code = await RUN.runStep(st);
+    return { code, log: fs.readFileSync(st.logFile, 'utf8') };
+  };
+  const okRun = await runStepWith(['node -p 40+2']);
+  ok(okRun.code === 0 && /42/.test(okRun.log), 'le runner lance la commande de zone après la complète déclarée', okRun.log);
+  const koRun = await runStepWith(['node -e process.exit(3)', 'node -p 50+5']);
+  ok(koRun.code === 3 && /55/.test(koRun.log), 'une commande de zone en échec rend la complète rouge (premier code gardé), les suivantes tournent', koRun.log);
+  fs.rmSync(PR, { recursive: true, force: true });
+
+  // point 6 — targeted command deduced
+  ok(S.targetedCommand(K, { testCommand: 'python -m pytest -q' }, ['tests/test_a.py', 'tests/test_b.py']).command === 'python -m pytest -q tests/test_a.py tests/test_b.py', 'python -m pytest ⇒ « python -m pytest -q {files} »');
+  ok(S.targetedCommand(K, { testCommand: 'python -m pytest' }, ['tests/test_a.py']).command === 'python -m pytest -q tests/test_a.py', 'pytest sans -q : déduction aussi');
+  const gr = S.targetedCommand(K, { testCommand: 'gradlew testDebugUnitTest' }, ['android/app/src/test/java/FooTest.kt']);
+  ok(/^gradlew testDebugUnitTest --tests "\*\.FooTest"$/.test(gr.command || ''), 'zone Gradle ⇒ « gradlew testDebugUnitTest --tests <classe> »', JSON.stringify(gr));
+  ok(!S.targetedCommand(K, { testCommand: 'pytest' }, ['t.py']).command, 'commande inconnue (pytest nu) : toujours pas de déduction');
+  ok(!S.targetedCommand(K, { testCommand: 'python -m pytest && echo x' }, ['t.py']).command, 'commande composite : pas de déduction');
+
+  // point 2 — area test globs count as tests
+  const merged = S.withAreaTestGlobs(cfgK);
+  ok(isTestFile('android/app/src/test/java/FooTest.kt', merged.testGlobs) && isTestFile('tests/test_server.py', merged.testGlobs), 'les testGlobs d’une zone comptent comme tests (Rouge)');
+  ok(!isTestFile('android/app/src/test/java/FooTest.kt', merged.mainTestGlobs) && S.withAreaTestGlobs(merged) === merged, 'la suite principale garde ses seuls motifs ; idempotent');
+  ok(S.withAreaTestGlobs({ testGlobs: ['t/**'] }).testGlobs.join() === 't/**', 'sans « areas » : inchangé');
+
+  // point 1 in a real repository — area command targeted at the area's own tests, main untouched
+  wk('android/app/src/main/java/Foo.kt', 'class Foo { fun x() = 5 }\n');
+  const plan = S.selectAreaTests({ cwd: K, cfg: cfgK, changed: S.changedSince(K, H), lean: true });
+  ok(plan.commands.length === 1 && plan.commands[0].area === 'android' && plan.commands[0].command === 'gradlew testDebugUnitTest --tests "*.FooTest"', 'diff .kt : la zone Android, ciblée sur FooTest, pas pytest', JSON.stringify(plan));
+  gk('checkout', '-q', '--', '.');
+
+  // point 7 is covered by the real engine run of section 6 (idle regression on / off)
+  fs.rmSync(K, { recursive: true, force: true });
 }
 }
 

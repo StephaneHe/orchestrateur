@@ -61,12 +61,23 @@ export async function runStep(step) {
     const shell = step.argv[0] === '__shell__';
     write(`\n$ ${shell ? cmd : [cmd, ...args].join(' ')}   (cwd ${cwd}, commit ${step.commit})\n`);
     const from = fs.fstatSync(logFd).size;
-    const code = await new Promise((resolve) => {
+    const code0 = await new Promise((resolve) => {
       const c = spawn(shell ? cmd : (cmd === 'node' ? process.execPath : cmd), shell ? [] : args, { cwd, shell, windowsHide: true, stdio: ['ignore', logFd, logFd],
         env: { ...process.env, ORCH_REGRESS_LAUNCHER: LAUNCHER } });
       c.on('error', (e) => { write(`[idle-regression] ${e.message}\n`); resolve(127); });
       c.on('exit', (c2) => resolve(c2 ?? 1));
     });
+    let code = code0;
+    // Areas' commands of a declared full run (2026-10-29): each runs after it, the first failure code is kept.
+    for (const ac of Array.isArray(step.areaCommands) ? step.areaCommands : []) {
+      write(`\n$ ${ac}   (zone, cwd ${cwd}, commit ${step.commit})\n`);
+      const c3 = await new Promise((resolve) => {
+        const c = spawn(ac, [], { cwd, shell: true, windowsHide: true, stdio: ['ignore', logFd, logFd], env: { ...process.env, ORCH_REGRESS_LAUNCHER: LAUNCHER } });
+        c.on('error', (e) => { write(`[idle-regression] ${e.message}\n`); resolve(127); });
+        c.on('exit', (c2) => resolve(c2 ?? 1));
+      });
+      if (code === 0) code = c3;
+    }
     let ko = null, reportRel = null, failures = null, ignored = [];
     if (step.report) {
       const rep = readJson(path.join(cwd, step.report));

@@ -183,6 +183,12 @@ export function targetedCommand(cwd, cfg, files) {
       try { script = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8')).scripts?.test || null; } catch {}
     } else if (/^node\s/.test(tc)) script = tc;
     if (script && /^node\s/.test(script.trim()) && /(^|\s)--test(\s|$)/.test(script) && !/[&|;<>]/.test(script)) command = `${script.trim()} ${list}`;
+    // Deduced like « node --test » (2026-10-29): pytest takes the files, Gradle takes classes.
+    else if (/^python3?(\.exe)?\s+-m\s+pytest(\s|$)/.test(tc) && !/[&|;<>]/.test(tc)) command = `python -m pytest -q ${list}`;
+    else if (/(^|[\\/\s])gradlew(\.bat)?\s+\S*[tT]est\S*\s*$/.test(tc) && !/[&|;<>]/.test(tc)) {
+      const classes = [...new Set(files.map(f => path.posix.basename(posix(f)).replace(/\.[^.]+$/, '')).filter(Boolean))];
+      command = `${tc} ${classes.map(c => `--tests "*.${c}"`).join(' ')}`;
+    }
   }
   if (!command) return { why: 'commande de tests ciblés inconnue : déclarer « targetedTestCommand » (avec {files}) dans .orchestrateur/pipeline.json' };
   // cmd.exe stops at 8191 characters.
@@ -196,11 +202,13 @@ export function targetedCommand(cwd, cfg, files) {
  * A changed code file reached by no test, or no known command ⇒ the full suite.
  * → {targeted:true, command, files, reasons, requirement, total} | {targeted:false, why}
  */
-export function selectTargetedTests({ cwd, cfg, from, isTest }) {
-  return selectForChanged({ cwd, cfg, changed: changedSince(cwd, from), isTest });
+export function selectTargetedTests({ cwd, cfg, from, isTest, lean = false }) {
+  return selectForChanged({ cwd, cfg, changed: changedSince(cwd, from), isTest, lean });
 }
 /** Same selection for a given list of changed files (the bench reads them from real commits, read-only). */
-export function selectForChanged({ cwd, cfg, changed, isTest, tests = null }) {
+export function selectForChanged({ cwd, cfg, changed, isTest, tests = null, lean = false }) {
+  // Files of a declared area are tested by that area's own command, never by the main suite.
+  if (Array.isArray(cfg.areas) && cfg.areas.length) changed = changed.filter(f => !cfg.areas.some(a => inArea(a, f)));
   tests = tests || runnableTests(cwd, isTest);
   if (!tests.length) return { targeted: false, why: 'aucun fichier de test reconnu' };
   const sources = changed.filter(f => !isTest(f) && !isNeutral(f, cfg));
@@ -218,15 +226,77 @@ export function selectForChanged({ cwd, cfg, changed, isTest, tests = null }) {
       const s = texts.get(t);
       if (s.includes(src) || s.includes(path.posix.basename(src))) { add(t, `nomme ${src}`); hit = true; }
     }
+    // lean: a class name is not an import path (.kt…): tests naming the class count.
+    if (!hit && lean) {
+      const stem = path.posix.basename(src).replace(/\.[^.]+$/, '');
+      const esc = stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = stem.length >= 3 ? new RegExp('\\b' + esc + '\\b') : null;
+      if (re) for (const t of tests) if (re.test(texts.get(t))) { add(t, `nomme la classe ${stem}`); hit = true; }
+    }
     if (!hit && fs.existsSync(path.join(cwd, src))) uncovered.push(src);
   }
-  if (uncovered.length) return { targeted: false, why: `fichier modifié couvert par aucun test : ${uncovered.slice(0, 4).join(', ')}` };
+  // lean (lever targetedTests): a changed file no test reaches no longer forces the
+  // full suite at each step — the full run happens once, after the fact (idle regression).
+  if (uncovered.length && !lean) return { targeted: false, why: `fichier modifié couvert par aucun test : ${uncovered.slice(0, 4).join(', ')}` };
   const files = [...reasons.keys()].sort();
+  if (!files.length && lean) return { targeted: true, empty: true, command: null, files, reasons: {}, requirement: [], total: tests.length, uncovered };
   if (!files.length) return { targeted: false, why: 'aucun test touché par les fichiers modifiés' };
   const cmd = targetedCommand(cwd, cfg, files);
   if (!cmd.command) return { targeted: false, why: cmd.why };
   const req = requirementTests(cwd, cfg, files);
-  return { targeted: true, command: cmd.command, files, reasons: Object.fromEntries(reasons), requirement: [...req], total: tests.length };
+  return { targeted: true, command: cmd.command, files, reasons: Object.fromEntries(reasons), requirement: [...req], total: tests.length, ...(uncovered.length ? { uncovered } : {}) };
+}
+
+// ---------------------------------------------------------------------------
+// areas — optional zones of .orchestrateur/pipeline.json (2026-10-29)
+// ---------------------------------------------------------------------------
+// Local glob (no import from the engine, which imports this module).
+function areaGlob(g) {
+  const s = posix(g).replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\/\*\*$/, '/\u0001').replace(/\*\*\/?/g, '\u0000').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]').replace(/\u0000/g, '(?:.*/)?').replace(/\u0001/g, '.*');
+  return new RegExp(`^${s}$`);
+}
+const inArea = (a, f) => (a.paths || []).some(g => areaGlob(g).test(posix(f)));
+/**
+ * Which test commands a change needs when the project declares `areas`:
+ * only the areas touched by the diff run their own command; a file outside
+ * every area keeps the main suite. Without `areas`: the main suite, as before.
+ * → {commands: [{area|null, command}], versionFiles}
+ */
+export function selectAreaTests({ cwd, cfg, changed, lean = false }) {
+  const areas = Array.isArray(cfg.areas) ? cfg.areas : [];
+  const files = changed.map(posix).filter(f => f && !LOCAL_ONLY(f));
+  const touched = new Map();
+  let mainTouched = !areas.length;
+  for (const f of files) {
+    const a = areas.find(x => inArea(x, f));
+    if (a) touched.set(a.name, a);
+    // docs, changelog, registry and main version files never make the main suite run on their own
+    else if (!isNeutral(f, cfg)) mainTouched = true;
+  }
+  if (!touched.size) mainTouched = true;
+  const commands = [];
+  const versionFiles = [];
+  const addVersions = (v) => { for (const x of v || []) if (!versionFiles.includes(x)) versionFiles.push(x); };
+  if (mainTouched) { commands.push({ area: null, command: cfg.testCommand }); addVersions(cfg.versionFiles); }
+  for (const a of touched.values()) {
+    const own = files.filter(f => inArea(a, f));
+    const isT = (f) => inArea(a, f) && (a.testGlobs || []).some(g => areaGlob(g).test(posix(f)));
+    // targeting only under the lever (lean): otherwise the area's whole testCommand runs
+    const sel = !lean ? { targeted: false } : selectForChanged({ cwd, changed: own, isTest: isT, lean,
+      cfg: { testCommand: a.testCommand, targetedTestCommand: a.targetedTestCommand, testGlobs: a.testGlobs, versionFiles: a.versionFiles, changelog: cfg.changelog } });
+    // targeted when known; an area whose selection is empty runs nothing (lean)
+    const command = sel.targeted ? sel.command : a.testCommand;
+    commands.push({ area: a.name, command, ...(sel.targeted ? { files: sel.files } : {}) });
+    addVersions(a.versionFiles);
+  }
+  return { commands, versionFiles };
+}
+
+/** cfg with the areas' test globs merged into testGlobs (so their tests count as tests); the main ones stay in mainTestGlobs. */
+export function withAreaTestGlobs(cfg) {
+  if (!cfg || !Array.isArray(cfg.areas) || !cfg.areas.length || cfg.mainTestGlobs) return cfg;
+  const extra = cfg.areas.flatMap(a => a?.testGlobs || []);
+  return { ...cfg, mainTestGlobs: cfg.testGlobs || [], testGlobs: [...new Set([...(cfg.testGlobs || []), ...extra])] };
 }
 
 // ---------------------------------------------------------------------------

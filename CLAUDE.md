@@ -3729,11 +3729,31 @@ dispatch, sans redémarrage.
 - `targetedTests` : 4a, 4b, 4c, 4ab ne lancent que les tests de l'item et ceux
   dont la clôture d'imports atteint, ou dont le texte nomme, un fichier modifié
   depuis la dernière livraison (tests d'exigence compris) ; un doute ⇒ suite
-  complète, dit. Suite complète au départ et à Livrer. Commande :
-  `targetedTestCommand` (`{files}`) de `.orchestrateur/pipeline.json`, sinon
-  déduite d'un script `node … --test`. (L'index d'impact de la Mémoire ne couvre
-  que l'orchestrateur et n'est jamais importé par le moteur : ce levier calcule
-  la même règle sur les tests du projet.)
+  complète, dit. Depuis 0.153.0, **avec l'inactivité (`idleRegression`) allumée
+  pour le projet** (sinon rien ne rattraperait la complète : comportement
+  d'avant), un fichier modifié qu'aucun test n'atteint (un `.kt`) n'impose plus
+  la suite complète : tests de l'item, modifiés, et ceux de la même zone qui
+  nomment la classe ; ni le départ ni Livrer ne lancent la suite complète (a
+  posteriori, pendant l'inactivité ; cette complète, déclarée
+  (`idleRegression.full`, commandes de zone lancées ensuite) ou non, lance aussi
+  la commande de chaque zone).
+  Commande : `targetedTestCommand` (`{files}`) de `.orchestrateur/pipeline.json`,
+  sinon déduite d'un script `node … --test`, de `python -m pytest …` (`-q
+  {files}`) ou d'une zone Gradle (`--tests <classe>`).
+  **Zones** (`areas`, optionnel, 0.153.0) : `[{name, paths:[globs], testCommand,
+  targetedTestCommand?, testGlobs, versionFiles}]` dans
+  `.orchestrateur/pipeline.json`. Seules les zones touchées par le diff lancent
+  leur commande (rouge, vert, suite, Livrer ; la `testCommand` entière sans le
+  levier, ciblée avec lui) ; un fichier hors zone garde la suite principale ;
+  les `testGlobs` d'une zone comptent comme tests à l'étape Rouge ; Livrer monte
+  la version des `versionFiles` des zones touchées ; sans `areas`, rien ne
+  change. (L'index d'impact de la Mémoire ne couvre que l'orchestrateur et
+  n'est jamais importé par le moteur : ce levier calcule la même règle sur les
+  tests du projet.)
+  **Limite connue** : une complète déclarée avec rapport JSON dont seule une
+  commande de zone échoue est comptée rouge (code non nul), mais l'alerte dit
+  « aucun KO détaillé » sans nommer la zone (un identifiant `zone:<nom>` dans
+  `ko` reste à ajouter).
 - `extraTests` : « N annoncés, N+1 écrits » accepté et noté si le test en plus
   est dans le même fichier.
 - Banc : `node scripts/pipeline-speed-bench.mjs extract …` (lecture seule,

@@ -11,6 +11,16 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.153.0] - 2026-10-29
+
+### Added
+- (server) Optional `areas` in `.orchestrateur/pipeline.json` (`name`, `paths`, `testCommand`, `targetedTestCommand`, `testGlobs`, `versionFiles`): only the areas touched by the diff run their test commands (red, green, suite, deliver), their test files count as tests for the red step, and the bumped version is the one of the touched areas. Without `areas`, nothing changes.
+- (server) With the `targetedTests` lever, the targeted test command is deduced for `python -m pytest` projects and for Gradle areas (`--tests <class>`).
+- (server) The after-the-fact full run also runs every area's command, for declared (`idleRegression`) and undeclared projects alike.
+
+### Changed
+- (server) With `targetedTests` and idle regression on, a modified code file no test reaches (typically a `.kt`) no longer forces the full suite: the item's tests, the modified tests and the same-area tests that name the class run instead. Neither the start nor Livrer runs the full suite; it runs once, after the fact, during inactivity.
+
 ## [0.152.3] - 2026-10-29
 
 ### Fixed

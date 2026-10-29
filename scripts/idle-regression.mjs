@@ -167,11 +167,14 @@ const PLACEHOLDER_ARGV = (a) => Array.isArray(a) && a.length && a.every(x => typ
 export function projectPlan(dir) {
   const cfg = readJson(path.join(dir, '.orchestrateur', 'pipeline.json')) || {};
   const d = cfg.idleRegression && typeof cfg.idleRegression === 'object' ? cfg.idleRegression : null;
+  // Areas (2026-10-29): the after-the-fact full run also runs each area's whole command, declared
+  // run or not, since the delivery steps no longer do (lever targetedTests).
+  const areaCmds = (Array.isArray(cfg.areas) ? cfg.areas : []).map(a => a?.testCommand).filter(c => typeof c === 'string' && c.trim());
   if (d && PLACEHOLDER_ARGV(d.full)) {
-    return { full: d.full, bisect: PLACEHOLDER_ARGV(d.bisect) ? d.bisect : null, inPlace: d.inPlace === true, declared: true, timeoutMin: Number(d.timeoutMin) || null };
+    return { full: d.full, bisect: PLACEHOLDER_ARGV(d.bisect) ? d.bisect : null, inPlace: d.inPlace === true, declared: true, timeoutMin: Number(d.timeoutMin) || null, ...(areaCmds.length ? { areaCommands: areaCmds } : {}) };
   }
   const tc = cfg.testCommand;
-  const argv = typeof tc === 'string' && tc.trim() ? ['__shell__', tc] : PLACEHOLDER_ARGV(tc) ? tc : null;
+  const argv = typeof tc === 'string' && tc.trim() ? ['__shell__', areaCmds.length ? [tc, ...areaCmds].map(c => `(${c})`).join(' && ') : tc] : PLACEHOLDER_ARGV(tc) ? tc : null;
   return argv ? { full: argv, bisect: null, inPlace: false, declared: false, timeoutMin: Number(cfg.testTimeoutMin) || null } : null;
 }
 
@@ -478,6 +481,8 @@ function startStep(deps, st, t, { kind, commit, ko = null }, act) {
     timeoutMs: clean ? (t.test?.timeoutMin ? t.test.timeoutMin * 60_000 * 2 : STEP_TIMEOUT_MS)
       : (t.plan.timeoutMin ? t.plan.timeoutMin * 60_000 * (t.plan.declared ? 1 : 2) : STEP_TIMEOUT_MS),
     ...(clean || (kind === 'full' && !t.plan.declared && tc) ? { testCommand: tc } : {}),
+    // declared full run: the areas' commands run after it (runStep); never for a bisect or a clean check
+    ...(!clean && !useBisect && t.plan.declared && t.plan.areaCommands?.length ? { areaCommands: t.plan.areaCommands } : {}),
   };
   fs.writeFileSync(path.join(dir, `${id}.step.json`), JSON.stringify(step, null, 2));
   const { pid } = deps.launch(step);

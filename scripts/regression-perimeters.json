@@ -960,6 +960,7 @@
             "_test_model_reco.mjs",
             "_test_pipeline_corpus.mjs",
             "_test_pipeline_entries.mjs",
+            "_test_pipeline_speed.mjs",
             "_test_typed_operations.mjs"
           ]
         },

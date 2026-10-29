@@ -517,13 +517,42 @@ function runCommand(cwd, command, env, timeoutMs = TEST_TIMEOUT_MS, tick = null)
  */
 function runSuite(ctx) {
   const { cwd, cfg } = ctx;
+  // The full suite is only deferred when the after-the-fact (idle) regression is on for the project:
+  // otherwise nothing would ever run it.
+  const lean = !!ctx.tuning?.targetedTests && !!ctx.idleRegression && !!ctx.targetFrom;
+  // Lever targetedTests (2026-10-29): the full suite no longer runs at the start of
+  // a Development run; it runs once, after the fact, while the user is idle.
+  if (lean && ctx.suiteMode === 'start') {
+    ctx.onSuiteTargeted?.({ targeted: true, empty: true, files: [], requirement: [], total: 0, why: 'suite complète reportée a posteriori (non-régression pendant l’inactivité)' });
+    return { ok: true, code: 0, out: '', ms: 0, skipped: true };
+  }
+  // Areas (2026-10-29): only the areas the diff touches run their own command.
+  if (Array.isArray(cfg.areas) && cfg.areas.length && ctx.targetFrom) {
+    const plan = Speed.selectAreaTests({ cwd, cfg, changed: Speed.changedSince(cwd, ctx.targetFrom()), lean: lean && ctx.suiteMode !== 'full' });
+    const t0 = Date.now(); const outs = [];
+    let last = { ok: true, code: 0, out: '' };
+    for (const c of plan.commands) {
+      if (c.area === null) last = runMainSuite(ctx, lean);
+      else if (c.command) last = { ...runCommand(cwd, c.command, ctx.testEnv, testTimeoutMs(cfg), ctx.testTick), area: c.area };
+      else continue;
+      outs.push(`[${c.area ?? 'principale'}] ${c.command || cfg.testCommand}\n${last.out || ''}`);
+      if (!last.ok) break;
+    }
+    return { ...last, out: outs.join('\n').slice(-12_000), ms: Date.now() - t0, areas: plan.commands.map(c => c.area ?? 'principale') };
+  }
+  return runMainSuite(ctx, lean);
+}
+function runMainSuite(ctx, lean) {
+  const { cwd, cfg } = ctx;
+  const mainGlobs = cfg.mainTestGlobs || cfg.testGlobs;
   let run = () => runCommand(cwd, cfg.testCommand, ctx.testEnv, testTimeoutMs(cfg), ctx.testTick);
   let command = cfg.testCommand;
   // Lever targetedTests (0.143.0): a TDD step runs the item's tests and those
   // its changes reach; anything uncertain runs the full suite, said.
   if (ctx.tuning?.targetedTests && ctx.suiteMode === 'targeted' && command && ctx.targetFrom) {
-    const sel = Speed.selectTargetedTests({ cwd, cfg, from: ctx.targetFrom(), isTest: (f) => isTestFile(f, cfg.testGlobs) });
+    const sel = Speed.selectTargetedTests({ cwd, cfg, from: ctx.targetFrom(), isTest: (f) => isTestFile(f, mainGlobs), lean });
     ctx.onSuiteTargeted?.(sel);
+    if (sel.targeted && sel.empty) return { ok: true, code: 0, out: '', ms: 0, skipped: true };
     if (sel.targeted) {
       command = sel.command;
       run = () => ({ ...runCommand(cwd, sel.command, ctx.testEnv, testTimeoutMs(cfg), ctx.testTick), targeted: { files: sel.files.length, total: sel.total } });
@@ -846,14 +875,14 @@ function stepPrompt(ctx, step, extra) {
         // P9 / design §2.8: two parallel tasks must never both write the same
         // version; the integrator numbers each task's release in turn.
         L.push(`FRAGMENT=${ctx.lane.fragment}`);
-        L.push(`1. NE MODIFIE NI le numéro de version (${(cfg.versionFiles || []).join(', ') || 'fichiers de version'}) NI ${cfg.changelog || 'CHANGELOG.md'} : tu travailles dans un couloir parallèle, c'est l'orchestrateur qui attribue la version en intégrant la branche ;`);
+        L.push(`1. NE MODIFIE NI le numéro de version (${deliveryVersionFiles(ctx).join(', ') || 'fichiers de version'}) NI ${cfg.changelog || 'CHANGELOG.md'} : tu travailles dans un couloir parallèle, c'est l'orchestrateur qui attribue la version en intégrant la branche ;`);
         L.push(`2. écris à la place le fragment ${ctx.lane.fragment} : il commence par « ---\\nbump: patch|minor|major\\n--- » (patch pour une correction, minor pour une fonctionnalité), suivi des sections Keep a Changelog (### Added, ### Fixed…) de cette livraison ;`);
       } else if (ctx.prebump) {
         // 0.114.1: an item of this run already bumped the version — never bump it twice.
         L.push(`1. la version est DÉJÀ incrémentée par un item de cette exécution (${ctx.prebump.from} → ${ctx.prebump.to}) : ne l'incrémente PAS de nouveau ;`);
         L.push(`2. vérifie et complète au besoin l'entrée « ## [${ctx.prebump.to}] » de ${cfg.changelog || 'CHANGELOG.md'} ;`);
       } else {
-        L.push(`1. incrémente la version (patch pour une correction, minor pour une fonctionnalité) dans : ${(cfg.versionFiles || []).join(', ') || '(fichier de version du projet)'}${ctx.tuning?.codeDeliver && mentionList(ctx) ? ` — et mets la même version dans chaque mention de version du projet : ${mentionList(ctx)}` : ''} ;`);
+        L.push(`1. incrémente la version (patch pour une correction, minor pour une fonctionnalité) dans : ${deliveryVersionFiles(ctx).join(', ') || '(fichier de version du projet)'}${ctx.tuning?.codeDeliver && mentionList(ctx) ? ` — et mets la même version dans chaque mention de version du projet : ${mentionList(ctx)}` : ''} ;`);
         L.push(`2. ajoute l'entrée « ## [X.Y.Z] - AAAA-MM-JJ » correspondante dans ${cfg.changelog || 'CHANGELOG.md'} ;`);
       }
       if (cfg.requirements) L.push(`3. ajoute D'OFFICE la ligne de la demande dans ${cfg.requirements} (date, demande verbatim, tests associés, version) — c'est obligatoire à chaque livraison, personne d'autre ne le fera ;`);
@@ -889,7 +918,7 @@ function deliveryTextPrompt(L, ctx, art, T) {
   L.push('MODIFIER=non');
   const does = ctx.lane ? `le fragment ${ctx.lane.fragment}`
     : ctx.prebump ? `l'entrée « ## [${ctx.prebump.to}] » de ${cl} (la version est DÉJÀ incrémentée par un item de cette exécution : ${ctx.prebump.from} → ${ctx.prebump.to})`
-      : `la version (${(cfg.versionFiles || []).join(', ') || 'aucun fichier de version'}${mentionList(ctx) ? `, mentions : ${mentionList(ctx)}` : ''}) et l'entrée de ${cl}`;
+      : `la version (${deliveryVersionFiles(ctx).join(', ') || 'aucun fichier de version'}${mentionList(ctx) ? `, mentions : ${mentionList(ctx)}` : ''}) et l'entrée de ${cl}`;
   L.push(`Ton rôle : rédiger le TEXTE de la livraison, et seulement lui. Le programme de l'orchestrateur écrit lui-même ${does}${cfg.requirements ? `, la ligne de ${cfg.requirements}` : ''} et le commit, puis vérifie ${cfg.testCommand ? `${T} vert` : 'le résultat'}${cfg.buildCommand ? ` et le build` : ''}.`);
   if (ctx.coveredItems?.length) L.push(`Comportement(s) DÉJÀ assuré(s) par le code existant (le test ajouté sert de documentation) : ${ctx.coveredItems.map(coveredLabel).join(' ; ')}. Mentionne-le dans l'entrée.`);
   if (ctx.acceptedDefects?.length) L.push(`Défauts ACCEPTÉS explicitement par l'utilisateur : ${ctx.acceptedDefects.map(d => `${d.item != null ? `[item ${d.item}] ` : ''}${d.description}`).join(' ; ')}. Mentionne-les dans l'entrée (problèmes connus).`);
@@ -904,6 +933,16 @@ function deliveryTextPrompt(L, ctx, art, T) {
   if (cfg.requirements) L.push('## Exigence', `la ligne à ajouter à ${cfg.requirements}, au format de ce fichier (lis ses dernières lignes) : date, demande verbatim, tests associés ; écris {version} à la place du numéro de version`);
   L.push('## Livré', 'ce qui a été livré, en quelques lignes');
   L.push('Ne modifie AUCUN fichier du projet et ne lance ni git add ni git commit : le programme le fait, et refuse l’étape si un fichier a changé.');
+}
+
+/** Version files of the areas the run touched (all of them without `areas`). */
+function deliveryVersionFiles(ctx) {
+  const { cwd, cfg } = ctx;
+  if (!Array.isArray(cfg.areas) || !cfg.areas.length) return cfg.versionFiles || [];
+  try {
+    const v = Speed.selectAreaTests({ cwd, cfg, changed: Speed.changedSince(cwd, ctx.versionBase || ctx.base) }).versionFiles;
+    return v.length ? v : cfg.versionFiles || [];
+  } catch { return cfg.versionFiles || []; }
 }
 
 /** Version mentions the delivery keeps equal to the version (0.140.0), for the instructions. */
@@ -922,7 +961,7 @@ function releaseFromText(ctx, step, before, after) {
   if (git(cwd, ['rev-parse', 'HEAD']).out !== ctx.headAtStep) return { ok: false, textProblem: true, changed: [], why: 'étape de texte : le model ne commite pas, le programme fait le commit' };
   const text = parseDeliveryText(readArtefact(ctx, step.artefact), { needBump: !ctx.prebump || !!ctx.lane, needRequirement: !!cfg.requirements });
   if (text.error) return { ok: false, textProblem: true, changed: [], why: `${step.artefact} : ${text.error}` };
-  const d = deliverRelease(cwd, cfg, text, { prebump: ctx.lane ? null : ctx.prebump, versionBase: ctx.versionBase, lane: ctx.lane, run: ctx.run,
+  const d = deliverRelease(cwd, { ...cfg, versionFiles: deliveryVersionFiles(ctx) }, text, { prebump: ctx.lane ? null : ctx.prebump, versionBase: ctx.versionBase, lane: ctx.lane, run: ctx.run,
     gateCheck: cfg.testCommand ? (dir) => runCommand(dir, cfg.testCommand, ctx.testEnv, testTimeoutMs(cfg), ctx.testTick) : null });
   return d.ok ? d : { changed: [], ...d };
 }
@@ -2479,7 +2518,7 @@ function checkCatalogCriteria(ctx, step, before, after) {
       if (touched.length) return fail(`fichiers de test modifiés (interdit à cette étape) : ${touched.slice(0, 8).join(', ')}`);
     }
     for (const f of c.requireFiles || []) if (!fs.existsSync(path.join(cwd, f))) return fail(`fichier requis absent : ${f}`);
-    if (c.reloadConfig) ctx.cfg = readJson(path.join(cwd, '.orchestrateur', 'pipeline.json')) || ctx.cfg;
+    if (c.reloadConfig) ctx.cfg = Speed.withAreaTestGlobs(readJson(path.join(cwd, '.orchestrateur', 'pipeline.json'))) || ctx.cfg;
     if (c.needTestCommand && !ctx.cfg.testCommand) return fail('.orchestrateur/pipeline.json sans testCommand');
     // Suite déjà rouge au départ (incident) : seule la correction doit la rendre
     // verte ; les étapes d'avant ne peuvent pas être jugées sur elle.
@@ -2854,7 +2893,8 @@ function checkCriteria(ctx, step, before, after) {
     // bump counts, and a release commit is optional — none is needed when the
     // version, CHANGELOG entry and requirement line are already committed.
     // Never relaxed when no item bumped the version.
-    const prebump = ctx.releaseBase ? bumpedInRun(cwd, cfg, ctx.versionBase, ctx.releaseBase) : null;
+    const vfiles = deliveryVersionFiles(ctx);
+    const prebump = ctx.releaseBase ? bumpedInRun(cwd, { ...cfg, versionFiles: vfiles }, ctx.versionBase, ctx.releaseBase) : null;
     if (prebump) relBase = ctx.versionBase;
     if (!head || head === relBase) return { ok: false, why: 'aucun commit créé', changed };
     const dirty = git(cwd, ['status', '--porcelain']).out.split('\n').filter(l => l && !isLocalOnly(l.slice(3)));
@@ -2865,7 +2905,7 @@ function checkCriteria(ctx, step, before, after) {
       // P9, rule changelog.d (design §2.8): in a lane the delivery carries a
       // fragment; the version and the CHANGELOG are the integrator's.
       const cl = cfg.changelog || 'CHANGELOG.md';
-      for (const vf of cfg.versionFiles || []) {
+      for (const vf of vfiles) {
         if (!diffNames.includes(vf)) continue;
         const v = readVersion(vf, git(cwd, ['show', `HEAD:${vf}`]).out), pv = readVersion(vf, git(cwd, ['show', `${relBase}:${vf}`]).out);
         if (v !== pv) return { ok: false, why: `version modifiée dans ${vf} (${pv} → ${v}) : dans un couloir, la version est attribuée à l’intégration — remets ${pv} et écris le fragment ${ctx.lane.fragment}`, changed };
@@ -2876,7 +2916,7 @@ function checkCriteria(ctx, step, before, after) {
       if (!frag || frag.invalid || frag.bumpDefaulted) return { ok: false, why: `fragment ${ctx.lane.fragment} : ${frag?.invalid || 'en-tête « ---\\nbump: patch|minor|major\\n--- » manquant'}`, changed };
       if (!frag.body) return { ok: false, why: `fragment ${ctx.lane.fragment} vide : décris la livraison (### Added, ### Fixed…)`, changed };
     }
-    for (const vf of ctx.lane ? [] : cfg.versionFiles || []) {
+    for (const vf of ctx.lane ? [] : vfiles) {
       if (!diffNames.includes(vf)) return { ok: false, why: `version non incrémentée : ${vf} inchangé`, changed };
       let txt = ''; try { txt = fs.readFileSync(path.join(cwd, vf), 'utf8'); } catch {}
       const prev = git(cwd, ['show', `${relBase}:${vf}`]).out;
@@ -2885,7 +2925,7 @@ function checkCriteria(ctx, step, before, after) {
       version = version || v;
     }
     const cl = cfg.changelog || 'CHANGELOG.md';
-    if (!ctx.lane && (fs.existsSync(path.join(cwd, cl)) || (cfg.versionFiles || []).length)) {
+    if (!ctx.lane && (fs.existsSync(path.join(cwd, cl)) || vfiles.length)) {
       if (!diffNames.includes(cl)) return { ok: false, why: `${cl} sans nouvelle entrée`, changed };
       if (version) {
         let txt = ''; try { txt = fs.readFileSync(path.join(cwd, cl), 'utf8'); } catch {}
@@ -2974,7 +3014,7 @@ export async function runPipeline(o) {
       return refuse(65, `exécution ${o.resumeRun} : elle travaille dans ${was ? `le couloir ${was} (branche ${state.lane.branch})` : 'la copie principale'}, pas dans ${now ? `le couloir ${now}` : 'la copie principale'} — reprise refusée, rien n'est modifié`);
     }
   }
-  const cfg = readJson(path.join(cwd, '.orchestrateur', 'pipeline.json')) || {};
+  const cfg = Speed.withAreaTestGlobs(readJson(path.join(cwd, '.orchestrateur', 'pipeline.json')) || {});
   const pipeline = state?.pipeline || o.pipeline;
   if (!ENGINE_PIPELINES.includes(pipeline)) return refuse(64, `« ${pipeline} » n'est pas en service (${ENGINE_PIPELINES.join(', ')}).`);
   // A mode may have its own preconditions (Rédaction « document »: outside git, tree not clean).
@@ -3754,7 +3794,7 @@ export async function runPipeline(o) {
     const n = String(state.steps.length + 1).padStart(2, '0');
     const key = `${n}-${step.id}`;
     // Lever targetedTests: the TDD loop's checks run targeted tests, everything else the full suite.
-    ctx.suiteMode = pipeline === 'dev' && Speed.TARGET_STEPS.has(step.id) ? 'targeted' : 'full';
+    ctx.suiteMode = pipeline === 'dev' && (Speed.TARGET_STEPS.has(step.id) || (step.id === 'livrer' && ctx.tuning?.targetedTests && ctx.idleRegression)) ? 'targeted' : 'full';
     ctx.suiteStep = step.id;
     ctx.stepKey = key;
     // A delivery without version (Rédaction, media): one commit, by the program.
@@ -3969,7 +4009,9 @@ export async function runPipeline(o) {
     }
   }
   if ((pipeline === 'dev' || pipeline === 'maintenance') && state.index === 0 && (!resumed || state.pausedLimit === 'precondition')) {
+    ctx.suiteMode = pipeline === 'dev' ? 'start' : 'full';
     const t = runSuite(ctx);
+    ctx.suiteMode = 'full';
     if (!t.ok) {
       const failure = classifyTestFailure(t.out);
       const envSigns = failure.signals.map(s => `${s.label} (${s.match})`).join(', ');
