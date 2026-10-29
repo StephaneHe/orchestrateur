@@ -2866,6 +2866,23 @@ function todoOf(project) {
   todoCache.set(project.name, { key, items });
   return items;
 }
+// Read-only media viewer (0.154.0): images and videos under the fleet roots only,
+// path resolved (realpath) before the check; videos honour Range via sendFile.
+const MEDIA_TYPES = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+  '.webp': 'image/webp', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime' };
+app.get('/api/media', (req, res) => {
+  const raw = typeof req.query.path === 'string' ? req.query.path : '';
+  const type = MEDIA_TYPES[path.extname(raw).toLowerCase()];
+  if (!raw || raw.includes('\0') || !type) return res.status(404).end();
+  let real;
+  try { real = fs.realpathSync(path.resolve(raw)); } catch { return res.status(404).end(); }
+  const roots = ['I:\\Dev', __dirname, ATTACHMENTS_DIR].map(r => { try { return fs.realpathSync(r); } catch { return path.resolve(r); } });
+  const under = roots.some(r => real.toLowerCase().startsWith(r.toLowerCase() + path.sep));
+  if (!under || !MEDIA_TYPES[path.extname(real).toLowerCase()]) return res.status(404).end();
+  try { if (!fs.statSync(real).isFile()) return res.status(404).end(); } catch { return res.status(404).end(); }
+  res.type(type);
+  res.sendFile(real, { acceptRanges: true, dotfiles: 'allow' }, (err) => { if (err && !res.headersSent) res.status(404).end(); });
+});
 app.get('/api/todo', (req, res) => {
   const only = typeof req.query.project === 'string' && req.query.project ? req.query.project : null;
   const projects = (config.projects || []).filter(p => p && p.name && p.path && (!only || p.name === only));

@@ -29,7 +29,7 @@
   const COMMON_WORDS = new Set(["index", "test", "tests", "demo", "app", "server", "serveur", "docs", "notes",
     "data", "main", "home", "api", "web", "core", "chef", "projet", "lab"]);
   const DETERMINER = "(?<!(?:^|[^\\p{L}])(?:le|la|les|l'|l’|de|du|des|un|une|en|ma|ta|sa|ce|cette|mon|ton|son|the|a|an|this|my)\\s+)";
-  const FILE_EXT = "mjs|cjs|js|jsx|ts|tsx|json|jsonl|ndjson|md|kt|kts|java|gradle|css|html|htm|ps1|psm1|py|sh|bat|cmd|txt|log|yml|yaml|toml|xml|csv|sql|apk|png|jpg|svg|lock|env|go|rs|c|h|cpp";
+  const FILE_EXT = "mjs|cjs|js|jsx|ts|tsx|json|jsonl|ndjson|md|kt|kts|java|gradle|css|html|htm|ps1|psm1|py|sh|bat|cmd|txt|log|yml|yaml|toml|xml|csv|sql|apk|png|jpg|jpeg|gif|webp|mp4|webm|mov|svg|lock|env|go|rs|c|h|cpp";
   const NOT_FILES = /^(?:node|vue|next|nuxt|express|three|d3|chart|react|socket\.io|p5)\.js$/i;
 
   let vocab = { projects: [], slots: [], conductor: null };
@@ -77,6 +77,20 @@
 
   const unesc = (s) => String(s).replace(/&(amp|lt|gt|quot|#39);/g, (m, e) => ({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" }[e]));
 
+  const IMAGE_RE = /\.(?:png|jpe?g|gif|webp)$/i;
+  const VIDEO_RE = /\.(?:mp4|webm|mov)$/i;
+
+  /** Inline preview for a cited image / video; "" for anything else. Served by GET /api/media. */
+  function mediaPreview(value) {
+    const v = String(value || "").trim();
+    const isImg = IMAGE_RE.test(v), isVid = VIDEO_RE.test(v);
+    if (!isImg && !isVid) return "";
+    const src = `/api/media?path=${encodeURIComponent(v)}`;
+    return isVid
+      ? `<span class="media-prev media-video"><video controls preload="metadata" playsinline src="${escAttr(src)}"></video></span>`
+      : `<span class="media-prev media-image"><img loading="lazy" alt="${escAttr(v.split(/[\\/]/).pop())}" src="${escAttr(src)}"></span>`;
+  }
+
   function link(text, value, kind) {
     return `<a class="idref" href="#" role="button" data-idref="${escAttr(value)}"${kind ? ` data-idref-kind="${escAttr(kind)}"` : ""}` +
       ` title="Qu’est-ce que c’est ? (cliquer)">${text}</a>`;
@@ -90,9 +104,9 @@
       if (g.explicit !== undefined) {
         const { kind, value } = splitExplicit(unesc(g.explicit));
         if (!value) return m;
-        return link(escAttr(value), value, kind);
+        return link(escAttr(value), value, kind) + (!kind || kind === "fichier" ? mediaPreview(value) : "");
       }
-      if (g.file !== undefined) return NOT_FILES.test(m) ? m : link(m, unesc(m), "fichier");
+      if (g.file !== undefined) return NOT_FILES.test(m) ? m : link(m, unesc(m), "fichier") + mediaPreview(unesc(m));
       if (g.run !== undefined) return link(m, m, "run");
       if (g.queue !== undefined) return link(m, m, "queue");
       if (g.todo !== undefined) return link(m, m, "todo");
@@ -260,6 +274,16 @@
     if (names.length) setVocab({ projects: names, slots: vocab.slots, conductor: global.App?.composer?.CONDUCTOR || "chef" });
   }
 
+  // Missing or refused media: drop the preview, the link stays as it was.
+  document.addEventListener("error", (e) => {
+    const t = e.target;
+    if (t && t.closest && (t.tagName === "IMG" || t.tagName === "VIDEO")) { const p = t.closest(".media-prev"); if (p) p.remove(); }
+  }, true);
+  // Thumbnail → full size on click, back on a second click.
+  document.addEventListener("click", (e) => {
+    const img = e.target.closest && e.target.closest(".media-image img");
+    if (img) { e.preventDefault(); e.stopPropagation(); img.classList.toggle("media-zoom"); }
+  }, true);
   // Capture phase: a link inside a bubble, card or journal entry must not
   // trigger the host's own click handler (open drawer, fold/unfold…).
   document.addEventListener("click", (e) => {

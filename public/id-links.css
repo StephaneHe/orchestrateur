@@ -55,3 +55,9 @@ code a.idref { color: inherit; }
   .idov-close, .idov-link { min-width: 2.75rem; min-height: 2.75rem; }
   .idov-row { flex-direction: column; gap: 0.1rem; }
 }
+
+/* Inline media preview (0.154.0) */
+.media-prev { display: block; margin: 0.4rem 0; max-width: 100%; }
+.media-prev img { max-width: min(100%, 240px); max-height: 180px; border-radius: 4px; cursor: zoom-in; display: block; }
+.media-prev img.media-zoom { max-width: 100%; max-height: none; cursor: zoom-out; }
+.media-prev video { max-width: 100%; max-height: 50vh; display: block; }

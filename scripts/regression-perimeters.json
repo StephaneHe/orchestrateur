@@ -425,6 +425,7 @@
         "_test_neutral_stop.mjs",
         "_test_permission_denial.mjs",
         "_test_id_links.mjs",
+        "_test_media_preview.mjs",
         "_test_live_state.mjs"
       ],
       "uses": [
