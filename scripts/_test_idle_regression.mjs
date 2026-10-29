@@ -399,5 +399,81 @@ section('8. Anti-boucle : pas de 2ᵉ correction automatique à la suite d’une
   ok(reg.split('\n').some(l => /anti-boucle/i.test(l) && /à examiner/.test(l) && l.includes('Les non régressions et corrections ne sont lancées que pendant les heures d')),'registre des exigences : ligne anti-boucle citant « Les non régressions et corrections ne sont lancées que pendant les heures d’inactivité »');
 }
 
+// ---------------------------------------------------------------------------
+section('9. Pas de correction sur un test déjà corrigé en tête ; commit fautif = création du test → instable (cas psyProfile 26/10)');
+{
+  const L = tmp('orch-idle-recheck-');
+  let now = Date.parse('2026-10-26T03:00:00Z');
+  let head = '3ab9bd8'.padEnd(40, '0');
+  const ko = ['suite:_test_x.mjs'];
+  const launched = [], fixes = [], replays = [], rechecks = [];
+  let headStillRed = false, creates = false, list = [];
+  const deps = () => ({
+    logsDir: L, now, bootAt: 0,
+    settings: () => IR.cleanSettings({ enabled: true, since: '2026-10-01T00:00:00Z', idleMin: 30 }),
+    lastActivityAt: () => 0,
+    targets: () => [{ name: 'Psy', path: L, plan: { full: ['run'], bisect: null, inPlace: false } }],
+    busy: () => false, head: () => head, revList: () => list, subject: () => 'add test',
+    launch: (step) => { launched.push(step); return { pid: 5000 + launched.length }; },
+    alive: () => true, kill: () => {},
+    dispatchFix: (name, text) => fixes.push({ name, text }), alert: () => {}, chefAlertsOn: () => false,
+    stillRedOnHead: (name, dir, red) => { rechecks.push({ name, red: red.commit }); return { red: headStillRed }; },
+    culpritCreatesTest: (dir, commit, tests) => creates,
+    replayCompare: (dir, red) => { replays.push(red.commit); return { worktree: 1, local: 0 }; },
+  });
+  const finish = (code, extra = {}) => {
+    const step = launched[launched.length - 1];
+    fs.writeFileSync(step.resultFile, JSON.stringify({ code, ko: code ? ko : [], failures: code ? { nature: 'tests', tests: ko.map(k => ({ name: k })) } : null, endedAt: new Date(now).toISOString(), ...extra }));
+    now += MIN; IR.sweep(deps());
+  };
+  const P = () => IR.readState(L).projects.Psy;
+
+  // (a) red on 3ab9bd8 (no green known), HEAD moved on and the failing test now passes there.
+  now += 31 * MIN; IR.sweep(deps()); finish(1);
+  head = '49ba203'.padEnd(40, '0');
+  now += MIN; IR.sweep(deps());
+  ok(rechecks.length >= 1 && fixes.length === 0, '(a) test rejoué sur HEAD, vert : aucune correction lancée');
+  ok(/déjà corrigé dans 49ba203/.test(P().red?.fix?.skipped || ''), '(a) mention « déjà corrigé dans 49ba203 » gardée');
+
+  // (b) green known, then red; the only commit between them creates the failing test.
+  head = 'g'.repeat(40); now += 31 * MIN; IR.sweep(deps()); finish(0);
+  head = '79e94f1'.padEnd(40, '0'); list = [head]; creates = true; headStillRed = true;
+  now += 31 * MIN; IR.sweep(deps()); finish(1);
+  now += MIN; IR.sweep(deps());
+  ok(P().red?.flaky?.reason === 'culprit-creates-test', '(b) commit fautif qui crée le test : incident qualifié instable lié à l’environnement');
+  ok(replays.length === 1 && P().red.flaky.worktree === 1 && P().red.flaky.local === 0, '(b) test rejoué seul dans le worktree et la copie locale, résultats comparés');
+  ok(fixes.length === 1 && /instable/.test(fixes[0].text) && /79e94f1/.test(fixes[0].text), '(b) la demande de correction dit « instable » et nomme le commit');
+  fs.rmSync(L, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
+// 10. gitCommitCreatesTest on a project with a testCommand (p-20261027T225158-27e5a5, review):
+//     the runner writes ko = test:<test title> (a case title, not a file path), so the
+//     commit that creates the test FILE must be recognised from the file's content.
+// ---------------------------------------------------------------------------
+{
+  section('10. Commit qui crée le test : KO nommé par le titre du cas');
+  const D = fs.mkdtempSync(path.join(os.tmpdir(), 'idle-creates-'));
+  const g = (...a) => spawnSync('git', ['-C', D, '-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { encoding: 'utf8', windowsHide: true });
+  g('init', '-q');
+  fs.writeFileSync(path.join(D, 'README.md'), 'x\n');
+  g('add', '-A'); g('commit', '-q', '-m', 'base');
+  fs.mkdirSync(path.join(D, 'tests'));
+  fs.writeFileSync(path.join(D, 'tests', 'profile.test.mjs'), "import test from 'node:test';\ntest('computes the dominant trait from answers', () => {});\n");
+  g('add', '-A'); g('commit', '-q', '-m', 'add profile test');
+  const created = g('rev-parse', 'HEAD').stdout.trim();
+  fs.writeFileSync(path.join(D, 'src.mjs'), 'export const a = 1;\n');
+  g('add', '-A'); g('commit', '-q', '-m', 'code only');
+  const codeOnly = g('rev-parse', 'HEAD').stdout.trim();
+
+  ok(IR.gitCommitCreatesTest(D, created, ['test:computes the dominant trait from answers']) === true,
+    '(10) ko = test:<titre du cas> : le commit qui ajoute le fichier contenant ce cas est reconnu');
+  ok(IR.gitCommitCreatesTest(D, codeOnly, ['test:computes the dominant trait from answers']) === false,
+    '(10) un commit qui ne crée aucun fichier de test n’est pas reconnu');
+  ok(IR.gitCommitCreatesTest(D, created, ['test:another case that does not exist']) === false,
+    '(10) un titre absent du fichier ajouté n’est pas reconnu');
+  fs.rmSync(D, { recursive: true, force: true });
+}
+
 console.log(`\n${pass} OK, ${fail} KO`);
 process.exit(fail ? 1 : 0);

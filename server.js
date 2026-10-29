@@ -4554,7 +4554,7 @@ function sweepIdleRegression() {
       lastActivityAt: () => { try { return AutoAnswer.readActivity(LOGS_DIR)?.at || 0; } catch { return 0; } },
       targets: (settings) => IdleRegression.targetsOf({ projects: config.projects, inService: enf.projects || [], conductor: conductorName(), settings }),
       busy: idleRegressionBusy,
-      head: IdleRegression.gitHead, revList: IdleRegression.gitRevList, subject: IdleRegression.gitSubject,
+      head: IdleRegression.gitHead, revList: IdleRegression.gitRevList, subject: IdleRegression.gitSubject, culpritCreatesTest: IdleRegression.gitCommitCreatesTest,
       launch: (step) => IdleRegression.launchRunner(step, { root: __dirname }),
       alive: (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } },
       kill: IdleRegression.killTree,

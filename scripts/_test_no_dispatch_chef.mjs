@@ -63,13 +63,18 @@ async function chefTurn(text, json, map) {
   const q0 = { Q: logOf('Q').length, R: logOf('R').length };
   const r = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'dispatch.mjs'), 'chef', text, '--test', 'n8-ne-pas-dispatcher'],
     { env: { ...baseEnv, FAKE_PIPE_JSON: JSON.stringify(json), FAKE_CLAUDE_CLASSIFY_MAP: JSON.stringify(map || {}), FAKE_CLAUDE_DUMP_PROMPT: dump }, encoding: 'utf8', timeout: 180_000, windowsHide: true });
-  // Let any launched musician turn write its prompt, then finish.
-  for (let i = 0; i < 40 && ['Q', 'R'].some(n => fs.existsSync(path.join(T, 'logs', `${n}.pid`))); i++) await sleep(500);
-  await sleep(500);
   const evs = logOf('chef').slice(n0);
   const run = evs.find(e => e.type === 'user_prompt')?.pipeline?.run;
   const art = run ? path.join(T, 'chef', '.orchestrateur', 'runs', run) : null;
   const read = (f) => { try { return JSON.parse(fs.readFileSync(path.join(art, f), 'utf8')); } catch { return null; } };
+  // The Dispatcher launches tasks detached: under load (parallel suites) the
+  // child may not have written its .pid yet, so waiting on .pid alone misses it.
+  // Wait for the user_prompt of every task dispatch.json says was launched.
+  const launched = [...new Set((read('dispatch.json')?.dispatched || []).map(d => d.projet).filter(p => p === 'Q' || p === 'R'))];
+  for (let i = 0; i < 60 && launched.some(n => !logOf(n).slice(q0[n]).some(e => e.type === 'user_prompt')); i++) await sleep(500);
+  // Let any launched musician turn finish.
+  for (let i = 0; i < 40 && ['Q', 'R'].some(n => fs.existsSync(path.join(T, 'logs', `${n}.pid`))); i++) await sleep(500);
+  await sleep(500);
   let prompts = []; try { prompts = fs.readFileSync(dump, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l).prompt); } catch {}
   const musicianPrompts = ['Q', 'R'].flatMap(n => logOf(n).slice(q0[n]).filter(e => e.type === 'user_prompt').map(e => `${n}: ${e.text}`));
   return { code: r.status, out: `${r.stdout || ''}${r.stderr || ''}`, read, calls: calls().slice(c0), musicianPrompts,

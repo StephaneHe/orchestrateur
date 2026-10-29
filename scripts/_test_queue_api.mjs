@@ -176,11 +176,13 @@ function drainSandbox() {
   const intervals = [];
   const api = new Function(
     'dispatchQueue', 'persistQueue', 'dispatchPidAlive', 'spawnDirectDispatch', 'readLimitedUntil',
-    'musicianAutoStates', 'debugLog', 'console', 'setInterval',
+    'musicianAutoStates', 'debugLog', 'console', 'setInterval', 'loopMon',
     `${DRAIN_SRC}\nreturn { drainQueue, sweepQueues, queueStalledSince, drainLaunchedAt, drainPending };`)(
     dq, () => {}, () => (pid.alive ? 4242 : null),
     (name, prompt, a, v, opts) => { spawned.push({ name, prompt, opts }); return 1; },
-    () => limited, states, () => {}, { log: () => {} }, (fn, ms) => { intervals.push(ms); return { unref() {} }; });
+    () => limited, states, () => {}, { log: () => {} }, (fn, ms) => { intervals.push(ms); return { unref() {} }; },
+    // server.js wraps its sweeps in the event-loop lag monitor (0.150.0): pass-through double.
+    { wrap: (_n, fn) => fn, tracked: (_n, fn) => fn() });
   return { api, dq, spawned, pid, states, setLimited: (v) => { limited = v; }, intervals };
 }
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));

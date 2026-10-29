@@ -258,6 +258,11 @@ export function stillRed(fullKo, stepKo, code) {
 // ---------------------------------------------------------------------------
 // The fix request (Incident) and the chef's alert
 // ---------------------------------------------------------------------------
+function flakyCompare(f) {
+  if (f.worktree == null && f.local == null) return '';
+  const r = (n) => (n == null ? 'inconnu' : n === 0 ? 'vert' : 'rouge');
+  return ` Test rejoué seul : copie propre (worktree) ${r(f.worktree)}, copie locale ${r(f.local)}${f.worktree !== f.local ? ' — résultats différents : dépend de l’environnement' : ''}.`;
+}
 export function fixText(name, red) {
   const c = red.bisect?.culprit;
   const what = describeFailures(red.failures);
@@ -270,6 +275,7 @@ export function fixText(name, red) {
     red.ignored?.length ? `Fichier(s) ignoré(s) par git, donc absent(s) d'une copie propre, cité(s) par la sortie : ${red.ignored.map(i => i.file).join(', ')} — les versionner (ou une fixture), ou ne plus en dépendre.` : null,
     red.cleanCopy ? null : c ?`Commit fautif (recherche entre la dernière complète verte ${short(red.good)} et ${short(red.commit)}) : ${short(c)}${red.bisect.subject ? ` « ${red.bisect.subject} »` : ''}.`
       : red.good ? `Commit fautif non isolé entre ${short(red.good)} et ${short(red.commit)}${red.bisect?.why ? ` (${red.bisect.why})` : ''}.` : 'Aucune complète verte connue avant : commit fautif non recherché.',
+    red.flaky ? `[INSTABLE] Le commit désigné (${short(red.flaky.commit)}) CRÉE le test en échec : c'est plus probablement un test instable lié à l'environnement qu'une régression.${flakyCompare(red.flaky)} Commence par vérifier la stabilité du test (environnement, horloge, ordre, dépendances locales) avant de chercher une régression de code.` : null,
     red.report ? `Rapport : ${red.report}` : null,
     red.log ? `Sortie : ${red.log}` : null,
     'Corrige la cause (voie Incident) : reproduis avec les tests KO seulement, corrige, relance ces tests et les tests liés aux fichiers modifiés. Ne lance pas de non-régression complète : l’orchestrateur la relancera pendant la prochaine période d’inactivité. Un test d’exigence ne se supprime ni ne s’affaiblit.',
@@ -364,10 +370,11 @@ export function sweep(deps) {
   out.idle = idle; out.idleMs = idleMs;
 
   // 1. The step in progress: finished, dead, or to stop.
+  let justApplied = false;   // a result was applied in this sweep: the fix waits for the next one
   if (st.active) {
     const a = st.active;
     const res = readJson(a.resultFile);
-    if (res) { st.active = null; applyResult(deps, st, a, res, act); }
+    if (res) { st.active = null; applyResult(deps, st, a, res, act); justApplied = true; }
     else if (!deps.alive(a.pid)) {
       st.active = null; proj(st, a.project).interrupted++;
       act({ event: 'interrupted', project: a.project, step: a.kind, commit: a.commit, why: 'processus arrêté sans résultat' });
@@ -387,7 +394,32 @@ export function sweep(deps) {
     const p = proj(st, t.name);
     if (deps.busy(t.name)) continue;
     const r = p.red;
-    if (r && r.searchDone && !r.fix && !r.toExamine) {
+    if (r && r.searchDone && !r.fix && !r.toExamine && !justApplied) {
+      // The failing test is replayed on the current HEAD before any fix (p-20261027T225158-27e5a5):
+      // a newer commit may already have fixed it.
+      const head = deps.head(t.path);
+      if (head && head !== r.commit && deps.stillRedOnHead) {
+        let chk = null;
+        try { chk = deps.stillRedOnHead(t.name, t.path, r); } catch (e) { log(`[idle-regression] rejeu sur HEAD impossible : ${e.message}`); }
+        if (chk && chk.red === false) {
+          r.fix = { at: isoNow(now), by: 'inactivité', skipped: `déjà corrigé dans ${short(head)} (le test en échec est vert sur HEAD)` };
+          act({ event: 'fix-skipped', project: t.name, commit: r.commit, why: r.fix.skipped });
+          saveState(logsDir, st); return out;
+        }
+      }
+      // A culprit that CREATES the failing test is more likely an unstable, environment-bound test
+      // than a regression: say so, and compare the test alone in the worktree and the local copy.
+      const culprit = r.bisect?.culprit;
+      if (culprit && deps.culpritCreatesTest) {
+        let creates = false;
+        try { creates = !!deps.culpritCreatesTest(t.path, culprit, r.ko || []); } catch { /* unknown: not flaky */ }
+        if (creates) {
+          let cmp = {};
+          try { cmp = deps.replayCompare?.(t.path, r) || {}; } catch (e) { cmp = { error: e.message }; }
+          r.flaky = { reason: 'culprit-creates-test', commit: culprit, ...cmp };
+          act({ event: 'flaky', project: t.name, commit: culprit, why: 'le commit fautif crée le test en échec' });
+        }
+      }
       deps.dispatchFix(t.name, fixText(t.name, r));
       r.fix = { at: isoNow(now), by: 'inactivité' };
       p.lastFix = { at: r.fix.at, commit: r.commit, sig: failureSignature(r), auto: true };
@@ -528,6 +560,20 @@ function git(dir, args) {
 }
 export const gitHead = (dir) => git(dir, ['rev-parse', 'HEAD']).out || null;
 export const gitRevList = (dir, a, b) => git(dir, ['rev-list', '--reverse', '--first-parent', `${a}..${b}`]).out.split('\n').filter(Boolean);
+/** True when `commit` adds a file that is one of the failing tests (suite:<name>.mjs, or a path named by a KO). */
+export function gitCommitCreatesTest(dir, commit, ko = []) {
+  const added = git(dir, ['diff-tree', '--no-commit-id', '--name-only', '--diff-filter=A', '-r', commit]).out.split(/\r?\n/).filter(Boolean);
+  const wanted = (ko || []).map(k => String(k).replace(/^(suite|test):/, ''));
+  if (added.some(f => wanted.some(w => w && (f === w || f.endsWith(`/${w}`) || f.endsWith(`/${w}.mjs`))))) return true;
+  // A project with a testCommand reports a case title (test:<title>), not a path: look for the
+  // title in the content of the files this commit adds.
+  const titles = (ko || []).filter(k => /^test:/.test(String(k))).map(k => String(k).slice(5).trim()).filter(t => t.length >= 4);
+  if (!titles.length) return false;
+  return added.slice(0, 50).some(f => {
+    const r = git(dir, ['show', `${commit}:${f}`]);
+    return r.ok && titles.some(t => r.out.includes(t));
+  });
+}
 export const gitSubject = (dir, c) => git(dir, ['log', '-1', '--format=%s', c]).out.slice(0, 160) || null;
 
 /** Starts the runner (idle-regression-runner.mjs, never imported), detached from the server. */

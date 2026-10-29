@@ -11,6 +11,13 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.152.2] - 2026-10-28
+
+### Fixed
+- (tests) After-the-fact full run of acf03ed red on two suites, bisected to 2074edf (v0.150.0):
+  - `_test_queue_api.mjs`: the sandbox that evaluates the real drain block of `server.js` now passes a pass-through `loopMon` double (`wrap`, `tracked`); since 0.150.0 the block wraps `sweepQueues` in the event-loop lag monitor, and the sandbox threw `ReferenceError: loopMon is not defined`.
+  - `_test_no_dispatch_chef.mjs`: `chefTurn` now waits for the `user_prompt` of every task `dispatch.json` reports as launched before reading the musicians' logs. It waited only while a `.pid` existed, so under parallel load the detached dispatch to R had not started yet and « la vraie tâche du même message part normalement chez R » failed intermittently. No assertion changed.
+
 ## [0.152.1] - 2026-10-28
 
 ### Fixed

@@ -229,7 +229,10 @@ export function selectTargets(repo, changed, { since = 'HEAD', files = repoFiles
     if (DOC_RE.test(f)) { docsOnly.push(f); continue; }
     let covered = TOOLING_FILES.includes(f);   // its TOOLING_SUITES were added above
     for (const [s, cov] of coverage) if (cov.has(f)) {
-      add(s, `couvre ${f}`); covered = true;
+      covered = true;
+      // A modified suite runs itself and is never capped: otherwise the pass stays green on a test it never played.
+      if (s === f) { add(s, `suite modifiée : ${f}`); continue; }
+      add(s, `couvre ${f}`);
       const k = path.posix.basename(s), c = closeness(k, f, new Set([...graph.get(s).mentions, ...graph.get(s).imports]));
       rank.set(k, Math.min(rank.get(k) ?? 9, c));
     }

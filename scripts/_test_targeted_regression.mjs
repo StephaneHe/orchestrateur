@@ -197,6 +197,15 @@ ok(/abortTimeout/.test(regSrc) && /TIMEOUT_EXIT = 5/.test(regSrc) && /--timeout-
 const gated = checkReport({ results: [], timeout: { limitMin: 25, notRun: ['_c.mjs'] } });
 ok(!gated.ok && gated.reasons.some(r => /délai dépassé/.test(r)), 'un rapport « délai dépassé » est refusé à la livraison');
 
+// A modified suite file must run itself in the targeted pass (p-20261027T225158-27e5a5:
+// a red test added to _test_idle_regression.mjs was "deferred", so the pass stayed green).
+section('Une suite modifiée se joue elle-même');
+for (const opts of [{}, { noFull: true }]) {
+  const self = T.selectTargets(ROOT, ['scripts/_test_idle_regression.mjs'], { files, ...opts });
+  ok(!self.full && names(self).includes('_test_idle_regression.mjs') && !(self.dropped || []).some(d => /_test_idle_regression/.test(d.file || '')),
+    `suite modifiée sélectionnée par elle-même${opts.noFull ? ' (noFull)' : ''}`, JSON.stringify(names(self)));
+}
+
 fs.rmSync(R, { recursive: true, force: true });
 console.log(`\n${pass} ok, ${fail} KO`);
 process.exit(fail ? 1 : 0);
