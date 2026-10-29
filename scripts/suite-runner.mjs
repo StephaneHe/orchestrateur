@@ -88,6 +88,13 @@ export const SUITE_TIMEOUT_MS = Object.freeze({
   '_test_item_delivery.mjs': 600_000,
 });
 
+// Suites that assert a wall-clock cap on a spawned process and failed ALONE on
+// a loaded machine (_test_phase4b_harness.mjs: max=515 ms, cap 500 ms, after-the-
+// fact run of acf03ed, although already serial). One re-run decides: a real
+// regression fails twice, a load spike does not. The re-run is announced in the
+// kept output; the cap in the suite itself is not loosened.
+export const RETRY_ONCE_SUITES = new Set(['_test_phase4b_harness.mjs']);
+
 /** Default parallelism: ORCH_REGRESS_JOBS, else a quarter of the CPUs, 1 to 4. */
 export function defaultJobs(env = process.env, cpus = os.cpus().length) {
   const n = Number(env.ORCH_REGRESS_JOBS);
@@ -121,7 +128,14 @@ export async function runPool(tasks, { jobs = 1, serial = new Set(), onResult = 
  */
 export async function runSuite(file, cwd, { failedOutputDir, timeoutMs } = {}) {
   const t0 = Date.now();
-  const r = await runNode(file, cwd, timeoutMs ?? SUITE_TIMEOUT_MS[path.basename(file)]);
+  let r = await runNode(file, cwd, timeoutMs ?? SUITE_TIMEOUT_MS[path.basename(file)]);
+  if (r.code !== 0 && RETRY_ONCE_SUITES.has(path.basename(file))) {
+    const first = r.out;
+    r = await runNode(file, cwd, timeoutMs ?? SUITE_TIMEOUT_MS[path.basename(file)]);
+    r.out = `${first}
+--- first attempt failed (timing-sensitive suite), re-run once ---
+${r.out}`;
+  }
   const durationS = Math.round((Date.now() - t0) / 1000);
   const tail = r.out.trim().split('\n').slice(-1)[0] || '';
   const ok = r.code === 0;

@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runPool, runSuite, SERIAL_SUITES, SUITE_TIMEOUT_MS, defaultJobs } from './suite-runner.mjs';
+import { runPool, runSuite, SERIAL_SUITES, RETRY_ONCE_SUITES, SUITE_TIMEOUT_MS, defaultJobs } from './suite-runner.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -78,6 +78,31 @@ try {
   const src = fs.readFileSync(path.join(ROOT, 'scripts', 'regression.mjs'), 'utf8');
   ok(/await runPool\(tasks, \{ jobs, serial: SERIAL_SUITES, onResult:/.test(src) && /opt\('--jobs'\)/.test(src) && /defaultJobs\(\)/.test(src), 'runSuites passe par runPool, avec --jobs et SERIAL_SUITES');
   ok(/record\('suite', f, f, r\.ok \? 'OK' : 'KO', `\$\{r\.tail\} \(\$\{r\.durationS\} s, exit \$\{r\.code\}\)`, output \? \{ output \} : null\)/.test(src), 'entrée du rapport inchangée (même detail, même champ output)');
+  // The 500 ms latency cap of the phase 4.B harness suite failed even ALONE (max=515 ms): serial is not enough.
+  ok(SERIAL_SUITES.has('_test_phase4b_harness.mjs') && RETRY_ONCE_SUITES.has('_test_phase4b_harness.mjs'), '_test_phase4b_harness.mjs (plafond de latence 500 ms) : en série ET un seul nouvel essai');
+  {
+    // Same basename as the real suite: first run fails (load spike), second passes.
+    const flaky = path.join(T, '_test_phase4b_harness.mjs'), mark = path.join(T, 'flaky.mark');
+    fs.writeFileSync(flaky, `import fs from 'node:fs';
+if (!fs.existsSync(${JSON.stringify(mark)})) { fs.writeFileSync(${JSON.stringify(mark)}, '1'); console.log('[FAIL] latency max=515 ms'); console.log('\\n0 ok, 1 KO'); process.exit(1); }
+console.log('\\n1 ok, 0 KO');
+`);
+    const r = await runSuite(flaky, T, { failedOutputDir: OUT });
+    ok(r.ok && /1 ok, 0 KO/.test(r.tail) && /re-run once/.test(r.out) && /latency max=515/.test(r.out), 'pic de charge isolé : la suite chronométrée repasse au 2e essai, 1er échec gardé dans la sortie');
+    const bad = path.join(T, 'bad'); fs.mkdirSync(bad);
+    const always = path.join(bad, '_test_phase4b_harness.mjs');
+    fs.writeFileSync(always, `console.log('\\n0 ok, 1 KO'); process.exit(1);
+`);
+    const r2 = await runSuite(always, T, { failedOutputDir: OUT });
+    ok(!r2.ok && r2.code === 1 && /re-run once/.test(r2.out) && r2.tail === '0 ok, 1 KO', 'une vraie régression (échec aux deux essais) reste rouge');
+    const other = path.join(T, '_test_other_timing.mjs'), mark2 = path.join(T, 'other.mark');
+    fs.writeFileSync(other, `import fs from 'node:fs';
+if (!fs.existsSync(${JSON.stringify(mark2)})) { fs.writeFileSync(${JSON.stringify(mark2)}, '1'); process.exit(1); }
+console.log('\\n1 ok, 0 KO');
+`);
+    const r3 = await runSuite(other, T, { failedOutputDir: OUT });
+    ok(!r3.ok && !/re-run once/.test(r3.out), 'une suite hors liste n’est jamais rejouée');
+  }
   for (const s of ['_test_model_backoff.mjs', '_test_permission_prompt.mjs', '_test_neutral_stop.mjs', '_test_responses_shim.mjs', '_test_pool_chef_dispatch.mjs', '_test_pool_p0a.mjs', '_test_queue_api.mjs'])
     ok(SERIAL_SUITES.has(s) && fs.existsSync(path.join(ROOT, 'scripts', s)), `${s} reste en série (suite existante)`);
   // 0.148.0: own cap of the suites known to run close to the default 300 s.
