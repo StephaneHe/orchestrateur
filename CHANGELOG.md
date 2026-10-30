@@ -11,6 +11,13 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.155.0] - 2026-10-30
+
+### Added
+- (server) Un constat de relecture qui ne porte que sur la documentation, un commentaire, une docstring, le CHANGELOG ou le compte rendu ne bloque plus la livraison : il passe dans les notes de livraison après au plus un tour de correction (`scripts/review-doc-policy.mjs`, `scripts/pipeline-engine.mjs`). Un constat sur du code ou un test, y compris un constat mixte, reste bloquant.
+- (server) Test `scripts/_test_review_doc_nonblocking.mjs` (doc seule non bloquante, code bloquant, mixte bloquant), rattaché à `scripts/regression-perimeters.json`.
+- (android) Liens média : détection des liens image/vidéo dans le Markdown du fil (`MediaLinks.kt`, `Markdown.kt`), test JVM `MediaLinksTest` et ligne de `docs/ANDROID-PARITY.md`.
+
 ## [0.154.0] - 2026-10-29
 
 ### Added

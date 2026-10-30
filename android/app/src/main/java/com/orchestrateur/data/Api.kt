@@ -49,6 +49,8 @@ class Api(private val store: ServerStore) {
 
     val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
+    fun token(): String? = store.token
+
     fun baseUrl(): String =
         (store.serverUrl ?: error("serveur non configuré")).trimEnd('/')
 

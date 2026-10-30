@@ -58,6 +58,7 @@ import { readFragments } from './lanes.mjs';
 import { cleanTuning, runTuning, readTuning, tuningFor, cleanValues, runTuningValues } from './pipeline-tuning.mjs';
 import * as Speed from './pipeline-speed.mjs';
 import { runIdleRegression } from './idle-regression.mjs';
+import { applyDocFindingsPolicy } from './review-doc-policy.mjs';
 import { judgeCitedPaths, observedInTurn, toolUsesInTurn } from './cited-paths.mjs';
 import * as Ops from './typed-operations.mjs';
 import * as Files from './files-check.mjs';
@@ -869,6 +870,7 @@ function stepPrompt(ctx, step, extra) {
       if (ctx.deliveryMode === 'release') { deliveryTextPrompt(L, ctx, art, T); break; }
       L.push('Ton rôle : LIVRER et DOCUMENTER (règles de la flotte), dans cet ordre :');
       if (ctx.coveredItems?.length) L.push(`Comportement(s) DÉJÀ assuré(s) par le code existant, sans nouveau code de production (le test ajouté sert de documentation) : ${ctx.coveredItems.map(coveredLabel).join(' ; ')}. Mentionne-le dans l'entrée CHANGELOG et dans ${art('livraison.md')}.`);
+      if (ctx.deliveryNotes?.length) L.push(`Constats de documentation de la relecture, non bloquants : ${ctx.deliveryNotes.map(d => d.description).join(' ; ')}. Mentionne-les dans ${art('livraison.md')}.`);
       if (ctx.acceptedDefects?.length) L.push(`Défauts ACCEPTÉS explicitement par l'utilisateur, livrés en connaissance de cause : ${ctx.acceptedDefects.map(d => `${d.item != null ? `[item ${d.item}] ` : ''}${d.description}`).join(' ; ')}. Mentionne-les dans l'entrée CHANGELOG (problèmes connus) et dans ${art('livraison.md')}.`);
       if (ctx.deliveryFixes?.length) L.push(`0. d'abord, les corrections relevées par la relecture qui ne relèvent pas des tests (documentation, commentaires…) :\n${ctx.deliveryFixes.map(f => `   - ${f}`).join('\n')}`);
       if (ctx.lane) {
@@ -921,6 +923,7 @@ function deliveryTextPrompt(L, ctx, art, T) {
       : `la version (${deliveryVersionFiles(ctx).join(', ') || 'aucun fichier de version'}${mentionList(ctx) ? `, mentions : ${mentionList(ctx)}` : ''}) et l'entrée de ${cl}`;
   L.push(`Ton rôle : rédiger le TEXTE de la livraison, et seulement lui. Le programme de l'orchestrateur écrit lui-même ${does}${cfg.requirements ? `, la ligne de ${cfg.requirements}` : ''} et le commit, puis vérifie ${cfg.testCommand ? `${T} vert` : 'le résultat'}${cfg.buildCommand ? ` et le build` : ''}.`);
   if (ctx.coveredItems?.length) L.push(`Comportement(s) DÉJÀ assuré(s) par le code existant (le test ajouté sert de documentation) : ${ctx.coveredItems.map(coveredLabel).join(' ; ')}. Mentionne-le dans l'entrée.`);
+  if (ctx.deliveryNotes?.length) L.push(`Constats de documentation de la relecture, non bloquants : ${ctx.deliveryNotes.map(d => d.description).join(' ; ')}. Mentionne-les dans ${art('livraison.md')} (## Livré).`);
   if (ctx.acceptedDefects?.length) L.push(`Défauts ACCEPTÉS explicitement par l'utilisateur : ${ctx.acceptedDefects.map(d => `${d.item != null ? `[item ${d.item}] ` : ''}${d.description}`).join(' ; ')}. Mentionne-les dans l'entrée (problèmes connus).`);
   if (ctx.release) {
     const it = (d) => (d.group === 0 ? 'travail d’avant la montée en complet' : `item ${d.group} « ${d.text} »`);
@@ -3374,7 +3377,7 @@ export async function runPipeline(o) {
   const testEnv = { ...childEnv };
   delete testEnv.ORCH_OBS_ID;
   const ctx = { root, request: state.request || prompt, run, pipeline, kind, mode: state.mode, cwd, cfg, artDir, runDir, base, testEnv, reviewItems: null, testPrint: null, limits,
-    item: state.item || null, itemTestBase: state.itemTestBase || null, reviewScope: null, acceptedDefects: state.acceptedDefects || [], escalated: !!state.escalated, coveredItems: state.coveredItems || [], deliveryFixes: state.deliveryFixes || [], suiteRedAtStart: !!state.suiteRedAtStart, lastMedia: state.lastMedia || null,
+    item: state.item || null, itemTestBase: state.itemTestBase || null, reviewScope: null, acceptedDefects: state.acceptedDefects || [], deliveryNotes: state.deliveryNotes || [], escalated: !!state.escalated, coveredItems: state.coveredItems || [], deliveryFixes: state.deliveryFixes || [], suiteRedAtStart: !!state.suiteRedAtStart, lastMedia: state.lastMedia || null,
     resumeMessages: state.resumeMessages || [], relaxed: state.relaxed || [],
     // P9: in a lane, Livrer writes a changelog.d fragment; the integrator assigns the version.
     lane: state.lane?.k >= 1 ? { ...state.lane, dir: cwd, main: project.path, fragment: laneFragmentPath(state.lane.task) } : null };
@@ -4080,6 +4083,14 @@ export async function runPipeline(o) {
     writeEvent({ type: 'system', subtype: 'pipeline_item_delivered', pipeline: { run, item: g }, commit: c.commit,
       text: `📦 ${groupLabel(g)} livré dans son propre commit ${c.commit.slice(0, 7)}` });
     return c;
+  };
+  // Doc-only review findings kept after one correction round: they do not block,
+  // Livrer mentions them in the delivery notes.
+  const noteDeliveryFindings = (list, key) => {
+    state.deliveryNotes = [...(state.deliveryNotes || []), ...list.map(d => ({ item: key, description: String(d).slice(0, 400) }))];
+    ctx.deliveryNotes = state.deliveryNotes;
+    writeEvent({ type: 'system', subtype: 'pipeline_review_doc_noted', pipeline: { run, item: key }, notes: list,
+      text: `📝 ${list.length} constat(s) de documentation non bloquant(s) après un tour de correction → notes de livraison : ${list.slice(0, 5).join(' ; ')}` });
   };
   // An item stopped by one of ITS limits is set aside — its work saved as a
   // patch and taken out of the work tree — and the other items go on.
@@ -4898,11 +4909,15 @@ export async function runPipeline(o) {
       const g = ctx.reviewScope.group;
       const label = g === 0 ? 'le travail d’avant la montée en complet' : `l’item ${g}`;
       const problems = last.crit?.review?.verdict === 'problemes';
-      const defects = problems ? last.crit.review.items : [];
-      // Non-testable findings (doc, registry…) block too (0.65.0): a correction
-      // step fixes them, then the item is reviewed again before any delivery.
-      const fixes = problems ? last.crit.review.delivery || [] : [];
       const rounds = state.itemReviewRounds?.[g] || 0;
+      // Non-testable findings (doc, registry…) block (0.65.0): a correction step
+      // fixes them, then the item is reviewed again before any delivery. Exception:
+      // when they are the ONLY findings and one correction round is done, they go
+      // to the delivery notes instead; in a mixed review they always block.
+      const policy = applyDocFindingsPolicy(problems ? last.crit.review : { items: [], delivery: [] }, rounds);
+      const defects = policy.blocking.items;
+      const fixes = policy.blocking.delivery;
+      if (policy.notes.length) noteDeliveryFindings(policy.notes, g);
       const budget = state.itemReviewBudgets?.[g] || limits.reviewRounds;
       if (defects.length || fixes.length) {
         state.lastDefects = { ...(state.lastDefects || {}), [g]: [...defects, ...fixes] };
@@ -4933,29 +4948,33 @@ export async function runPipeline(o) {
       state.item = ctx.item = null;
       ctx.reviewScope = null;
     } else if (step.id === 'revue' && last.crit?.review?.verdict === 'problemes') {
-      const items = last.crit.review.items, fixes = last.crit.review.delivery || [];
+      const policy = applyDocFindingsPolicy(last.crit.review, state.reviewRounds || 0);
+      const items = policy.blocking.items, fixes = policy.blocking.delivery;
+      if (policy.notes.length) noteDeliveryFindings(policy.notes, null);
       state.lastDefects = { ...(state.lastDefects || {}), global: [...items, ...fixes] };
-      if (state.reviewRounds >= (state.budgets?.review || limits.reviewRounds)) {
-        return pauseForLimit({ limit: 'review', value: state.reviewRounds, step, why: `la revue relève encore : ${[...items, ...fixes].slice(0, 5).join(' ; ')}` });
-      }
-      state.reviewRounds++;
-      ctx.testPrint = testsNow();   // tests existants protégés ; en ajouter reste permis
-      if (state.mode === 'complet') {
-        // Complet : chaque problème devient un item de la liste, puis retour à 4 ;
-        // un constat de doc passe par une correction (0.65.0), jamais par Livrer.
-        if (items.length) {
-          const md = (readArtefact(ctx, 'tests.md') || '').replace(/\s*$/, '\n');
-          fs.writeFileSync(path.join(artDir, 'tests.md'), md + items.map(i => `- [ ] (revue) ${String(i).replace(/\s+/g, ' ').slice(0, 300)}`).join('\n') + '\n');
+      if (items.length || fixes.length) {
+        if (state.reviewRounds >= (state.budgets?.review || limits.reviewRounds)) {
+          return pauseForLimit({ limit: 'review', value: state.reviewRounds, step, why: `la revue relève encore : ${[...items, ...fixes].slice(0, 5).join(' ; ')}` });
         }
-        if (fixes.length) ctx.reviewItems = state.reviewItems = fixes;
-        state.plan.splice(state.index + 1, 0, ...(fixes.length ? ['vert'] : []), ...(items.length ? ['@loop'] : []), 'revue');
-      } else {
-        ctx.reviewItems = state.reviewItems = [...items, ...fixes];
-        state.plan.splice(state.index + 1, 0, 'vert', 'revue');
+        state.reviewRounds++;
+        ctx.testPrint = testsNow();   // tests existants protégés ; en ajouter reste permis
+        if (state.mode === 'complet') {
+          // Complet : chaque problème devient un item de la liste, puis retour à 4 ;
+          // un constat de doc passe par une correction (0.65.0), jamais par Livrer.
+          if (items.length) {
+            const md = (readArtefact(ctx, 'tests.md') || '').replace(/\s*$/, '\n');
+            fs.writeFileSync(path.join(artDir, 'tests.md'), md + items.map(i => `- [ ] (revue) ${String(i).replace(/\s+/g, ' ').slice(0, 300)}`).join('\n') + '\n');
+          }
+          if (fixes.length) ctx.reviewItems = state.reviewItems = fixes;
+          state.plan.splice(state.index + 1, 0, ...(fixes.length ? ['vert'] : []), ...(items.length ? ['@loop'] : []), 'revue');
+        } else {
+          ctx.reviewItems = state.reviewItems = [...items, ...fixes];
+          state.plan.splice(state.index + 1, 0, 'vert', 'revue');
+        }
+        const to = state.mode === 'complet' && items.length ? '4 (nouveaux items)' : '4b';
+        writeEvent({ type: 'system', subtype: 'pipeline_loop', pipeline: { run, from: 'revue', to: state.mode === 'complet' && items.length ? 'tdd' : 'vert', round: state.reviewRounds },
+          text: `revue : ${items.length + fixes.length} problème(s)${fixes.length ? ` dont ${fixes.length} constat(s) de documentation` : ''} → retour à ${to} (tour de revue ${state.reviewRounds}/${limits.reviewRounds})` });
       }
-      const to = state.mode === 'complet' && items.length ? '4 (nouveaux items)' : '4b';
-      writeEvent({ type: 'system', subtype: 'pipeline_loop', pipeline: { run, from: 'revue', to: state.mode === 'complet' && items.length ? 'tdd' : 'vert', round: state.reviewRounds },
-        text: `revue : ${items.length + fixes.length} problème(s)${fixes.length ? ` dont ${fixes.length} constat(s) de documentation` : ''} → retour à ${to} (tour de revue ${state.reviewRounds}/${limits.reviewRounds})` });
     }
     // A step that lists questions for the user (meeting: files in doubt) pauses
     // right after it, once: « continuer » resumes at the next step.

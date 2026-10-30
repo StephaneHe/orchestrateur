@@ -12,6 +12,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.window.Dialog
+import coil.compose.AsyncImage
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,6 +43,8 @@ import com.orchestrateur.data.IdLinks
 import com.orchestrateur.data.IdMatch
 import com.orchestrateur.data.IdVocab
 import com.orchestrateur.data.IdVocabCache
+import com.orchestrateur.data.MediaKind
+import com.orchestrateur.data.MediaLinks
 import com.orchestrateur.data.getJson
 import com.orchestrateur.data.idVocabFrom
 import com.orchestrateur.ui.common.LocalEnv
@@ -66,14 +76,23 @@ fun Markdown(
             is MdBlock.H1 -> LinkableText(ri(b.text, Palette.Accent), color = Palette.Accent, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, project = project)
             is MdBlock.H2 -> LinkableText(ri(b.text, Palette.Accent), color = Palette.Accent, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, project = project)
             is MdBlock.H3 -> LinkableText(ri(b.text, baseColor),     color = baseColor,       fontSize = 14.sp, fontWeight = FontWeight.SemiBold, project = project)
-            is MdBlock.Para -> LinkableText(ri(b.text, baseColor), color = baseColor, fontSize = 13.sp, lineHeight = 19.sp, project = project)
-            is MdBlock.Bullet -> Row(verticalAlignment = Alignment.Top) {
-                Text("• ", color = baseColor, fontSize = 13.sp)
-                LinkableText(ri(b.text, baseColor), color = baseColor, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.weight(1f), project = project)
+            is MdBlock.Para -> {
+                LinkableText(ri(b.text, baseColor), color = baseColor, fontSize = 13.sp, lineHeight = 19.sp, project = project)
+                if (idrefs) for (m in MediaLinks.cited(b.text)) MediaPreview(m)
             }
-            is MdBlock.Ordered -> Row(verticalAlignment = Alignment.Top) {
-                Text("${b.n}. ", color = baseColor, fontSize = 13.sp)
-                LinkableText(ri(b.text, baseColor), color = baseColor, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.weight(1f), project = project)
+            is MdBlock.Bullet -> Column {
+                Row(verticalAlignment = Alignment.Top) {
+                    Text("• ", color = baseColor, fontSize = 13.sp)
+                    LinkableText(ri(b.text, baseColor), color = baseColor, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.weight(1f), project = project)
+                }
+                if (idrefs) for (m in MediaLinks.cited(b.text)) MediaPreview(m)
+            }
+            is MdBlock.Ordered -> Column {
+                Row(verticalAlignment = Alignment.Top) {
+                    Text("${b.n}. ", color = baseColor, fontSize = 13.sp)
+                    LinkableText(ri(b.text, baseColor), color = baseColor, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.weight(1f), project = project)
+                }
+                if (idrefs) for (m in MediaLinks.cited(b.text)) MediaPreview(m)
             }
             is MdBlock.Quote -> Row(
                 Modifier
@@ -514,3 +533,32 @@ private fun AnnotatedString.Builder.appendInline(nodes: List<MdInline>, base: Co
 }
 
 private fun renderInline(nodes: List<MdInline>, base: Color): AnnotatedString = buildAnnotatedString { appendInline(nodes, base) }
+
+/**
+ * Preview of a cited image / video through GET /api/media (same route and token
+ * as the web). A missing or refused file shows nothing: the plain link stays.
+ */
+@Composable
+private fun MediaPreview(path: String) {
+    val env = LocalEnv.current
+    val kind = MediaLinks.kindOf(path) ?: return
+    val url = remember(path) { runCatching { MediaLinks.url(env.api.baseUrl(), path, env.api.token()) }.getOrNull() } ?: return
+    var full by remember { mutableStateOf(false) }
+    var failed by remember { mutableStateOf(false) }
+    val uri = LocalUriHandler.current
+    if (failed) return
+    if (kind == MediaKind.IMAGE) {
+        AsyncImage(
+            model = url,
+            contentDescription = path.substringAfterLast('\\').substringAfterLast('/'),
+            onError = { failed = true },
+            modifier = Modifier.heightIn(max = 180.dp).clip(RoundedCornerShape(6.dp)).clickable { full = true },
+        )
+        if (full) Dialog(onDismissRequest = { full = false }) {
+            AsyncImage(model = url, contentDescription = null, modifier = Modifier.fillMaxWidth().clickable { full = false })
+        }
+    } else {
+        val available by produceState<Boolean?>(null, url) { value = withContext(Dispatchers.IO) { MediaLinks.available(url) } }
+        if (available == true) Text("▶ Lire la vidéo", color = Palette.Accent, fontSize = 13.sp, modifier = Modifier.clickable { uri.openUri(url) })
+    }
+}
