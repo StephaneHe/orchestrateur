@@ -45,5 +45,11 @@ ok(/fun\s+available\(/.test(kt) && /"HEAD"/.test(kt), 'MediaLinks.available() pr
 const prev = md.slice(md.indexOf('private fun MediaPreview'));
 ok(/MediaLinks\.available\(/.test(prev) && /Dispatchers\.IO/.test(prev), 'video preview checks availability off the main thread before showing the player link');
 
+// Item 4: only a cited path whose extension is a known image/video is kept as media
+// (with its kind); another type or no extension stays a plain link without preview.
+const flat = kt.replace(/\s+/g, ' ');
+ok(/in IMAGES -> MediaKind\.IMAGE/.test(flat) && /in VIDEOS -> MediaKind\.VIDEO/.test(flat) && /else -> null/.test(flat), 'kindOf() maps a known extension to IMAGE / VIDEO and anything else to null');
+ok(/substringAfterLast\('\.', ""\)/.test(kt) && /\.filter \{ kindOf\(it\) != null \}/.test(flat), 'a path without extension is not media, and cited() keeps only paths with a media kind');
+
 console.log(`\n${pass} ok, ${fail} ko`);
 process.exit(fail ? 1 : 0);
