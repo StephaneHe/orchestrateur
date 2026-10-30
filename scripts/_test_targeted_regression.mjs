@@ -133,10 +133,11 @@ fs.writeFileSync(path.join(DEV, 'a.txt'), 'v2\n'); g(DEV, 'add', '-A'); g(DEV, '
 const tree = g(DEV, 'rev-parse', 'v2.0.0^{tree}').stdout.trim();
 const putReport = (rep) => { fs.mkdirSync(path.join(DEV, '.regress'), { recursive: true }); fs.writeFileSync(path.join(DEV, '.regress', `report-${Math.random().toString(36).slice(2)}.json`), JSON.stringify(rep)); };
 let p = preflight({ dev: DEV, prod: PROD, tag: 'v2.0.0', from: DEV });
-ok(!p.ok && /aucune non-régression COMPLÈTE/.test(p.problems.join(' ')), 'prod-jump sans complète : REFUSÉ', p.problems.join(' | '));
+// 0.156.1 (user, 2026-10-30): a missing report is a warning, never a refusal.
+ok(p.ok && p.warnings.some(w => /aucun rapport de tests/.test(w)), 'prod-jump sans rapport : avertissement, jamais un refus (0.156.1)', p.problems.join(' | '));
 putReport({ mode: 'targeted', tree, results: GREEN });
 p = preflight({ dev: DEV, prod: PROD, tag: 'v2.0.0', from: DEV });
-ok(!p.ok, 'prod-jump avec seulement une ciblée verte : REFUSÉ');
+ok(p.ok && p.report.green && !p.warnings.length, 'prod-jump avec une ciblée verte : aucun avertissement (0.156.1)');
 putReport({ mode: 'full', tree, results: GREEN });
 fs.mkdirSync(path.join(PROD, 'logs'), { recursive: true }); fs.writeFileSync(path.join(PROD, 'logs', 'orchestrateur.turnlock'), '123');
 p = preflight({ dev: DEV, prod: PROD, tag: 'v2.0.0', from: DEV });

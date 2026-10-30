@@ -11,6 +11,17 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.156.2] - 2026-10-30
+
+### Fixed
+- (server) Delivery by the program no longer fails with « version introuvable dans <projet>.py » on a Python project (defect seen in production on 0.153.0, [projet]): `readVersion()` of the engine (`scripts/pipeline-engine.mjs`) and the version slot of `scripts/code-delivery.mjs` now read, and the delivery rewrites, a Python module constant `__version__ = "x.y.z"` (single or double quotes, optional annotation) in `.py` / `.pyi` files. The comment listing the supported formats is exact again. `versionSlot` already handled the formats it knew (proof: `scripts/code-delivery.mjs`, `.orchestrateur/pipeline.json`); the missing format was `__version__`. Covered by `scripts/_test_python_version_slot.mjs`.
+
+## [0.156.1] - 2026-10-30
+
+### Changed
+- (server) `prod-jump.mjs` never refuses a production jump for want of a test report and never asks to run one: a missing or red report is a printed warning (`preflight().warnings`), whatever the idleRegression switch. Nothing is lost: `prod-before-<tag>` is still tagged before the fast-forward, and the rollback command (`rollbackCommand`) is printed with the plan and after `--apply`; the full non-regression keeps running after the fact, while idle. Clean production, no running turn and fast-forward only still block. User request (2026-10-30): « Annules les tests et passe en priorite une protection contre ca, de maniere a ne rien perdre, mais encore moins du temps ».
+- Test expectations of `_test_targeted_regression`, `_test_regression_perimeters` and `_test_idle_regression` aligned (refusal → warning); new section 5 of `_test_todo_untracked.mjs`.
+
 ## [0.156.0] - 2026-10-30
 
 ### Added

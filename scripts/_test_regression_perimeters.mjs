@@ -178,10 +178,8 @@ spawnSync('git', ['clone', '-q', R, PROD], { windowsHide: true });
 g(PROD, 'checkout', '-q', '-B', 'master', 'v1.0.0');
 const putReport = (r) => { fs.mkdirSync(path.join(R, '.regress'), { recursive: true }); fs.writeFileSync(path.join(R, '.regress', `report-${Math.random().toString(36).slice(2)}.json`), JSON.stringify(r)); };
 let pj = preflight({ dev: R, prod: PROD, tag: 'v1.1.0', from: R });
-ok(!pj.ok && /aucune non-régression COMPLÈTE ni PAR PÉRIMÈTRE/.test(pj.problems.join(' ')), 'prod-jump sans rapport : REFUSÉ', pj.problems.join(' | '));
-putReport({ ...rep, selection: { baseCommit: g(R, 'rev-parse', 'v1.1.0^{commit}').stdout.trim() } });
-pj = preflight({ dev: R, prod: PROD, tag: 'v1.1.0', from: R });
-ok(!pj.ok && /pas depuis la version en prod/.test(pj.problems.join(' ')), 'prod-jump avec un rapport par périmètre fait depuis une autre base : REFUSÉ', pj.problems.join(' | '));
+// 0.156.1 (user, 2026-10-30): no test report is a condition of the jump any more, only a warning.
+ok(pj.ok && pj.warnings.some(w => /aucun rapport de tests/.test(w)), 'prod-jump sans rapport : avertissement, jamais un refus (0.156.1)', pj.problems.join(' | '));
 putReport(rep);
 pj = preflight({ dev: R, prod: PROD, tag: 'v1.1.0', from: R });
 // 0.125.0, user rule: no non-regression in production, so none in the plan.

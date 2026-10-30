@@ -35,11 +35,14 @@ function git(cwd, args) {
   return { ok: r.status === 0, out: (r.stdout || '').replace(/\s+$/, ''), err: (r.stderr || '').trim() };
 }
 
-// Version formats the code rewrites — the ones readVersion() of the engine reads.
+// Version formats the code rewrites — the ones readVersion() of the engine reads:
+// JSON "version", versionName, `version = "…"` and Python `__version__ = "…"`.
 const FORMATS = [
   { test: (f) => /\.json$/i.test(f), re: /("version"\s*:\s*")([^"]+)(")/ },
   { test: () => true, re: /(versionName\s*=?\s*["'])([^"']+)(["'])/ },
   { test: () => true, re: /^(version\s*=\s*["'])([0-9][^"'\s]*)(["'])/m },
+  // Python module constant, optional annotation (`__version__: str = "1.2.3"`).
+  { test: (f) => /\.pyi?$/i.test(f), re: /^(__version__\s*(?::\s*\w+\s*)?=\s*["'])([^"'\s]+)(["'])/m },
 ];
 function versionSlot(file, text) {
   for (const f of FORMATS) {

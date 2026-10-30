@@ -16,7 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { preflight, applyJump, keptOnDisk } from './prod-jump.mjs';
+import { preflight, applyJump, keptOnDisk, rollbackCommand } from './prod-jump.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -72,6 +72,42 @@ try {
   fs.writeFileSync(path.join(PROD3, 'note.txt'), 'prod only\n'); g(PROD3, 'add', '-A'); g(PROD3, 'commit', '-q', '-m', 'prod only');
   const p3 = preflight({ dev: DEV, prod: PROD3, tag: 'v2.0.0', from: DEV });
   ok(!p3.ok && /inconnu de la dev|pas d'avance rapide/.test(p3.problems.join(' ')), 'refusé : pas d’avance rapide vérifiable', p3.problems.join(' | '));
+
+  // 0.156.1, user (2026-10-30): « Annules les tests et passe en priorite une
+  // protection contre ca, de maniere a ne rien perdre, mais encore moins du temps ».
+  console.log('\n── 5. Aucun rapport de tests ne bloque la mise en prod ; rien n’est perdu');
+  const D5 = path.join(R, 'dev5'), P5 = path.join(R, 'prod5');
+  fs.mkdirSync(D5);
+  fs.writeFileSync(path.join(D5, '.gitignore'), '.regress/\nlogs/\n');
+  fs.writeFileSync(path.join(D5, 'a.txt'), 'v1\n');
+  g(D5, 'init', '-q'); g(D5, 'add', '-A'); g(D5, 'commit', '-q', '-m', 'v1');
+  spawnSync('git', ['clone', '-q', D5, P5], { windowsHide: true });
+  const before5 = g(P5, 'rev-parse', 'HEAD').stdout.trim();
+  fs.writeFileSync(path.join(D5, 'a.txt'), 'v3\n'); g(D5, 'commit', '-qam', 'v3'); g(D5, 'tag', '-a', 'v3.0.0', '-m', 'v3');
+  const asksRun = (s) => /(re)?lancer|regression\.mjs|COMPLÈTE|PAR PÉRIMÈTRE/.test(s);
+  let q = preflight({ dev: D5, prod: P5, tag: 'v3.0.0', from: D5 });
+  ok(q.ok && q.warnings.some(w => /aucun rapport de tests/.test(w)) && !asksRun([...q.problems, ...q.warnings].join(' ')),
+    'sans aucun rapport : mise en prod possible, simple avertissement, aucun lancement demandé', [...q.problems, ...q.warnings].join(' | '));
+  fs.mkdirSync(path.join(D5, '.regress'));
+  fs.writeFileSync(path.join(D5, '.regress', 'report-red.json'), JSON.stringify({ mode: 'targeted', tree: g(D5, 'rev-parse', 'v3.0.0^{tree}').stdout.trim(), stale: true, results: [{ id: 'suite:_test_x.mjs', status: 'KO', detail: 'charge' }] }));
+  q = preflight({ dev: D5, prod: P5, tag: 'v3.0.0', from: D5 });
+  ok(q.ok && q.warnings.some(w => /non vert/.test(w)) && !asksRun([...q.problems, ...q.warnings].join(' ')), 'rapport rouge ou périmé : avertissement seulement', [...q.problems, ...q.warnings].join(' | '));
+  fs.writeFileSync(path.join(P5, 'a.txt'), 'local\n');
+  ok(!preflight({ dev: D5, prod: P5, tag: 'v3.0.0', from: D5 }).ok, 'garde-fou gardé : prod modifiée ⇒ refusé');
+  g(P5, 'checkout', '-q', '--', 'a.txt');
+  fs.mkdirSync(path.join(P5, 'logs')); fs.writeFileSync(path.join(P5, 'logs', 'orchestrateur.turnlock'), '1');
+  ok(!preflight({ dev: D5, prod: P5, tag: 'v3.0.0', from: D5 }).ok, 'garde-fou gardé : tour en cours ⇒ refusé');
+  fs.rmSync(path.join(P5, 'logs'), { recursive: true, force: true });
+  // The CLI's dev is this checkout: its output is checked on the source, the jump on the real functions.
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'prod-jump.mjs'), 'utf8').split('async function main()')[1] || '';
+  ok(/AVERTISSEMENT/.test(src) && /retour arrière : \$\{rollbackCommand/.test(src) && /retour : \$\{rollbackCommand/.test(src) && !/process\.exit\(1\)[^\n]*report|report[^\n]*process\.exit\(1\)/.test(src),
+    'CLI : avertissement et commande de retour arrière affichés (plan et --apply), jamais de refus sur le rapport');
+  ok(rollbackCommand({ prod: P5, tag: 'v3.0.0' }) === `git -C ${P5} reset --hard prod-before-v3.0.0` && q.plan[0].includes('tag -a prod-before-v3.0.0'), 'plan : le tag de retour est la première étape, avant l’avance rapide');
+  const j5 = applyJump({ prod: P5, tag: 'v3.0.0', from: D5, keep: q.keep });
+  ok(j5.ok && g(P5, 'rev-parse', 'prod-before-v3.0.0^{commit}').stdout.trim() === before5 && g(P5, 'rev-parse', 'HEAD').stdout.trim() === g(D5, 'rev-parse', 'v3.0.0^{commit}').stdout.trim(),
+    'bond : prod-before-v3.0.0 posé sur l’ancienne prod, puis avance rapide', JSON.stringify(j5));
+  g(P5, 'reset', '-q', '--hard', 'prod-before-v3.0.0');
+  ok(g(P5, 'rev-parse', 'HEAD').stdout.trim() === before5, 'retour arrière par la commande affichée : prod revenue à l’état d’avant');
 } finally {
   fs.rmSync(R, { recursive: true, force: true });
 }

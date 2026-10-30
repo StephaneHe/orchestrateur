@@ -586,10 +586,11 @@ export function runScanners(cwd, cfg, env) {
 
 function readJson(f) { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } }
 
-/** Version courante lue dans un fichier de version (package.json ou gradle). */
+/** Version courante lue dans un fichier de version (package.json, gradle, `version = "…"` ou Python `__version__`). */
 export function readVersion(file, text) {
   if (/\.json$/i.test(file)) { try { return JSON.parse(text).version || null; } catch { return null; } }
-  const m = /versionName\s*=?\s*["']([^"']+)["']/.exec(text) || /^version\s*=\s*["']?([0-9][^"'\s]*)/m.exec(text);
+  const m = /versionName\s*=?\s*["']([^"']+)["']/.exec(text) || /^version\s*=\s*["']?([0-9][^"'\s]*)/m.exec(text)
+    || (/\.pyi?$/i.test(file) ? /^__version__\s*(?::\s*\w+\s*)?=\s*["']([^"'\s]+)["']/m.exec(text) : null);
   return m ? m[1] : null;
 }
 

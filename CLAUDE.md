@@ -827,6 +827,13 @@ d'autoriser un lancement de non régression »).
   `report-idle-*` partiel) ; l'état des complètes a posteriori est affiché,
   jamais une condition. `delivery-gate.mjs prod-check <ref> --unit`. Le point
   de retour `prod-before-…` reste.
+  **Depuis 0.156.1** (« Annules les tests et passe en priorite une protection
+  contre ca, de maniere a ne rien perdre, mais encore moins du temps ») :
+  `prod-jump.mjs` ne refuse plus JAMAIS faute de rapport de tests et n'en
+  demande aucun, interrupteur allumé ou non ; rapport absent ou rouge =
+  avertissement (`warnings`). Tag `prod-before-<tag>` avant l'avance rapide,
+  commande de retour arrière affichée ; prod propre, aucun tour, avance rapide
+  restent exigés. Recette : `_test_todo_untracked.mjs` §5.
 - **Complète a posteriori** (`scripts/idle-regression.mjs`, balayage du serveur
   toutes les 60 s, `ORCH_IDLE_REGRESSION_SWEEP_MS`) : lancée par le
   **programme**, jamais par un musicien, seulement si l'utilisateur est inactif

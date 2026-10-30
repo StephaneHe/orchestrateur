@@ -253,7 +253,8 @@ section('5. Mise en prod sans complète (prod-jump)');
   // The production's switch is read, never written.
   const mr = path.join(Pd, 'model-routing.json');
   let p = preflight({ dev: D, prod: Pd, tag: 'v9.9.9', turnLock: path.join(W, 'none.lock') });
-  ok(!p.ok && p.problems.some(x => /COMPLÈTE/.test(x)), 'interrupteur coupé : la ciblée ne suffit pas (comportement d’avant)');
+  // 0.156.1 (user, 2026-10-30): no test report blocks the jump, switch on or off.
+  ok(p.ok && p.report.green && !p.report.unit, 'interrupteur coupé : la ciblée verte suffit aussi (0.156.1)', p.problems.join(' | '));
   fs.writeFileSync(mr, JSON.stringify({ idleRegression: { enabled: true, since: '2026-10-23T00:00:00Z', idleMin: 30 } }));
   // model-routing.json is untracked in this prod fixture: keep the tree clean.
   fs.appendFileSync(path.join(Pd, '.git', 'info', 'exclude'), 'model-routing.json\n');
@@ -265,13 +266,13 @@ section('5. Mise en prod sans complète (prod-jump)');
   ok(p.plan[0].includes('prod-before-v9.9.9'), 'le point de retour prod-before-… reste');
   report('report-worktree.json', { results: [{ id: 'suite:_test_x.mjs', status: 'KO', detail: 'rouge' }] });
   p = preflight({ dev: D, prod: Pd, tag: 'v9.9.9', turnLock: path.join(W, 'none.lock') });
-  ok(!p.ok && p.problems.some(x => /KO non accepté/.test(x)), 'tests de la tâche rouges : refusée');
+  ok(p.ok && p.warnings.some(x => /KO non accepté/.test(x)), 'tests de la tâche rouges : avertissement, jamais un refus (0.156.1)', p.problems.join(' | '));
   report('report-worktree.json', { stale: { start: tree } });
   ok(!checkUnitReport(JSON.parse(fs.readFileSync(path.join(D, '.regress', 'report-worktree.json'), 'utf8')), { tree }).ok, 'rapport périmé : refusé');
   fs.rmSync(path.join(D, '.regress', 'report-worktree.json'));
   report('report-idle-bisect-x.json', { mode: 'partial' });
   p = preflight({ dev: D, prod: Pd, tag: 'v9.9.9', turnLock: path.join(W, 'none.lock') });
-  ok(!p.ok, 'un essai de recherche du programme (report-idle-…, quelques suites) ne vaut pas les tests de la tâche');
+  ok(p.ok && !p.report.green && p.warnings.length, 'un essai de recherche du programme (report-idle-…) ne vaut pas les tests de la tâche : avertissement (0.156.1)', p.problems.join(' | '));
   ok(/puis non-régression sur orchestrateur-dev/.test(jumpPlan({ prod: Pd, tag: 'v1' }).at(-1)), 'interrupteur coupé : plan d’avant inchangé');
   fs.rmSync(W, { recursive: true, force: true });
 }

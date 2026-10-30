@@ -25,13 +25,20 @@
 // The full run is done after the fact, while idle, on orchestrateur-dev
 // (scripts/idle-regression.mjs); its state is printed, never a condition.
 //
+// Since 0.156.1 (user, 2026-10-30, « Annules les tests et passe en priorite une
+// protection contre ca, de maniere a ne rien perdre, mais encore moins du
+// temps »): NO test report is a condition any more, whatever the switch. A
+// missing or red report is a printed warning; nothing asks to launch a run.
+// Nothing is lost: prod-before-<tag> is tagged before the fast-forward and the
+// rollback command is printed; the full run follows while idle.
+//
 // Step 2 of docs/DEV-PROD.md, made mechanical. The jump itself stays a user
 // decision: without --apply nothing is written (plan only).
 //
 // Usage (from the dev checkout):
 //   node scripts/prod-jump.mjs --tag vX.Y.Z --prod I:\orchestrateur [--from origin|<path>] [--apply]
-// Refusals (exit 1): no full green report on the tag, tag unknown, production
-// not clean, a production turn running, no fast-forward possible.
+// Refusals (exit 1): tag unknown, production not clean, a production turn
+// running, no fast-forward possible. Never for want of a test report.
 // After --apply: the chef restarts the server when the fleet is idle, with the
 // user's agreement (never this script), then the non-regression runs on
 // orchestrateur-dev. Never in production (0.125.0, user rule).
@@ -41,7 +48,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { checkProdReport, findProdReport, prodPlan, readKnownKo, checkUnitReport, findUnitReport } from './delivery-gate.mjs';
+import { readKnownKo, checkUnitReport, findUnitReport } from './delivery-gate.mjs';
 import { readSettings as readIdleSettings, readState as readIdleState } from './idle-regression.mjs';
 
 const DEV = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -83,31 +90,35 @@ export function posterioriState(prod) {
   } catch { return 'état illisible'; }
 }
 
-/** Everything that must hold before the jump; → { ok, problems, plan, report, keep } */
+/** The rollback printed before and after the jump (the tag is created before the fast-forward). */
+export function rollbackCommand({ prod, tag }) {
+  return `git -C ${prod} reset --hard prod-before-${tag}`;
+}
+
+/**
+ * Everything that must hold before the jump; → { ok, problems, warnings, plan, report, keep }
+ * 0.156.1 (user, 2026-10-30): « Annules les tests et passe en priorite une
+ * protection contre ca, de maniere a ne rien perdre, mais encore moins du
+ * temps ». A missing or red test report NEVER blocks the jump and no run is
+ * ever asked for: it is a warning. Nothing is lost: prod-before-<tag> is
+ * tagged before the fast-forward, and the full run happens after the fact,
+ * while idle (idle-regression.mjs). Clean prod, no running turn and
+ * fast-forward only still block.
+ */
 export function preflight({ dev = DEV, prod, tag, from = 'origin', turnLock = null, unit = false } = {}) {
-  const problems = [];
+  const problems = [], warnings = [];
   const tree = git(dev, ['rev-parse', `${tag}^{tree}`]).out;
   const commit = git(dev, ['rev-parse', `${tag}^{commit}`]).out;
   if (!tree || !commit) problems.push(`tag ${tag} inconnu dans la dev`);
   let report = null;
-  // The production version a perimeter run must start from (read only).
-  const prodHead = prod && fs.existsSync(path.join(prod, '.git')) ? git(prod, ['rev-parse', 'HEAD']).out : null;
   const policy = unitPolicy({ prod, unit });
-  if (tree && policy.on) {
+  if (tree) {
     const knownKo = readKnownKo(dev);
     const found = findUnitReport(dev, tree, { knownKo });
-    const v = found ? checkUnitReport(found.r, { tree, knownKo })
-      : { ok: false, reasons: [`aucun rapport de tests vert sur ${tag} : celui du commit de livraison (node scripts/regression.mjs --targeted, dans orchestrateur-dev)`], accepted: [] };
-    report = { file: found?.f || null, accepted: v.accepted, mode: found?.r.mode || null, plan: null, unit: true, why: policy.why };
-    problems.push(...v.reasons);
-  } else if (tree) {
-    const plan = prodPlan(dev, tag, prodHead);
-    const knownKo = readKnownKo(dev);
-    const found = findProdReport(dev, tree, { plan, knownKo });
-    const v = found ? checkProdReport(found.r, { tree, knownKo, plan })
-      : { ok: false, reasons: [`aucune non-régression COMPLÈTE ni PAR PÉRIMÈTRE sur ${tag} : lancer, dans orchestrateur-dev (jamais en prod), node scripts/regression.mjs --ref ${tag} --perimeters --prod ${prod}`], accepted: [] };
-    report = { file: found?.f || null, accepted: v.accepted, mode: found?.r.mode || null, plan };
-    problems.push(...v.reasons);
+    const v = found ? checkUnitReport(found.r, { tree, knownKo }) : { ok: false, reasons: [], accepted: [] };
+    report = { file: found?.f || null, accepted: v.accepted, mode: found?.r.mode || null, green: !!found && v.ok, unit: policy.on, why: policy.why };
+    if (!found) warnings.push(`aucun rapport de tests sur ${tag} : avertissement seulement, la non-régression a posteriori (pendant l’inactivité) s’en charge`);
+    else if (!v.ok) warnings.push(`rapport de tests non vert sur ${tag} (${path.basename(found.f)}) : ${v.reasons.slice(0, 3).map(r => r.replace(/\s*—\s*relancer.*$/, '')).join(' ; ')} — avertissement seulement, la non-régression a posteriori s’en charge`);
   }
   let keep = [];
   if (!prod || !fs.existsSync(path.join(prod, '.git'))) problems.push(`dépôt de prod introuvable : ${prod}`);
@@ -129,7 +140,7 @@ export function preflight({ dev = DEV, prod, tag, from = 'origin', turnLock = nu
     }
   }
   const plan = jumpPlan({ prod, tag, from, keep, unit: policy.on });
-  return { ok: !problems.length, problems, plan, report, tree, commit, keep };
+  return { ok: !problems.length, problems, warnings, plan, report, tree, commit, keep };
 }
 
 // 0.125.0, user rule (2026-10-20): « Aucune non regression ne doit se lancer
@@ -185,18 +196,16 @@ async function main() {
     for (const x of p.problems) console.error(`  - ${x}`);
     process.exit(1);
   }
-  if (p.report.unit) {
-    console.log(`[prod-jump] ${tag} : tests de la tâche verts (${path.basename(p.report.file)}, mode ${p.report.mode}) — mise en prod possible sans non-régression complète (${p.report.why})`);
-    console.log(`[prod-jump] non-régression a posteriori (information, jamais une condition) : ${posterioriState(path.resolve(prod))}`);
-  }
-  const kind = p.report.unit ? null : p.report.mode === 'perimeter' ? `PAR PÉRIMÈTRE depuis la prod (${p.report.plan.perimeters.map(x => x.id).join(', ') || 'socle seul'})` : 'COMPLÈTE';
-  if (kind) console.log(`[prod-jump] ${tag} : non-régression ${kind} verte (${path.basename(p.report.file)}) — mise en prod possible`);
+  if (p.report.green) console.log(`[prod-jump] ${tag} : tests verts (${path.basename(p.report.file)}, mode ${p.report.mode}) — information, jamais une condition`);
+  for (const w of p.warnings) console.log(`[prod-jump] AVERTISSEMENT : ${w}`);
+  console.log(`[prod-jump] non-régression a posteriori (information, jamais une condition) : ${posterioriState(path.resolve(prod))}`);
   console.log(p.plan.map((s, i) => `  ${i + 1}. ${s}`).join('\n'));
+  console.log(`[prod-jump] retour arrière : ${rollbackCommand({ prod: path.resolve(prod), tag })}`);
   if (!argv.includes('--apply')) { console.log('[prod-jump] plan seulement (ajouter --apply, sur décision de l’utilisateur)'); return; }
   const r = applyJump({ prod: path.resolve(prod), tag, from, keep: p.keep });
   if (!r.ok) { console.error(`[prod-jump] échec à l'étape ${r.step} : ${r.err}`); process.exit(1); }
   for (const f of r.restored) console.log(`[prod-jump] ${f} remis sur le disque (non suivi par git, contenu de prod-before-${tag})`);
-  console.log(`[prod-jump] prod avancée sur ${tag} (retour : git reset --hard prod-before-${tag}). ${p.report.unit ? AFTER_APPLY_UNIT : AFTER_APPLY}`);
+  console.log(`[prod-jump] prod avancée sur ${tag} (retour : ${rollbackCommand({ prod: path.resolve(prod), tag })}). ${p.report.unit ? AFTER_APPLY_UNIT : AFTER_APPLY}`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();
