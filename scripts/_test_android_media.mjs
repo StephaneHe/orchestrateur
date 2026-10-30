@@ -51,5 +51,12 @@ const flat = kt.replace(/\s+/g, ' ');
 ok(/in IMAGES -> MediaKind\.IMAGE/.test(flat) && /in VIDEOS -> MediaKind\.VIDEO/.test(flat) && /else -> null/.test(flat), 'kindOf() maps a known extension to IMAGE / VIDEO and anything else to null');
 ok(/substringAfterLast\('\.', ""\)/.test(kt) && /\.filter \{ kindOf\(it\) != null \}/.test(flat), 'a path without extension is not media, and cited() keeps only paths with a media kind');
 
+// Item 5: the request is traced in the requirements register, Android side, with a
+// reference to this existing suite.
+const reg = read('docs/USER_REQUIREMENTS.md').split('\n').filter(l => l.startsWith('|'));
+const row = reg.find(l => l.includes('2026-10-29') && l.includes('Il faut que l\'orchestrateur puisse afficher des images ou des videos. Web et mobile') && /android/i.test(l));
+ok(!!row, 'USER_REQUIREMENTS.md has a 2026-10-29 Android row quoting « Web et mobile » verbatim');
+ok(!!row && row.includes('suite:_test_android_media.mjs'), 'that row references suite:_test_android_media.mjs');
+
 console.log(`\n${pass} ok, ${fail} ko`);
 process.exit(fail ? 1 : 0);
