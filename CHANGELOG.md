@@ -11,6 +11,16 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.156.0] - 2026-10-30
+
+### Added
+- (android) Image and video previews in the native thread: a cited path whose extension is an image or video type known to the server becomes a thumbnail that opens full screen, or a video link, through the same read-only `/api/media` route and the same token as the web dashboard. A missing or refused file, a path of another type, or a path without extension stays a plain link without preview (`MediaLinks.kt`, `Markdown.kt`, `Api.kt`).
+- (android) Unit test `MediaLinksTest` and suite `scripts/_test_android_media.mjs` for the media link extraction.
+- Requirement traced in `docs/USER_REQUIREMENTS.md` (task 2 of 2 of the media request, Android side), with a reference to the existing suite test `_test_android_media.mjs`.
+
+### Changed
+- Behaviours already ensured by existing code, kept as documentation by the added tests: only a cited path with a known image/video extension is retained as media (`android/app/src/main/java/com/orchestrateur/data/MediaLinks.kt:15`, commit 9ab0f51), and the request is traced in the requirements register (`docs/USER_REQUIREMENTS.md:229`).
+
 ## [0.155.0] - 2026-10-30
 
 ### Added
