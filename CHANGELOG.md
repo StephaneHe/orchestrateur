@@ -11,6 +11,11 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.159.1] - 2026-10-31
+
+### Changed
+- (android) App 1.2.0 (versionCode 28): ships the image and video previews delivered in the code since 0.156.0 (`MediaLinks.kt`, `Markdown.kt`, `Api.kt`) but never built — the app had stayed at 1.1.2 (versionCode 27). No code change.
+
 ## [0.159.0] - 2026-10-31
 
 ### Added
