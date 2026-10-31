@@ -75,6 +75,7 @@ export const SERIAL_SUITES = new Set([
   '_test_aside_rework.mjs',        // ~90 s alone: nine sequential full-Development runs (0.139.0)
   '_test_pipeline_speed.mjs',      // ~20 sequential full-Development runs, levers off then on (0.143.0)
   '_test_item_delivery.mjs',       // ~225 s alone, > 300 s (suite timeout) under parallel load (0.149.1)
+  '_test_release_prebump.mjs',     // 180 to 260 s in full runs, > 300 s (suite timeout) four times under load (0.159.6)
 ]);
 
 // Suites known to run close to the default 300 s cap even alone get their own
@@ -83,10 +84,14 @@ export const SERIAL_SUITES = new Set([
 // 0.149.1: the after-the-fact full run of 6a111c2 killed two more at 300 s with
 // every check green so far; measured alone: _test_pipeline_speed.mjs 283 s,
 // _test_item_delivery.mjs 224 s.
+// 0.159.6: _test_release_prebump.mjs was killed at 300 s, every check green so
+// far, in the after-the-fact full runs of 1751f54, c40e6d7, e6208c8 and da317d9
+// (green alone, 177 to 262 s); the bisect then blamed an Android-only commit.
 export const SUITE_TIMEOUT_MS = Object.freeze({
   '_test_pipeline_gates.mjs': 600_000,
   '_test_pipeline_speed.mjs': 600_000,
   '_test_item_delivery.mjs': 600_000,
+  '_test_release_prebump.mjs': 600_000,
 });
 
 // Suites that assert a wall-clock cap on a spawned process and failed ALONE on

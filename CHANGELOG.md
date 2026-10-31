@@ -11,6 +11,11 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.159.6] - 2026-10-31
+
+### Fixed
+- (server) The after-the-fact full regression of da317d9 was red on `_test_release_prebump.mjs`, killed at the 300 s suite timeout with every check green so far (same kill on 1751f54, c40e6d7 and e6208c8; 177 to 262 s alone): the bisect then blamed an Android-only commit. The suite now runs serially (`SERIAL_SUITES`) with its own 600 s cap (`SUITE_TIMEOUT_MS`), like `_test_item_delivery.mjs` in 0.149.1. No check of the suite is changed.
+
 ## [0.159.5] - 2026-10-31
 
 ### Fixed
