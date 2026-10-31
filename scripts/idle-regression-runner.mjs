@@ -28,6 +28,8 @@ import { LAUNCHER } from './idle-regression.mjs';
 import { addCleanWorktree, removeWorktree, ignoredHints } from './clean-copy-check.mjs';
 import { parseTestOutput, compactFailures, koIds } from './test-failures.mjs';
 import { setupFailures } from './copy-setup.mjs';
+import { acquireSuiteLock, suiteLockDir, sharedRoot, projectKey } from './suite-lock.mjs';
+import { readTuningValues } from './pipeline-tuning.mjs';
 
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
 // The command's own output (the log is appended to): read back from `from`, at most 4 MB from its end.
@@ -46,7 +48,7 @@ export async function runStep(step) {
   const logFd = fs.openSync(step.logFile, 'a');
   const write = (s) => fs.writeSync(logFd, s);
   const finish = (res) => { writeFileAtomic(step.resultFile, JSON.stringify({ ...res, endedAt: new Date().toISOString() }, null, 2)); };
-  let cwd = step.path;
+  let cwd = step.path, lock = null;
   try {
     if (isProdRoot(step.path)) { write(`[idle-regression] refusé : ${step.path} est une prod\n`); finish({ code: 65, ko: null, refused: true }); return 65; }
     if (!step.inPlace) {
@@ -60,10 +62,16 @@ export async function runStep(step) {
     const [cmd, ...args] = step.argv[0] === '__shell__' ? [step.argv[1]] : step.argv;
     const shell = step.argv[0] === '__shell__';
     write(`\n$ ${shell ? cmd : [cmd, ...args].join(' ')}   (cwd ${cwd}, commit ${step.commit})\n`);
+    // Suite lock (suite-lock.mjs): never beside another run of this project's tests, complete runs capped
+    // machine-wide. The command (regression.mjs) is told it runs under the lock.
+    const lockKey = projectKey(step.path);
+    let maxFull = 1; try { maxFull = readTuningValues(sharedRoot(step.path)).suiteMax; } catch { /* default */ }
+    lock = acquireSuiteLock({ dir: suiteLockDir(), project: lockKey, label: path.basename(sharedRoot(step.path)), who: `non-régression a posteriori ${step.commit?.slice(0, 7) || ''}`,
+      full: !step.argv.includes('--only-suites'), maxFull, onWait: (t) => write(`[idle-regression] ${t}\n`) });
     const from = fs.fstatSync(logFd).size;
     const code0 = await new Promise((resolve) => {
       const c = spawn(shell ? cmd : (cmd === 'node' ? process.execPath : cmd), shell ? [] : args, { cwd, shell, windowsHide: true, stdio: ['ignore', logFd, logFd],
-        env: { ...process.env, ORCH_REGRESS_LAUNCHER: LAUNCHER } });
+        env: { ...process.env, ORCH_REGRESS_LAUNCHER: LAUNCHER, ORCH_SUITE_LOCK_HELD: lockKey } });
       c.on('error', (e) => { write(`[idle-regression] ${e.message}\n`); resolve(127); });
       c.on('exit', (c2) => resolve(c2 ?? 1));
     });
@@ -72,7 +80,7 @@ export async function runStep(step) {
     for (const ac of Array.isArray(step.areaCommands) ? step.areaCommands : []) {
       write(`\n$ ${ac}   (zone, cwd ${cwd}, commit ${step.commit})\n`);
       const c3 = await new Promise((resolve) => {
-        const c = spawn(ac, [], { cwd, shell: true, windowsHide: true, stdio: ['ignore', logFd, logFd], env: { ...process.env, ORCH_REGRESS_LAUNCHER: LAUNCHER } });
+        const c = spawn(ac, [], { cwd, shell: true, windowsHide: true, stdio: ['ignore', logFd, logFd], env: { ...process.env, ORCH_REGRESS_LAUNCHER: LAUNCHER, ORCH_SUITE_LOCK_HELD: lockKey } });
         c.on('error', (e) => { write(`[idle-regression] ${e.message}\n`); resolve(127); });
         c.on('exit', (c2) => resolve(c2 ?? 1));
       });
@@ -99,6 +107,7 @@ export async function runStep(step) {
     finish({ code: 2, ko: null, why: e.message });
     return 2;
   } finally {
+    try { lock?.release(undefined); } catch { /* gone */ }
     if (!step.inPlace) removeWorktree(step.path, step.worktree);
     try { fs.closeSync(logFd); } catch { /* closed */ }
   }

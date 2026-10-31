@@ -31,6 +31,8 @@ import { writeFileAtomic } from './atomic-file.mjs';
 import { provisionPipelineLane, PIPELINE_LINKS } from './lanes.mjs';
 import { parseTestOutput, describeFailures, failureLines, compactFailures } from './test-failures.mjs';
 import { runCopySetup, setupFailures } from './copy-setup.mjs';
+import { acquireSuiteLock, suiteLockDir, sharedRoot, projectKey } from './suite-lock.mjs';
+import { readTuningValues } from './pipeline-tuning.mjs';
 
 export const USER_AGREEMENT = 'oui';
 export const DEFAULT_TIMEOUT_MIN = 30;
@@ -139,8 +141,15 @@ export function checkCleanCopy({ dir, testCommand, commit = 'HEAD', timeoutMs = 
     const w = addCleanWorktree(dir, wt, sha, { env });
     if (!w.ok) return done({ ok: false, code: 70, why: `copie propre impossible (git worktree) : ${w.out.trim().slice(0, 200)}`, failures: null, ignored: [], output: w.out });
     if (w.setup && !w.setup.ok) return done({ ok: false, code: w.setup.code, failures: setupFailures(w.setup), ignored: [], output: w.out });
-    const t = spawnSync(a.shell ? a.cmd : (a.cmd === 'node' ? process.execPath : a.cmd), a.shell ? [] : a.args,
-      { cwd: wt, shell: a.shell, encoding: 'utf8', windowsHide: true, timeout: timeoutMs, maxBuffer: 256 * 1024 * 1024, env: { ...env, ORCH_REGRESS_LIVE: '0' } });
+    // Suite lock (suite-lock.mjs): one run of this project's tests at a time, complete ones capped machine-wide.
+    const lockKey = projectKey(dir);
+    let maxFull = 1; try { maxFull = readTuningValues(sharedRoot(dir)).suiteMax; } catch { /* default */ }
+    const lock = acquireSuiteLock({ dir: suiteLockDir(), project: lockKey, label: path.basename(sharedRoot(dir)), who: `copie propre ${String(sha).slice(0, 7)}`, full: true, maxFull });
+    let t;
+    try {
+      t = spawnSync(a.shell ? a.cmd : (a.cmd === 'node' ? process.execPath : a.cmd), a.shell ? [] : a.args,
+        { cwd: wt, shell: a.shell, encoding: 'utf8', windowsHide: true, timeout: timeoutMs, maxBuffer: 256 * 1024 * 1024, env: { ...env, ORCH_REGRESS_LIVE: '0', ORCH_SUITE_LOCK_HELD: lockKey } });
+    } finally { lock.release(undefined); }
     const output = `${w.out}$ ${commandText(testCommand)}   (copie propre ${wt}, commit ${sha})\n${t.stdout || ''}${t.stderr || ''}${t.error ? `\n[clean-copy] ${t.error.message}\n` : ''}`;
     const timedOut = t.error?.code === 'ETIMEDOUT' || t.signal === 'SIGTERM';
     const code = t.status ?? (t.error?.code === 'ENOENT' ? 127 : 1);

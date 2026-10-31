@@ -62,6 +62,7 @@ export const SERIAL_SUITES = new Set([
   '_test_queue_order.mjs',         // own server instance under .regress/ (timed drain)
   '_test_queue_edit.mjs',          // own server instance under .regress/ (timed drain)
   '_test_stale_run.mjs',           // runs regression.mjs on a private repo, timed stop
+  '_test_suite_lock.mjs',          // measures time overlaps between processes
   '_test_parallel_lanes.mjs',      // concurrent turns: overlap and wait timings
   '_test_maxparallel_default.mjs', // concurrent turns: overlap and wait timings
   '_test_dev_pilot_first.mjs',     // concurrent turns: overlap and wait timings

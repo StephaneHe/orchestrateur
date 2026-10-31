@@ -874,6 +874,47 @@ d'autoriser un lancement de non régression »).
   tout de suite.
 - Recette : `_test_idle_regression.mjs`.
 
+## Verrou de suite : une vérification à la fois par projet (0.158.0)
+
+Règle utilisateur (2026-10-30) : « les règles doivent être faites respecter par
+du code. pas seulement par le modèle. » Contexte : « il n'y a aucun intérêt à
+faire tourner les mêmes tests deux fois en même temps ? » (deux non-régressions
+ciblées d'un même projet, couloirs 0 et 1, le 30/10 à 00:34).
+
+- `scripts/suite-lock.mjs` (`acquireSuiteLock`, `withSuiteLock`,
+  `lockedSuiteRun`). **Un seul dossier de verrous pour toute la machine**
+  (`suiteLockDir()` : `%TEMP%\orchestrateur-suite-locks`, ou `ORCH_SUITE_LOCK_DIR`
+  pour les tests), et **une seule clé de projet** (`projectKey(cwd)` : chemin de
+  la copie principale, `git --git-common-dir`, donc un couloir et sa copie
+  partagent la même clé, quel que soit le nom dans config.json). Moteur,
+  `regression.mjs`, balayage a posteriori et copie propre passent par là
+  (`regression.mjs` charge le module dynamiquement et s'en passe s'il est
+  absent d'une copie partielle des scripts).
+  Verrou rendu à la sortie, repris si le PID est mort ; rien n'est jamais tué.
+- **Par projet** : toute exécution de la commande de tests (étapes et livraison
+  du moteur par `runTestCommand`, `regression.mjs`, balayage a posteriori
+  `idle-regression-runner.mjs`, `clean-copy-check.mjs`) prend le verrou. Une
+  seconde demande attend, puis tourne, jamais en parallèle ; si elle a attendu
+  et que l'arbre git (contenu) et la commande sont les mêmes que ceux de la
+  première, elle réutilise son résultat (code et rapport) sans relancer.
+- **Globale** : au plus `suiteMax` suites COMPLÈTES à la fois sur la machine,
+  tous projets confondus (`pipeline-enforce.mjs tuning-values --suite-max N`,
+  1 à 8, défaut 1, relu à chaque lancement dans le `model-routing.json` de la
+  racine du lanceur). Un passage ciblé n'y est pas soumis.
+- **Attente visible** : « suite en attente du verrou : <qui le tient> … »,
+  répétée toutes les 30 s, écrite par le moteur en `system/pipeline_progress`
+  dans le journal du musicien (et sur la console / le journal du runner pour les
+  autres lanceurs).
+- `ORCH_SUITE_LOCK_HELD=<clé de projet>` : posé par un lanceur qui tient déjà le
+  verrou pour la commande qu'il lance (la `testCommand` est `regression.mjs`, qui
+  attendrait sinon son propre parent) ; `regression.mjs` l'exporte à ses suites.
+  Même clé : rien n'est repris. Autre clé (une suite qui lance le moteur sur un
+  projet de test) : le verrou de CE projet est pris, mais pas un second créneau
+  global (l'ancêtre en tient déjà un ; avec une limite de 1 ce serait une
+  attente sans fin).
+- Redémarrage inutile (moteur, `regression.mjs`, runners). Recette :
+  `_test_suite_lock.mjs` (série : mesure des chevauchements).
+
 ## Passage ciblé borné : plafond, délai, signal de vie (0.148.1)
 
 Demande utilisateur du chef (exécution p-20261026T090638-774755 : passages

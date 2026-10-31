@@ -37,6 +37,7 @@ import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { derivedToken } from './local-secret.mjs';
 import { renameRetry, writeFileAtomic } from './atomic-file.mjs';
+import { lockedSuiteRun } from './suite-lock.mjs';
 import { notificationReportText } from './turn-report.mjs';
 import { readBranchLog } from './dual-run.mjs';
 import { languageFor, languageGate, localize, workingLanguage } from './language.mjs';
@@ -487,6 +488,18 @@ export function runCommandTicking(cwd, command, env, timeoutMs, { tickMs = PROGR
   return { ok: res.code === 0, code: res.code, out: String(res.out || '').slice(-12_000), ms: Date.now() - t0, timedOut: !!res.timedOut };
 }
 
+/**
+ * A project's test command, under the suite lock (suite-lock.mjs): never two at
+ * once for a project, `full` ones capped machine-wide. The wait is said in the
+ * musician's log through ctx.onSuiteWait.
+ */
+function runTestCommand(ctx, cwd, command, full = true) {
+  if (!command) return { ok: true, code: 0, out: '' };
+  return lockedSuiteRun({ root: ctx.root, cwd, who: `${ctx.projectName || 'projet'} · ${ctx.run || 'exécution'}`, key: command, full, onWait: ctx.onSuiteWait },
+    // ORCH_SUITE_LOCK_HELD: the command (regression.mjs) must not wait for the lock we hold.
+    ({ heldKey }) => runCommand(cwd, command, { ...ctx.testEnv, ORCH_SUITE_LOCK_HELD: heldKey }, testTimeoutMs(ctx.cfg), ctx.testTick));
+}
+
 /** « n/N suites » of the regression running in `cwd` (its .regress/live record), '' when there is none. */
 export function suiteProgressText(cwd) {
   try {
@@ -534,7 +547,7 @@ function runSuite(ctx) {
     let last = { ok: true, code: 0, out: '' };
     for (const c of plan.commands) {
       if (c.area === null) last = runMainSuite(ctx, lean);
-      else if (c.command) last = { ...runCommand(cwd, c.command, ctx.testEnv, testTimeoutMs(cfg), ctx.testTick), area: c.area };
+      else if (c.command) last = { ...runTestCommand(ctx, cwd, c.command), area: c.area };
       else continue;
       outs.push(`[${c.area ?? 'principale'}] ${c.command || cfg.testCommand}\n${last.out || ''}`);
       if (!last.ok) break;
@@ -546,7 +559,7 @@ function runSuite(ctx) {
 function runMainSuite(ctx, lean) {
   const { cwd, cfg } = ctx;
   const mainGlobs = cfg.mainTestGlobs || cfg.testGlobs;
-  let run = () => runCommand(cwd, cfg.testCommand, ctx.testEnv, testTimeoutMs(cfg), ctx.testTick);
+  let run = () => runTestCommand(ctx, cwd, cfg.testCommand);
   let command = cfg.testCommand;
   // Lever targetedTests (0.143.0): a TDD step runs the item's tests and those
   // its changes reach; anything uncertain runs the full suite, said.
@@ -556,7 +569,7 @@ function runMainSuite(ctx, lean) {
     if (sel.targeted && sel.empty) return { ok: true, code: 0, out: '', ms: 0, skipped: true };
     if (sel.targeted) {
       command = sel.command;
-      run = () => ({ ...runCommand(cwd, sel.command, ctx.testEnv, testTimeoutMs(cfg), ctx.testTick), targeted: { files: sel.files.length, total: sel.total } });
+      run = () => ({ ...runTestCommand(ctx, cwd, sel.command, false), targeted: { files: sel.files.length, total: sel.total } });
     }
   }
   if (!ctx.tuning?.suiteCache || !command || !ctx.suiteCacheFile) return run();
@@ -966,7 +979,7 @@ function releaseFromText(ctx, step, before, after) {
   const text = parseDeliveryText(readArtefact(ctx, step.artefact), { needBump: !ctx.prebump || !!ctx.lane, needRequirement: !!cfg.requirements });
   if (text.error) return { ok: false, textProblem: true, changed: [], why: `${step.artefact} : ${text.error}` };
   const d = deliverRelease(cwd, { ...cfg, versionFiles: deliveryVersionFiles(ctx) }, text, { prebump: ctx.lane ? null : ctx.prebump, versionBase: ctx.versionBase, lane: ctx.lane, run: ctx.run,
-    gateCheck: cfg.testCommand ? (dir) => runCommand(dir, cfg.testCommand, ctx.testEnv, testTimeoutMs(cfg), ctx.testTick) : null });
+    gateCheck: cfg.testCommand ? (dir) => runTestCommand(ctx, dir, cfg.testCommand) : null });
   return d.ok ? d : { changed: [], ...d };
 }
 
@@ -2528,7 +2541,7 @@ function checkCatalogCriteria(ctx, step, before, after) {
     // verte ; les étapes d'avant ne peuvent pas être jugées sur elle.
     if (ctx.cfg.testCommand && changed.length && !ctx.suiteRedAtStart) {
       for (let i = 0; i < (c.suiteTwice ? 2 : 1); i++) {
-        const t = runCommand(cwd, ctx.cfg.testCommand, ctx.testEnv, testTimeoutMs(ctx.cfg), ctx.testTick);
+        const t = runTestCommand(ctx, cwd, ctx.cfg.testCommand);
         if (!t.ok) return fail(`la suite échoue${c.suiteTwice ? ` (passage ${i + 1}/2)` : ''} (${ctx.cfg.testCommand}, code ${t.code}) :\n${t.out.slice(-1500)}`, { test: t });
       }
     }
@@ -3377,7 +3390,7 @@ export async function runPipeline(o) {
   if (obsId) childEnv.ORCH_OBS_ID = obsId;
   const testEnv = { ...childEnv };
   delete testEnv.ORCH_OBS_ID;
-  const ctx = { root, request: state.request || prompt, run, pipeline, kind, mode: state.mode, cwd, cfg, artDir, runDir, base, testEnv, reviewItems: null, testPrint: null, limits,
+  const ctx = { root, projectName, request: state.request || prompt, run, pipeline, kind, mode: state.mode, cwd, cfg, artDir, runDir, base, testEnv, reviewItems: null, testPrint: null, limits,
     item: state.item || null, itemTestBase: state.itemTestBase || null, reviewScope: null, acceptedDefects: state.acceptedDefects || [], deliveryNotes: state.deliveryNotes || [], escalated: !!state.escalated, coveredItems: state.coveredItems || [], deliveryFixes: state.deliveryFixes || [], suiteRedAtStart: !!state.suiteRedAtStart, lastMedia: state.lastMedia || null,
     resumeMessages: state.resumeMessages || [], relaxed: state.relaxed || [],
     // P9: in a lane, Livrer writes a changelog.d fragment; the integrator assigns the version.
@@ -3387,6 +3400,8 @@ export async function runPipeline(o) {
   ctx.speed = speedValues;
   ctx.testTick = (ms) => writeEvent({ type: 'system', subtype: 'pipeline_progress', pipeline: { run, step: current?.id || null, tests: true },
     text: `vérification par les tests en cours depuis ${fmtDur(ms)}${suiteProgressText(ctx.cwd)}` });
+  // Suite lock waits (suite-lock.mjs) are said in the musician's log.
+  ctx.onSuiteWait = (text) => writeEvent({ type: 'system', subtype: 'pipeline_progress', pipeline: { run, step: current?.id || null, tests: true, suiteLock: true }, text });
   // Lever targetedTests: where the item's changes are measured from (its last delivery).
   ctx.targetFrom = () => (state.itemDelivery ? state.lastDelivered || base : base);
   ctx.onSuiteTargeted = (sel) => {

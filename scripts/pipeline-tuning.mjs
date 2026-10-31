@@ -115,9 +115,9 @@ export function describeTuning(raw) {
 // re-read at each dispatch and frozen in run.json.tuningValues when a run
 // starts. They only apply while their lever is on (limits, groupReview, redGreen).
 // ---------------------------------------------------------------------------
-export const VALUE_DEFAULTS = { items: 25, runMin: 150, reviewBatch: 3, redGreenMaxTests: 2 };
-export const VALUE_BOUNDS = { items: [1, 60], runMin: [10, 600], reviewBatch: [2, 3], redGreenMaxTests: [1, 2] };
-export const VALUE_LABELS = { items: 'tests (items) par exécution', runMin: 'minutes de travail par exécution', reviewBatch: 'items par relecture groupée', redGreenMaxTests: 'tests annoncés au plus pour test + code en un appel' };
+export const VALUE_DEFAULTS = { items: 25, runMin: 150, reviewBatch: 3, redGreenMaxTests: 2, suiteMax: 1 };
+export const VALUE_BOUNDS = { items: [1, 60], runMin: [10, 600], reviewBatch: [2, 3], redGreenMaxTests: [1, 2], suiteMax: [1, 8] };
+export const VALUE_LABELS = { items: 'tests (items) par exécution', runMin: 'minutes de travail par exécution', reviewBatch: 'items par relecture groupée', redGreenMaxTests: 'tests annoncés au plus pour test + code en un appel', suiteMax: 'suites complètes simultanées sur la machine (suite-lock.mjs)' };
 
 /** Only known keys, integers within their bounds; anything else dropped. */
 export function cleanValues(v) {
@@ -143,7 +143,7 @@ export function runTuningValues(state, root, { resumed = false } = {}) {
 }
 /** Parses `--items 25 --run-min 150 --review-batch 3 --red-green-max 2`; throws a French message. */
 export function parseValueArgs(argv) {
-  const flags = { '--items': 'items', '--run-min': 'runMin', '--review-batch': 'reviewBatch', '--red-green-max': 'redGreenMaxTests' };
+  const flags = { '--items': 'items', '--run-min': 'runMin', '--review-batch': 'reviewBatch', '--red-green-max': 'redGreenMaxTests', '--suite-max': 'suiteMax' };
   const out = {};
   for (let i = 0; i < argv.length; i++) {
     const k = flags[argv[i]];

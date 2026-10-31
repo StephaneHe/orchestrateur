@@ -2408,8 +2408,35 @@ async function abortTimeout(limitMin) {
   process.exit(TIMEOUT_EXIT);
 }
 
+// One regression per project at a time, COMPLETE ones capped machine-wide (suite-lock.mjs,
+// 0.158.0). A run waiting on the same content reuses the first one's exit code and report.
+// Not taken when the engine already holds the lock for this very command (ORCH_SUITE_LOCK_HELD).
+async function takeSuiteLock() {
+  // Fail-open: a partial copy of these scripts (some suites copy a fixed list into a private repo) has
+  // no lock module, and must still run.
+  let L, T;
+  try { [L, T] = await Promise.all([import('./suite-lock.mjs'), import('./pipeline-tuning.mjs')]); } catch { return; }
+  const key = L.projectKey(REPO);
+  const tree = source.worktree ? worktreeTree(REPO) || '' : '';
+  const cmdKey = argv.filter((a, i) => a !== '--out' && argv[i - 1] !== '--out').join(' ');
+  let maxFull = 1;
+  try { maxFull = T.readTuningValues(REPO).suiteMax; } catch { /* default */ }
+  const lock = L.acquireSuiteLock({ dir: L.suiteLockDir(), project: key, label: path.basename(L.sharedRoot(REPO)), who: `non-régression ${label} (pid ${process.pid})`, tree, key: cmdKey,
+    full: !(selection && !selection.full), maxFull, onWait: (t) => console.log(`   ${t}`) });
+  if (lock.reused) {
+    const prev = lock.result || {};
+    try { if (prev.report && fs.existsSync(prev.report)) { fs.mkdirSync(path.dirname(path.resolve(reportOut())), { recursive: true }); fs.copyFileSync(prev.report, path.resolve(reportOut())); } } catch { /* report only */ }
+    console.log(`=== MÊME ARBRE que ${lock.by} : rapport réutilisé, non relancée (code ${prev.code ?? 0})`);
+    process.exit(prev.code ?? 0);
+  }
+  if (!lock.held) process.on('exit', (code) => lock.release({ code, report: path.resolve(reportOut()) }));
+  // Inherited by the suites: an engine run of a fixture project inside a suite must not wait for the slot we hold.
+  process.env.ORCH_SUITE_LOCK_HELD = key;
+}
+
 async function main() {
   fs.mkdirSync(REGRESS_DIR, { recursive: true });
+  await takeSuiteLock();
   console.log(`\n=== Non-régression — état testé : ${label} ===\n`);
   if (process.env.ORCH_REGRESS_LIVE !== '0') {
     try {

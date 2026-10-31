@@ -15,7 +15,7 @@
 //   node scripts/pipeline-enforce.mjs tuning          interrupteurs de la phase 0 des pipelines
 //   node scripts/pipeline-enforce.mjs tuning <levier|all> on|off [<projet>]
 //                                                     sans projet : tous les projets ; avec : ce projet
-//   node scripts/pipeline-enforce.mjs tuning-values [--items N] [--run-min N] [--review-batch N] [--red-green-max N] | --reset
+//   node scripts/pipeline-enforce.mjs tuning-values [--items N] [--run-min N] [--review-batch N] [--red-green-max N] [--suite-max N] | --reset
 //                                                     valeurs des leviers « vitesse » (0.143.0) : limites (25 tests, 150 min),
 //                                                     relecture groupée (3 items), test + code en un appel (≤ 2 tests)
 //   node scripts/pipeline-enforce.mjs kg [off|shadow|assist]

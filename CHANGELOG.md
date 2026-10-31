@@ -11,6 +11,18 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.158.0] - 2026-10-31
+
+### Added
+- (server) `scripts/suite-lock.mjs`: one test-suite run at a time per project, enforced by code. A single machine-wide lock directory (`suiteLockDir()`: `%TEMP%\orchestrateur-suite-locks`, or `ORCH_SUITE_LOCK_DIR` for tests) and a single project key (`projectKey(cwd)`, from `git --git-common-dir`), so a lane and its main copy share the same lock. A second request for the same project waits, then runs, never in parallel; if it waited and the git tree content and command are identical to the first run's, it reuses that result (code and report) instead of relaunching.
+- (server) Global cap on COMPLETE suites running at once on the machine, all projects together: `pipeline-enforce.mjs tuning-values --suite-max N` (1 to 8, default 1). Targeted runs are not subject to it.
+- (server) Visible waiting: « suite en attente du verrou : <qui le tient> … », repeated every 30 s, written by the engine as `system/pipeline_progress` in the musician's log (console / runner log for other launchers).
+- (server) `ORCH_SUITE_LOCK_HELD=<project key>` lets a launcher that already holds the lock run its command (`regression.mjs` exports it to its suites).
+- Test: `scripts/_test_suite_lock.mjs` (serial suite: measures overlaps).
+
+### Changed
+- (server) The engine (`runTestCommand`), `regression.mjs`, the after-the-fact runner (`idle-regression-runner.mjs`) and the clean-copy check all take the suite lock around the test command.
+
 ## [0.157.0] - 2026-10-31
 
 ### Added
