@@ -107,6 +107,8 @@ data class ChatMsg(
     val truncated: Boolean = false,
     // role=conductor: the reply was reformulated into the discussion language (0.51.0) — original text.
     val langOriginal: String? = null,
+    // role=user|conductor: technical message (relay, alert, [ANSWER]…) shown folded (ChatFoldRule).
+    val fold: ChatFold? = null,
 ) {
     // activity = the chef's mid-turn steps (thinking / tool_use / intermediate
     // text), kept persistently so nothing is erased when the next block arrives.
@@ -694,7 +696,7 @@ class FleetViewModel(
                         fileResult(makeResultItem(raw, txt, source))
                     }
                 } else {
-                    if (!isLocalEcho) chat.add(ChatMsg(ChatMsg.Role.user, txt))
+                    if (!isLocalEcho) chat.add(ChatMsg(ChatMsg.Role.user, txt, fold = ChatFoldRule.forUser(txt)))
                     chefTurnOpen = true      // the user just opened a chef turn
                 }
             }
@@ -753,6 +755,7 @@ class FleetViewModel(
                     taking = currentTurnTaking,
                     question = CHEF_QUESTION_RE.containsMatchIn(txt),
                     report = turnIsReport,
+                    fold = ChatFoldRule.forConductor(txt),
                 ))
                 while (chat.size > CHAT_MAX) chat.removeAt(0)
                 // Les lignes de mission se lisent après la réponse du chef.
@@ -856,6 +859,7 @@ class FleetViewModel(
                         taking = taking,
                         question = e.question == true || CHEF_QUESTION_RE.containsMatchIn(txt),
                         langOriginal = e.lang.o("original").s("text"),
+                        fold = ChatFoldRule.forConductor(txt),
                     ))
                     taking = emptyList()
                     inTurn = false
@@ -866,7 +870,7 @@ class FleetViewModel(
                     inTurn = true              // a turn opens
                     taking = sinceChefTurn.toList()
                     sinceChefTurn = mutableListOf()
-                    built.add(ChatMsg(ChatMsg.Role.user, txt, ts = e.ts))
+                    built.add(ChatMsg(ChatMsg.Role.user, txt, ts = e.ts, fold = ChatFoldRule.forUser(txt)))
                 }
             }
         }

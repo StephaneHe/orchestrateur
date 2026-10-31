@@ -62,7 +62,7 @@ fun MainPane(
     // thread is on screen, never the history loaded at start.
     val env = com.orchestrateur.ui.common.LocalEnv.current
     val shownAt = remember { System.currentTimeMillis() }
-    val lastChef = vm.chat.lastOrNull { it.role == ChatMsg.Role.conductor }
+    val lastChef = vm.chat.lastOrNull { it.role == ChatMsg.Role.conductor && it.fold == null }
     LaunchedEffect(lastChef?.id) {
         val m = lastChef ?: return@LaunchedEffect
         if (env.prefs.ttsAuto && m.ts > shownAt) env.tts.speak(m.id, m.text)
@@ -675,10 +675,16 @@ private fun ChatBubble(
         MissionsBlock(msg.missions, msg.observed, msg.truncated, vm, onOpenMusician); return
     }
     var showMenu by remember { mutableStateOf(false) }
+    // Technical messages start folded; a reload keeps ts and text, so the state survives it.
+    var expanded by remember(msg.ts, msg.text) { mutableStateOf(false) }
+    val fold = msg.fold
+    if (fold != null && !expanded) { FoldedLine(msg, fold) { expanded = true }; return }
     val isUser = msg.role == ChatMsg.Role.user
     val isCallback = msg.role == ChatMsg.Role.callback
-    val isRight = isUser
+    // An expanded technical message was not written by the user: left side, its type as label.
+    val isRight = isUser && fold == null
     val label = when {
+        fold != null -> "▾ ${fold.type.uppercase()} · replier"
         isUser -> "VOUS"
         isCallback -> (msg.source ?: "musicien").uppercase()
         msg.question -> "CHEF D'ORCHESTRE · QUESTION"
@@ -725,7 +731,8 @@ private fun ChatBubble(
                 fontSize = 9.sp,
                 letterSpacing = 1.6.sp,
                 fontFamily = FontFamily.Monospace,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                modifier = (if (fold != null) Modifier.heightIn(min = 32.dp).clickable { expanded = false } else Modifier)
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
             )
             Box {
                 Box(
@@ -778,6 +785,32 @@ private fun ChatBubble(
             }
             if (msg.role == ChatMsg.Role.conductor) ChefBubbleFooter(msg, onReply)
         }
+    }
+}
+
+/** One-line row of a folded technical message: « ▸ type · summary », tap to expand. */
+@Composable
+private fun FoldedLine(msg: ChatMsg, fold: ChatFold, onExpand: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 44.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onExpand)
+            .border(1.dp, blend(Palette.Fg3, Palette.CardBorder, 0.25f), RoundedCornerShape(8.dp))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("▸", color = Palette.Fg3, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+        Text(
+            fold.type.uppercase(), color = if (msg.role == ChatMsg.Role.conductor) Palette.Accent else Palette.Fg2,
+            fontSize = 9.sp, letterSpacing = 1.2.sp, fontFamily = FontFamily.Monospace, maxLines = 1,
+        )
+        Text(
+            fold.summary, color = Palette.Fg3, fontSize = 11.sp,
+            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+        )
     }
 }
 

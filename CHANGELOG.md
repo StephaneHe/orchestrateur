@@ -11,6 +11,11 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.159.4] - 2026-10-31
+
+### Changed
+- (android) App 1.3.0 (versionCode 30): in the chef thread only the dialogue between the user and the chef stays open; technical messages are folded on one line (« ▸ TYPE · summary »), expanded with a tap and folded back from their label. Folded: the messages received by the chef that the user did not type — any message with a server `source` (wake, pipeline, pause to decide, defect, permission, lane integration, musician notify; an @shortcut stays the user's own) and, since the server writes them without a source, the relays `[NEEDS_CHEF_INPUT_FROM:…]`, `[CALLBACK_WAKE …]`, `[ALERTE …]` (summary = its event line), the notices « ⏳ / ⚠ Ta réponse à la pause… » and `[REPRISE]` (a replayed user message stays open) — and the chef replies that start with `[ANSWER]`. The chef reports written for the user after a wake or an alert stay open. Rule `ChatFoldRule` (`ui/fleet/ChatFold.kt`), source first, fixed protocol prefixes otherwise; auto-read skips a folded reply. JVM test `ChatFoldRuleTest` on real chef-log messages.
+
 ## [0.159.3] - 2026-10-31
 
 ### Fixed
