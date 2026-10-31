@@ -3098,6 +3098,7 @@ export async function runPipeline(o) {
   if (!state && pipeline === Design.DESIGN_PIPELINE && !startTuning.design) {
     return refuse(64, 'le pipeline « Design » est coupé pour ce projet (interrupteur « design » : node scripts/pipeline-enforce.mjs tuning design on [<projet>])');
   }
+  if (state && o.noEscalate) state.noEscalate = true;
   if (!state) {
     state = {
       run, project: projectName, pipeline, mode, kind, base, status: 'running',
@@ -3107,6 +3108,7 @@ export async function runPipeline(o) {
       // commit (no flag): per-item Review (0.63.0), per-item delivery (0.64.0).
       ...(pipeline === 'dev' && mode === 'complet' ? { itemReview: true, itemDelivery: true, lastDelivered: base, delivered: [], aside: [] } : {}),
       ...(classification ? { classification } : {}), ...(o.modeNote ? { modeNote: o.modeNote } : {}),
+      ...(o.noEscalate || noEscalateRequested(o.promptForLog ?? prompt) ? { noEscalate: true } : {}),
       callback: callbackProject || null, source: sourceProject || null,
       ...(o.lane ? { lane: { k: o.lane.k, task: o.lane.task, branch: o.lane.branch, integration: o.lane.integration || null } } : {}),
     };
@@ -3467,7 +3469,7 @@ export async function runPipeline(o) {
     // passe par le même portier que les tours ; les messages rédigés par
     // l'orchestrateur lui-même (pause, échec) sont mis dans la langue choisie.
     // Smart pause answers (0.122.0): what was split off or adjusted is said in the result.
-    if (!paused && !isError && state.splitOff?.length) result = `${result}\n\n**Reste à demander séparément** (découpage choisi à la pause ; liste dans reste.md) :\n${state.splitOff.map((t, i) => `${i + 1}. ${t}`).join('\n')}`;
+    if (!paused && !isError && state.splitOff?.length) result = `${result}\n\n**Reste à demander séparément** (${state.noEscalate && !state.escalated ? 'pas de montée en complet demandée' : 'découpage choisi à la pause'} ; liste dans reste.md) :\n${state.splitOff.map((t, i) => `${i + 1}. ${t}`).join('\n')}`;
     if (!paused && !isError && state.relaxed?.length) result = `${result}\n\n**Critère(s) ajusté(s) pour cette exécution, à votre demande** : ${state.relaxed.map(r => `${r.criterion === 'citedPaths' ? 'chemins cités (signalés au lieu d’être refusés)' : `nombre de tests de l’item ${r.item ?? '?'}`}`).join(' ; ')}.`;
     const target = languageFor(root, projectName);
     let resultLang = null;
@@ -4287,8 +4289,11 @@ export async function runPipeline(o) {
         tests = v.checked ? { declared: v.declared, written: v.written, ...(v.tolerated ? { tolerated: v.tolerated.file } : {}) } : { written: v.written, unchecked: v.note };
       } else tests = { unchecked: 'item commencé avant 0.62.0 : nombre de tests non vérifié' };
       fs.writeFileSync(path.join(artDir, 'tests.md'), checkItem(readArtefact(ctx, 'tests.md') || '', state.item.n));
-      state.itemsDone = (state.itemsDone || 0) + 1;
-      writeEvent({ type: 'system', subtype: 'pipeline_item_done', pipeline: { run, item: state.item.n }, tests,
+      const coveredNow = state.coveredItem === state.item.n;
+      state.coveredItem = null;
+      if (coveredNow) state.coveredDone = (state.coveredDone || 0) + 1;
+      else state.itemsDone = (state.itemsDone || 0) + 1;
+      writeEvent({ type: 'system', subtype: 'pipeline_item_done', pipeline: { run, item: state.item.n }, tests, ...(coveredNow ? { covered: true } : {}),
         text: `✓ item ${state.item.n} coché : ${state.item.text}${tests.declared != null ? ` (${tests.written}/${tests.declared} test(s))` : tests.unchecked ? ` — ${tests.unchecked}` : ''}` });
       // Per-item Review once the item's group has no open case left (an item
       // and the cases its Review attached to it are reviewed together).
@@ -4828,6 +4833,8 @@ export async function runPipeline(o) {
       const coveredText = ctx.item?.text || String(state.request || '').replace(/\s+/g, ' ').trim().slice(0, 160);
       const proof = last.crit.proof || [];
       state.coveredItems = ctx.coveredItems = [...(state.coveredItems || []), { n: ctx.item?.n ?? null, text: coveredText, proof }];
+      // 0.159.0: an item already covered by the existing code costs no slot of the items limit.
+      if (ctx.item) state.coveredItem = ctx.item.n;
       const proofTxt = proof.length ? `(preuve : ${proofText(proof)})` : '';
       writeEvent({ type: 'system', subtype: 'pipeline_item_covered', pipeline: { run, item: ctx.item?.n ?? null }, proof,
         text: ctx.item
@@ -4861,7 +4868,18 @@ export async function runPipeline(o) {
       // à l'étape 3 — annoncée, jamais en silence.
       if (state.mode === 'leger' && !afterReview && !state.escalated) {
         const scope = lightScope(cwd, base, cfg);
-        if (scope.over) {
+        // --no-escalate (0.159.0): the run stays light, delivers what is done
+        // and hands what goes beyond its scope back as a separate request.
+        if (scope.over && state.noEscalate) {
+          const excerpt = String(state.request || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+          const rest = `ce qui dépasse le périmètre du mode léger (${scope.why}) dans la demande « ${excerpt} » — à vérifier dans le compte rendu de cette exécution`;
+          if (!(state.splitOff || []).includes(rest)) {
+            state.splitOff = [...(state.splitOff || []), rest];
+            fs.writeFileSync(path.join(artDir, 'reste.md'), ['# Reste à demander séparément', '', ...state.splitOff.map((t, i) => `${i + 1}. ${t}`), ''].join('\n'));
+          }
+          writeEvent({ type: 'system', subtype: 'pipeline_escalate_refused', pipeline: { run, mode: 'leger' }, scope,
+            text: `⇥ périmètre dépassé (${scope.why}), montée en complet refusée (pas de montée en complet demandée) : ce qui est fait est livré, le reste à demander séparément (reste.md)` });
+        } else if (scope.over) {
           state.mode = ctx.mode = 'complet';
           state.escalated = ctx.escalated = true;
           stepDefs = devCatalog({ mode: 'complet', kind });
@@ -5294,6 +5312,13 @@ export function citedPausedRun(logsDir, projectName, text) {
     if (s.status === 'paused') return { run, lane: Number(s.lane?.k) || 0, chefPause: s.chefPause || null, pausedLimit: s.pausedLimit || null };
   }
   return null;
+}
+
+/** « pas de montée en complet » written in the request (0.159.0), case and
+ *  accents ignored: an explicit instruction of the user, like --no-escalate. */
+export const NO_ESCALATE_PHRASE = 'pas de montee en complet';
+export function noEscalateRequested(text) {
+  return String(text || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').includes(NO_ESCALATE_PHRASE);
 }
 
 const CODE_RE = /\.(m?js|cjs|ts|tsx|jsx|kt|kts|java|py|go|rs|cs|swift|c|cc|cpp|h)$/i;

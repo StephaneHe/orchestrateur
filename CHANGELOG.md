@@ -11,6 +11,17 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.159.0] - 2026-10-31
+
+### Added
+- (server) `dispatch.mjs --no-escalate`: a light Development run never climbs to the full mode. Also set when the request contains « pas de montée en complet » (case, accents and spacing ignored, `noEscalateRequested` of `pipeline-engine.mjs`); kept in `run.json.noEscalate`, carried through the queue in the request text. Over its scope (`lightScope`), the run goes on light, delivers what is done and lists what goes beyond in « Reste à demander séparément » (`reste.md`, final result), like « découper »; traced `system/pipeline_escalate_refused`. Light runs asked « Pas de montée en complet » had climbed anyway (107 and 127 min).
+
+### Changed
+- (server) An item accepted as already covered by the existing code (`DEJA_COUVERT`) no longer counts in the items limit (`run.json.coveredDone`, `pipeline_item_done.covered`). A covered light request already skipped 4b, so it never triggered the escalation.
+
+### Fixed
+- (server) `scripts/suite-lock.mjs` header: locks live in `suiteLockDir()`, not `logs/suite-locks`.
+
 ## [0.158.4] - 2026-10-31
 
 ### Fixed

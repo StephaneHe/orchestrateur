@@ -328,6 +328,12 @@ if (dualSynthesis && !DUAL_RUN_RE.test(dualSynthesis)) die(`--dual-synthesis inv
 const newSessionIdx = argv.indexOf('--new-session');
 if (newSessionIdx !== -1) argv.splice(newSessionIdx, 1);
 const NEW_SESSION = newSessionIdx !== -1;
+// --no-escalate (0.159.0): a light Development run never climbs to the full
+// mode; what goes beyond its scope becomes a separate request. Also set by
+// « pas de montée en complet » in the request (read by the engine).
+const noEscalateIdx = argv.indexOf('--no-escalate');
+if (noEscalateIdx !== -1) argv.splice(noEscalateIdx, 1);
+const NO_ESCALATE = noEscalateIdx !== -1;
 // Context calibration (0.99.0, scripts/context-policy.mjs): a musician's
 // session is resumed only when the request continues its task. --meme-tache:
 // the Routage says so (decided by the model); --resume-session: forced by hand.
@@ -1155,7 +1161,9 @@ function postQueueIfBusy(extra = {}, route = '/api/dispatch') {
     let token;
     try { token = fs.readFileSync(path.join(ROOT, '.token'), 'utf8').trim(); }
     catch { return resolve(null); }
-    const payload = { project: projectName, prompt, queueIfBusy: true, ...extra };
+    // --no-escalate travels in the queued text itself: the engine reads the phrase.
+    const queued = NO_ESCALATE ? `${prompt}\n\n(Pas de montée en complet.)` : prompt;
+    const payload = { project: projectName, prompt: queued, queueIfBusy: true, ...extra };
     if (callbackProject)   payload.callback = callbackProject;
     if (sourceProject)     payload.source   = sourceProject;
     if (modelOverride)     payload.model    = modelOverride;
@@ -1911,7 +1919,7 @@ if (!PIPE_STEP && !DUAL_BRANCH && !dualSynthesis && (pipelineArg || pipelineResu
         ? `\n\n[Note de l'orchestrateur : cette demande relève du pipeline « ${classification.notInService} », pas encore en service sur ce projet. ` +
           'Elle est traitée en Discussion : ne modifie rien ; si elle demande une action, termine ta réponse en disant à l’utilisateur de la relancer avec /dev.]'
         : ''),
-      promptForLog: prompt, pipeline: pipe, resumeRun, classification, mode, kind, acceptDefects, deleteDoubts, pauseOption, chefDecision,
+      promptForLog: prompt, pipeline: pipe, resumeRun, classification, mode, kind, acceptDefects, deleteDoubts, pauseOption, chefDecision, noEscalate: NO_ESCALATE,
       ...(pipeNotes.length ? { modeNote: pipeNotes.join(' ; ') } : {}),
       callbackProject, chefCallback: CHEF_RESUME_CALLBACK, sourceProject, obsId, testLabel,
       dispatchScript: fileURLToPath(import.meta.url),

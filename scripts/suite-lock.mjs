@@ -16,8 +16,9 @@
 //      targeted runs are exempt;
 //   3. every wait is announced through `onWait("suite en attente du verrou : …")`.
 //
-// Lock files live in `dir` (logs/suite-locks). A lock whose pid is dead is
-// taken over. Nothing is ever killed.
+// Lock files live in `suiteLockDir()` (%TEMP%\orchestrateur-suite-locks, one
+// directory for the whole machine; ORCH_SUITE_LOCK_DIR for tests). A lock whose
+// pid is dead is taken over. Nothing is ever killed.
 // ============================================================================
 
 import fs from 'node:fs';
