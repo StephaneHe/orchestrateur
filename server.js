@@ -2866,10 +2866,11 @@ function todoOf(project) {
   todoCache.set(project.name, { key, items });
   return items;
 }
-// Read-only media viewer (0.154.0): images and videos under the fleet roots only,
-// path resolved (realpath) before the check; videos honour Range via sendFile.
+// Read-only media viewer (0.154.0): images, videos and sounds under the fleet roots only,
+// path resolved (realpath) before the check; videos and sounds honour Range via sendFile.
 const MEDIA_TYPES = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
-  '.webp': 'image/webp', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime' };
+  '.webp': 'image/webp', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime',
+  '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.flac': 'audio/flac', '.opus': 'audio/ogg' };
 app.get('/api/media', (req, res) => {
   const raw = typeof req.query.path === 'string' ? req.query.path : '';
   const type = MEDIA_TYPES[path.extname(raw).toLowerCase()];

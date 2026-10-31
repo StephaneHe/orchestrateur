@@ -11,13 +11,24 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.161.0] - 2026-10-31
+
+### Added
+- (server) `GET /api/media` serves sounds (`.wav`, `.mp3`, `.ogg`, `.m4a`, `.flac`, `.opus`) with the right audio `Content-Type` and `Range` support (206 + `Content-Range`), under the same fleet-roots-only path checks as images and videos (no wider access).
+- (web) A cited sound (`[[fichier:…\A.wav]]` or any recognised file reference) now gets an inline `<audio controls preload="metadata">` player, like images and videos get their preview; a missing or refused sound drops its player and keeps the link.
+- Regression coverage: `_test_media_preview.mjs` (player rendered for each audio extension) and `_test_media_route.mjs` (MIME, Range, exact bytes, refusal outside the roots and via `../`).
+
+### Changed
+- (android) The inline audio player of app 1.4.0 now plays: `/api/media` serves audio, which lifts the known limitation noted in 0.160.0 (no app change, no new APK).
+- (server) Ported from lane task t-20261031T210440-4e70ed77 (commit 55e3ead), whose integration had been refused: its requirement line now cites its tests without any escaped pipe in a table cell.
+
 ## [0.160.0] - 2026-10-31
 
 ### Added
 - (android) App 1.4.0 (versionCode 32): an audio reference (`[[fichier:<path>.wav|mp3|ogg|m4a|flac|opus]]`, same reference forms as the images and videos of 1.2.1) cited in the thread or in a card shows a compact inline player with play/pause, a draggable progress bar and the duration. It reads the file through the same `/api/media` route and token as images and videos. Only one player plays at a time (`SinglePlayer`); playback stops on the lifecycle ON_STOP and when the player leaves the composition. JVM test `AudioLinksTest` covers the audio link detection and the single-player rule.
 
 ### Changed
-- (android) Known limitation: the player stays hidden as long as `/api/media` (`MEDIA_TYPES` in `server.js`) does not serve audio. That server task is still to come and is not delivered in this repository.
+- (android) Known limitation: the player stays hidden as long as `/api/media` (`MEDIA_TYPES` in `server.js`) does not serve audio. Lifted in 0.161.0, which serves audio.
 
 ## [0.159.6] - 2026-10-31
 

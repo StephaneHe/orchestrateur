@@ -49,6 +49,22 @@ try {
   ok(vid.headers.get('content-range') === `bytes 10-19/${video.length}`, 'vidéo : Content-Range correct', vid.headers.get('content-range'));
   ok(Buffer.from(await vid.arrayBuffer()).equals(video.subarray(10, 20)), 'vidéo : octets demandés exacts');
 
+  console.log('── audio (2026-10-31)');
+  // User request (2026-10-31): « ajoutes un lecteur pour lire dans l'App (il n'y en a pas) et dans le web s'il n'y en a pas déja ».
+  const aTypes = { wav: /^audio\/(x-)?wav|^audio\/wave/, mp3: /^audio\/mpeg/, ogg: /^audio\/ogg/, m4a: /^audio\/(mp4|x-m4a|m4a)/, flac: /^audio\/(x-)?flac/, opus: /^audio\/(ogg|opus)/ };
+  const aDir = path.dirname(imgPath);
+  for (const [ext, re] of Object.entries(aTypes)) {
+    const f = path.join(aDir, `son-test.${ext}`);
+    fs.writeFileSync(f, video);
+    try {
+      const r = await media(f, { Range: 'bytes=10-19' });
+      ok(r.status === 206, `.${ext} : 206 sur Range`, r.status);
+      ok(re.test(r.headers.get('content-type') || ''), `.${ext} : Content-Type audio`, r.headers.get('content-type'));
+      ok(r.headers.get('content-range') === `bytes 10-19/${video.length}`, `.${ext} : Content-Range`, r.headers.get('content-range'));
+      ok(Buffer.from(await r.arrayBuffer()).equals(video.subarray(10, 20)), `.${ext} : octets exacts`);
+    } finally { fs.rmSync(f, { force: true }); }
+  }
+
   console.log('── refus');
   // An allowed extension outside every fleet root, asked directly and through `../`.
   // Same drive as the uploads (a relative `../` path cannot cross drives): the
@@ -72,6 +88,14 @@ try {
     ok(viaDots.startsWith(rootDir) && viaDots.includes('..'), 'chemin ../ construit depuis une racine du parc', viaDots);
     const dotdot = await media(viaDots);
     ok(dotdot.status === 404 && (await dotdot.arrayBuffer()).byteLength === 0, 'sortie d’une racine par ../ : refusée, rien servi', `${viaDots} → ${dotdot.status}`);
+    // Audio types must not widen access: same refusals for a sound outside the roots.
+    const outWav = path.join(outDir, 'secret.wav');
+    fs.writeFileSync(outWav, png);
+    const wavDirect = await media(outWav);
+    ok(wavDirect.status === 404 && (await wavDirect.arrayBuffer()).byteLength === 0, 'audio hors racine : refusé sans rien servir', wavDirect.status);
+    const wavDots = `${rootDir}${path.sep}${path.relative(rootDir, outDir)}${path.sep}secret.wav`;
+    const wavVia = await media(wavDots);
+    ok(wavVia.status === 404 && (await wavVia.arrayBuffer()).byteLength === 0, 'audio : sortie d’une racine par ../ refusée, rien servi', `${wavDots} → ${wavVia.status}`);
     const txt = await media(txtPath);
     ok(txt.status === 404 && (await txt.text()) === '', 'extension non autorisée sous une racine : refusée', txt.status);
   } finally {

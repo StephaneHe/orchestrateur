@@ -6,9 +6,8 @@ enum class MediaKind { IMAGE, VIDEO, AUDIO }
 
 /**
  * Preview links for a cited image / video / audio file: same GET /api/media?path= route as
- * the web thread (public/id-links.js). Images and videos use the extensions of MEDIA_TYPES in
- * server.js; audio (wav, mp3, ogg, m4a, flac, opus) is detected here but /api/media answers 404
- * for it until the server serves audio, so the inline player stays hidden until then.
+ * the web thread (public/id-links.js). Every extension matches MEDIA_TYPES in server.js, audio
+ * (wav, mp3, ogg, m4a, flac, opus) included since server 0.161.0.
  */
 object MediaLinks {
     private val IMAGES = setOf("png", "jpg", "jpeg", "gif", "webp")

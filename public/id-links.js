@@ -79,13 +79,15 @@
 
   const IMAGE_RE = /\.(?:png|jpe?g|gif|webp)$/i;
   const VIDEO_RE = /\.(?:mp4|webm|mov)$/i;
+  const AUDIO_RE = /\.(?:wav|mp3|ogg|m4a|flac|opus)$/i;
 
-  /** Inline preview for a cited image / video; "" for anything else. Served by GET /api/media. */
+  /** Inline preview for a cited image / video / sound; "" for anything else. Served by GET /api/media. */
   function mediaPreview(value) {
     const v = String(value || "").trim();
-    const isImg = IMAGE_RE.test(v), isVid = VIDEO_RE.test(v);
-    if (!isImg && !isVid) return "";
+    const isImg = IMAGE_RE.test(v), isVid = VIDEO_RE.test(v), isAud = AUDIO_RE.test(v);
+    if (!isImg && !isVid && !isAud) return "";
     const src = `/api/media?path=${encodeURIComponent(v)}`;
+    if (isAud) return `<span class="media-prev media-audio"><audio controls preload="metadata" src="${escAttr(src)}"></audio></span>`;
     return isVid
       ? `<span class="media-prev media-video"><video controls preload="metadata" playsinline src="${escAttr(src)}"></video></span>`
       : `<span class="media-prev media-image"><img loading="lazy" alt="${escAttr(v.split(/[\\/]/).pop())}" src="${escAttr(src)}"></span>`;
@@ -277,7 +279,7 @@
   // Missing or refused media: drop the preview, the link stays as it was.
   document.addEventListener("error", (e) => {
     const t = e.target;
-    if (t && t.closest && (t.tagName === "IMG" || t.tagName === "VIDEO")) { const p = t.closest(".media-prev"); if (p) p.remove(); }
+    if (t && t.closest && (t.tagName === "IMG" || t.tagName === "VIDEO" || t.tagName === "AUDIO")) { const p = t.closest(".media-prev"); if (p) p.remove(); }
   }, true);
   // Thumbnail → full size on click, back on a second click.
   document.addEventListener("click", (e) => {

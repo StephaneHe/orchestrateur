@@ -24,5 +24,12 @@ ok(/<video\b[^>]*\bcontrols\b[^>]*src="\/api\/media\?path=[^"]*demo\.mp4/.test(v
 const txt = L.linkify(String.raw`Voir [[fichier:I:\Dev\Chef\notes.txt]]`);
 ok(!/<img|<video/.test(txt), 'non-media file gets no preview');
 
+// User request (2026-10-31): « ajoutes un lecteur pour lire dans l'App (il n'y en a pas) et dans le web s'il n'y en a pas déja ».
+for (const ext of ['wav', 'mp3', 'ogg', 'm4a', 'flac', 'opus']) {
+  const aud = L.linkify(String.raw`Écoute [[fichier:I:\Dev\Chef\melody-compare\aveugle\A.${ext}]]`);
+  ok(new RegExp(`<audio\\b[^>]*\\bcontrols\\b[^>]*src="/api/media\\?path=[^"]*A\\.${ext}"`).test(aud), `cited .${ext} gets an <audio controls> player`);
+}
+ok(!/<img|<video/.test(L.linkify(String.raw`[[fichier:I:\Dev\Chef\A.wav]]`)), 'cited sound is neither image nor video');
+
 console.log(`\n${pass} ok, ${fail} ko`);
 process.exit(fail ? 1 : 0);
