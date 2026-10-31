@@ -39,7 +39,7 @@ object IdLinks {
         "data", "main", "home", "api", "web", "core", "chef", "projet", "lab")
     // Java look-behind needs a bounded length: \s{1,10} instead of the web's \s+.
     private const val DETERMINER = "(?<!(?:^|[^\\p{L}])(?:le|la|les|l'|l’|de|du|des|un|une|en|ma|ta|sa|ce|cette|mon|ton|son|the|a|an|this|my)\\s{1,10})"
-    private const val FILE_EXT = "mjs|cjs|js|jsx|ts|tsx|json|jsonl|ndjson|md|kt|kts|java|gradle|css|html|htm|ps1|psm1|py|sh|bat|cmd|txt|log|yml|yaml|toml|xml|csv|sql|apk|png|jpg|svg|lock|env|go|rs|c|h|cpp"
+    private const val FILE_EXT = "mjs|cjs|js|jsx|ts|tsx|json|jsonl|ndjson|md|kt|kts|java|gradle|css|html|htm|ps1|psm1|py|sh|bat|cmd|txt|log|yml|yaml|toml|xml|csv|sql|apk|png|jpg|jpeg|gif|webp|mp4|webm|mov|svg|lock|env|go|rs|c|h|cpp"
     private val NOT_FILES = Regex("^(?:node|vue|next|nuxt|express|three|d3|chart|react|socket\\.io|p5)\\.js$", RegexOption.IGNORE_CASE)
     private val EXPLICIT = Regex("\\[\\[([^\\[\\]\\n]{1,200})\\]\\]")
     private val SPLIT = Regex("^([a-zà-ÿ]{2,10})\\s*:\\s*(.+)$", RegexOption.IGNORE_CASE)

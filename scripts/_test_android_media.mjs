@@ -51,6 +51,21 @@ const flat = kt.replace(/\s+/g, ' ');
 ok(/in IMAGES -> MediaKind\.IMAGE/.test(flat) && /in VIDEOS -> MediaKind\.VIDEO/.test(flat) && /else -> null/.test(flat), 'kindOf() maps a known extension to IMAGE / VIDEO and anything else to null');
 ok(/substringAfterLast\('\.', ""\)/.test(kt) && /\.filter \{ kindOf\(it\) != null \}/.test(flat), 'a path without extension is not media, and cited() keeps only paths with a media kind');
 
+// User report (2026-10-31): « Je vois l'image sur le client web, mais pas sur l'app ».
+// The chef cited the image as [[fichier:I:\…\x.png]]; the app only looked at code spans.
+// The app must find the same media references as the web: explicit marks and bare paths.
+ok(/IdLinks\.find\(/.test(kt) && /m\.kind == "" \|\| m\.kind == "fichier"/.test(kt), 'cited() reuses IdLinks.find: explicit [[…]] / [[fichier:…]] marks and bare paths, like the web');
+const webExt = (read('public/id-links.js').match(/const FILE_EXT = "([^"]+)"/) || [])[1] || '';
+const appExt = (read('android/app/src/main/java/com/orchestrateur/data/IdLinks.kt').match(/FILE_EXT = "([^"]+)"/) || [])[1] || '';
+const mediaExt = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'mp4', 'webm', 'mov'];
+ok(mediaExt.every(e => webExt.split('|').includes(e) && appExt.split('|').includes(e)), 'web and app file patterns both know every media extension (bare paths)');
+const jvm = read('android/app/src/test/java/com/orchestrateur/data/MediaLinksTest.kt');
+ok(jvm.includes('[[fichier:I:\\\\Dev\\\\Chef\\\\icons\\\\pitchball\\\\pitchball-icon-512.png]]') && /fun citedFindsTheRealChefMessageMark/.test(jvm),
+  'JVM test replays the real chef message [[fichier:I:\\Dev\\Chef\\icons\\pitchball\\pitchball-icon-512.png]]');
+ok(/fun citedFindsEveryFormatTheWebPreviews/.test(jvm) && /fun citedIgnoresWhatTheWebDoesNotPreview/.test(jvm), 'JVM tests cover the variants (marks, bare paths, slash / backslash, code spans) and the non-media');
+const reg31 = read('docs/USER_REQUIREMENTS.md').split('\n').find(l => l.startsWith('| 2026-10-31') && l.includes("Je vois l'image sur le client web, mais pas sur l'app"));
+ok(!!reg31 && reg31.includes('suite:_test_android_media.mjs'), 'USER_REQUIREMENTS.md traces the 2026-10-31 report verbatim with suite:_test_android_media.mjs');
+
 // Item 5: the request is traced in the requirements register, Android side, with a
 // reference to this existing suite.
 const reg = read('docs/USER_REQUIREMENTS.md').split('\n').filter(l => l.startsWith('|'));

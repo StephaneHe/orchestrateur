@@ -11,6 +11,11 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.159.3] - 2026-10-31
+
+### Fixed
+- (android) App 1.2.1 (versionCode 29): an image or video cited in the thread is previewed for every reference the web previews. `MediaLinks.cited` only read code spans, so the chef's `[[fichier:I:\Dev\Chef\icons\pitchball\pitchball-icon-512.png]]` showed on the web and not in the app. It now reuses `IdLinks.find` (explicit `[[value]]` / `[[fichier:value]]` marks, bare paths with drive letter, slash or backslash), also inside code spans, never inside a link or a URL; a code span that is a whole media path still counts. `IdLinks.kt` knows the same file extensions as `public/id-links.js` (`jpeg`, `gif`, `webp`, `mp4`, `webm`, `mov` were missing). The `/api/media?path=` URL built by the app was already right (200 on the real server).
+
 ## [0.159.2] - 2026-10-31
 
 ### Fixed

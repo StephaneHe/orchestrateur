@@ -4,7 +4,7 @@ Demande utilisateur du 2026-10-20 : « Fais une nouvelle application android
 Orchestrateur, qui prend en compte toutes les fonctionalites. Une fois faite,
 mets la sur la page d'exposition des applications http://stephane:7777/downloads ».
 
-App **1.1.0** (`versionCode` 25), même `applicationId` (`com.orchestrateur`) :
+App **1.2.1** (`versionCode` 29), même `applicationId` (`com.orchestrateur`) :
 elle s'installe par-dessus la 1.0.0 et la 0.13.0. Serveur **0.131.0** (onglet
 « 🧠 Mémoire », graphe de connaissances phase 1, routes `/api/kg/*`) ; la 1.0.0
 allait avec le serveur 0.127.0 (menu des pauses dans `/api/pipeline-runs`).
@@ -95,7 +95,7 @@ section : `projets`, `pipelines`, `non-regressions`, `todo`, `git`,
 | 56 | Interrupteurs `ui.*` de config.json et paramètres `?todo=0`, `?models=0`… | `app.js` | non applicable | — | — | réglages d'affichage du navigateur ; toutes les sections sont toujours accessibles dans l'app |
 | 57 | Notification de bureau d'une nouvelle demande d'autorisation | `permissions.js` | partiel | `ui/fleet/PermissionBand.kt#PermissionBand` | — | la carte apparaît dans l'app ouverte ; pas encore de notification Android quand l'app est fermée |
 | 58 | Mémoire (graphe de connaissances, phase 1) : revue des faits proposés (quatre questions), Valider / Corriger / Périmer / Rejeter, paires suspectes, contradictions « celle-ci vaut », Ouvrir / Corriger la source, Règles en vigueur, Statistiques ; bandeau des contradictions | `kg-panel.js` | partiel | `ui/panels/MemoryScreen.kt#MemoryScreen` `ui/more/Sections.kt#MoreScreen` | `jvm:MemoryLogicTest#parsesEveryKind` `jvm:MemoryLogicTest#groupsContradictionsFirst` `jvm:MemoryLogicTest#decisionPayload` `jvm:MemoryLogicTest#decisionOutcomes` `jvm:MemoryLogicTest#fixSourceTextAndOwner` `jvm:MemoryLogicTest#disabledFrom404` `jvm:MemoryLogicTest#statusLineAndBadge` `jvm:MemoryLogicTest#rulesAndStats` | section `memoire`, visible seulement avec `ui.kgMemory` (sinon grisée « Mémoire désactivée (interrupteur kg.ui) ») ; le bandeau des contradictions du dashboard devient un compte sur l'entrée « Plus » et sur l'onglet « Revue », sans bandeau sur le fil du chef |
-| 59 | Aperçu des images et vidéos citées dans le fil (route `/api/media`, même jeton que le web) | `id-links.js` | partiel | `ui/fleet/Markdown.kt#MediaPreview` | `jvm:MediaLinksTest#kindOfRecognisesServerExtensions` `jvm:MediaLinksTest#urlEncodesPathAndToken` `jvm:MediaLinksTest#citedKeepsOnlyMediaPathsWithoutDuplicates` | image en miniature puis plein écran ; la vidéo s'ouvre dans le lecteur externe (pas de lecteur intégré) |
+| 59 | Aperçu des images et vidéos citées dans le fil (route `/api/media`, même jeton que le web) | `id-links.js` | partiel | `ui/fleet/Markdown.kt#MediaPreview` | `jvm:MediaLinksTest#kindOfRecognisesServerExtensions` `jvm:MediaLinksTest#urlEncodesPathAndToken` `jvm:MediaLinksTest#citedKeepsOnlyMediaPathsWithoutDuplicates` `jvm:MediaLinksTest#citedFindsTheRealChefMessageMark` `jvm:MediaLinksTest#citedFindsEveryFormatTheWebPreviews` `jvm:MediaLinksTest#citedIgnoresWhatTheWebDoesNotPreview` | image en miniature puis plein écran ; la vidéo s'ouvre dans le lecteur externe (pas de lecteur intégré) |
 
 ## Routes sans écran
 

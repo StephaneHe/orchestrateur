@@ -43,8 +43,32 @@ object MediaLinks {
         }
     }.getOrDefault(false)
 
-    /** Media paths cited as `code` spans in [text], in order, without duplicates. */
-    fun cited(text: String): List<String> =
-        Regex("`([^`\n]+)`").findAll(text).map { it.groupValues[1].trim() }
-            .filter { kindOf(it) != null }.distinct().toList()
+    private val CODE_SPAN = Regex("`([^`\n]+)`")
+    // The web skips <a>: Markdown links and bare URLs are never previewed.
+    private val LINK_OR_URL = Regex("\\[([^\\[\\]\\n]*)\\]\\([^)\\n]*\\)|https?://[^\\s<]+")
+
+    /**
+     * Media paths cited in [text], in order, without duplicates: the same references
+     * the web previews (public/id-links.js `linkText`) — explicit `[[value]]` /
+     * `[[fichier:value]]` marks and bare file paths, slash or backslash — plus a
+     * code span that is a whole media path (spaces allowed). Found inside code spans
+     * too, never inside a link or a URL.
+     */
+    fun cited(text: String): List<String> {
+        val out = mutableListOf<String>()
+        fun scan(s: String) {
+            for (m in IdLinks.find(LINK_OR_URL.replace(s) { " ".repeat(it.value.length) }, IdVocab())) {
+                if (m.kind == "" || m.kind == "fichier") out += m.value.trim()
+            }
+        }
+        var i = 0
+        for (c in CODE_SPAN.findAll(text)) {
+            scan(text.substring(i, c.range.first))
+            val inner = c.groupValues[1].trim()
+            if (kindOf(inner) != null && !inner.startsWith("[[")) out += inner else scan(c.groupValues[1])
+            i = c.range.last + 1
+        }
+        scan(text.substring(i))
+        return out.filter { kindOf(it) != null }.distinct()
+    }
 }
