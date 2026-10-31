@@ -101,10 +101,12 @@ section('1. Délai de la commande de test : testTimeoutMin du projet');
   // 0.153.0: runSuite runs the touched areas' commands, then delegates the main suite to runMainSuite:
   // every runCommand of both bodies must pass the project's delay.
   const body = (name) => (src.split(`\nfunction ${name}(`)[1] || '').split(/\n(?:export )?(?:async )?function /)[0];
-  const suiteRuns = [body('runSuite'), body('runMainSuite')].flatMap(b => b.match(/runCommand\([^\n]*\)/g) || []);
+  // 0.158.0 (suite-lock.mjs): the test command runs through runTestCommand, whose one runCommand passes the delay.
+  const suiteRuns = [body('runSuite'), body('runMainSuite'), body('runTestCommand')].flatMap(b => b.match(/runCommand\([^\n]*\)/g) || []);
   ok(calls.length + viaSuite >= 8 && calls.every(c => /testTimeoutMs\(/.test(c))
-    && suiteRuns.length >= 2 && suiteRuns.every(c => /testTimeoutMs\(cfg\)/.test(c))
-    && /runCommand\(cwd, cfg\.testCommand, ctx\.testEnv, testTimeoutMs\(cfg\)(, ctx\.testTick)?\)/.test(body('runMainSuite') || body('runSuite')),
+    && suiteRuns.length >= 1 && suiteRuns.every(c => /testTimeoutMs\((ctx\.)?cfg\)/.test(c))
+    && /runTestCommand\(ctx, cwd, cfg\.testCommand\)/.test(body('runMainSuite') || body('runSuite'))
+    && /runCommand\(cwd, command, \{ \.\.\.ctx\.testEnv[^\n]*testTimeoutMs\(ctx\.cfg\), ctx\.testTick\)/.test(body('runTestCommand')),
     `chaque lancement de la commande de test ou de build passe le délai du projet (${calls.length} appels directs, ${viaSuite} par runSuite)`,
     calls.filter(c => !/testTimeoutMs\(/.test(c)).join('\n'));
 }

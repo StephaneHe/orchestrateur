@@ -77,6 +77,26 @@ t('OK, périmée (stale) et antérieure à l’activation : rien', !reg.some(a =
 const errRun = A.regressionAlerts({ dirs: [{ project: 'x', dir: checkout }], since: SINCE, read: () => ({ running: [], recent: [{ ...KO_RUN, id: 'r-err', status: 'error', ko: [] }] }) });
 t('une exécution arrêtée en erreur est signalée', errRun.length === 1 && /arrêtée en erreur/.test(A.alertLine(errRun[0], 0)));
 
+// User request (2026-10-30), verbatim: « en plus les non régression ne sont appelés qu'après au moins une
+// demi heure d'inactivité sur un projet, et uniquement si la version en prod courante n'a pas deja ete soumise
+// aux tests de non régression. je ne vois aucun cas où en lancer deux identiques pourraient arriver. verifies ».
+// Replay of 2026-10-29 19:27: a pipeline step check KO (testCommand = regression.mjs --targeted) was
+// recorded « hors d’un tour » and raised to the chef as « Non-régression terminée KO ».
+{
+  const { launcherOf } = await import('./regression-live.mjs');
+  const { stepLauncherEnv } = await import('./pipeline-engine.mjs');
+  // The engine's test environment: ORCH_TURN_* removed (pipeline-engine.mjs), the step launcher added.
+  const env = { PATH: process.env.PATH, ...stepLauncherEnv({ projectName: 'orchestrateur-dev', run: 'p-20261029T151016-21b296', stepKey: '07-vert' }) };
+  const launcher = launcherOf(env);
+  t('vérification d’étape : lanceur réel (exécution et étape), pas « hors d’un tour »', launcher.kind === 'pipeline-step' && launcher.run === 'p-20261029T151016-21b296' && launcher.step === '07-vert' && /p-20261029T151016-21b296 · 07-vert/.test(launcher.by), JSON.stringify(launcher));
+  const STEP_KO = {"id":"r-20261029T192757-50660","pid":50660,"root":"I:\\Dev\\orchestrateur-dev","label":"worktree","mode":"targeted","args":"--targeted --no-browser","launcher":launcher,"startedAt":"2026-10-29T19:27:57.267Z","updatedAt":"2026-10-29T19:28:16.765Z","status":"ko","stage":"suites","suites":{"total":6,"done":6,"ok":5,"ko":1,"na":0},"ko":["suite:_test_android_media.mjs"],"report":".regress/report-worktree.json","endedAt":"2026-10-29T19:28:17.762Z"};
+  const stepAlerts = A.regressionAlerts({ dirs: [{ project: 'orchestrateur-dev', dir: checkout }], since: '2026-10-29T00:00:00Z', read: () => ({ running: [], recent: [STEP_KO] }) });
+  t('… KO : aucune alerte « Non-régression terminée KO » au chef (l’exécution gère son échec)', stepAlerts.length === 0, JSON.stringify(stepAlerts.map(a => a.key)));
+  // regression.mjs reads its launcher BEFORE removing the turn markers from its environment.
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'regression.mjs'), 'utf8');
+  t('… regression.mjs lit le lanceur avant de retirer les marqueurs du tour', src.indexOf('const LAUNCHER_ENV') > -1 && src.indexOf('const LAUNCHER_ENV') < src.indexOf("delete process.env[k]") && /createLiveRun\(\{[^}]*env: LAUNCHER_ENV/.test(src));
+}
+
 // ---------------------------------------------------------------------------
 console.log('\n── 2. Pause de processus non transmise au chef');
 const logs = path.join(tmp, 'logs');

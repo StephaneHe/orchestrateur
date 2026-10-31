@@ -333,6 +333,32 @@ function raiseRed(deps, name, r, act) {
   act({ event: 'alert', project: name, commit: r.commit, why: via });
 }
 
+/**
+ * ms of the project's last activity, 0 = none known: the last write of its
+ * musician logs (turns, pipeline steps, lanes) and the last check recorded in
+ * its .regress/history.ndjson or .regress/live/ — the runs of this program
+ * excluded, otherwise its own interrupted run would push the next one back.
+ */
+export function projectActivityAt(logsDir, name, dir) {
+  let at = 0;
+  const mtime = (f) => { try { at = Math.max(at, fs.statSync(f).mtimeMs); } catch { /* absent */ } };
+  mtime(path.join(logsDir, `${name}.jsonl`));
+  try { for (const f of fs.readdirSync(path.join(logsDir, 'lanes', name))) if (f.endsWith('.jsonl')) mtime(path.join(logsDir, 'lanes', name, f)); } catch { /* no lane */ }
+  const checkAt = (r) => {
+    if (!r || r.launcher?.by === LAUNCHER) return;
+    const t = Date.parse(r.endedAt || r.updatedAt || r.startedAt || '');
+    if (Number.isFinite(t)) at = Math.max(at, t);
+  };
+  if (dir) {
+    try {
+      const lines = fs.readFileSync(path.join(dir, '.regress', 'history.ndjson'), 'utf8').trim().split('\n').slice(-50);
+      for (const l of lines) { try { checkAt(JSON.parse(l)); } catch { /* torn line */ } }
+    } catch { /* no history */ }
+    try { for (const f of fs.readdirSync(path.join(dir, '.regress', 'live'))) if (f.endsWith('.json')) checkAt(readJson(path.join(dir, '.regress', 'live', f))); } catch { /* none */ }
+  }
+  return at;
+}
+
 // ---------------------------------------------------------------------------
 // The sweep (all effects injected; the server passes the real ones)
 // ---------------------------------------------------------------------------
@@ -344,7 +370,8 @@ function raiseRed(deps, name, r, act) {
  *   bootAt                  → server boot (unknown activity counts from it)
  *   targets(settings)       → targetsOf(...)
  *   busy(name)              → a musician turn in progress on the project
- *   head(dir)               → HEAD commit of the checkout
+ *   projectActivityAt(name, dir) → ms of the project's last turn, step or check (projectActivityAt)
+ *   head(dir)              → HEAD commit of the checkout
  *   revList(dir, a, b)      → commits a..b, oldest first
  *   subject(dir, c)         → commit subject
  *   launch(step)            → { pid } — starts the runner (detached)
@@ -392,7 +419,14 @@ export function sweep(deps) {
   if (!idle) { saveState(logsDir, st); return { ...out, waiting: `utilisateur actif il y a ${Math.round(idleMs / 60_000)} min (seuil ${settings.idleMin} min)` }; }
 
   // 2. Next work, one step at a time for the whole fleet: fix, bisect, full.
-  const targets = deps.targets(settings);
+  // The project itself must be quiet for idleMin too (end of its last turn,
+  // step or check): an idle user is not enough (2026-10-29, full run started
+  // 30 s after the last delivery check of a run).
+  const quiet = (t) => {
+    const at = Number(deps.projectActivityAt?.(t.name, t.path)) || 0;
+    return !at || now - at >= settings.idleMin * 60_000;
+  };
+  const targets = deps.targets(settings).filter(quiet);
   for (const t of targets) {
     const p = proj(st, t.name);
     if (deps.busy(t.name)) continue;

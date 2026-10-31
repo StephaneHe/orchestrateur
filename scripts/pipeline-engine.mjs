@@ -497,7 +497,15 @@ function runTestCommand(ctx, cwd, command, full = true) {
   if (!command) return { ok: true, code: 0, out: '' };
   return lockedSuiteRun({ root: ctx.root, cwd, who: `${ctx.projectName || 'projet'} · ${ctx.run || 'exécution'}`, key: command, full, onWait: ctx.onSuiteWait },
     // ORCH_SUITE_LOCK_HELD: the command (regression.mjs) must not wait for the lock we hold.
-    ({ heldKey }) => runCommand(cwd, command, { ...ctx.testEnv, ORCH_SUITE_LOCK_HELD: heldKey }, testTimeoutMs(ctx.cfg), ctx.testTick));
+    ({ heldKey }) => runCommand(cwd, command, { ...ctx.testEnv, ...stepLauncherEnv(ctx), ORCH_SUITE_LOCK_HELD: heldKey }, testTimeoutMs(ctx.cfg), ctx.testTick));
+}
+
+/**
+ * Who launched a step check (regression-live.mjs launcherOf): the run and its
+ * step. Kept out of ctx.testEnv, which keys the suite cache across steps.
+ */
+export function stepLauncherEnv(ctx) {
+  return { ORCH_REGRESS_PIPELINE_PROJECT: ctx.projectName || '', ORCH_REGRESS_PIPELINE_RUN: ctx.run || '', ORCH_REGRESS_PIPELINE_STEP: ctx.stepKey || ctx.suiteStep || '' };
 }
 
 /** « n/N suites » of the regression running in `cwd` (its .regress/live record), '' when there is none. */

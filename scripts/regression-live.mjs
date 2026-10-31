@@ -38,6 +38,11 @@ export function pidAlive(pid) {
 /** Who launched the run, from the environment of the turn (never a guess). */
 export function launcherOf(env = process.env) {
   if (env.ORCH_REGRESS_LAUNCHER) return { by: String(env.ORCH_REGRESS_LAUNCHER).slice(0, 120) };
+  // A pipeline step check (pipeline-engine.mjs stepLauncherEnv): the run handles its own failure.
+  if (env.ORCH_REGRESS_PIPELINE_RUN) {
+    const project = String(env.ORCH_REGRESS_PIPELINE_PROJECT || ''), run = String(env.ORCH_REGRESS_PIPELINE_RUN).slice(0, 80), step = String(env.ORCH_REGRESS_PIPELINE_STEP || '').slice(0, 80);
+    return { by: `vérification d’étape ${run}${step ? ` · ${step}` : ''}${project ? ` (${project})` : ''}`, kind: 'pipeline-step', ...(project ? { project } : {}), run, ...(step ? { step } : {}) };
+  }
   if (env.ORCH_TURN_STEP && env.ORCH_TURN_PROJECT) return { by: `pipeline de ${env.ORCH_TURN_PROJECT}`, project: env.ORCH_TURN_PROJECT, step: env.ORCH_TURN_STEP };
   if (env.ORCH_TURN_PROJECT) return { by: `tour de ${env.ORCH_TURN_PROJECT}`, project: env.ORCH_TURN_PROJECT };
   return { by: 'hors d’un tour (script ou console)' };

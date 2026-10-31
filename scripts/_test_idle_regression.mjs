@@ -476,5 +476,64 @@ section('9. Pas de correction sur un test déjà corrigé en tête ; commit faut
   fs.rmSync(D, { recursive: true, force: true });
 }
 
+// ---------------------------------------------------------------------------
+// 11. User request (2026-10-30), verbatim: « en plus les non régression ne sont
+//     appelés qu'après au moins une demi heure d'inactivité sur un projet, et
+//     uniquement si la version en prod courante n'a pas deja ete soumise aux
+//     tests de non régression. je ne vois aucun cas où en lancer deux
+//     identiques pourraient arriver. verifies ». Replay of 2026-10-29: the user
+//     away for hours, no turn in progress, the project's last delivery checks
+//     ended at 17:58:49 and 17:59:24 — the full run started at 17:59:28.
+// ---------------------------------------------------------------------------
+{
+  section('11. 30 min de silence du PROJET (cas du 29/10, 17:59:28), version verte jamais relancée');
+  const L = tmp('orch-idle-proj-');
+  const C = tmp('orch-idle-proj-co-');
+  fs.mkdirSync(path.join(C, '.regress'), { recursive: true });
+  // The real records of .regress/history.ndjson of orchestrateur-dev (29/10).
+  const hist = [
+    {"id":"r-20261029T175835-70808","pid":70808,"label":"worktree","mode":"targeted","args":"--targeted --no-browser --out .regress/report-livraison.json","launcher":{"by":"hors d’un tour (script ou console)"},"startedAt":"2026-10-29T17:58:35.224Z","updatedAt":"2026-10-29T17:58:48.697Z","status":"ok","endedAt":"2026-10-29T17:58:49.166Z"},
+    {"id":"r-20261029T175903-65076","pid":65076,"label":"worktree","mode":"targeted","args":"--targeted --no-browser","launcher":{"by":"hors d’un tour (script ou console)"},"startedAt":"2026-10-29T17:59:03.894Z","updatedAt":"2026-10-29T17:59:23.847Z","status":"ok","endedAt":"2026-10-29T17:59:24.049Z"},
+  ];
+  fs.writeFileSync(path.join(C, '.regress', 'history.ndjson'), hist.map(h => JSON.stringify(h)).join('\n') + '\n');
+  const lastCheck = Date.parse('2026-10-29T17:59:24.049Z');
+  ok(IR.projectActivityAt(L, 'orchestrateur-dev', C) === lastCheck, '(11) activité du projet = fin de sa dernière vérification (17:59:24)');
+  let now = Date.parse('2026-10-29T17:59:28.294Z');
+  let head = '9ab0f51d8e51d16eab8a41d9e01bdb38f0d96684';
+  const launched = [];
+  const alive = new Set();
+  const deps = () => ({
+    logsDir: L, now, bootAt: 0,
+    settings: () => IR.cleanSettings({ enabled: true, since: '2026-10-23T00:00:00Z', idleMin: 30 }),
+    lastActivityAt: () => Date.parse('2026-10-29T14:00:00Z'),
+    projectActivityAt: (name, dir) => IR.projectActivityAt(L, name, dir),
+    targets: () => [{ name: 'orchestrateur-dev', path: C, plan: { full: ['run'], bisect: null, inPlace: true } }],
+    busy: () => false, head: () => head, revList: () => [], subject: () => null,
+    launch: (step) => { const pid = 5000 + launched.length; alive.add(pid); launched.push({ ...step, pid }); return { pid }; },
+    alive: (pid) => alive.has(pid), kill: (pid) => alive.delete(pid), dispatchFix: () => {}, chefAlertsOn: () => true,
+  });
+  IR.sweep(deps());
+  ok(launched.length === 0, '(11) 17:59:28, utilisateur absent depuis des heures, projet vérifié il y a 4 s : aucune complète');
+  // A pipeline step writes the musician log of a lane: that is activity of the project too.
+  fs.mkdirSync(path.join(L, 'lanes', 'orchestrateur-dev'), { recursive: true });
+  const laneLog = path.join(L, 'lanes', 'orchestrateur-dev', '1.jsonl');
+  fs.writeFileSync(laneLog, '{}\n');
+  const stepAt = lastCheck + 10 * MIN;
+  fs.utimesSync(laneLog, new Date(stepAt), new Date(stepAt));
+  now = lastCheck + 31 * MIN; IR.sweep(deps());
+  ok(launched.length === 0, '(11) une étape du projet (journal de couloir) 21 min plus tôt : toujours rien');
+  now = stepAt + 31 * MIN; IR.sweep(deps());
+  ok(launched.length === 1 && launched[0].commit === head, '(11) projet silencieux depuis 31 min : complète lancée sur la tête');
+  // Its own run (launcher idle-regression) is not activity of the project: interrupted, it is relaunched in the next window.
+  fs.appendFileSync(path.join(C, '.regress', 'history.ndjson'), JSON.stringify({ id: 'r-idle', launcher: { by: 'idle-regression' }, status: 'interrupted', startedAt: new Date(now).toISOString(), endedAt: new Date(now + MIN).toISOString() }) + '\n');
+  alive.delete(launched[0].pid); now += MIN; IR.sweep(deps());
+  ok(launched.length === 2 && launched[1].commit === head, '(11) interrompue (processus mort) : relancée sur le même commit, sa propre trace ne compte pas');
+  fs.writeFileSync(launched[1].resultFile, JSON.stringify({ code: 0, ko: [] }));
+  now += MIN; IR.sweep(deps());
+  for (let i = 0; i < 5; i++) { now += 3 * 60 * MIN; IR.sweep(deps()); }
+  ok(IR.readState(L).projects['orchestrateur-dev'].lastGreen?.commit === head && launched.length === 2, '(11) version passée VERTE : jamais relancée, même 15 h plus tard');
+  fs.rmSync(L, { recursive: true, force: true }); fs.rmSync(C, { recursive: true, force: true });
+}
+
 console.log(`\n${pass} OK, ${fail} KO`);
 process.exit(fail ? 1 : 0);

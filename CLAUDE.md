@@ -840,7 +840,12 @@ d'autoriser un lancement de non régression »).
   depuis le seuil (`logs/user-activity.json` : gestes et présence du dashboard
   et de l'app) ET qu'aucun musicien n'est en cours sur le projet ; une à la fois
   pour la flotte ; arrêtée (arbre du processus) dès que l'un ou l'autre change,
-  ou si l'interrupteur est coupé, puis relancée dans une fenêtre suivante. Elle
+  ou si l'interrupteur est coupé, puis relancée dans une fenêtre suivante.
+  Depuis 0.158.1, le **projet** doit aussi être silencieux depuis le seuil
+  (`projectActivityAt` : journaux du musicien et de ses couloirs, dernière
+  vérification de `.regress/`, ses propres complètes exclues). Les
+  vérifications d'étape d'un pipeline portent leur lanceur (`kind:
+  'pipeline-step'`, exécution, étape) et n'alertent jamais le chef. Elle
   porte sur la tête de la copie, depuis la dernière complète verte. Cibles :
   projets en service et instances de dev ; **jamais une prod** (`devOf`,
   instance « prod », puis `prod-guard.mjs` dans le runner) : l'orchestrateur

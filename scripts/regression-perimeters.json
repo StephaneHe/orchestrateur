@@ -983,6 +983,7 @@
         {
           "perimeter": "outillage",
           "suites": [
+            "_test_chef_alerts.mjs",
             "_test_dev_instance_pipelines.mjs",
             "_test_model_reco.mjs",
             "_test_pipeline_corpus.mjs",

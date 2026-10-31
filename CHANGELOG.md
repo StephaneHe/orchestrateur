@@ -11,6 +11,13 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.158.1] - 2026-10-31
+
+### Fixed
+- (server) Pipeline step checks are recorded with their real launcher. The engine adds `ORCH_REGRESS_PIPELINE_PROJECT/RUN/STEP` to the test command (`stepLauncherEnv`, kept out of the suite-cache key); `launcherOf` reads them (`kind: 'pipeline-step'`, run, step); `regression.mjs` reads its launcher before removing the turn markers (it used to say « hors d’un tour » for every run). A step check never raises « Non-régression terminée KO » to the chef: its run handles the failure.
+- (server) The after-the-fact full run (idle-regression) also waits for the PROJECT to be quiet for `idleMin`: last write of its musician logs (turns, steps, lanes) and last check of its `.regress/history.ndjson` / `.regress/live/`, its own runs excluded (`projectActivityAt`). On 2026-10-29 it started at 17:59:28, 4 s after the last delivery check, because only the user's activity was measured. A version already green is still never relaunched; a relaunch after an interruption stays allowed.
+- Tests: `_test_chef_alerts.mjs` (step check), `_test_idle_regression.mjs` §11 (replay of 2026-10-29). Server restart needed for the sweep and the alerts; the engine and `regression.mjs` are active at once.
+
 ## [0.158.0] - 2026-10-31
 
 ### Added

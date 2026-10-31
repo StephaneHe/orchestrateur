@@ -78,7 +78,9 @@ let plannedSuites = [];
 
 // Marqueurs du tour qui lance la recette (0.48.0) : jamais transmis aux suites
 // ni à l'instance de test, sinon leurs dispatches passeraient pour ce tour.
-for (const k of ['ORCH_TURN_PROJECT', 'ORCH_TURN_STEP', 'ORCH_STEP_TOKEN']) delete process.env[k];
+// The launcher (regression-live.mjs) is read before they are removed.
+const LAUNCHER_ENV = { ...process.env };
+for (const k of ['ORCH_TURN_PROJECT', 'ORCH_TURN_STEP', 'ORCH_STEP_TOKEN', 'ORCH_REGRESS_PIPELINE_PROJECT', 'ORCH_REGRESS_PIPELINE_RUN', 'ORCH_REGRESS_PIPELINE_STEP']) delete process.env[k];
 
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(n);
@@ -2440,7 +2442,7 @@ async function main() {
   console.log(`\n=== Non-régression — état testé : ${label} ===\n`);
   if (process.env.ORCH_REGRESS_LIVE !== '0') {
     try {
-      live = createLiveRun({ root: REPO, label, mode: requestedMode(), argv: process.argv.slice(2) });
+      live = createLiveRun({ root: REPO, label, mode: requestedMode(), argv: process.argv.slice(2), env: LAUNCHER_ENV });
       live.setReport(path.relative(REPO, path.resolve(reportOut())).split(path.sep).join('/'));
       // Any other way out (crash, early exit) still leaves a final status.
       process.on('exit', (code) => { if (!live.finished) live.finish({ status: code === 0 ? 'ok' : 'error', durationS: Math.round((Date.now() - t0) / 1000) }); });

@@ -120,6 +120,8 @@ export function regressionAlerts({ dirs, since, busy = () => null, now = Date.no
     for (const r of v.recent || []) {
       if (!REGRESSION_BAD.has(r.status)) continue;
       if (r.launcher?.by === IDLE_LAUNCHER) continue;
+      // A pipeline step check: its run handles the failure (pause, retry), never a chef alert.
+      if (r.launcher?.kind === 'pipeline-step') continue;
       const end = ts(r.endedAt || r.updatedAt || r.startedAt);
       if (!end || end < sinceT) continue;
       const after = all.filter(x => x.id !== r.id && ts(x.startedAt) > ts(r.startedAt))
