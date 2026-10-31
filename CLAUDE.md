@@ -3572,7 +3572,10 @@ leviers de `pipeline-tuning.mjs` (coupés par défaut, **figés dans
 - `asideRedo` : correctif qui ne s'applique plus ⇒ item REFAIT depuis le code
   actuel (`uncheckGroup`, `redoHints`, correctif copié dans le dossier
   d'exécution comme indication), une fois par item (`state.redone`,
-  `system/pipeline_item_redo`).
+  `system/pipeline_item_redo`). L'item 0 (travail léger d'avant la montée en
+  complet, sans case dans `tests.md`) l'est aussi (0.156.3) : une case
+  `(revue item 0)` est ajoutée EN FIN de liste (sans renuméroter), réécrite sur
+  HEAD avec le correctif et les défauts comme indication, puis relue.
 - `asideGroup` : les conflits restants sont tous constatés, puis UNE pause
   `aside_conflict` (`asideConflict` = liste, `asideGrouped`).
 - Mise en service : `node scripts/pipeline-enforce.mjs tuning <levier> on

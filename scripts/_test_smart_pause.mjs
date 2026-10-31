@@ -38,6 +38,7 @@ import { fileURLToPath } from 'node:url';
 import { diagnosePause, diagnoseWithModel, smartMenu, fixMenu, checkMenu, matchOptionKey, menuQuestion, CAUSE_KINDS, TRANSIENT_KINDS, OPTION_KEYS } from './pause-diagnosis.mjs';
 import { resumeMessage, orchArtefactNames } from './pipeline-engine.mjs';
 import { oldMenuOf, pausesInLog, replayPause } from './pause-replay.mjs';
+import { appendItemZeroCase } from './aside-rework.mjs';
 import * as AA from './auto-answer.mjs';
 import { FAST_TEST_COMMAND } from '../tests/fixture-speed.mjs';
 
@@ -291,6 +292,44 @@ const reste = fs.existsSync(path.join(P, '.orchestrateur', 'runs', run3, 'reste.
 ok(st.splitOff?.length === 2 && /multiplier par 5/.test(reste) && /multiplier par 6/.test(reste), '7c : les 2 tests en trop deviennent des demandes séparées nommées (reste.md)', reste || st.splitOff);
 ok(r.code === 0 && st.status === 'done' && st.itemsDone === 3, `7c : les 3 premiers sont faits et l’exécution se termine (code ${r.code}, ${st.status}, ${st.itemsDone} items)`, r.out.slice(-800));
 ok(/Reste à demander séparément/.test(lastText(r.evs)) && /multiplier par 6/.test(lastText(r.evs)), '7c : le résultat nomme ce qui reste à demander');
+
+// ---------------------------------------------------------------------------
+section('8. Item 0 (travail d’avant la montée en complet) : « asideRedo » le refait aussi');
+// Process defect seen 4 times on 2026-10-29: the light work that escalated became item 0,
+// was set aside by the Review, its patch no longer applied on the items delivered since,
+// and the only choice left was « écarter l’item » — the core of the request was thrown away.
+{
+  g('reset', '-q', '--hard', g('rev-list', '--max-parents=0', 'HEAD').stdout.trim()); g('clean', '-qfd', '-e', '.orchestrateur');
+  const routingFile = path.join(T, 'model-routing.json');
+  const routing = JSON.parse(fs.readFileSync(routingFile, 'utf8'));
+  routing.enforcement.tuning = { asideRedo: true };
+  fs.writeFileSync(routingFile, JSON.stringify(routing));
+  const E = { FAKE_PIPE_BIG: '1', FAKE_PIPE_ITEMS: '1' };
+  const asideOf = (x) => (x.aside || []).map(a => `${a.group}:${a.limit}`).join(',');
+  r = await go(['Ajoute une fonction double puis les multiplications', '--mode', 'leger', '--kind', 'simple'], { ...E, FAKE_PIPE_REVIEW_ITEM: '0:3' });
+  const run8 = r.run;
+  st = runState(run8);
+  ok(st.escalated === true && /^0:/.test(asideOf(st)), `montée en complet : l’item 0 est mis de côté par la Revue (${asideOf(st)})`, r.out.slice(-800));
+  // Work delivered since touches what the item 0 patch touches: the patch no longer applies.
+  fs.appendFileSync(path.join(P, 'src', 'pipe.mjs'), 'export const later = 1;\n');
+  g('add', '-A'); g('commit', '-q', '-m', 'work delivered since');
+  const rf = path.join(T, 'logs', 'runs', run8, 'run.json');
+  const cur = JSON.parse(fs.readFileSync(rf, 'utf8'));
+  cur.lastDelivered = g('rev-parse', 'HEAD').stdout.trim();
+  fs.writeFileSync(rf, JSON.stringify(cur));
+  r = await go(['reprendre les items'], E);
+  st = runState(run8);
+  const redo = r.evs.find(e => e.subtype === 'pipeline_item_redo');
+  ok(redo?.pipeline.item === 0 && redo.hint && fs.existsSync(redo.hint) && /double/.test(fs.readFileSync(redo.hint, 'utf8')), 'item 0 : correctif périmé ⇒ refait à partir du code actuel, l’ancien correctif copié comme indication', JSON.stringify(redo || {}).slice(0, 600));
+  ok(r.code === 0 && st.status === 'done' && !(st.aside || []).length && !(st.discardedAside || []).length && (st.redone || []).some(x => x.group === 0), `aucune pause « écarter l’item » : l’item 0 est refait et l’exécution se termine (code ${r.code}, ${st.status})`, r.out.slice(-800));
+  ok(/\(revue item 0\)/.test(fs.readFileSync(path.join(P, '.orchestrateur', 'runs', run8, 'tests.md'), 'utf8')) && (st.delivered || []).some(x => x.group === 0), 'une case rattachée à l’item 0 réécrit le travail sur HEAD, puis l’item 0 est livré', (st.delivered || []).map(x => x.group));
+  // Only trailing whitespace is trimmed: a regex typo (/s*$/) once ate the trailing « s ».
+  const z = appendItemZeroCase('- [x] 1: (tests: 1) ajoute les multiplications\n- [ ] 2: (tests: 1) les divisions', 'refaire les modifications');
+  const zw = appendItemZeroCase('- [ ] 1: (tests: 1) les divisions  \n\n', 'refaire');
+  ok(/les divisions\n- \[ \] .*refaire les modifications\n$/.test(z) && /les divisions\n- \[ \] /.test(zw), 'item 0 : la case est ajoutée en fin de liste, seuls les espaces finaux retirés, jamais les « s » finaux du texte', JSON.stringify([z, zw]));
+  const d = diagnosePause({ limit: 'aside_conflict', step: { id: 'revue', label: 'relire' }, why: 'le correctif de l’item 0 ne s’applique plus' });
+  ok(keysOf(fixMenu(d, smartMenu(d, { step: { id: 'revue' }, conflicts: 1, restoreQueue: 0 }))).includes('écarter l’item'), '« écarter l’item » reste proposé quand le correctif est vraiment dépassé (2e échec)');
+}
 
 srv.close();
 if (!process.env.KEEP_T) { try { fs.rmSync(T, { recursive: true, force: true }); } catch {} } else console.log('T=' + T);

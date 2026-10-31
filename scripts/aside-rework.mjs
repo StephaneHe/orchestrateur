@@ -31,7 +31,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { groupOf } from './item-review.mjs';
+import { groupOf, attachedCase } from './item-review.mjs';
 
 function git(cwd, args) {
   const r = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } });
@@ -81,6 +81,12 @@ export function uncheckGroup(md, g) {
     return `${m[1]} ${m[3]}${m[4]}`;
   }).join('');
   return { md: text, unchecked: count };
+}
+
+/** tests.md with a case attached to group 0 appended at the END (inserting earlier would
+ *  renumber the cases of items set aside or open). Only trailing whitespace is trimmed. */
+export function appendItemZeroCase(md, text) {
+  return `${String(md || '').replace(/\s*$/, '')}\n${attachedCase(0, text)}\n`;
 }
 
 /** Copies the set-aside patch into the run's artefact folder (readable by the model, inside the project). */

@@ -11,6 +11,11 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.156.3] - 2026-10-31
+
+### Fixed
+- (server) Lever `asideRedo` now also redoes item 0 (the light work done before the escalation to the full mode). Its set-aside patch no longer applying used to leave only « écarter l’item », throwing the core of the request away (seen 4 times on 2026-10-29). A `(revue item 0)` case is appended at the END of `tests.md` (no renumbering, `appendItemZeroCase` of `scripts/aside-rework.mjs`: only trailing whitespace is trimmed), rewritten on HEAD with the old patch and the defects as hints, then reviewed and delivered; once per item, and « écarter l’item » is still offered on a second failure. The review diff of group 0 starts from its recorded tree. Covered by section 8 of `scripts/_test_smart_pause.mjs`.
+
 ## [0.156.2] - 2026-10-30
 
 ### Fixed

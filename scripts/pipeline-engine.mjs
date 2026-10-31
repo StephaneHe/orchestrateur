@@ -4300,11 +4300,13 @@ export async function runPipeline(o) {
         if (!r.ok) {
           const err = String(r.err || '').split('\n')[0];
           // Lever asideRedo (0.139.0): the item is REDONE from the current code,
-          // its old patch a hint only — once per item, never for group 0.
-          if (ctx.tuning?.asideRedo && g !== 0 && !(state.redone || []).some(x => x.group === g)) {
+          // its old patch a hint only — once per item. Group 0 (the light work before
+          // the escalation) has no case in tests.md: one is attached to it.
+          if (ctx.tuning?.asideRedo && !(state.redone || []).some(x => x.group === g)) {
             // A batch set aside together (lever groupReview): every item of it is redone.
             let md = { md: readArtefact(ctx, 'tests.md') || '', unchecked: 0 };
             for (const x of a.batch || [g]) { const u = Rework.uncheckGroup(md.md, x); md = { md: u.md, unchecked: md.unchecked + u.unchecked }; }
+            if (g === 0) md.md = Rework.appendItemZeroCase(md.md, '(tests: 1) refaire sur le code ACTUEL le travail léger d’avant la montée en complet (demande.md), ses modifications ne s’appliquent plus');
             fs.writeFileSync(path.join(artDir, 'tests.md'), md.md);
             state.itemsDone = Math.max(0, (state.itemsDone || 0) - md.unchecked);
             const hintFile = Rework.patchHint(path.join(root, a.patch), artDir, g);
@@ -4554,7 +4556,7 @@ export async function runPipeline(o) {
         const g = ctx.reviewScope.group;
         // A batch: everything since the last delivered commit (its items' provisional commits and work).
         const from = ctx.reviewScope.batch ? git(cwd, ['rev-parse', `${state.lastDelivered || base}^{tree}`]).out
-          : g === 0 ? git(cwd, ['rev-parse', `${base}^{tree}`]).out : state.groupTrees?.[g];
+          : g === 0 ? (state.groupTrees?.[0] || git(cwd, ['rev-parse', `${base}^{tree}`]).out) : state.groupTrees?.[g];
         const now = from ? worktreeTree(cwd, path.join(runDir, 'item-review.idx')) : null;
         itemDiff = from && now ? treeDiff(cwd, from, now) : null;
         if (itemDiff == null) ctx.reviewScope.fallback = true;
