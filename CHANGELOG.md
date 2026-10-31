@@ -11,6 +11,11 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.159.2] - 2026-10-31
+
+### Fixed
+- (server) An Android app published by `copy-build.mjs` always gets its `/downloads` card: a new project created empty got its app module later, nothing ever wrote its `downloads.json` entry, and `/downloads/<app>/apk` answered 404. `scripts/downloads-register.mjs` (`registerDownloadApp`) adds the entry if absent (version source: the app module gradle file, or the `package.json` it reads `versionName` from), validated by the registry rules, atomic write, existing entries and layout untouched; called by `copy-build.mjs` at every publication and by `new-project.mjs` when the module already exists. The missing entry of the new game project is added.
+
 ## [0.159.1] - 2026-10-31
 
 ### Changed

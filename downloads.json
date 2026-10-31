@@ -17,7 +17,8 @@
       "name": "TranslateOverlay",
       "description": "Bulle flottante qui traduit le texte de l'écran en overlay, langue détectée automatiquement, sur l'appareil",
       "version": { "file": "I:\\Dev\\TranslateOverlay\\app\\build.gradle.kts" }
-    }
+    },
+    { "name": "PitchRoll", "description": "Jeu d'arcade : guider une balle du doigt en suivant une hauteur de son et/ou une couleur cible, en évitant les trous", "version": { "file": "I:\\Dev\\PitchRoll\\package.json", "regex": "\"version\"\\s*:\\s*\"([^\"]+)\"" } }
   ],
   "docs": [
     {

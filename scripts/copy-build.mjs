@@ -21,9 +21,13 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { registerDownloadApp } from './downloads-register.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const BUILDS_ROOT = path.join(__dirname, '..', 'builds');
+// Test roots only (never set in prod): orchestrator root and projects root.
+const ROOT = process.env.DISPATCH_ROOT_FOR_TESTS ? path.resolve(process.env.DISPATCH_ROOT_FOR_TESTS) : path.join(__dirname, '..');
+const DEV_ROOT = process.env.ORCH_DEV_ROOT_FOR_TESTS || 'I:\\Dev';
+const BUILDS_ROOT = path.join(ROOT, 'builds');
 
 const project = process.argv[2];
 if (!project) {
@@ -38,10 +42,10 @@ const searchPaths = project === 'orchestrateur'
     path.join(__dirname, '..', 'android', 'app', 'build', 'outputs', 'apk', 'release'),
   ]
   : [
-    path.join('I:\\Dev', project, 'android', 'app', 'build', 'outputs', 'apk', 'debug'),
-    path.join('I:\\Dev', project, 'android', 'app', 'build', 'outputs', 'apk', 'release'),
-    path.join('I:\\Dev', project, 'app', 'build', 'outputs', 'apk', 'debug'),
-    path.join('I:\\Dev', project, 'app', 'build', 'outputs', 'apk', 'release'),
+    path.join(DEV_ROOT, project, 'android', 'app', 'build', 'outputs', 'apk', 'debug'),
+    path.join(DEV_ROOT, project, 'android', 'app', 'build', 'outputs', 'apk', 'release'),
+    path.join(DEV_ROOT, project, 'app', 'build', 'outputs', 'apk', 'debug'),
+    path.join(DEV_ROOT, project, 'app', 'build', 'outputs', 'apk', 'release'),
   ];
 
 function findLatestApk(dir) {
@@ -81,3 +85,14 @@ const sizeMB = (fs.statSync(apkSrc).size / (1024 * 1024)).toFixed(1);
 console.log(`[copy-build] ${project}: ${path.basename(apkSrc)} (${sizeMB} MB)`);
 console.log(`  → ${destVersioned}`);
 console.log(`  → ${destLatest} (latest)`);
+
+// A published APK must have its /downloads card (PitchRoll, 2026-10-31: 404).
+if (project !== 'orchestrateur') {
+  try {
+    const r = registerDownloadApp(ROOT, { name: project, dir: path.join(DEV_ROOT, project) });
+    if (r.status === 'added') console.log(`  → downloads.json: entry "${project}" added (${r.entry.version.file})`);
+    else if (r.status === 'invalid') console.warn(`[copy-build] downloads.json not updated: ${r.why}`);
+  } catch (e) {
+    console.warn(`[copy-build] downloads.json not updated: ${e.message}`);
+  }
+}

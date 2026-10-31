@@ -241,6 +241,12 @@ Ajouter une app Android :
 3. Recharger `/downloads`. Vérifier : `node scripts/_test_downloads_hot.mjs`
    (valide aussi le `downloads.json` du dépôt).
 
+**Inscription automatique** (0.159.2) : `copy-build.mjs` (à chaque
+publication) et `new-project.mjs` (si le module app existe déjà) ajoutent
+l'entrée absente (`scripts/downloads-register.mjs`) ; source de version = le
+gradle du module app, ou le `package.json` qu'il lit. Entrée existante jamais
+modifiée. Recette : `_test_downloads_register.mjs`.
+
 Un doc : entrée dans `docs[]` avec `project`, `id` (slug), `title`, `file`
 (nom simple sous `builds/<project>/`) et `fallbacks` (chemins absolus).
 Sans copie sous `builds/`, la source du projet est relue à chaque requête

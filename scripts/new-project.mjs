@@ -57,6 +57,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { STANDARD_TOOLS, ensureProjectPermissions, trustWorkspace } from './workspace-trust.mjs';
 import { serviceNewProject } from './pipeline-onboard.mjs';
+import { registerDownloadApp } from './downloads-register.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Même racine alternative que dispatch.mjs, pour les recettes (jamais en prod).
@@ -251,6 +252,19 @@ if (process.env.DISPATCH_ROOT_FOR_TESTS && !process.env.ORCH_CLAUDE_JSON) {
   } catch (e) {
     warn(`trust — FAILED: ${e.message}. Run: node scripts/trust-projects.mjs ${name}`);
   }
+}
+
+// 4b. /downloads card of an Android project (0.159.2) -----------------------
+//
+// Only when the app module already exists; a fresh project gets its entry
+// from copy-build.mjs at its first APK publication.
+try {
+  const d = registerDownloadApp(ROOT, { name, dir: projectPath });
+  if (d.status === 'added') { log(`dl   downloads.json entry "${name}" — created`); created.push('downloads.json entry'); }
+  else if (d.status === 'exists') { log(`dl   downloads.json entry "${name}" — exists, skipped`); skipped.push('downloads.json entry'); }
+  else if (d.status === 'invalid') warn(`dl   downloads.json — not updated: ${d.why}`);
+} catch (e) {
+  warn(`dl   downloads.json — FAILED: ${e.message}`);
 }
 
 // 5. In service in the mandatory pipelines (0.109.0) ------------------------
