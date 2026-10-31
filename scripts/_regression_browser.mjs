@@ -1688,7 +1688,8 @@ export async function browserChecks(sb, t) {
       const proj = JSON.parse(fs.readFileSync(path.join(sb.root, 'config.json'), 'utf8')).projects.find(p => p.name === 'omega');
       const st = JSON.parse(fs.readFileSync(path.join(proj.path, '.claude', 'settings.json'), 'utf8'));
       assert(st.permissions.allow.includes('WebSearch'), 'WebSearch absent de .claude/settings.json');
-      assert(readLogB('omega').some(e => e.subtype === 'denials_acknowledged' && e.toolIds.includes('toolu_ws1') && e.action === 'granted'), 'serveur : refus accordé non acquitté');
+      // The card goes as soon as the grant succeeds; the acknowledgement is written right after (same wait as « Vu »).
+      assert(await until(async () => readLogB('omega').some(e => e.subtype === 'denials_acknowledged' && e.toolIds.includes('toolu_ws1') && e.action === 'granted'), 5000), 'serveur : refus accordé non acquitté');
       // Rechargement : rien ne revient. Dans un second onglet neuf (état relu
       // depuis le serveur) — recharger la page principale fausserait les
       // parcours suivants (fixtures sans horodatage repassées « non lues »).

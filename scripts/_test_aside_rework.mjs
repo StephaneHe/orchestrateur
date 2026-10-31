@@ -123,7 +123,9 @@ const reset = () => { g('reset', '-q', '--hard', H0); g('clean', '-qfd', '-e', '
 
 // The psyProfile pattern: item 1 gets a wrong test, item 2 a wrong test header,
 // item 3 a review finding three times (set aside), every item a requirements row.
-const CASE = { FAKE_PIPE_ITEMS: '4', FAKE_PIPE_TEST_WRONG: '1', FAKE_PIPE_HEADER: '2', FAKE_PIPE_REVIEW_DOC_ITEM: '3:3', FAKE_PIPE_REQ_ROW: '1' };
+// Item 3's repeated review finding is a CODE finding: since 0.155.0 a documentation-only
+// finding stops blocking after one correction round, so it can no longer set an item aside.
+const CASE = { FAKE_PIPE_ITEMS: '4', FAKE_PIPE_TEST_WRONG: '1', FAKE_PIPE_HEADER: '2', FAKE_PIPE_REVIEW_ITEM: '3:3', FAKE_PIPE_REQ_ROW: '1' };
 const baseEnv = { ...process.env, DISPATCH_ROOT_FOR_TESTS: T, CLAUDE_BIN: FAKE, FAKE_CLAUDE_PIPELINE: '1', FAKE_CLAUDE_ECHO_MODEL: '1', FAKE_CLAUDE_LATENCY_MS: '5', FAKE_CLAUDE_TOOL_USES: '0',
   ORCH_PERM_DISABLE: '1', ORCH_PORT: String(srv.address().port), ORCH_PIPE_PROGRESS_MS: '200', ORCH_NO_PENDING_RELEASE: '1' };
 for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'ORCH_TURN_PROJECT', 'ORCH_TURN_STEP', 'ORCH_STEP_TOKEN', 'ORCH_OBS_ID', 'DISPATCH_SLOT', 'ORCH_TEST_LABEL',
@@ -143,7 +145,16 @@ const go = async (args, env) => {
   const evs = logOf().slice(n0);
   return { ...r, evs, run: evs.find(e => e.type === 'user_prompt' && e.pipeline)?.pipeline.run, limit: evs.find(e => e.type === 'notification' && e.subtype === 'pipeline_limit')?.limit || null };
 };
-const delivered = (run) => (runState(run).delivered || []).map(d => d.group).sort((a, b) => a - b).join(',');
+// A code finding attaches « (revue item k) » cases to tests.md, which shifts the case numbers of
+// the items after it: report each group as the ORIGINAL item it is (rank among non-attached cases).
+const originalRank = (run) => {
+  let md = ''; try { md = fs.readFileSync(path.join(P, '.orchestrateur', 'runs', run, 'tests.md'), 'utf8'); } catch {}
+  const cases = md.split(/\r?\n/).filter(l => /^\s*[-*]\s+\[( |x|X)\]\s+/.test(l));
+  const rank = new Map(); let k = 0;
+  cases.forEach((l, i) => { if (!/\]\s+\(revue item \d+\)/.test(l)) rank.set(i + 1, ++k); });
+  return (g) => rank.get(g) ?? g;
+};
+const delivered = (run) => { const o = originalRank(run); return (runState(run).delivered || []).map(d => o(d.group)).sort((a, b) => a - b).join(','); };
 const REQUEST = ['Ajoute les multiplications par deux, trois, quatre et cinq', '--mode', 'complet'];
 
 // ---------------------------------------------------------------------------

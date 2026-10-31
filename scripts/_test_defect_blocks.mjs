@@ -130,16 +130,19 @@ reset();
 
 // ---------------------------------------------------------------------------
 section('4. Un défaut jamais corrigé : l’item n’est jamais livré ; « accepter » le livre, défauts notés');
-r = await go(['Ajoute la multiplication par deux et trois', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '2', FAKE_PIPE_REVIEW_DOC_ITEM: '1', ORCH_PIPE_REVIEW_ROUNDS: '1' });
+// A CODE finding: since 0.155.0 a documentation-only finding stops blocking after one
+// correction round (delivery notes), so the never-corrected defect here is on the code.
+r = await go(['Ajoute la multiplication par deux et trois', '--mode', 'complet'], { FAKE_PIPE_ITEMS: '2', FAKE_PIPE_REVIEW_ITEM: '1', ORCH_PIPE_REVIEW_ROUNDS: '1' });
 const run4 = r.run;
 const res4 = r.evs.filter(e => e.type === 'result').pop()?.result || '';
-ok(r.code === 2 && !subjects().some(s => /^feat\(item 1\)/.test(s)) && subjects().some(s => /^feat\(item 2\)/.test(s)), `constat de doc toujours là après son tour : l’item 1 n’est PAS livré, l’item 2 l’est (${subjects().join(' | ')})`, r.out.slice(-600));
+// Matched on the item's text: the attached « (revue item 1) » case renumbers item 2.
+ok(r.code === 2 && !subjects().some(s => /^feat\(item \d+\): multiplier par 2/.test(s)) && subjects().some(s => /^feat\(item \d+\): multiplier par 3/.test(s)), `constat de code toujours là après son tour : l’item 1 n’est PAS livré, l’item 2 l’est (${subjects().join(' | ')})`, r.out.slice(-600));
 ok(/« accepter »/.test(res4) && /NEEDS_USER_INPUT:.*« accepter »/.test(res4), 'la pause propose « accepter » (livrer en connaissance de cause)');
 r = await go(['accepter'], { FAKE_PIPE_ITEMS: '2', ORCH_PIPE_REVIEW_ROUNDS: '1' });
 const acc = r.evs.find(e => e.subtype === 'pipeline_defect_accepted');
 const livLog = fs.readFileSync(path.join(T, 'logs', 'runs', run4, r.done.filter(d => d.pipeline.step === 'livrer').pop()?.pipeline.key + '.jsonl'), 'utf8');
 ok(r.code === 0 && r.run === run4 && acc?.pipeline?.item === 1 && subjects().some(s => /^feat\(item 1\)/.test(s)), `« accepter » : l’item 1 est livré, l’acceptation est tracée (« ${acc?.text?.slice(0, 100)} »)`, r.out.slice(-600));
-ok(/Défauts ACCEPTÉS explicitement/.test(livLog) && /README/.test(livLog) && runState(run4).acceptedDefects?.length === 1, 'Livrer reçoit les défauts acceptés, à noter dans le CHANGELOG');
+ok(/Défauts ACCEPTÉS explicitement/.test(livLog) && /défaut relevé sur l’item 1/.test(livLog) && runState(run4).acceptedDefects?.length === 1, 'Livrer reçoit les défauts acceptés, à noter dans le CHANGELOG');
 reset();
 
 // ---------------------------------------------------------------------------

@@ -98,7 +98,13 @@ section('1. Délai de la commande de test : testTimeoutMin du projet');
   // runCommand passes the project's delay (checked just above, with the others).
   // 0.149.0: an optional trailing ctx.testTick (progress heartbeat) is allowed.
   const viaSuite = (src.match(/\brunSuite\(ctx\)/g) || []).length;
-  ok(calls.length + viaSuite >= 8 && calls.every(c => /testTimeoutMs\(/.test(c)) && /function runSuite\(ctx\)[\s\S]{0,200}runCommand\(cwd, cfg\.testCommand, ctx\.testEnv, testTimeoutMs\(cfg\)(, ctx\.testTick)?\)/.test(src),
+  // 0.153.0: runSuite runs the touched areas' commands, then delegates the main suite to runMainSuite:
+  // every runCommand of both bodies must pass the project's delay.
+  const body = (name) => (src.split(`\nfunction ${name}(`)[1] || '').split(/\n(?:export )?(?:async )?function /)[0];
+  const suiteRuns = [body('runSuite'), body('runMainSuite')].flatMap(b => b.match(/runCommand\([^\n]*\)/g) || []);
+  ok(calls.length + viaSuite >= 8 && calls.every(c => /testTimeoutMs\(/.test(c))
+    && suiteRuns.length >= 2 && suiteRuns.every(c => /testTimeoutMs\(cfg\)/.test(c))
+    && /runCommand\(cwd, cfg\.testCommand, ctx\.testEnv, testTimeoutMs\(cfg\)(, ctx\.testTick)?\)/.test(body('runMainSuite') || body('runSuite')),
     `chaque lancement de la commande de test ou de build passe le délai du projet (${calls.length} appels directs, ${viaSuite} par runSuite)`,
     calls.filter(c => !/testTimeoutMs\(/.test(c)).join('\n'));
 }
