@@ -11,6 +11,11 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.159.5] - 2026-10-31
+
+### Fixed
+- (android) App 1.3.1 (versionCode 31): the « RÉSULTAT REÇU » card of a musician addressed to the chef (awaiting the chef, `NEEDS_CHEF_INPUT:` sentinel, process pause `[p-… · pause n]`) was shown expanded with its whole text: the 1.3.0 fold rule only applied to chat bubbles (`ChatBubble`), and a single result opened its basket with every card in full (`ResultCard`). Such a card now starts folded on one line (project, « attend le chef », duration), expands on tap with its buttons, and folds back from its header. Rule `ChatFoldRule.resultFolded`, JVM test `ResultFoldRuleTest`.
+
 ## [0.159.4] - 2026-10-31
 
 ### Changed

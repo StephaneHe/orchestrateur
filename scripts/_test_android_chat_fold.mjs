@@ -41,6 +41,17 @@ ok(/fun userTypedMessagesStayOpen/.test(jvm) && /fun onlyAnswerRepliesOfTheChefF
 ok(jvm.includes('[NEEDS_CHEF_INPUT_FROM:projetA] Le musicien « projetA » te demande une décision') && jvm.includes('[ALERTE n=1]\\nLe serveur signale'),
   'JVM test replays real chef-log messages');
 
+// App 1.3.1 — « cette partie devrait être collapse. Elle apparaît ouverte » : the
+// « RÉSULTAT REÇU » card of a musician awaiting the chef folds too.
+const rjvm = read('android/app/src/test/java/com/orchestrateur/ui/fleet/ResultFoldRuleTest.kt');
+ok(/fun resultFolded\(item: ResultItem\)/.test(rule), 'ChatFoldRule.resultFolded classifies a result card');
+ok(/val foldable = ChatFoldRule\.resultFolded\(item\)/.test(pane) && /mutableStateOf\(!foldable\)/.test(pane),
+  'ResultCard starts folded for a musician → chef card, expanded on tap');
+ok(/fun needsChefInputCardIsFoldedByDefault/.test(rjvm) && /fun ordinaryResultsStayOpen/.test(rjvm) && rjvm.includes('pause de PROCESSUS'),
+  'JVM test ResultFoldRuleTest covers NEEDS_CHEF_INPUT / process-pause cards and ordinary results');
+const row131 = read('docs/USER_REQUIREMENTS.md').split('\n').find(l => l.startsWith('| 2026-10-31') && l.includes('cette partie devrait être collapse. Elle apparaît ouverte'));
+ok(!!row131 && row131.includes('suite:_test_android_chat_fold.mjs'), 'USER_REQUIREMENTS.md traces the 1.3.1 request verbatim');
+
 const gradle = read('android/app/build.gradle.kts');
 const vc = Number((gradle.match(/versionCode = (\d+)/) || [])[1]);
 const vn = (gradle.match(/versionName = "([^"]+)"/) || [])[1] || '';

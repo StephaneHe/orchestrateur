@@ -336,6 +336,33 @@ private fun ResultCard(
     onOpenMusician: (String) -> Unit = {},
 ) {
     val c = if (item.isInfo) Palette.Fg2 else outcomeColor(item.outcome)
+    // A musician → chef exchange is technical (app 1.3.1): one line, tap to expand.
+    val foldable = ChatFoldRule.resultFolded(item)
+    var expanded by remember(item.source, item.ts, item.text) { mutableStateOf(!foldable) }
+    if (!expanded) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 44.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { expanded = true }
+                .background(blend(c, Palette.CardBg, 0.06f)),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            Box(Modifier.width(3.dp).heightIn(min = 44.dp).background(c))
+            Text("▸", color = Palette.Fg3, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+            Text(
+                item.source.uppercase(), color = Palette.Fg1, fontSize = 9.sp,
+                letterSpacing = 1.2.sp, fontFamily = FontFamily.Monospace, maxLines = 1,
+            )
+            Text("attend le chef", color = Palette.StInput, fontSize = 9.sp, maxLines = 1)
+            item.durationMs?.let {
+                Text(fmtAge(it), color = Palette.Fg2, fontSize = 9.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
+            }
+        }
+        return
+    }
     Row(
         Modifier
             .fillMaxWidth()
@@ -346,9 +373,11 @@ private fun ResultCard(
         Box(Modifier.width(3.dp).fillMaxHeight().background(c))
         Column(Modifier.padding(horizontal = 9.dp, vertical = 7.dp)) {
             Row(
+                modifier = if (foldable) Modifier.heightIn(min = 32.dp).clickable { expanded = false } else Modifier,
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
+                if (foldable) Text("▾", color = Palette.Fg3, fontSize = 10.sp)
                 Text(
                     // Un notify manuel n'est pas un tour terminé : on le dit.
                     if (item.isInfo) "INFORMATION DE ${item.source.uppercase()}" else item.source.uppercase(),

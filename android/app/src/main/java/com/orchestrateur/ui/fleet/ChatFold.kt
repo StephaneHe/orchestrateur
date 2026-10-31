@@ -82,6 +82,23 @@ object ChatFoldRule {
         return ChatFold("réponse au musicien", summarize(t.substring(m.range.last + 1)))
     }
 
+    private val CHEF_SENTINEL_RE = Regex("""^NEEDS_CHEF_INPUT\s*:""", RegexOption.MULTILINE)
+    private val PROCESS_PAUSE_RE = Regex("""^\[p-[^\]]*·\s*pause\s*\d+\]""", RegexOption.MULTILINE)
+
+    /**
+     * A result card of the « RÉSULTAT REÇU » basket is a musician → chef report.
+     * Those addressed to the chef (awaiting chef, NEEDS_CHEF_INPUT sentinel,
+     * process pause « [p-… · pause n] ») start folded; the protocol markers are
+     * fixed strings, never a guess on free text.
+     */
+    fun resultFolded(item: ResultItem): Boolean {
+        if (item.awaitingChef || item.outcome == "ask_chef") return true
+        return listOf(item.summary, item.text).any { body ->
+            val t = body.trim()
+            CHEF_SENTINEL_RE.containsMatchIn(t) || PROCESS_PAUSE_RE.containsMatchIn(t)
+        }
+    }
+
     /** First meaningful line, whitespace collapsed, cut at [SUMMARY_MAX]. */
     fun summarize(text: String): String {
         val line = text.lines().map { it.trim() }.firstOrNull { it.isNotEmpty() } ?: return ""
