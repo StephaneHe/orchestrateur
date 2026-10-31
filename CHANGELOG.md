@@ -11,6 +11,11 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.158.4] - 2026-10-31
+
+### Fixed
+- (server) `scripts/_test_model_backoff.mjs` was flaky (failed in targeted checks on 2026-10-30, e.g. "844 ms puis 730 ms"): it compared two end-to-end gaps (step done → next step start) that also include the chef notice and the next step's process start, whose cost varies by up to ~1 s under load, against waits that differ by only 300 ms. The "growing delays" check now compares the waits themselves (`pipeline_backoff` → `pipeline_backoff_end` timestamps, ~20 ms of noise); the end-to-end gaps keep only their lower bounds. Not weakened: an engine that waits a constant delay or no delay still fails the check (verified by breaking `backoffWait` both ways).
+
 ## [0.158.3] - 2026-10-31
 
 ### Fixed

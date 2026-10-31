@@ -185,7 +185,14 @@ ok(bo.length === 2 && bo[0].tier === 1 && bo[0].waitMs === 300 && bo[1].tier ===
 const ts = (e) => Date.parse(e.timestamp);
 const gap1 = ts(r.evs.filter(e => e.subtype === 'pipeline_step_start' && e.pipeline.step === 'rouge')[2]) - ts(rouge[1]);
 const gap2 = ts(r.evs.filter(e => e.subtype === 'pipeline_step_start' && e.pipeline.step === 'rouge')[4]) - ts(rouge[3]);
-ok(gap1 >= 280 && gap2 >= 580 && gap2 > gap1, `délais réellement attendus : ${gap1} ms puis ${gap2} ms (croissants)`);
+// The end-to-end gaps also hold the chef notice and the next step's process
+// start, whose cost varies by up to ~1 s under load: only lower bounds there.
+// The comparison uses the wait itself (backoff event → backoff end), which
+// still fails if the delay stops growing or is not actually waited.
+const boEnd = ofType(r.evs, 'pipeline_backoff_end');
+const wait1 = boEnd[0] && ts(boEnd[0]) - ts(bo[0]), wait2 = boEnd[1] && ts(boEnd[1]) - ts(bo[1]);
+ok(gap1 >= 280 && gap2 >= 580 && wait1 >= 280 && wait2 >= 580 && wait2 > wait1,
+  `délais réellement attendus : ${wait1} ms puis ${wait2} ms (croissants ; de bout en bout ${gap1} puis ${gap2} ms)`);
 const rougeStarts = r.evs.filter(e => e.subtype === 'pipeline_step_start' && e.pipeline.step === 'rouge');
 ok(launches().filter(l => l.failed).length === 4 && launches().filter(l => l.failed).every(l => l.model === 'claude-opus-5-5') && rougeStarts.length === 5 && rougeStarts.every(s => s.model === 'claude-opus-5-5'),
   `toujours le MÊME model pour l’étape (claude-opus-5-5, ${rougeStarts.length} lancements) : aucun fallback`);
