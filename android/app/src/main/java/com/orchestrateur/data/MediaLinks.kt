@@ -2,15 +2,18 @@ package com.orchestrateur.data
 
 import java.net.URLEncoder
 
-enum class MediaKind { IMAGE, VIDEO }
+enum class MediaKind { IMAGE, VIDEO, AUDIO }
 
 /**
- * Preview links for a cited image / video: same GET /api/media?path= route as
- * the web thread (public/id-links.js), same extensions as MEDIA_TYPES in server.js.
+ * Preview links for a cited image / video / audio file: same GET /api/media?path= route as
+ * the web thread (public/id-links.js). Images and videos use the extensions of MEDIA_TYPES in
+ * server.js; audio (wav, mp3, ogg, m4a, flac, opus) is detected here but /api/media answers 404
+ * for it until the server serves audio, so the inline player stays hidden until then.
  */
 object MediaLinks {
     private val IMAGES = setOf("png", "jpg", "jpeg", "gif", "webp")
     private val VIDEOS = setOf("mp4", "webm", "mov")
+    private val AUDIO_EXTS = setOf("wav", "mp3", "ogg", "m4a", "flac", "opus")
 
     fun kindOf(value: String): MediaKind? {
         val v = value.trim()
@@ -19,6 +22,7 @@ object MediaLinks {
         return when (ext) {
             in IMAGES -> MediaKind.IMAGE
             in VIDEOS -> MediaKind.VIDEO
+            in AUDIO_EXTS -> MediaKind.AUDIO
             else -> null
         }
     }

@@ -11,6 +11,14 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.160.0] - 2026-10-31
+
+### Added
+- (android) App 1.4.0 (versionCode 32): an audio reference (`[[fichier:<path>.wav|mp3|ogg|m4a|flac|opus]]`, same reference forms as the images and videos of 1.2.1) cited in the thread or in a card shows a compact inline player with play/pause, a draggable progress bar and the duration. It reads the file through the same `/api/media` route and token as images and videos. Only one player plays at a time (`SinglePlayer`); playback stops on the lifecycle ON_STOP and when the player leaves the composition. JVM test `AudioLinksTest` covers the audio link detection and the single-player rule.
+
+### Changed
+- (android) Known limitation: the player stays hidden as long as `/api/media` (`MEDIA_TYPES` in `server.js`) does not serve audio. That server task is still to come and is not delivered in this repository.
+
 ## [0.159.6] - 2026-10-31
 
 ### Fixed

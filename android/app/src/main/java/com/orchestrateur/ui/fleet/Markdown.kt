@@ -9,7 +9,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.material3.Slider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,6 +47,7 @@ import com.orchestrateur.data.IdVocab
 import com.orchestrateur.data.IdVocabCache
 import com.orchestrateur.data.MediaKind
 import com.orchestrateur.data.MediaLinks
+import com.orchestrateur.data.SinglePlayer
 import com.orchestrateur.data.getJson
 import com.orchestrateur.data.idVocabFrom
 import com.orchestrateur.ui.common.LocalEnv
@@ -535,8 +538,9 @@ private fun AnnotatedString.Builder.appendInline(nodes: List<MdInline>, base: Co
 private fun renderInline(nodes: List<MdInline>, base: Color): AnnotatedString = buildAnnotatedString { appendInline(nodes, base) }
 
 /**
- * Preview of a cited image / video through GET /api/media (same route and token
- * as the web). A missing or refused file shows nothing: the plain link stays.
+ * Preview of a cited image / video / audio file through GET /api/media (same route and token
+ * as the web). Audio gets the inline [AudioPlayer]. A missing or refused file shows nothing:
+ * the plain link stays.
  */
 @Composable
 private fun MediaPreview(path: String) {
@@ -557,8 +561,89 @@ private fun MediaPreview(path: String) {
         if (full) Dialog(onDismissRequest = { full = false }) {
             AsyncImage(model = url, contentDescription = null, modifier = Modifier.fillMaxWidth().clickable { full = false })
         }
+    } else if (kind == MediaKind.AUDIO) {
+        val available by produceState<Boolean?>(null, url) { value = withContext(Dispatchers.IO) { MediaLinks.available(url) } }
+        if (available == true) AudioPlayer(url)
     } else {
         val available by produceState<Boolean?>(null, url) { value = withContext(Dispatchers.IO) { MediaLinks.available(url) } }
         if (available == true) Text("▶ Lire la vidéo", color = Palette.Accent, fontSize = 13.sp, modifier = Modifier.clickable { uri.openUri(url) })
+    }
+}
+
+/**
+ * Compact inline audio player: play / pause, draggable progress, duration. Reads the
+ * file through the same /api/media URL as images and videos. [SinglePlayer.shared]
+ * keeps one player playing at a time; playback also stops on the lifecycle ON_STOP
+ * (app in the background), and leaving the composition stops and releases the player.
+ */
+@Composable
+private fun AudioPlayer(url: String) {
+    // One key per player instance: the same file cited twice must still be two players for SinglePlayer.
+    val key = remember { java.util.UUID.randomUUID().toString() }
+    var player by remember(url) { mutableStateOf<android.media.MediaPlayer?>(null) }
+    var ready by remember(url) { mutableStateOf(false) }
+    var failed by remember(url) { mutableStateOf(false) }
+    var playing by remember(url) { mutableStateOf(false) }
+    var duration by remember(url) { mutableStateOf(0) }
+    var position by remember(url) { mutableStateOf(0) }
+    var dragging by remember(url) { mutableStateOf(false) }
+
+    fun pause() {
+        runCatching { player?.pause() }
+        playing = false
+        SinglePlayer.shared.stop(key)
+    }
+
+    DisposableEffect(url) {
+        val mp = android.media.MediaPlayer()
+        player = mp
+        mp.setOnPreparedListener { duration = it.duration; ready = true }
+        mp.setOnCompletionListener { playing = false; position = 0; SinglePlayer.shared.stop(key) }
+        mp.setOnErrorListener { _, _, _ -> failed = true; playing = false; SinglePlayer.shared.stop(key); true }
+        runCatching { mp.setDataSource(url); mp.prepareAsync() }.onFailure { failed = true }
+        onDispose {
+            SinglePlayer.shared.stop(key)
+            player = null
+            runCatching { mp.release() }
+        }
+    }
+    LaunchedEffect(playing, dragging) {
+        while (playing && !dragging) {
+            position = runCatching { player?.currentPosition ?: 0 }.getOrDefault(0)
+            kotlinx.coroutines.delay(250)
+        }
+    }
+    val lifecycle = androidx.compose.ui.platform.LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        // Leaving the app (Home, app switch) pauses the playback.
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
+            if (e == androidx.lifecycle.Lifecycle.Event.ON_STOP) SinglePlayer.shared.stopAll()
+        }
+        lifecycle.addObserver(obs)
+        onDispose { lifecycle.removeObserver(obs) }
+    }
+    if (failed) return
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp)) {
+        Text(
+            if (playing) "⏸" else "▶",
+            color = if (ready) Palette.Accent else Palette.Accent.copy(alpha = 0.4f),
+            fontSize = 20.sp,
+            modifier = Modifier.clickable(enabled = ready) {
+                val mp = player ?: return@clickable
+                if (playing) pause() else {
+                    SinglePlayer.shared.play(key) { runCatching { mp.pause() }; playing = false }
+                    runCatching { mp.start() }.onSuccess { playing = true }
+                }
+            }.padding(horizontal = 10.dp, vertical = 6.dp),
+        )
+        Slider(
+            value = if (duration > 0) position.toFloat().coerceIn(0f, duration.toFloat()) else 0f,
+            onValueChange = { dragging = true; position = it.toInt() },
+            onValueChangeFinished = { runCatching { player?.seekTo(position) }; dragging = false },
+            valueRange = 0f..(if (duration > 0) duration.toFloat() else 1f),
+            enabled = ready,
+            modifier = Modifier.weight(1f),
+        )
+        Text("${SinglePlayer.format(position)} / ${SinglePlayer.format(duration)}", color = Palette.Accent, fontSize = 12.sp, modifier = Modifier.padding(start = 6.dp))
     }
 }
