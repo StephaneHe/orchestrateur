@@ -11,6 +11,11 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.158.3] - 2026-10-31
+
+### Fixed
+- (server) Targeted test selection now runs the existing tests that READ a changed production file (post-mortem A4 of the BookHaven run p-20261030T174518-53d2c7: a pytest reading `epub_reader.html`, `test_release_*` reading `CHANGELOG.md` / version files were left out, so a delivery went green while the full suite was red). `scripts/pipeline-speed.mjs`: `readersOf` (bounded textual search, relative path or standalone file name); `selectForChanged` adds the tests that cite a changed changelog, registry, version, doc file or a file of another zone; `selectAreaTests` also schedules a zone the diff does not touch when one of its tests reads a changed file (targeted under the `targetedTests` lever, its whole suite otherwise, reason in `why`). Beyond `citedTestsMax` readers (`.orchestrateur/pipeline.json`, default 25) the zone's whole suite runs, said. `pipeline-engine.mjs` reports a zone suite run for that reason (`pipeline_suite_targeted`). Replay of BookHaven commit 52a335d: `tests/test_android_epub_theme_persist.py` is now selected.
+
 ## [0.158.2] - 2026-10-31
 
 ### Added

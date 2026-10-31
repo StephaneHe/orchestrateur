@@ -196,6 +196,33 @@ export function targetedCommand(cwd, cfg, files) {
   return { command };
 }
 
+/** Default bound of the reader search (`citedTestsMax` of .orchestrateur/pipeline.json): beyond, the zone's whole suite runs. */
+export const CITED_TESTS_MAX = 25;
+const READ_CAP = 1 << 20;
+const MAX_SEARCHED = 500;
+const citedMax = (cfg) => (Number.isInteger(cfg?.citedTestsMax) && cfg.citedTestsMax > 0 ? cfg.citedTestsMax : CITED_TESTS_MAX);
+const tooManyReaders = (n, max) => `${n} tests lisent les fichiers modifiés (au-delà du seuil citedTestsMax = ${max}) : suite entière de la zone`;
+function readTexts(cwd, tests) {
+  return new Map(tests.map(t => { let s = ''; try { s = fs.readFileSync(path.join(cwd, t), 'utf8').slice(0, READ_CAP); } catch {} return [t, s]; }));
+}
+/**
+ * Tests whose text cites a file by its relative path or its file name — a
+ * pytest that opens a .kt or an .html, a release test that reads CHANGELOG.md:
+ * imports never see these. Bounded textual search. → Map test → reason
+ */
+export function readersOf(tests, texts, files) {
+  const out = new Map();
+  for (const f of [...new Set(files.map(posix))].slice(0, MAX_SEARCHED)) {
+    const base = path.posix.basename(f);
+    if (!base) continue;
+    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // the name must stand alone: « theme.html » does not cite « dark_theme.html »
+    const re = new RegExp(`(?:^|[^\\w.-])(?:${esc(f)}|${esc(base)})(?![\\w-])`);
+    for (const t of tests) if (t !== f && !out.has(t) && re.test(texts.get(t) || '')) out.set(t, `lit ${f}`);
+  }
+  return out;
+}
+
 /**
  * Tests to run for a change since `from`: the changed test files, then every
  * test whose import closure reaches a changed file or whose text names it.
@@ -205,10 +232,15 @@ export function targetedCommand(cwd, cfg, files) {
 export function selectTargetedTests({ cwd, cfg, from, isTest, lean = false }) {
   return selectForChanged({ cwd, cfg, changed: changedSince(cwd, from), isTest, lean });
 }
-/** Same selection for a given list of changed files (the bench reads them from real commits, read-only). */
-export function selectForChanged({ cwd, cfg, changed, isTest, tests = null, lean = false }) {
-  // Files of a declared area are tested by that area's own command, never by the main suite.
-  if (Array.isArray(cfg.areas) && cfg.areas.length) changed = changed.filter(f => !cfg.areas.some(a => inArea(a, f)));
+/** Same selection for a given list of changed files (the bench reads them from real commits, read-only).
+ *  `others`: changed files outside this zone, searched only for the tests that read them. */
+export function selectForChanged({ cwd, cfg, changed, isTest, tests = null, lean = false, others = [] }) {
+  // Files of a declared area are tested by that area's own command, never by the main suite
+  // (but a main test that reads one of them still runs).
+  if (Array.isArray(cfg.areas) && cfg.areas.length) {
+    others = [...others, ...changed.filter(f => cfg.areas.some(a => inArea(a, f)))];
+    changed = changed.filter(f => !cfg.areas.some(a => inArea(a, f)));
+  }
   tests = tests || runnableTests(cwd, isTest);
   if (!tests.length) return { targeted: false, why: 'aucun fichier de test reconnu' };
   const sources = changed.filter(f => !isTest(f) && !isNeutral(f, cfg));
@@ -216,7 +248,9 @@ export function selectForChanged({ cwd, cfg, changed, isTest, tests = null, lean
   const add = (t, why) => { if (!reasons.has(t)) reasons.set(t, why); };
   for (const f of changed) if (tests.includes(f)) add(f, 'test de l’item (modifié)');
   const cache = new Map();
-  const texts = new Map(tests.map(t => { let s = ''; try { s = fs.readFileSync(path.join(cwd, t), 'utf8'); } catch {} return [t, s]; }));
+  const texts = readTexts(cwd, tests);
+  // Tests that READ a changelog, registry, version or doc file, or a file of another zone (post-mortem A4).
+  const readers = readersOf(tests, texts, [...changed.filter(f => !isTest(f) && isNeutral(f, cfg)), ...others.filter(f => !isTest(f))]);
   const uncovered = [];
   for (const src of sources) {
     let hit = false;
@@ -235,6 +269,10 @@ export function selectForChanged({ cwd, cfg, changed, isTest, tests = null, lean
     }
     if (!hit && fs.existsSync(path.join(cwd, src))) uncovered.push(src);
   }
+  for (const t of reasons.keys()) readers.delete(t);
+  const max = citedMax(cfg);
+  if (readers.size > max) return { targeted: false, why: tooManyReaders(readers.size, max) };
+  for (const [t, why] of readers) add(t, why);
   // lean (lever targetedTests): a changed file no test reaches no longer forces the
   // full suite at each step — the full run happens once, after the fact (idle regression).
   if (uncovered.length && !lean) return { targeted: false, why: `fichier modifié couvert par aucun test : ${uncovered.slice(0, 4).join(', ')}` };
@@ -274,20 +312,41 @@ export function selectAreaTests({ cwd, cfg, changed, lean = false }) {
     else if (!isNeutral(f, cfg)) mainTouched = true;
   }
   if (!touched.size) mainTouched = true;
+  // A zone the diff does not touch still runs when one of its tests READS a changed file
+  // (post-mortem A4: a pytest of the server zone reading an .html of the android zone).
+  const readersBy = new Map();
+  if (areas.length) {
+    const anyGlobs = [...(cfg.mainTestGlobs || cfg.testGlobs || []), ...areas.flatMap(a => a.testGlobs || [])];
+    const all = runnableTests(cwd, f => anyGlobs.some(g => areaGlob(g).test(posix(f))));
+    const texts = readTexts(cwd, all);
+    for (const [t, why] of readersOf(all, texts, files.filter(f => !all.includes(f)))) {
+      const a = areas.find(x => inArea(x, t));
+      const key = a ? a.name : null;
+      if (!readersBy.has(key)) readersBy.set(key, new Map());
+      readersBy.get(key).set(t, why);
+    }
+  }
+  const readersWhy = (m) => `${[...m].slice(0, 3).map(([t, w]) => `${t} ${w}`).join(' ; ')}${m.size > 3 ? ` (+${m.size - 3})` : ''}`;
+  // the main suite does its own targeting (runMainSuite → selectForChanged, area files as readers only)
+  if (!mainTouched && readersBy.has(null)) mainTouched = true;
   const commands = [];
   const versionFiles = [];
   const addVersions = (v) => { for (const x of v || []) if (!versionFiles.includes(x)) versionFiles.push(x); };
-  if (mainTouched) { commands.push({ area: null, command: cfg.testCommand }); addVersions(cfg.versionFiles); }
-  for (const a of touched.values()) {
+  if (mainTouched) { commands.push({ area: null, command: cfg.testCommand, ...(readersBy.has(null) ? { why: readersWhy(readersBy.get(null)) } : {}) }); addVersions(cfg.versionFiles); }
+  for (const a of areas) {
+    const isTouched = touched.has(a.name);
+    const readers = readersBy.get(a.name);
+    if (!isTouched && !readers) continue;
     const own = files.filter(f => inArea(a, f));
     const isT = (f) => inArea(a, f) && (a.testGlobs || []).some(g => areaGlob(g).test(posix(f)));
     // targeting only under the lever (lean): otherwise the area's whole testCommand runs
-    const sel = !lean ? { targeted: false } : selectForChanged({ cwd, changed: own, isTest: isT, lean,
-      cfg: { testCommand: a.testCommand, targetedTestCommand: a.targetedTestCommand, testGlobs: a.testGlobs, versionFiles: a.versionFiles, changelog: cfg.changelog } });
+    const sel = !lean ? { targeted: false } : selectForChanged({ cwd, changed: own, isTest: isT, lean, others: files.filter(f => !inArea(a, f)),
+      cfg: { testCommand: a.testCommand, targetedTestCommand: a.targetedTestCommand, testGlobs: a.testGlobs, versionFiles: a.versionFiles, changelog: cfg.changelog, requirements: cfg.requirements, citedTestsMax: cfg.citedTestsMax } });
     // targeted when known; an area whose selection is empty runs nothing (lean)
     const command = sel.targeted ? sel.command : a.testCommand;
-    commands.push({ area: a.name, command, ...(sel.targeted ? { files: sel.files } : {}) });
-    addVersions(a.versionFiles);
+    const why = !sel.targeted && sel.why ? sel.why : (readers && !isTouched ? readersWhy(readers) : null);
+    commands.push({ area: a.name, command, ...(sel.targeted ? { files: sel.files } : {}), ...(why ? { why } : {}) });
+    if (isTouched) addVersions(a.versionFiles);
   }
   return { commands, versionFiles };
 }

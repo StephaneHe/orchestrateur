@@ -554,6 +554,8 @@ function runSuite(ctx) {
     const t0 = Date.now(); const outs = [];
     let last = { ok: true, code: 0, out: '' };
     for (const c of plan.commands) {
+      // a zone's whole suite run because of tests that read changed files: said
+      if (c.why && !c.files && c.area !== null) ctx.onSuiteTargeted?.({ targeted: false, files: [], requirement: [], total: 0, why: `zone ${c.area} : ${c.why}` });
       if (c.area === null) last = runMainSuite(ctx, lean);
       else if (c.command) last = { ...runTestCommand(ctx, cwd, c.command), area: c.area };
       else continue;

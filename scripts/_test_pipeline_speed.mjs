@@ -526,6 +526,62 @@ section('10. Sélection ciblée sans suite complète : .kt, pytest, Gradle, test
 }
 }
 
+if (want(11)) {
+// ---------------------------------------------------------------------------
+// 11. Tests that READ a changed file — post-mortem of p-20261030T174518-53d2c7 (A4).
+// User's requirement (2026-10-31), verbatim: « Je ne veux aucun compromis sur la qualite ».
+// Replays the real case of commit 52a335d: epub_reader.html (android zone) is read by
+// a pytest of the server zone; the targeted selection left it out, the delivery went green.
+section('11. Tests qui lisent un fichier modifié : sélectionnés, même dans une autre zone');
+{
+  const R = fs.mkdtempSync(path.join(os.tmpdir(), 'orch-readers-'));
+  const wr = (f, s) => { fs.mkdirSync(path.dirname(path.join(R, f)), { recursive: true }); fs.writeFileSync(path.join(R, f), s); };
+  wr('bookhaven.py', 'VERSION = "1.0.0"\n');
+  wr('CHANGELOG.md', '# Changelog\n');
+  wr('android/app/build.gradle.kts', 'versionName = "1.0.0"\n');
+  wr('android/app/src/main/assets/epub_reader.html', '<html></html>\n');
+  wr('android/app/src/main/assets/lonely.html', '<html></html>\n');
+  wr('android/app/src/main/java/Foo.kt', 'class Foo { fun x() = 1 }\n');
+  wr('android/app/src/test/java/FooTest.kt', 'class FooTest { @Test fun x() { Foo().x() } }\n');
+  wr('tests/test_android_epub_theme_persist.py', 'from pathlib import Path\n\ndef test_theme():\n    assert "x" in (Path("android/app/src/main/assets") / "epub_reader.html").read_text() or True\n');
+  wr('tests/test_release_zone_coupling.py', 'from pathlib import Path\n\ndef test_coupling():\n    assert Path("CHANGELOG.md").read_text() and Path("android/app/build.gradle.kts").read_text()\n');
+  wr('tests/test_server.py', 'import bookhaven\n\ndef test_v():\n    assert bookhaven.VERSION\n');
+  gitIn(R)('init', '-q'); gitIn(R)('add', '-A'); gitIn(R)('commit', '-q', '-m', 'i');
+  const cfgR = S.withAreaTestGlobs({
+    testCommand: 'python -m pytest -q', testGlobs: ['tests/**', 'android/app/src/test/**'],
+    versionFiles: ['bookhaven.py', 'android/app/build.gradle.kts'], changelog: 'CHANGELOG.md',
+    areas: [
+      { name: 'android', paths: ['android/**'], testCommand: 'gradlew testDebugUnitTest', targetedTestCommand: 'gradlew testDebugUnitTest {files}', testGlobs: ['android/app/src/test/**'], versionFiles: ['android/app/build.gradle.kts'] },
+      { name: 'serveur', paths: ['*.py', 'tests/**'], testCommand: 'python -m pytest -q', targetedTestCommand: 'python -m pytest -q {files}', testGlobs: ['tests/**'], versionFiles: ['bookhaven.py'] },
+    ],
+  });
+  const plan = (changed, lean = true, c = cfgR) => S.selectAreaTests({ cwd: R, cfg: c, changed, lean });
+  const zone = (p, n) => p.commands.find(c => c.area === n);
+
+  // test 1 — the real case: a modified .html brings in the pytest that reads it
+  let p = plan(['android/app/src/main/assets/epub_reader.html']);
+  ok(zone(p, 'serveur')?.files?.join() === 'tests/test_android_epub_theme_persist.py' && /test_android_epub_theme_persist\.py/.test(zone(p, 'serveur').command),
+    '.html modifié (zone android) ⇒ le test pytest qui le lit (zone serveur) est lancé, ciblé', JSON.stringify(p));
+  p = plan(['android/app/src/main/assets/epub_reader.html'], false);
+  ok(zone(p, 'serveur')?.command === 'python -m pytest -q' && /epub_reader\.html/.test(zone(p, 'serveur').why || ''),
+    'levier coupé : la suite de la zone lectrice tourne, et la raison est dite', JSON.stringify(p));
+
+  // test 2 — a version bump brings in test_release_*; too many readers ⇒ the zone's suite, said
+  p = plan(['android/app/build.gradle.kts', 'CHANGELOG.md']);
+  ok((zone(p, 'serveur')?.files || []).includes('tests/test_release_zone_coupling.py'),
+    'montée de version (build.gradle.kts, CHANGELOG.md) ⇒ test_release_* entre', JSON.stringify(p));
+  p = plan(['android/app/build.gradle.kts', 'CHANGELOG.md', 'android/app/src/main/assets/epub_reader.html'], true, { ...cfgR, citedTestsMax: 1 });
+  ok(zone(p, 'serveur')?.command === 'python -m pytest -q' && !zone(p, 'serveur').files && /seuil/.test(zone(p, 'serveur').why || ''),
+    'au-delà du seuil (citedTestsMax) : la suite entière de la zone, et on le dit', JSON.stringify(p));
+
+  // test 3 — a file nobody cites brings nothing in
+  p = plan(['android/app/src/main/assets/lonely.html']);
+  ok(!zone(p, 'serveur') && p.commands.every(c => !/pytest/.test(c.command || '')),
+    'fichier que personne ne cite ⇒ aucun test d’une autre zone', JSON.stringify(p));
+  fs.rmSync(R, { recursive: true, force: true });
+}
+}
+
 srv.close();
 if (process.env.SPEED_KEEP) console.log(`racine gardée : ${T}`); else try { fs.rmSync(T, { recursive: true, force: true }); } catch {}
 console.log(`\n${fail ? '✗' : '✓'} _test_pipeline_speed : ${pass} OK, ${fail} KO`);
