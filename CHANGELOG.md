@@ -11,6 +11,17 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.158.2] - 2026-10-31
+
+### Added
+- (server) `scripts/_test_gradle_version_code.mjs`: regression test on a real BookHaven excerpt of `android/app/build.gradle.kts` (`versionCode = 144`, `versionName = "2.0.11"`). `versionSlot` recognises `versionName = "x.y.z"` and the program delivery bumps `versionCode` by 1 in the same delivery (2.0.11 → 2.0.12, 144 → 145).
+
+### Changed
+- (server) `scripts/regression-perimeters.json`: the new suite is attached to the same perimeter as `_test_python_version_slot.mjs`.
+
+### Notes
+- The behaviour was already ensured by the existing code (`versionSlot` and the `versionCode` increment in `scripts/code-delivery.mjs`, commit 95b67ee); the new test serves as documentation. The 2026-10-30 production defect therefore does not come from the Kotlin gradle format. Unverified lead: the version file chosen per zone (`deliveryVersionFiles` in `pipeline-engine.mjs`) or the repository state at that time.
+
 ## [0.158.1] - 2026-10-31
 
 ### Fixed
