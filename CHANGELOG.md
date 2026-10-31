@@ -11,6 +11,11 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.157.0] - 2026-10-31
+
+### Added
+- (server) orchestrateur-dev runs only the selected test files at each pipeline step. Its `.orchestrateur/pipeline.json` declares `targetedTestCommand` = `node scripts/regression-files.mjs {files}`: the new minimal launcher keeps the `scripts/_test_*.mjs` among the paths the engine gives (fixtures and sandbox files dropped) and runs `regression.mjs --only-suites <them> --no-browser`, whose report on the exact tree is the one the pre-commit delivery gate reads. Before, every step fell back to `regression.mjs --targeted` over the whole perimeter (« commande de tests ciblés inconnue », about 24 min per step, cut at 25 min). `testCommand` is unchanged and stays the after-the-fact full run. Covered by `scripts/_test_regression_files.mjs` (perimeter `outillage`).
+
 ## [0.156.3] - 2026-10-31
 
 ### Fixed

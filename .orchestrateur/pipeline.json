@@ -1,5 +1,6 @@
 {
   "testCommand": "node scripts/regression.mjs --targeted --no-browser",
+  "targetedTestCommand": "node scripts/regression-files.mjs {files}",
   "testGlobs": [
     "scripts/_test_*.mjs",
     "scripts/_regression*.mjs",

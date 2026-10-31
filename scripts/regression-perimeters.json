@@ -109,10 +109,12 @@
         "scripts/_bench_phase1_3.mjs",
         "scripts/instrumentation-report.mjs",
         "scripts/dev-split.mjs",
-        "scripts/idle-regression-runner.mjs"
+        "scripts/idle-regression-runner.mjs",
+        "scripts/regression-files.mjs"
       ],
       "suites": [
         "_test_delivery_gate.mjs",
+        "_test_regression_files.mjs",
         "_test_targeted_regression.mjs",
         "_test_regression_perimeters.mjs",
         "_test_failed_suite_output.mjs",
@@ -144,6 +146,7 @@
             "_test_fixture_speed.mjs",
             "_test_idle_regression.mjs",
             "_test_no_prod_regression.mjs",
+            "_test_regression_files.mjs",
             "_test_regression_live.mjs",
             "_test_stale_run.mjs",
             "_test_todo_untracked.mjs"
@@ -176,6 +179,7 @@
           "suites": [
             "_test_fixture_speed.mjs",
             "_test_idle_regression.mjs",
+            "_test_regression_files.mjs",
             "_test_regression_live.mjs",
             "_test_stale_run.mjs"
           ]
