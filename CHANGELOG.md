@@ -11,6 +11,12 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.161.1] - 2026-11-01
+
+### Fixed
+- `docs/ANDROID-PARITY.md` still named app 1.3.1 after the 1.4.0 bump (33e5a62): `_test_android_parity.mjs` failed its "app version is in the document" check in the after-the-fact full run of ba196c3. Header now names app 1.4.0 (`versionCode` 32) and server 0.161.0; row 61 (inline audio player) moves from `partiel` to `oui`, since `/api/media` serves sounds from 0.161.0. No check is changed.
+- `_test_item_review.mjs` and `_test_pipeline_catalog.mjs` were killed at the 300 s suite timeout mid-run in the same full run, while green alone (173 s and 146 s): both now run serially (`SERIAL_SUITES`) with their own 600 s cap (`SUITE_TIMEOUT_MS`), as in 0.149.1 and 0.159.6. No check is changed.
+
 ## [0.161.0] - 2026-10-31
 
 ### Added
