@@ -3954,6 +3954,17 @@ Décision « vas y » (2026-10-22) ; `docs/KG-SYNTHESE.md` §4 phase 1, §6 déc
   d'office (`kg.cutoff.why`).
 - **Paires suspectes** (`kg.mjs pairs`, case `kg.juger`, `suspectPairs`) : le
   code choisit, le model juge, l'utilisateur confirme puis « celle-ci vaut ».
+- **Jamais de doublon proposé** (0.162.0, remarque « il est facile d'y avoir
+  beaucoup de duplicats dans les propositions de la memoire. Ex: Lnage de
+  discussion = francais ») : `scripts/kg-dedup.mjs` (`proposalDuplicate`), sur
+  les identifiants, jamais sur des mots. L'extraction n'écrit pas une relation
+  déjà connue (en attente, validée, observée ou refusée, quelle que soit la
+  citation), un « s'applique à » de projet couvert par la même règle **validée**
+  pour la flotte, ni une règle de `SETTING_RULES` (langue de discussion : déjà
+  appliquée par le réglage) ; trace `extract.json → duplicates`. Doublons déjà
+  en attente : `kg.mjs dedup [--dry-run]` et le balayage, événement `dedup`
+  (jamais une décision de l'utilisateur, jamais compté pour la coupure), la
+  plus ancienne de chaque relation reste. Recette : `_test_kg_dedup.mjs`.
 - **`injectable(f)`** : seuls `observed` / `validated` non périmés peuvent être
   énoncés ; **un fait `proposed` ne l'est jamais** (règle à garder pour
   l'injection de la phase 2).

@@ -1475,6 +1475,7 @@
       "label": "Index de connaissances (KG : phase 0 b sans model, phase 1 faits curés et onglet Mémoire)",
       "files": [
         "scripts/kg.mjs",
+        "scripts/kg-dedup.mjs",
         "tests/kg-corpus/**",
         "tests/kg-fixture.mjs"
       ],
@@ -1482,7 +1483,8 @@
         "_test_kg_core.mjs",
         "_test_kg_replay.mjs",
         "_test_kg_queries.mjs",
-        "_test_kg_facts.mjs"
+        "_test_kg_facts.mjs",
+        "_test_kg_dedup.mjs"
       ],
       "uses": [
         {
@@ -1495,6 +1497,7 @@
           "perimeter": "dispatch",
           "suites": [
             "_test_kg_core.mjs",
+            "_test_kg_dedup.mjs",
             "_test_kg_facts.mjs",
             "_test_kg_queries.mjs",
             "_test_kg_replay.mjs"
@@ -1504,6 +1507,7 @@
           "perimeter": "noyau",
           "suites": [
             "_test_kg_core.mjs",
+            "_test_kg_dedup.mjs",
             "_test_kg_facts.mjs",
             "_test_kg_queries.mjs",
             "_test_kg_replay.mjs"

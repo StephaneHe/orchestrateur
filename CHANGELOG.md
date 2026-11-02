@@ -11,6 +11,12 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.162.0] - 2026-11-02
+
+### Fixed
+- (server) Memory proposals (« 🧠 Mémoire » tab) are no longer duplicates. User remark of 2026-11-02: the same rule was offered several times, e.g. « Langue de discussion = français ». Production showed three causes. First, a fact id hashes its quote and source line, so a re-read memory or another sentence produced a new proposal for the same relation. Second, nothing compared a proposal to pending or rejected relations. Third, a rule the orchestrator already applies by a setting (discussion language) was offered for the fleet, the chef and orchestrateur. New `scripts/kg-dedup.mjs` (`proposalDuplicate`, `pendingDuplicates`) compares relations on ids, never on words. Extraction no longer writes a proposal that repeats an existing relation, whether pending, validated, observed or rejected, and whatever the quote. It also drops a project-level « s’applique à » when the same rule is validated for the whole fleet, and any rule of the closed `SETTING_RULES` list (discussion language). Each skipped proposal is traced in `logs/kg/extract.json` → `duplicates` (kind, original id, reason).
+- (server) Duplicates already pending are put away by the program: `node scripts/kg.mjs dedup [--dry-run]`, also run by the 5-minute sweep. It writes one `dedup` event per duplicate in `facts.jsonl` (original, kind, reason, `by: code:dedup`) and a `done` line in `review.jsonl`. The fact is shown `retracted` « doublon écarté par le programme » with `duplicateOf`. This is never a user decision and never counts as a false model fact, so it cannot trigger the automatic cut-off. The oldest proposal of each relation stays, and a project proposal whose fleet rule is only proposed stays too. A dry run on a copy of production data finds 14 duplicates among 119 pending proposals.
+
 ## [0.161.1] - 2026-11-01
 
 ### Fixed

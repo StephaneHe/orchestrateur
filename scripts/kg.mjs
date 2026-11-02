@@ -57,6 +57,9 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { writeFileAtomic, appendLines, withExclusiveLock, removeFile } from './atomic-file.mjs';
 import '../public/permission-core.js';
+import { proposalDuplicate, pendingDuplicates, proposalOrder } from './kg-dedup.mjs';
+
+export { proposalDuplicate, pendingDuplicates } from './kg-dedup.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const KG_DIR = 'logs/kg';
@@ -1188,6 +1191,11 @@ export function foldFacts(events, { now = new Date().toISOString() } = {}) {
       if (f) applyDecision(f, e);
       const p = pairs.get(e.target);
       if (p) p.status = e.action === 'validate' ? 'validated' : e.action === 'reject' ? 'retracted' : e.action === 'arbitrate' ? 'validated' : p.status;
+    } else if (e.ev === 'dedup' && e.target) {
+      // Put away by the program as a duplicate (0.162.0): never a user decision, never a false fact.
+      const f = facts.get(e.target);
+      if (f && (f.status === 'proposed' || f.status === 'to_review')) { f.status = 'retracted'; f.statusWhy = `doublon écarté par le programme : ${e.why}`; f.duplicateOf = e.of; f.dedup = { kind: e.kind, at: e.at }; }
+      bump(e.target);
     } else if (e.ev === 'cutoff') cutoffs.push(e);
   }
   // A model fact nobody reviewed for 90 days goes back to review.
@@ -1685,7 +1693,10 @@ export async function extract(root, { force = false, max = null, all = false, on
   const chunks = extractionChunks(root, { corpus, state, only }).filter(c => all || st.chunks[c.chunkKey]?.sha !== c.sha);
   const summary = { ok: true, model: m.model, pending: chunks.length, calls: 0, proposed: 0, seen: 0, rejected: 0, known: 0, suspended: null };
   const fold = foldFacts(events, { now });
-  const derivedKeys = new Set(idx.derived.facts.filter(f => !f.origin).map(f => `${f.s}|${f.p}|${JSON.stringify(f.o)}`));
+  // Every known relation, any status: a proposal duplicating one of them is not written (0.162.0).
+  const known = [...idx.derived.facts];
+  st.duplicates ||= [];
+  summary.duplicates = 0;
   for (const chunk of chunks) {
     if (summary.calls >= cap) break;
     const ids = candidateIds(idx, chunk);
@@ -1703,12 +1714,24 @@ export async function extract(root, { force = false, max = null, all = false, on
     if (!list) { st.rejected.push({ at: now, chunk: chunk.chunkKey, why: 'réponse du model illisible (JSON attendu)' }); summary.rejected++; st.chunks[chunk.chunkKey] = { sha: chunk.sha, at: now, facts: 0, unreadable: true }; continue; }
     const recs = [];
     let kept = 0;
+    const checked = [];
     for (const raw of list.slice(0, 12)) {
       const c = checkProposal(idx, chunk, ids, raw, { model: r.served || m.model, now });
       if (!c.ok) { st.rejected.push({ at: now, chunk: chunk.chunkKey, why: c.why, s: raw?.s, p: raw?.p, o: raw?.o }); summary.rejected++; continue; }
-      if (derivedKeys.has(`${c.fact.s}|${c.fact.p}|${JSON.stringify(c.fact.o)}`)) { summary.known++; continue; }
+      checked.push(c.fact);
+    }
+    for (const fact of checked.sort(proposalOrder)) {
+      const c = { fact };
       if (fold.facts.has(c.fact.id)) { recs.push({ ev: 'seen', id: c.fact.id, at: now }); summary.seen++; continue; }
+      const dup = proposalDuplicate(c.fact, { facts: known, nodes: idx.nodes });
+      if (dup) {
+        if (dup.kind === 'known' && !known.find(f => f.id === dup.of)?.origin) { summary.known++; continue; }
+        st.duplicates.push({ at: now, chunk: chunk.chunkKey, s: c.fact.s, p: c.fact.p, o: c.fact.o, quote: c.fact.source?.quote || null, ...dup });
+        summary.duplicates++;
+        continue;
+      }
       fold.facts.set(c.fact.id, c.fact);
+      known.push({ ...c.fact, origin: 'model' });
       recs.push({ ev: 'assert', at: now, by: c.fact.by, fact: c.fact });
       kept++;
     }
@@ -1722,6 +1745,7 @@ export async function extract(root, { force = false, max = null, all = false, on
   }
   if (!summary.suspended && st.suspended && summary.calls) delete st.suspended;
   st.rejected = st.rejected.slice(-200);
+  st.duplicates = st.duplicates.slice(-200);
   st.lastExtract = { at: now, ...summary };
   if (!dryRun) saveExtractState(root, st);
   summary.remaining = Math.max(0, chunks.length - summary.calls);
@@ -1813,6 +1837,33 @@ export async function judgePairs(root, { force = false, max = null, now = new Da
   return out;
 }
 
+// ── Duplicates already pending (0.162.0) ─────────────────────────────────────
+/**
+ * Puts away the pending proposals that duplicate another fact (same relation,
+ * pending, validated or rejected; a project already covered by the fleet; a
+ * rule a setting applies): one `dedup` event each in facts.jsonl and a
+ * `done` line in review.jsonl. Never a user decision, never counted as a false
+ * model fact. The first proposal of each relation stays. → { ok, checked, duplicates }
+ */
+export function tidyDuplicates(root, { now = new Date().toISOString(), dryRun = false, by = 'code:dedup' } = {}) {
+  root = rootOf(root);
+  const run = () => {
+    const events = readEvents(root);
+    const idx = loadIndex(root, { events });
+    if (!idx) return { ok: false, message: 'index absent : node scripts/kg.mjs build' };
+    const dups = pendingDuplicates(idx.derived.facts, idx.nodes);
+    const checked = idx.derived.facts.filter(f => f.origin && (f.status === 'proposed' || f.status === 'to_review')).length;
+    if (!dryRun && dups.length) {
+      kgAppend(root, FACTS_FILE, dups.map(d => ({ ev: 'dedup', target: d.id, of: d.of, kind: d.kind, why: d.why, at: now, by })));
+      kgAppend(root, REVIEW_FILE, dups.map(d => ({ ev: 'done', id: d.id, action: 'dedup', of: d.of, at: now })));
+    }
+    return { ok: true, dryRun, checked, duplicates: dups };
+  };
+  if (dryRun) return run();
+  if (!fs.existsSync(path.join(kgDirOf(root), FACTS_FILE))) return { ok: true, checked: 0, duplicates: [] };
+  return withFactsLock(root, run);
+}
+
 // ── Status, backup, sweep ─────────────────────────────────────────────────────
 export function kgStatus(root, { now = new Date().toISOString() } = {}) {
   root = rootOf(root);
@@ -1871,6 +1922,7 @@ export async function sweep(root, { now = new Date().toISOString(), env = proces
     }
   }
   out.backup = backupFacts(root, { now });
+  out.dedup = tidyDuplicates(root, { now });
   if (s.extract) {
     const st = readJsonKg(root, EXTRACT_STATE) || {};
     const nightly = hour >= NIGHTLY_HOUR && st.lastNightly !== today(now);
@@ -1937,6 +1989,7 @@ async function main(argv) {
   // Phase 1 verbs. The server calls them as a child process (it never loads this module).
   const out = (r) => { console.log(JSON.stringify(r, asJson ? null : null, asJson ? 0 : 2)); return r.ok === false ? (r.status === 404 ? 4 : r.status === 409 ? 9 : r.status ? 3 : 2) : 0; };
   if (verb === 'sweep') return out(await sweep(root));
+  if (verb === 'dedup') { if (settings.mode === 'off' && !force) { console.error('kg.mode = off'); return 2; } return out(tidyDuplicates(root, { dryRun: !!flag('--dry-run') })); }
   if (verb === 'backup') { if (settings.mode === 'off' && !force) { console.error('kg.mode = off'); return 2; } return out(backupFacts(root)); }
   if (verb === 'extract' || verb === 'pairs') {
     const max = flag('--max'), all = !!flag('--all'), memories = !!flag('--memories'), dry = !!flag('--dry-run');
@@ -1972,7 +2025,7 @@ async function main(argv) {
     return 0;
   }
   if (!['fiche', 'regles', 'impact', 'explique', 'historique', 'contradictions', 'perimes', 'port-libre'].includes(verb)) {
-    console.error('usage: node scripts/kg.mjs build|fiche <p>|regles [--projet p]|impact <fichier>|explique <id>|historique <case>|contradictions|perimes|port-libre [--from n]|mode [off|shadow|assist]|switch <build|extract|ui> on|off|status|review|rules [--projet p] [--case c]|stats [<case>]|source <clé> [--line n]|decide <id> <action> --rev n|extract [--max n] [--all] [--memories]|pairs [--max n]|sweep|backup [--json] [--force]');
+    console.error('usage: node scripts/kg.mjs build|fiche <p>|regles [--projet p]|impact <fichier>|explique <id>|historique <case>|contradictions|perimes|port-libre [--from n]|mode [off|shadow|assist]|switch <build|extract|ui> on|off|status|review|rules [--projet p] [--case c]|stats [<case>]|source <clé> [--line n]|decide <id> <action> --rev n|extract [--max n] [--all] [--memories]|pairs [--max n]|sweep|backup|dedup [--dry-run] [--json] [--force]');
     return 64;
   }
   if (settings.mode === 'off' && !force) { console.error('index désactivé (kg.mode = off) — --force pour interroger quand même'); return 2; }
