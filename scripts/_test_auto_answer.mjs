@@ -536,6 +536,33 @@ section('9. Incident du 2026-10-20 : lecture, arriéré, lacune non présentée,
     A.presence.lastInteraction = now; A.presence.lastSent = now - 10_000;
     ok(A.presenceDue(now, doc('visible', true)) === false, 'un battement par minute au plus');
   }
+  // 9l — a load asked while one is in flight is never dropped (0.162.1): the
+  // in-flight request may predate the change, so one more follows and the caller
+  // awaits it (the band stayed stale until the next 30 s poll: nav auto-answer-dismiss).
+  {
+    const vm = await import('node:vm');
+    const pending = [];
+    const fetch = () => new Promise(res => pending.push(res));
+    const ctx = { console, setTimeout, clearTimeout, setInterval: () => 0, Date, JSON, fetch, globalThis: null };
+    ctx.globalThis = ctx;
+    vm.createContext(ctx);
+    vm.runInContext(fs.readFileSync(path.join(ROOT, 'public', 'auto-answer.js'), 'utf8'), ctx);
+    const A = ctx.AutoAnswer;
+    const reply = (v) => pending.shift()({ ok: true, status: 200, json: async () => ({ v }) });
+    const first = A.load();
+    const tick = () => new Promise(r => setTimeout(r, 0));
+    await tick();
+    const second = A.load();            // asked after the change, while the first is in flight
+    reply('avant');                     // the first answer predates the change
+    for (let i = 0; i < 20 && !pending.length; i++) await tick();
+    const refetched = pending.length === 1;
+    if (refetched) reply('après');
+    await Promise.race([second, new Promise(r => setTimeout(r, 2000))]);
+    await first;
+    ok(refetched && A.state.data?.v === 'après' && !A.state.busy,
+      'un chargement demandé pendant un chargement en cours n’est jamais perdu : un nouveau relevé suit, et l’appelant attend la vue à jour',
+      JSON.stringify({ refetched, data: A.state.data, busy: !!A.state.busy }));
+  }
 }
 
 // ---------------------------------------------------------------------------

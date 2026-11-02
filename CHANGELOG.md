@@ -11,6 +11,13 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.162.1] - 2026-11-02
+
+### Fixed
+- (server) The automatic-answer band no longer stays stale for up to 30 s after a change. `AutoAnswer.load()` (`public/auto-answer.js`) dropped any call made while a load was in flight, and that in-flight request could predate the change (a « Vu », an « Écarter », a new decision), so the view waited for the next poll. A call made during a load now triggers one more load, and every caller awaits the fresh one. This was the cause of the intermittent `navigateur:auto-answer-dismiss` KO (« décision absente de la zone ») in the after-the-fact full run of 832f718, and earlier in d564eb9 and c87f34f. New check 9l in `_test_auto_answer.mjs` (red on the old client).
+- (server) `_test_hors_pipeline_task.mjs` waits for each launched task's own `user_prompt` before waiting for `P.pid` to go. The task turn is detached: under load, `P.pid` did not exist yet when the chef turn returned, so section 2 found no turn and the late turn fell into section 3's window (2 KO in the full run of 832f718, green alone).
+- (server) `_test_defect_blocks.mjs` (112 s alone) and `_test_design.mjs` (108 s alone) run serially (`SERIAL_SUITES`): both were killed at 300 s under parallel load in the same full run, every check green so far.
+
 ## [0.162.0] - 2026-11-02
 
 ### Fixed

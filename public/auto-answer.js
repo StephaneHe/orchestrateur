@@ -25,7 +25,7 @@
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const KIND = { question: "question", pause: "pause de pipeline", permission: "autorisation", gap: "lacune" };
   const PHASE = { pending: "en attente de votre décision", handled: "traitée", obsolete: "obsolète" };
-  const st = { data: null, timer: null, busy: false, open: new Set() };
+  const st = { data: null, timer: null, busy: null, again: false, open: new Set() };
 
   // ── Présence ────────────────────────────────────────────────────────────────
   const presence = { lastInteraction: 0, lastSent: 0, timer: null };
@@ -198,12 +198,21 @@
 
   function render() { renderPill(); renderBand(); renderOverlay(); }
 
-  async function load() {
-    if (st.busy) return;
-    st.busy = true;
-    try { st.data = await call("/api/auto-answer"); render(); }
-    catch { /* serveur antérieur à 0.121.0 : la pill reste cachée */ }
-    finally { st.busy = false; }
+  // A load asked while one is in flight is not dropped: that request may predate
+  // the change (a « Vu », an « Écarter »), so one more load follows, and every
+  // caller awaits the fresh one (else the view stayed stale until the next poll).
+  function load() {
+    if (st.busy) { st.again = true; return st.busy; }
+    st.busy = (async () => {
+      try {
+        do {
+          st.again = false;
+          try { st.data = await call("/api/auto-answer"); render(); }
+          catch { /* serveur antérieur à 0.121.0 : la pill reste cachée */ }
+        } while (st.again);
+      } finally { st.busy = null; }
+    })();
+    return st.busy;
   }
 
   function openOverlay() {

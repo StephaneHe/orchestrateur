@@ -78,6 +78,8 @@ export const SERIAL_SUITES = new Set([
   '_test_release_prebump.mjs',     // 180 to 260 s in full runs, > 300 s (suite timeout) four times under load (0.159.6)
   '_test_item_review.mjs',         // 173 s alone, > 300 s (suite timeout) under parallel load (0.161.1)
   '_test_pipeline_catalog.mjs',    // 146 s alone, > 300 s (suite timeout) under parallel load (0.161.1)
+  '_test_defect_blocks.mjs',       // 112 s alone, > 300 s (suite timeout) under parallel load (0.162.1)
+  '_test_design.mjs',              // 108 s alone (real headless captures), > 300 s under parallel load (0.162.1)
 ]);
 
 // Suites known to run close to the default 300 s cap even alone get their own

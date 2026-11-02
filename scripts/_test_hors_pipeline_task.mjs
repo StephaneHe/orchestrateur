@@ -68,12 +68,18 @@ async function chefTurn(text, json, extraArgs = []) {
   const n0 = logOf('chef').length, p0 = logOf('P').length, g0 = gaps().length;
   const r = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'dispatch.mjs'), 'chef', text, '--test', 'n10-hors-pipeline', ...extraArgs],
     { env: { ...baseEnv, FAKE_PIPE_JSON: JSON.stringify(json), FAKE_CLAUDE_DUMP_PROMPT: dump }, encoding: 'utf8', timeout: 180_000, windowsHide: true });
-  for (let i = 0; i < 60 && fs.existsSync(path.join(T, 'logs', 'P.pid')); i++) await sleep(500);
-  await sleep(300);
-  const evs = logOf('chef').slice(n0);
-  const run = evs.find(e => e.type === 'user_prompt')?.pipeline?.run;
+  const evs0 = logOf('chef').slice(n0);
+  const run = evs0.find(e => e.type === 'user_prompt')?.pipeline?.run;
   const art = run ? path.join(T, 'chef', '.orchestrateur', 'runs', run) : null;
   const read = (f) => { try { return JSON.parse(fs.readFileSync(path.join(art, f), 'utf8')); } catch { return null; } };
+  // The task turns are DETACHED: under a loaded full run, P.pid may not exist yet
+  // when the chef turn returns, so wait for each launched task's own user_prompt
+  // first (else it lands late, inside the next section's window), then its end.
+  const launched = (read('dispatch.json')?.dispatched || []).filter(d => d.projet === 'P').length;
+  for (let i = 0; i < 240 && logOf('P').slice(p0).filter(e => e.type === 'user_prompt').length < launched; i++) await sleep(250);
+  for (let i = 0; i < 120 && fs.existsSync(path.join(T, 'logs', 'P.pid')); i++) await sleep(500);
+  await sleep(300);
+  const evs = logOf('chef').slice(n0);
   let prompts = []; try { prompts = fs.readFileSync(dump, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l).prompt); } catch {}
   const st = run ? JSON.parse(fs.readFileSync(path.join(T, 'logs', 'runs', run, 'run.json'), 'utf8')) : null;
   return { code: r.status, out: `${r.stdout || ''}${r.stderr || ''}`, evs, st, read, pUps: logOf('P').slice(p0).filter(e => e.type === 'user_prompt'),
