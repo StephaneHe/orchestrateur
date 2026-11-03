@@ -52,7 +52,8 @@ function renderTable(rows) {
       // 0.82.0: the turn is over but its process lives on and holds the queue.
       : r.queueHeld ? `FILE RETENUE — ${holdLine(r.queueHeld)} — ne pas tuer sans décision`
       : r.needsInput ? `needs: ${r.needsInput}`
-      : r.stalled ? 'STALL — consider intervention'
+      : r.stalled ? (r.lanes?.some(l => l.stalled) ? `STALL — ${r.lanes.filter(l => l.stalled).map(l => `couloir ${l.lane} muet depuis ${fmtAge(l.silentMs)}`).join(', ')} — consider intervention` : 'STALL — consider intervention')
+      : r.lanes?.length && r.logState !== 'live' && r.logState !== 'think' ? r.lanes.map(l => l.activity).join(' | ')
       // 0.47.2 : attente d'un fournisseur lent et tours d'essai, sans alarme.
       : [r.testRun && (r.state === 'live' || r.state === 'think') ? `🧪 test : ${r.testRun.label}` : '',
          r.waitingProvider ? `⏳ attend ${r.waitingProvider.provider || 'le fournisseur'} depuis ${fmtAge(r.waitingProvider.sinceMs)}` : '',

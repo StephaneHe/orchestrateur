@@ -11,6 +11,11 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.162.2] - 2026-11-03
+
+### Fixed
+- (server) A musician whose main copy is idle but whose lane (couloir k ≥ 1) is running a turn or pipeline step now shows as `live` ("En cours") in `/api/pupitre` and `fleet-status.mjs`, with the lane activity ("couloir 1 · étape … · depuis 4m00"), instead of "UNREAD · system:lane_task". A lane silent for `STALL_SILENCE_MS` is `stalled`. The behaviour was already provided by `scanLanes` / `scanProject` (`scripts/fleet-status-core.mjs`) and `TurnCore.reconcileBusy` (`public/turn-core.js`); this release adds the regression suite `_test_lane_busy_state.mjs` that reproduces the observed case (idle main copy, last event `lane_task`, lane with a live pid) and registers it in `scripts/regression-perimeters.json`.
+
 ## [0.162.1] - 2026-11-02
 
 ### Fixed

@@ -413,6 +413,66 @@ function lastMissionPrompt(lines) {
   return null;
 }
 
+/** Running lanes of a musician (0.162.2): logs/lanes/<p>/<k>.jsonl + <k>.pid.
+ *  Lane 0 is the main copy (logs/<p>.jsonl) and is read by scanProject itself;
+ *  the main copy must never mask a lane. Pure read, returns new objects only.
+ *  `mainLines` is the main log: the server writes a lane's permission requests
+ *  there (not in the lane log), so a pending one means « waiting », not stalled. */
+export function scanLanes(name, logsDir = DEFAULT_LOGS, now = Date.now(), mainLines = []) {
+  const dir = path.join(logsDir, 'lanes', name);
+  let files;
+  try { files = fs.readdirSync(dir); } catch { return []; }
+  // deriveState only reports pending permissions while a turn is in flight; the
+  // main log is idle here, so ask it as if the turn were live.
+  const probe = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: '' }] } });
+  const awaitingPermission = mainLines.length ? deriveState([...mainLines, probe]).awaitingPermission : null;
+  return files
+    .map(f => /^(\d+)\.jsonl$/.exec(f))
+    .filter(Boolean)
+    .map(m => Number(m[1]))
+    .filter(k => k >= 1)
+    .sort((a, b) => a - b)
+    .flatMap(k => {
+      const { lines, mtimeMs } = tailLines(path.join(dir, `${k}.jsonl`));
+      const { state, lastAssistantText, turnStartTs } = deriveState(lines);
+      const inFlight = state === 'live' || state === 'think';
+      let pid = null, pidMtime = 0;
+      try {
+        const pf = path.join(dir, `${k}.pid`);
+        pidMtime = fs.statSync(pf).mtimeMs;
+        const v = Number(fs.readFileSync(pf, 'utf8').trim());
+        pid = Number.isFinite(v) && v > 0 ? v : null;
+      } catch { /* no pid file */ }
+      const alive = pid ? (now - pidMtime < PID_STALE_MS && pidAlive(pid)) : null;
+      // Running: a live process, or a log still in flight (a dead process under
+      // an in-flight log is reported as `deadInFlight`, like the main copy).
+      if (!(alive === true || inFlight)) return [];
+      const last = lastMeaningful(lines);
+      const lastTs = last?.timestamp ? Date.parse(last.timestamp) : (mtimeMs || 0);
+      const silentMs = now - (lastTs || now);
+      const sinceMs = turnStartTs ? now - turnStartTs : null;
+      const hb = inFlight ? lastHeartbeat(lines) : null;
+      const hbTs = hb?.timestamp ? Date.parse(hb.timestamp) : 0;
+      const hbFresh = !!hb && now - hbTs < Math.max(2.5 * (hb.intervalMs || 30_000), 90_000);
+      const waitingProvider = hbFresh ? { provider: hb.provider || null, sinceMs: (hb.waitingMs || 0) + (now - hbTs) } : null;
+      const deadInFlight = inFlight && alive === false;
+      const stalled = inFlight && !awaitingPermission && silentMs >= STALL_SILENCE_MS &&
+        !(waitingProvider && waitingProvider.sinceMs < PROVIDER_WAIT_MAX_MS);
+      const what = activityPreview(last, lastAssistantText) || 'tour en cours';
+      return [{
+        lane: k,
+        state: 'live',
+        stalled,
+        deadInFlight,
+        awaitingPermission: !!awaitingPermission,
+        pid,
+        silentMs,
+        sinceMs,
+        activity: `couloir ${k} · ${what}${sinceMs != null ? ` · depuis ${fmtAge(sinceMs)}` : ''}${deadInFlight ? ' · processus perdu' : ''}`,
+      }];
+    });
+}
+
 /**
  * Full snapshot for one project. Used by the CLI table and the live desk view.
  * Includes state, current activity, turn-elapsed, silence, PID liveness,
@@ -471,13 +531,19 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
   } : null;
   // 0.82.0 — that process also holds the musician's queue: say so.
   const queueHeld = lingering ? queueHoldOf(lingering, queueLengthOf(name, logsDir)) : null;
+  const lanes = scanLanes(name, logsDir, now, lines);
+  const laneBusy = lanes.length > 0 && !inFlight;
+  const laneStalled = lanes.some(l => l.stalled);
 
   return {
     name,
+    // 0.162.2: running lanes ([{lane, state, stalled, activity, …}]); a lane
+    // running while the main copy is idle makes the musician `live`.
+    lanes,
     // 0.78.1: `live` while the turn's process outlives its result (never
     // « Prêt » while something attached to the musician runs). `logState`
     // keeps what the log alone says.
-    state: lingering ? 'live' : state,
+    state: lingering || laneBusy ? 'live' : state,
     logState: state,
     lingering,
     // Additive 0.82.0: {pid, sinceMs, queueLength, background} while queued
@@ -492,12 +558,13 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
     // tour d'essai ({label}) — tous deux affichés neutres, jamais en rouge.
     waitingProvider,
     testRun,
-    stalled,
+    stalled: stalled || laneStalled,
     // Dead process while the log still says a turn is running — a stronger,
     // separate stall signal (the child was SIGKILLed or crashed silently).
-    deadInFlight: inFlight && pid != null && alive === false,
+    deadInFlight: (inFlight && pid != null && alive === false) || lanes.some(l => l.deadInFlight),
     lastKind,
-    activity: lingering
+    activity: laneBusy && !lingering ? lanes.map(l => l.activity).join(' | ')
+      : lingering
       ? `⏳ tour terminé, processus encore actif${lingering.sinceMs != null ? ` depuis ${fmtAge(lingering.sinceMs)}` : ''}` +
         (background.length ? ` : ${background.map(b => b.what).join(' · ')}` : ' (travail en arrière-plan)') +
         (queueHeld ? ` — ⏸ file retenue : ${queueHeld.queueLength} tâche(s) en attente` : '')

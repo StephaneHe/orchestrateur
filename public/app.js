@@ -3483,7 +3483,9 @@ const App = {
     // 0.78.1 — « toute tâche qui tourne attachée à un musicien fait que le
     // musicien est En cours […], pas Prêt » : the server knows when a turn's
     // process outlives its result (`lingering`), the log stream does not.
-    for (const r of snap.fleet) {
+    for (const row of snap.fleet) {
+      // 0.162.2 — a turn or step running in a lane (k >= 1) is « En cours » too.
+      const r = Array.isArray(row.lanes) && row.lanes.length && !row.lingering ? { ...row, lingering: { lanes: row.lanes.length } } : row;
       const m = this.musicians.get(r.name);
       if (!m || !window.TurnCore?.reconcileBusy) continue;
       const newerTurn = Number(r.lastTurnStartAt) > (m.turnStartMs || 0);

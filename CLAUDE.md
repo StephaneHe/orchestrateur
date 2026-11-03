@@ -509,6 +509,22 @@ lancée en arrière-plan tourne ; le serveur retient alors la file
   Tests : `ORCH_QUEUE_HOLD_SWEEP_MS`, `ORCH_QUEUE_HOLD_ALERT_MS`,
   `ORCH_QUEUE_HOLD_REPEAT_MS`. Recettes : `_test_queue_held.mjs`, HTTP et
   navigateur `queue-held`.
+- **Couloirs** (0.162.2, « Rien ne tourne. orchestrateur-dev fait ce que tu lui demandes ? ») :
+  `scanLanes` (`fleet-status-core.mjs`) lit `logs/lanes/<p>/<k>.jsonl` et `<k>.pid`
+  (k ≥ 1). Un couloir qui tourne (pid vivant, ou log en cours sans pid mort) rend
+  le musicien `live` même si la copie principale est inactive ; `lanes
+  [{lane, state, stalled, silentMs, sinceMs, activity}]` dans `scanProject`,
+  activité « couloir 1 · étape … · depuis 4m00 », `stalled` si un couloir est muet
+  depuis `STALL_SILENCE_MS` (donc `fleet-status --stalled`), sauf attente
+  d'autorisation (la demande d'un couloir est écrite dans le log PRINCIPAL) ou
+  battement de fournisseur frais, comme pour la copie principale ; processus
+  mort sous un log en cours ⇒ `deadInFlight` (projet et couloir). `silentMs` du
+  projet reste celui de la copie principale : le silence d'un couloir est dans
+  `lanes[].silentMs` (le texte de l'alerte `chef-alerts` n'en tient pas compte :
+  limite connue). Client : `reconcileBusy` reçoit aussi `lanes.length > 0`
+  (dashboard) ; l'app Android adopte `live` via `snapshotState` au 2ᵉ relevé
+  consécutif, pas aussitôt. Recette :
+  `_test_lane_busy_state.mjs`. Redémarrage nécessaire (`/api/pupitre`).
 
 ---
 
