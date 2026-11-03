@@ -80,6 +80,7 @@ export const SERIAL_SUITES = new Set([
   '_test_pipeline_catalog.mjs',    // 146 s alone, > 300 s (suite timeout) under parallel load (0.161.1)
   '_test_defect_blocks.mjs',       // 112 s alone, > 300 s (suite timeout) under parallel load (0.162.1)
   '_test_design.mjs',              // 108 s alone (real headless captures), > 300 s under parallel load (0.162.1)
+  '_test_tests_per_item.mjs',      // 220 s alone, killed at 300 s on its last check in a full run (0.162.3)
 ]);
 
 // Suites known to run close to the default 300 s cap even alone get their own
@@ -93,8 +94,14 @@ export const SERIAL_SUITES = new Set([
 // (green alone, 177 to 262 s); the bisect then blamed an Android-only commit.
 // 0.161.1: the after-the-fact full run of ba196c3 killed _test_item_review.mjs
 // and _test_pipeline_catalog.mjs at 300 s mid-run; green alone in 173 s and 146 s.
+// 0.162.3: the after-the-fact full run of ed2f763 killed _test_pipeline_gates.mjs
+// at 600 s (65 of 66 checks green, 288 s a week earlier, 569 s the run before) and
+// _test_tests_per_item.mjs at 300 s (18 of 19 green; 220 s alone). Measured alone the
+// same day: _test_pipeline_gates.mjs 768 s (240 s in 0.138.0). The bisect then
+// blamed a commit that touches neither. Both suites slowed down steadily.
 export const SUITE_TIMEOUT_MS = Object.freeze({
-  '_test_pipeline_gates.mjs': 600_000,
+  '_test_pipeline_gates.mjs': 1_200_000,
+  '_test_tests_per_item.mjs': 600_000,
   '_test_pipeline_speed.mjs': 600_000,
   '_test_item_delivery.mjs': 600_000,
   '_test_release_prebump.mjs': 600_000,

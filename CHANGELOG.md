@@ -11,6 +11,11 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.162.3] - 2026-11-03
+
+### Fixed
+- (server) The after-the-fact full run of ed2f763 was red only because two suites hit their time cap on their very last check, every earlier check green: `_test_pipeline_gates.mjs` killed at 600 s (65 of 66; 288 s a week earlier, 569 s in the previous full run) and `_test_tests_per_item.mjs` killed at 300 s (18 of 19; 220 s alone, green). The bisect then blamed ed2f763, which touches neither. `_test_pipeline_gates.mjs` took 768 s alone the same day and gets a 1200 s cap; `_test_tests_per_item.mjs` now runs serially (`SERIAL_SUITES`) with a 600 s cap (`scripts/suite-runner.mjs`). No check is loosened.
+
 ## [0.162.2] - 2026-11-03
 
 ### Fixed
