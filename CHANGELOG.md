@@ -11,6 +11,11 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.164.0] - 2026-11-05
+
+### Added
+- (server) Immutability principle enforced by code (user rule 2026-11-03, "Always Prefer Immutability"). `scripts/code-principles.mjs` injects the rule block of `data/code-principles.md` (single source: pure functions, per-language idioms for Python / JS-TS / Kotlin, justified-mutable exception) into every code-writing turn, whatever the provider (claude, codex, NVIDIA, OpenRouter): pipeline steps 4b / `rouge-vert` / `refactor`, incident and audit corrections, maintenance, new-project and data steps that write scripts, delivery by the model, and ordinary musician turns. A dual action run gives it to both branches and to the synthesis, which writes the final code. Never into judge/artefact steps, a dual judge run, nor the chef. The Review prompt carries the matching criterion, limited to the diff (no retroactive rewrite). New suite `_test_code_principles.mjs`.
+
 ## [0.163.0] - 2026-11-05
 
 ### Added

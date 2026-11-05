@@ -2017,10 +2017,20 @@ function latestPausedRun(name) {
 // Ici, après la file : un musicien occupé a reçu la demande en file (avec ses
 // deux models) et ce processus est déjà sorti. Dans une étape de pipeline, le
 // mode double écrit dans le log de l'étape et sa relecture garde le jeton.
+// Immutability principle (user rule 2026-11-03): every turn that writes code, any
+// provider — code-writing pipeline steps and ordinary musician turns, not review or
+// other judge/artefact steps (scripts/code-principles.mjs, data/code-principles.md).
+// A dual run gets it once, from its parent: an action run hands it to both branches
+// and to the synthesis (which writes the final code); a judge run writes no code.
+let CODE_PRINCIPLES = '';
+if (!CHEF_TARGET && !DUAL_BRANCH && !dualSynthesis) {
+  const cp = await import('./code-principles.mjs');
+  if (PIPE_STEP ? cp.writesCode(PIPE_STEP.key) : true) CODE_PRINCIPLES = cp.codePrinciplesRule();
+}
 if (secondModel && !DUAL_BRANCH && !dualSynthesis) {
   const { runDual } = await import('./dual-run.mjs');
   const code = await runDual({
-    root: ROOT, logsDir: LOGS, config, projectName, prompt, promptForLog: prompt,
+    root: ROOT, logsDir: LOGS, config, projectName, prompt: dualMode === 'action' ? prompt + CODE_PRINCIPLES : prompt, promptForLog: prompt,
     // In a lane (P9) the two branches start from the lane's worktree, and their
     // own worktrees are kept apart from those of the other lanes.
     project: STEP_LANE ? { ...project, path: WORK_DIR } : project, ...(STEP_LANE ? { wtScope: `lane${STEP_LANE}` } : {}),
@@ -2287,6 +2297,7 @@ const LANG_WORK = langMod.workingLanguage(ROOT, LANG_MODEL, LANG_TARGET);
 // 0.107.0 — identifier marks: every turn whose text reaches the reader (not a
 // dual branch, not a pipeline step that writes machine-read artefacts).
 if (!DUAL_BRANCH && (!PIPE_STEP || ID_MARK_STEPS.has(PIPE_STEP.key.replace(/^\d+-/, '')))) prompt = prompt + idRefRule();
+prompt = prompt + CODE_PRINCIPLES;
 if (projectName !== CONDUCTOR) prompt = prompt + permissionExplainRule(langMod.LANGS[LANG_TARGET]?.name || 'français');
 prompt = prompt + langMod.languageRule(LANG_TARGET, LANG_WORK.working);
 // Le portier ne vérifie que ce qui est destiné à l'utilisateur : ni une branche

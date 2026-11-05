@@ -69,6 +69,7 @@ import { routePause, pauseSignature, decisionText } from './process-pause.mjs';
 import { releasePlan, parseDeliveryText, deliverRelease, deliverCommit, staleVersionHints, staleText, versionMentions } from './code-delivery.mjs';
 import { cachedSuite } from './suite-cache.mjs';
 import * as Rework from './aside-rework.mjs';
+import * as CodePrinciples from './code-principles.mjs';
 import * as Exploit from './exploitation.mjs';
 import * as Design from './design.mjs';
 
@@ -876,6 +877,7 @@ function stepPrompt(ctx, step, extra) {
       const covered = scope ? (ctx.coveredItems || []).filter(c => scope.cases.includes(c.n)) : ctx.coveredItems;
       if (covered?.length) L.push(`Items acceptés comme DÉJÀ COUVERTS (leur test passait d'emblée, sans nouveau code) : ${covered.map(coveredLabel).join(' ; ')}. Vérifie que chacun de ces tests est FIDÈLE à son item et qu'il échouerait si le comportement disparaissait ; un test vide de sens est un « problème ».`);
       L.push('Ne relève PAS l’absence de numéro de version incrémenté, d’entrée CHANGELOG ni de ligne dans le registre des exigences : l’étape Livrer, qui suit, les ajoute, et l’orchestrateur les vérifie.');
+      L.push(CodePrinciples.reviewCriterion());
       L.push(scope?.batch
         ? `Écris ${art('revue.json')}, et UNIQUEMENT ce JSON : {"verdict": "ok" | "problèmes", "items": [{"item": ${scope.batch[0]}, "text": "défaut de comportement 1"}, …], "hors_tdd": [{"item": ${scope.batch.at(-1)}, "text": "correction de doc ou de commentaire 1"}, …]}.`
         : `Écris ${art('revue.json')}, et UNIQUEMENT ce JSON : {"verdict": "ok" | "problèmes", "items": ["défaut de comportement 1", …], "hors_tdd": ["correction de doc ou de commentaire 1", …]}.`);

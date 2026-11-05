@@ -1276,6 +1276,23 @@ etre justifies et documentes. » Conception, état livré (§7) et règles (§3)
   false` sur la dev. La prod reste à `maxParallel` 1. Recette :
   `_test_dev_pipeline_lanes.mjs` (série).
 
+## Principe d'immuabilité dans les tours qui écrivent du code (0.164.0)
+
+Demande utilisateur (2026-11-03) : « Il faut suivre ceci: Always Prefer Immutability
+— écrire des fonctions pures, sans modifier les entrées (dataclasses figées,
+tuples). Si ca a du sens evidemment ».
+
+- **Source unique** : `data/code-principles.md` (règle, puis section `## review`),
+  lue par `scripts/code-principles.mjs`. Aucune copie dans un prompt.
+- **Injection** (`dispatch.mjs`, `CODE_PRINCIPLES`), tous fournisseurs : tours
+  ordinaires des musiciens et étapes de `CODE_WRITING_STEPS`. Double model d'action :
+  posé par le parent, donc les deux branches et la relecture l'ont une fois ; double
+  model de jugement : jamais. Jamais le chef ni ses slots.
+- **Revue** : `reviewCriterion()` dans le prompt de l'étape `revue`, sur le diff seul.
+- **Toute nouvelle étape qui écrit du code** va dans `CODE_WRITING_STEPS` (le groupe
+  `code` du catalogue est vérifié par le test).
+- Recette : `_test_code_principles.mjs`.
+
 ## Contexte calibré par requête (0.99.0)
 
 Demande utilisateur (TODO t-182fa2, précisée le 2026-10-14) : le contexte de
