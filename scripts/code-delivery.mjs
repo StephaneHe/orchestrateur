@@ -27,6 +27,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { commitWork } from './item-delivery.mjs';
+import { withVersionLink } from './changelog-links.mjs';
 
 const BUMPS = ['patch', 'minor', 'major'];
 
@@ -201,7 +202,21 @@ function insertChangelogEntry(file, version, body, date) {
   const eol = cl.includes('\r\n') ? '\r\n' : '\n';
   const entry = `## [${version}] - ${date}\n\n${body.trim()}\n\n`.replace(/\n/g, eol);
   const at = cl.search(/^## \[\d/m);
-  fs.writeFileSync(file, at === -1 ? `${cl.replace(/\s*$/, `${eol}${eol}`)}${entry}` : cl.slice(0, at) + entry + cl.slice(at));
+  fs.writeFileSync(file, withVersionLink(at === -1 ? `${cl.replace(/\s*$/, `${eol}${eol}`)}${entry}` : cl.slice(0, at) + entry + cl.slice(at), version));
+}
+
+/** Contents of the files a release may write ([rel, text|null]), to put back if it is refused. */
+function readReleaseFiles(cwd, cfg) {
+  const rels = [cfg.changelog || 'CHANGELOG.md', ...(cfg.requirements ? [cfg.requirements] : []), ...(cfg.versionFiles || []), ...versionMentions(cwd, cfg).map(m => m.file)];
+  return [...new Set(rels)].map((rel) => {
+    try { return [rel, fs.readFileSync(path.join(cwd, rel), 'utf8')]; } catch { return [rel, null]; }
+  });
+}
+function restoreReleaseFiles(cwd, saved) {
+  for (const [rel, text] of saved) {
+    if (text === null) fs.rmSync(path.join(cwd, rel), { force: true });
+    else fs.writeFileSync(path.join(cwd, rel), text);
+  }
 }
 
 /** No version file: the entry goes under « ## [Unreleased] » (created above the releases if absent). */
@@ -239,11 +254,14 @@ const subjectOf = (changelog) => (String(changelog).split('\n').map(l => l.repla
  *   lane: {fragment} — in a lane, a changelog.d fragment instead (0.102.0)
  *   only: the run's own files; the commit carries just these plus the CHANGELOG,
  *     register, version files and version mentions (null = everything changed)
+ *   treeCheck: (cwd) → {ran, ok, code, out, command} — tests on the final tree,
+ *     before the commit; red ⇒ no commit, release files put back, the work stays
  * → { ok, version, commit, noCommit?, files } | { ok: false, why }
  */
-export function deliverRelease(cwd, cfg, text, { prebump = null, versionBase = null, lane = null, date = new Date().toISOString().slice(0, 10), run = '', gateCheck = null, only = null } = {}) {
+export function deliverRelease(cwd, cfg, text, { prebump = null, versionBase = null, lane = null, date = new Date().toISOString().slice(0, 10), run = '', gateCheck = null, only = null, treeCheck = null } = {}) {
   const cl = path.join(cwd, cfg.changelog || 'CHANGELOG.md');
   const req = cfg.requirements ? path.join(cwd, cfg.requirements) : null;
+  const saved = treeCheck && !lane ? readReleaseFiles(cwd, cfg) : null;
   let version = null, from = null;
   if (lane) {
     fs.mkdirSync(path.dirname(path.join(cwd, lane.fragment)), { recursive: true });
@@ -253,6 +271,7 @@ export function deliverRelease(cwd, cfg, text, { prebump = null, versionBase = n
     version = prebump.to; from = prebump.from || null;
     let cur = ''; try { cur = fs.readFileSync(cl, 'utf8'); } catch {}
     if (!cur.includes(`## [${version}]`)) insertChangelogEntry(cl, version, text.changelog.replace(/\{version\}/g, version), date);
+    else fs.writeFileSync(cl, withVersionLink(cur, version));
     const reqDone = req && versionBase && git(cwd, ['diff', '--name-only', `${versionBase}..HEAD`, '--', cfg.requirements]).out;
     if (req && !reqDone) appendRequirement(req, text.requirement.replace(/\{version\}/g, version));
   } else {
@@ -280,6 +299,15 @@ export function deliverRelease(cwd, cfg, text, { prebump = null, versionBase = n
     if (sync.stale.length) {
       return { ok: false, version, from, staleVersion: sync.stale,
         why: `mention(s) de version pas à jour après le passage à ${version} : ${staleText(sync.stale, version)} — le programme n’a pas pu l’écrire (déclarer l’emplacement dans .orchestrateur/pipeline.json → versionMentions, ou confier la livraison au model)` };
+    }
+  }
+  if (saved) {
+    const t = treeCheck(cwd);
+    if (t?.ran && !t.ok) {
+      const staleHints = staleVersionHints(cwd, from, version, cfg);
+      restoreReleaseFiles(cwd, saved);
+      return { ok: false, version, from, changed: [], staleHints, test: { ok: false, code: t.code, out: t.out },
+        why: `la suite échoue après la livraison (${t.command}) — commit refusé, version et CHANGELOG remis comme avant, le travail reste dans la copie :\n${String(t.out).slice(-1500)}` };
     }
   }
   const subject = subjectOf(text.changelog);

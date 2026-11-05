@@ -34,6 +34,9 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { renameRetry } from './atomic-file.mjs';
+import { withVersionLink } from './changelog-links.mjs';
+import { syncVersionMentions } from './code-delivery.mjs';
+import { runReleaseTreeCheck } from './release-tree-check.mjs';
 
 export const HARD_CAP = 4;
 // User decision Q1 (2026-10-15): « Q1: defaut a 2, et on monitore pour verifier
@@ -251,12 +254,23 @@ export function commitLeftovers(dir, message, { verify = false } = {}) {
  * the release tree (fragments applied, staged) before the release commit, e.g.
  * this repository's targeted regression, so its delivery gate finds a report
  * made on exactly that tree. Placeholders {base} (integration tip) and
- * {version}. Absent ⇒ nothing runs. Output kept in logs/lanes/<p>/<task>.release-check.log.
+ * {version}. Absent ⇒ the project's tests that read the release's files
+ * (release-tree-check.mjs), when it has any. Output kept in
+ * logs/lanes/<p>/<task>.release-check.log.
  */
 export function runReleaseCheck(dir, { base, version, logsDir, project, task }) {
-  const cfg = laneConfig(dir).lanes || {};
+  const whole = laneConfig(dir);
+  const cfg = whole.lanes || {};
   const argv = cfg.releaseCheck;
-  if (!Array.isArray(argv) || !argv.length || !argv.every(a => typeof a === 'string')) return { ok: true, ran: false };
+  const logFile = () => { const f = path.join(logsDir, 'lanes', project, `${task}.release-check.log`); fs.mkdirSync(path.dirname(f), { recursive: true }); return f; };
+  if (!Array.isArray(argv) || !argv.length || !argv.every(a => typeof a === 'string')) {
+    if (!whole.testCommand) return { ok: true, ran: false };
+    const t = runReleaseTreeCheck(dir, whole, { root: path.dirname(logsDir), who: `${project} · ${task}`, timeoutMs: (Number(whole.testTimeoutMin) || 45) * 60_000 });
+    if (!t.ran) return { ok: true, ran: false };
+    let file = null;
+    try { file = logFile(); fs.writeFileSync(file, `$ ${t.command}\n${t.out || ''}`); } catch {}
+    return t.ok ? { ok: true, ran: true, output: file, files: t.files } : { ok: false, ran: true, code: t.code, output: file, files: t.files, why: `tests de l’arbre final rouges (${t.command}, code ${t.code}), voir ${file}` };
+  }
   git(dir, ['add', '-A', '--', '.', ...EXCLUDED_FROM_COMMIT.map(p => `:(exclude)${p}`)]);
   const args = argv.map(a => a.replace(/\{base\}/g, base).replace(/\{version\}/g, version));
   const timeout = (Number(cfg.releaseCheckTimeoutMin) || 45) * 60_000;
@@ -265,7 +279,7 @@ export function runReleaseCheck(dir, { base, version, logsDir, project, task }) 
   const r = spawnSync(args[0] === 'node' ? process.execPath : args[0], args.slice(1), { cwd: dir, encoding: 'utf8', windowsHide: true, timeout, env, maxBuffer: 64 * 1024 * 1024 });
   const output = `${r.stdout || ''}${r.stderr || ''}`;
   let file = null;
-  try { file = path.join(logsDir, 'lanes', project, `${task}.release-check.log`); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, `$ ${args.join(' ')}\n${output}`); } catch {}
+  try { file = logFile(); fs.writeFileSync(file, `$ ${args.join(' ')}\n${output}`); } catch {}
   if (r.status === 0) return { ok: true, ran: true, output: file };
   return { ok: false, ran: true, code: r.status, output: file, why: r.error ? r.error.message : `code ${r.status}, voir ${file}` };
 }
@@ -577,7 +591,9 @@ export function applyFragments(dir, { date = new Date().toISOString().slice(0, 1
   const entry = `## [${next}] - ${date}\n\n${frags.map(f => f.body).join('\n\n')}\n\n`;
   let cl = ''; try { cl = fs.readFileSync(changelog, 'utf8'); } catch {}
   const at = cl.search(/^## \[\d/m);
-  fs.writeFileSync(changelog, at === -1 ? `${cl.replace(/\s*$/, '\n\n')}${entry}` : cl.slice(0, at) + entry + cl.slice(at));
+  fs.writeFileSync(changelog, withVersionLink(at === -1 ? `${cl.replace(/\s*$/, '\n\n')}${entry}` : cl.slice(0, at) + entry + cl.slice(at), next));
+  // A declared mention that cannot be updated is judged by the tests of the final tree.
+  syncVersionMentions(dir, { ...cfg, versionFiles }, next);
   for (const f of frags) fs.rmSync(path.join(dir, f.file), { force: true });
   return { version: next, bump, fragments: frags.map(f => f.file) };
 }
@@ -722,6 +738,8 @@ export function finishTask({ logsDir, project, k, dir, turnEnd, title, log = () 
       // versions strictly increase in integration order; undone if the ff fails.
       const release = applyFragments(dir);
       if (release) {
+        // A lane of an ordinary turn has no dependencies of its own (no-op when already linked).
+        provisionPipelineLane(project.path, dir);
         const check = runReleaseCheck(dir, { base: mb, version: release.version, logsDir, project: project.name, task: t.task });
         if (!check.ok) {
           git(dir, ['reset', '-q', '--hard']);

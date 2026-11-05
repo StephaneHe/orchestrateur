@@ -200,9 +200,10 @@ export function targetedCommand(cwd, cfg, files) {
 export const CITED_TESTS_MAX = 25;
 const READ_CAP = 1 << 20;
 const MAX_SEARCHED = 500;
-const citedMax = (cfg) => (Number.isInteger(cfg?.citedTestsMax) && cfg.citedTestsMax > 0 ? cfg.citedTestsMax : CITED_TESTS_MAX);
+export const citedTestsMax = (cfg) => (Number.isInteger(cfg?.citedTestsMax) && cfg.citedTestsMax > 0 ? cfg.citedTestsMax : CITED_TESTS_MAX);
+const citedMax = citedTestsMax;
 const tooManyReaders = (n, max) => `${n} tests lisent les fichiers modifiés (au-delà du seuil citedTestsMax = ${max}) : suite entière de la zone`;
-function readTexts(cwd, tests) {
+export function readTexts(cwd, tests) {
   return new Map(tests.map(t => { let s = ''; try { s = fs.readFileSync(path.join(cwd, t), 'utf8').slice(0, READ_CAP); } catch {} return [t, s]; }));
 }
 /**
@@ -289,7 +290,7 @@ export function selectForChanged({ cwd, cfg, changed, isTest, tests = null, lean
 // areas — optional zones of .orchestrateur/pipeline.json (2026-10-29)
 // ---------------------------------------------------------------------------
 // Local glob (no import from the engine, which imports this module).
-function areaGlob(g) {
+export function areaGlob(g) {
   const s = posix(g).replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\/\*\*$/, '/\u0001').replace(/\*\*\/?/g, '\u0000').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]').replace(/\u0000/g, '(?:.*/)?').replace(/\u0001/g, '.*');
   return new RegExp(`^${s}$`);
 }

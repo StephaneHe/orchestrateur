@@ -67,6 +67,8 @@ import * as Doc from './document-check.mjs';
 import { diagnosePause, diagnoseWithModel, smartMenu, fixMenu, menuQuestion, menuBlock, matchOptionKey, readTestOutput, excludeAnswered } from './pause-diagnosis.mjs';
 import { routePause, pauseSignature, decisionText } from './process-pause.mjs';
 import { releasePlan, parseDeliveryText, deliverRelease, deliverCommit, staleVersionHints, staleText, versionMentions } from './code-delivery.mjs';
+import { runReleaseTreeCheck } from './release-tree-check.mjs';
+import { hasVersionLinks, missingVersionLink } from './changelog-links.mjs';
 import { cachedSuite } from './suite-cache.mjs';
 import * as Rework from './aside-rework.mjs';
 import * as CodePrinciples from './code-principles.mjs';
@@ -908,10 +910,10 @@ function stepPrompt(ctx, step, extra) {
       } else if (ctx.prebump) {
         // 0.114.1: an item of this run already bumped the version — never bump it twice.
         L.push(`1. la version est DÉJÀ incrémentée par un item de cette exécution (${ctx.prebump.from} → ${ctx.prebump.to}) : ne l'incrémente PAS de nouveau ;`);
-        L.push(`2. vérifie et complète au besoin l'entrée « ## [${ctx.prebump.to}] » de ${cfg.changelog || 'CHANGELOG.md'} ;`);
+        L.push(`2. vérifie et complète au besoin l'entrée « ## [${ctx.prebump.to}] » de ${cfg.changelog || 'CHANGELOG.md'}${changelogLinkHint(ctx)} ;`);
       } else {
         L.push(`1. incrémente la version (patch pour une correction, minor pour une fonctionnalité) dans : ${deliveryVersionFiles(ctx).join(', ') || '(fichier de version du projet)'}${ctx.tuning?.codeDeliver && mentionList(ctx) ? ` — et mets la même version dans chaque mention de version du projet : ${mentionList(ctx)}` : ''} ;`);
-        L.push(`2. ajoute l'entrée « ## [X.Y.Z] - AAAA-MM-JJ » correspondante dans ${cfg.changelog || 'CHANGELOG.md'} ;`);
+        L.push(`2. ajoute l'entrée « ## [X.Y.Z] - AAAA-MM-JJ » correspondante dans ${cfg.changelog || 'CHANGELOG.md'}${changelogLinkHint(ctx)} ;`);
       }
       if (cfg.requirements) L.push(`3. ajoute D'OFFICE la ligne de la demande dans ${cfg.requirements} (date, demande verbatim, tests associés, version) — c'est obligatoire à chaque livraison, personne d'autre ne le fera ;`);
       if (ctx.release) {
@@ -974,9 +976,21 @@ function deliveryVersionFiles(ctx) {
   } catch { return cfg.versionFiles || []; }
 }
 
+/** The model's Livrer writes the reference line too, when the project's CHANGELOG keeps them. */
+function changelogLinkHint(ctx) {
+  let text = ''; try { text = fs.readFileSync(path.join(ctx.cwd, ctx.cfg.changelog || 'CHANGELOG.md'), 'utf8'); } catch {}
+  return hasVersionLinks(text) ? ', ET sa ligne de référence « [X.Y.Z]: … » en bas du fichier, au même format et à côté de celle de la version précédente' : '';
+}
+
 /** Version mentions the delivery keeps equal to the version (0.140.0), for the instructions. */
 function mentionList(ctx) {
   try { return versionMentions(ctx.cwd, ctx.cfg).map(m => m.file).join(', '); } catch { return ''; }
+}
+
+/** The tests that read what a release wrote, on the final tree, under the suite lock. */
+function finalTreeCheck(ctx) {
+  const cfg = { ...ctx.cfg, versionFiles: deliveryVersionFiles(ctx) };
+  return (dir) => runReleaseTreeCheck(dir, cfg, { run: (command, full) => runTestCommand(ctx, dir, command, full) });
 }
 
 /**
@@ -991,7 +1005,7 @@ function releaseFromText(ctx, step, before, after) {
   const text = parseDeliveryText(readArtefact(ctx, step.artefact), { needBump: !ctx.prebump || !!ctx.lane, needRequirement: !!cfg.requirements });
   if (text.error) return { ok: false, textProblem: true, changed: [], why: `${step.artefact} : ${text.error}` };
   const d = deliverRelease(cwd, { ...cfg, versionFiles: deliveryVersionFiles(ctx) }, text, { prebump: ctx.lane ? null : ctx.prebump, versionBase: ctx.versionBase, lane: ctx.lane, run: ctx.run,
-    gateCheck: cfg.testCommand ? (dir) => runTestCommand(ctx, dir, cfg.testCommand) : null });
+    gateCheck: cfg.testCommand ? (dir) => runTestCommand(ctx, dir, cfg.testCommand) : null, treeCheck: finalTreeCheck(ctx) });
   return d.ok ? d : { changed: [], ...d };
 }
 
@@ -1810,7 +1824,7 @@ const CODE_STEPS = {
     let line = inGit ? 'Aucun fichier du dépôt modifié : ni version ni commit.' : 'Dossier hors git : rien à commiter.';
     if (changed.length) {
       // The CHANGELOG text is the model's; no requirement line (an operations task is not a feature).
-      const d = deliverRelease(ctx.cwd, { ...ctx.cfg, requirements: null }, { bump: 'patch', changelog: p.changelog || '### Changed\n\n- exploitation', requirement: '', summary: p.report || '' }, { lane: ctx.lane, run, only: own ? changed : null });
+      const d = deliverRelease(ctx.cwd, { ...ctx.cfg, requirements: null }, { bump: 'patch', changelog: p.changelog || '### Changed\n\n- exploitation', requirement: '', summary: p.report || '' }, { lane: ctx.lane, run, only: own ? changed : null, treeCheck: finalTreeCheck(ctx) });
       if (!d.ok) return { ok: false, why: `livraison par le programme : ${d.why} — les fichiers modifiés restent dans le projet, non commités (${changed.slice(0, 6).join(', ')})` };
       state.exploitDelivery = { version: d.version || null, from: d.from || null, commit: d.commit || null };
       line = d.noCommit ? 'Rien de nouveau à commiter.' : `Commit ${String(d.commit || '').slice(0, 12)} fait par le programme (aucun model)${d.version ? ` : version ${d.from} → ${d.version} (patch)` : ''}, entrée du CHANGELOG${d.mentions?.length ? `, mentions de version (${d.mentions.join(', ')})` : ''} ; fichiers : ${changed.slice(0, 8).map(f => `\`${f}\``).join(', ')}. Pas de push.`;
@@ -2959,6 +2973,7 @@ function checkCriteria(ctx, step, before, after) {
       if (version) {
         let txt = ''; try { txt = fs.readFileSync(path.join(cwd, cl), 'utf8'); } catch {}
         if (!txt.includes(`## [${version}]`)) return { ok: false, why: `${cl} : pas d’entrée « ## [${version}] »`, changed };
+        if (missingVersionLink(txt, version)) return { ok: false, why: `${cl} : pas de ligne de référence « [${version}]: … » alors que le fichier en tient une par version (même format que la précédente)`, changed };
       }
     }
     const leaked = diffNames.filter(f => isLocalOnly(f));
@@ -3958,7 +3973,7 @@ export async function runPipeline(o) {
       // is behind (named by the program, or still showing the old version in a
       // tracked file after a red suite) — the pause acts on it, never « corriger le code ».
       if (!c.ok && !d.textProblem) {
-        const stale = d.staleVersion || (d.ok && c.test && !c.test.ok ? staleVersionHints(cwd, d.from, d.version, cfg) : []);
+        const stale = d.staleVersion || d.staleHints || (d.ok && c.test && !c.test.ok ? staleVersionHints(cwd, d.from, d.version, cfg) : []);
         rec.codeDelivery = { from: d.from || null, to: d.version || null, red: !!(c.test && !c.test.ok), stale };
         if (stale.length && !d.staleVersion) rec.why = `${rec.why}\nmention(s) de version restée(s) à ${d.from} : ${staleText(stale, d.version)}`;
       }

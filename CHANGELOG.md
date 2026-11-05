@@ -11,6 +11,13 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.164.1] - 2026-11-05
+
+### Fixed
+- (server) A release no longer goes out red because of its own CHANGELOG (user request 2026-11-05, "corrige le problème de l'orchestrateur"). Both program writers of the `## [X.Y.Z]` header (Livrer by the program in `code-delivery.mjs`, lane fragments in `lanes.mjs`) now also write the `[X.Y.Z]: …` line when the project's CHANGELOG keeps version references, in the format of the latest one and at the file's own ordering (`scripts/changelog-links.mjs`); a project without references gets none. A model's Livrer is told to write it and is refused without it.
+- (server) The tests that read what a release wrote (CHANGELOG, version files, `package.json`, changed mentions) now run on the FINAL tree before the release commit (`scripts/release-tree-check.mjs`): selected by code, nothing runs when no test reads them. A lane without `lanes.releaseCheck` used to run nothing there. Red: no commit, version and CHANGELOG put back, the work stays (program delivery) or stays on the task branch, paused `release-check` (lane). What a test leaves in the tree never enters the commit.
+- (server) A lane's release now updates the version mentions (README "Version" line, `versionMentions`), as Livrer by the program already did; dependencies are linked before its check.
+
 ## [0.164.0] - 2026-11-05
 
 ### Added

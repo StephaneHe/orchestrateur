@@ -204,6 +204,7 @@ ok(r.state.diagnosis?.kind === 'version_stale' && /src\/version\.mjs/.test(r.sta
 const k4 = (r.state.diagnosis?.options || []).map(o => o.key);
 ok(k4.includes('confier au model') && !k4.includes('corriger le code') && r.state.diagnosis?.recommend?.key === 'confier au model', `choix : ${k4.join(', ')}`);
 ok(g('rev-parse', 'HEAD').stdout.trim() === H1 && version() === '1.8.1', 'rien de livré : HEAD et version inchangés');
+ok(/commit refusé/.test(l4[0]?.why || ''), 'refusé avant le commit, par les tests de l’arbre final (lit package.json)', l4[0]?.why);
 const run4 = r.run;
 r = await go(['confier au model'], { FAKE_PIPE_SYNC_FILE: 'src/version.mjs,README.md' });
 const l4b = livrer(r.state);

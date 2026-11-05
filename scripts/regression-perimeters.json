@@ -787,6 +787,8 @@
         "scripts/cited-paths.mjs",
         "scripts/pipeline-tuning.mjs",
         "scripts/code-delivery.mjs",
+        "scripts/changelog-links.mjs",
+        "scripts/release-tree-check.mjs",
         "scripts/suite-cache.mjs",
         "scripts/inert-custom.mjs",
         "scripts/pipeline-cleanup.mjs",
@@ -848,6 +850,7 @@
         "_test_python_version_slot.mjs",
         "_test_gradle_version_code.mjs",
         "_test_version_mentions.mjs",
+        "_test_release_tree_check.mjs",
         "_test_suite_cache.mjs",
         "_test_inert_cleanup.mjs",
         "_test_smart_pause.mjs",
@@ -935,7 +938,8 @@
             "_test_suite_lock.mjs",
             "_test_tests_per_item.mjs",
             "_test_typed_operations.mjs",
-            "_test_version_mentions.mjs"
+            "_test_version_mentions.mjs",
+            "_test_release_tree_check.mjs"
           ]
         },
         {
@@ -1121,7 +1125,8 @@
             "_test_suite_cache.mjs",
             "_test_suite_lock.mjs",
             "_test_tests_per_item.mjs",
-            "_test_version_mentions.mjs"
+            "_test_version_mentions.mjs",
+            "_test_release_tree_check.mjs"
           ]
         },
         {

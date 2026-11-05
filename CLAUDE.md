@@ -1276,6 +1276,25 @@ etre justifies et documentes. » Conception, état livré (§7) et règles (§3)
   false` sur la dev. La prod reste à `maxParallel` 1. Recette :
   `_test_dev_pipeline_lanes.mjs` (série).
 
+## Livraison : ligne de référence du CHANGELOG, tests sur l'arbre final (0.164.1)
+
+Demande utilisateur (2026-11-05) : « corrige le problème de l'orchestrateur »
+(un projet rougi deux fois par la livraison elle-même : en-tête `## [X.Y.Z]`
+sans sa ligne `[X.Y.Z]: ./`, assemblage après les tests de la tâche).
+
+- `scripts/changelog-links.mjs` (pur) : `withVersionLink`. **Tout code qui écrit
+  un en-tête de version passe par lui** (`insertChangelogEntry`,
+  `applyFragments`) : ligne au format de la dernière référence, à la place que
+  donne l'ordre du fichier ; aucune si le projet n'a pas de référence de version.
+  Livrer par le model : consigne et critère (`missingVersionLink`).
+- `scripts/release-tree-check.mjs` : les tests dont le texte cite un fichier écrit
+  par la release, le CHANGELOG, un fichier de version ou `package.json` tournent
+  sur l'arbre final, avant le commit, sous le verrou de suite ; aucun lecteur =
+  rien ne tourne. Rouge : pas de commit, fichiers de release remis, travail gardé
+  (`deliverRelease`, option `treeCheck`) ; couloir : pause `release-check`, travail
+  sur la branche. `lanes.releaseCheck` déclaré garde la priorité sur ce contrôle.
+- Recette : `_test_release_tree_check.mjs`. Redémarrage inutile.
+
 ## Principe d'immuabilité dans les tours qui écrivent du code (0.164.0)
 
 Demande utilisateur (2026-11-03) : « Il faut suivre ceci: Always Prefer Immutability
