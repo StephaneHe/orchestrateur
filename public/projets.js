@@ -282,7 +282,7 @@
       `<span class="pv-name">${esc(it.m.name)}</span>` +
       `<span class="pv-word">${esc(word)}</span>` +
       `<span class="pv-chips">${chips.join("")}</span>` +
-      `<span class="pv-line" title="${esc(it.line)}">${esc(it.line)}</span>` +
+      `<span class="pv-line${it.kind === "question" ? " is-question" : ""}" title="${esc(it.line)}">${it.kind === "question" && window.Salle?.questionHtml ? window.Salle.questionHtml(it.line, { name: it.m.name, max: 120 }) : esc(it.line)}</span>` +
       `<span class="pv-age${age.live ? " is-live" : ""}" title="${esc(age.title || "")}">${esc(age.text)}</span>` +
       `<span class="pv-more">${esc(detailsOf(r))}</span>`;
   }

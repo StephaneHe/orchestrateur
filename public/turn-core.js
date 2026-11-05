@@ -100,6 +100,31 @@
   ];
   const PREFIXES = /^\s*(\[(?:CHEF_ANSWER|ANSWER|CALLBACK_WAKE[^\]]*|NEEDS_CHEF_INPUT_FROM:[^\]]*|REPRISE)\]\s*)+/i;
 
+  // A question to the user is the whole text after its sentinel, every line of
+  // it (user, 2026-11-05: a question cut on the card could not be answered). Null
+  // when the text asks nothing; "" when the sentinel carries no text.
+  function questionOf(text) {
+    const m = /^NEEDS_USER_INPUT:\s*([\s\S]*)$/m.exec(String(text || ""));
+    return m ? m[1].trim() : null;
+  }
+  // A short form for narrow places: cut between two words, and it says it is cut
+  // (`cut`, `total`), so that no surface can pass it off as the whole question.
+  function questionExcerpt(text, max = 160) {
+    const flat = String(text || "").replace(/\s+/g, " ").trim();
+    if (flat.length <= max) return { text: flat, cut: false, total: flat.length };
+    const head = flat.slice(0, max);
+    const atWord = flat[max] === " " ? head : head.replace(/\s+\S*$/, "");
+    return { text: (atWord || head).trimEnd(), cut: true, total: flat.length };
+  }
+  // The quote opening an answer sent through the chef. It is a reminder for the
+  // user: when it is partial it says so, and the chef must not read it as the question.
+  function answerPrefix(name, question, max = 160) {
+    const x = questionExcerpt(question, max);
+    return x.cut
+      ? `Réponse pour ${name} à sa question (extrait, ${x.text.length} caractères sur ${x.total} ; question complète dans le journal de ${name}) « ${x.text}… » : `
+      : `Réponse pour ${name} à sa question « ${x.text} » : `;
+  }
+
   function oneLine(s, max) {
     const t = String(s || "").replace(/\s+/g, " ").trim();
     if (t.length <= max) return t;
@@ -487,13 +512,13 @@
         // dispatch.mjs after the CLI's own, old logs) — never a prompt-less turn.
         if (!cur) { if (ev.orch_turn) open(ev, pendingPrompt); else adopt(ev); }
         const text = typeof ev.result === "string" ? ev.result : "";
-        const needs = /^NEEDS_USER_INPUT:\s*(.*)$/m.exec(lastText || text);
+        const needs = questionOf(lastText || text);
         const asksChef = /NEEDS_CHEF_INPUT:/i.test(lastText) || /NEEDS_CHEF_INPUT:/i.test(text);
         cur.subtype = typeof ev.subtype === "string" ? ev.subtype : null;
         if (isConductorStop(ev)) { cur.outcome = "stopped"; cur.stop = stopInfo(ev); }
         else if (isResultError(ev) && ev.synthetic) cur.outcome = "system";
         else if (isResultError(ev)) cur.outcome = "error";
-        else if (needs) { cur.outcome = "question"; cur.question = oneLine(needs[1], 240); }
+        else if (needs !== null) { cur.outcome = "question"; cur.question = needs; }
         else if (asksChef) cur.outcome = "ask_chef";
         else cur.outcome = "ok";
         cur.durationMs = Number.isFinite(ev.duration_ms) && ev.duration_ms > 0 ? ev.duration_ms : null;
@@ -594,7 +619,7 @@
 
   g.TurnCore = {
     isAcknowledged, isQuestionResolved, isConductorStop, isPhantomResult,
-    isResultError, isTurnStart, stateAtTurnStart, stopInfo, stopWord, stopText, testInfo, reconcileBusy, snapshotState, questionOpen,
+    isResultError, isTurnStart, stateAtTurnStart, stopInfo, stopWord, stopText, testInfo, reconcileBusy, snapshotState, questionOpen, questionOf, questionExcerpt, answerPrefix,
     summarizePrompt, summarizeResult, cleanPrompt, createJournal, FULL_MAX,
   };
 })(typeof globalThis !== "undefined" ? globalThis : window);

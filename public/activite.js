@@ -205,7 +205,7 @@
     } else if (t.summary && t.summary.length) {
       did = `<ul class="jt-did">${t.summary.map(s => `<li>${esc(s)}</li>`).join("")}</ul>`;
     }
-    const q = t.outcome === "question" && t.question ? `<div class="jt-q">? ${esc(t.question)}</div>` : "";
+    const q = t.outcome === "question" && t.question ? `<div class="jt-q">? ${window.Salle?.questionHtml ? window.Salle.questionHtml(t.question, { name: window.Salle.diveName || "" }) : esc(t.question)}</div>` : "";
     // Mode double model (0.44.0) : chaque branche et la relecture, séparément.
     let dual = "";
     if (t.dual) {

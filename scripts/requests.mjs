@@ -167,13 +167,13 @@ export function startTurn(logsDir, id, { turn, pid = process.pid, log = null, of
   }, { now });
 }
 
-const QUESTION_RE = /(^|\n)\s*NEEDS_(USER|CHEF)_INPUT\s*:\s*(.+)/;
+const QUESTION_RE = /(^|\n)\s*NEEDS_(USER|CHEF)_INPUT\s*:\s*([\s\S]+)/;
 
 /** The outcome of one chef turn, from its own result line (or none). */
 export function turnOutcome({ result, code = 0, infra = null }) {
   if (result && !result.is_error) {
     const q = QUESTION_RE.exec(String(result.result || ''));
-    if (q) return { end: 'question', question: q[3].trim().slice(0, 600) };
+    if (q) return { end: 'question', question: q[3].trim() };
     return { end: 'done' };
   }
   const detail = String(result?.result || result?.subtype || (code ? `sortie ${code} sans résultat` : 'aucun résultat')).replace(/\s+/g, ' ').slice(0, 300);

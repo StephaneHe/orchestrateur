@@ -367,7 +367,7 @@
       return `<div class="att-item" data-kind="${esc(it.kind)}">
         <span class="ai-mark">${esc(it.mark)}</span>
         <span class="ai-name">${esc(it.name)}</span>
-        <span class="ai-text">${esc(it.text)}</span>
+        <span class="ai-text">${it.kind === "question" ? questionHtml(it.text, { name: it.name }) : esc(it.text)}</span>
         ${acts}
       </div>`;
     };
@@ -376,7 +376,7 @@
       `<button class="att-line" type="button">
          <span class="att-tag">⚠ À votre attention</span>
          <span class="att-counts">${esc(counts.join(" · "))}</span>
-         <span class="att-top">${esc(top.name)} : ${esc(top.text)}</span>
+         <span class="att-top">${esc(top.name)} : ${esc(top.kind === "question" ? questionShort(top.text, 120) : top.text)}</span>
          <span class="att-caret">${attentionOpen ? "▾" : "▸"}</span>
        </button>` +
       `<div class="att-list"${attentionOpen ? "" : " hidden"}>${items.map(itemHtml).join("")}</div>`;
@@ -469,7 +469,7 @@
       if (act) bits.push(esc(act));
       if (turn) bits.push(esc(turn));
     } else if (m.state === "input") {
-      bits.push(esc((r?.needsInput || m.lastLine || "").slice(0, 60)));
+      bits.push(esc(questionShort(r?.needsInput || m.lastLine, 60)));
     } else if (m.state === "error" && m.stopped) {
       bits.push(esc(m.stopped.reason ? m.stopped.reason.slice(0, 60) : "motif non précisé"));
     } else if (m.state === "unread") {
@@ -580,11 +580,11 @@
     else if (m.state === "input") line = r?.needsInput || m.lastLine || "";
     else if ((m.state === "live" || m.state === "think") && r?.activity) line = r.activity;
     else line = m.lastLine || r?.activity || r?.mission || "";
-    line = String(line).replace(/\s+/g, " ").slice(0, 90);
+    const lineHtml = m.state === "input" && line ? questionHtml(line, { name: m.name, max: 90 }) : esc(String(line).replace(/\s+/g, " ").slice(0, 90));
     return `<button class="rail-row rail-card" type="button" data-state="${esc(m.state)}" data-kind="${esc(d.kind)}" data-name="${esc(m.name)}" data-last="${last || 0}">
         <span class="rc-top"><span class="rr-dot"></span><span class="rr-name">${esc(m.name)}</span><span class="rc-age">${esc(age)}</span></span>
         <span class="rr-state">${esc(d.glyph)} ${esc(d.word)}${q}${nr}</span>
-        <span class="rc-line">${line ? esc(line) : "&nbsp;"}</span>
+        <span class="rc-line">${line ? lineHtml : "&nbsp;"}</span>
       </button>`;
   }
 
@@ -1306,6 +1306,77 @@
     if (queueDetail.id) paintQueueDetail();
   }
 
+  // ------------------------------------------------------------------------
+  // A question is never cut in silence (user, 2026-11-05): where it does not
+  // fit, its excerpt says so and « lire la suite » opens the whole text. The full
+  // text travels with the link, so a re-render of the rail cannot lose it.
+  // ------------------------------------------------------------------------
+  function questionShort(text, max) {
+    const x = global.TurnCore.questionExcerpt(text, max);
+    return x.cut ? x.text + "…" : x.text;
+  }
+
+  function questionHtml(text, { name = "", max = 280 } = {}) {
+    const x = global.TurnCore.questionExcerpt(text, max);
+    if (!x.cut) return esc(x.text);
+    return `${esc(x.text)}… <span class="q-more" role="button" tabindex="0" data-q-more data-q-name="${esc(name)}" data-q-full="${esc(text)}" title="Afficher toute la question (${x.total} caractères)">lire la suite</span>`;
+  }
+
+  function questionOverlayEl() {
+    let ov = document.getElementById("question-overlay");
+    if (ov) return ov;
+    ov = document.createElement("div");
+    ov.id = "question-overlay";
+    ov.className = "qdv-backdrop";
+    ov.hidden = true;
+    ov.innerHTML = `<div class="qdv" role="dialog" aria-modal="true" aria-labelledby="qfull-title">
+        <div class="qdv-head"><h2 id="qfull-title" class="qdv-title"></h2>
+          <button type="button" class="qdv-close" aria-label="Fermer la question">✕</button></div>
+        <div class="qdv-body"><div class="q-full-text md"></div></div>
+        <div class="qdv-actions"><button type="button" class="ai-act is-primary" data-q-answer>Répondre via le chef</button></div>
+      </div>`;
+    document.body.appendChild(ov);
+    ov.addEventListener("click", (e) => {
+      if (e.target === ov || e.target.closest(".qdv-close")) { closeQuestion(); return; }
+      if (e.target.closest("[data-q-answer]")) { const n = ov.dataset.name; closeQuestion(); App.answerViaChef(n); }
+    });
+    return ov;
+  }
+
+  function openQuestion(name, text) {
+    const ov = questionOverlayEl();
+    ov.dataset.name = name;
+    ov._returnFocus = document.activeElement;
+    ov.querySelector(".qdv-title").textContent = name ? `Question de ${name}` : "Question";
+    ov.querySelector(".q-full-text").innerHTML = global.mdToHtml ? global.mdToHtml(text) : esc(text);
+    ov.querySelector("[data-q-answer]").hidden = !name;
+    ov.hidden = false;
+    ov.querySelector(".qdv-close").focus();
+  }
+
+  function closeQuestion() {
+    const ov = document.getElementById("question-overlay");
+    if (!ov || ov.hidden) return false;
+    ov.hidden = true;
+    if (ov._returnFocus?.isConnected) ov._returnFocus.focus();
+    ov._returnFocus = null;
+    return true;
+  }
+
+  // Capture phase: the link often sits inside a rail card or an attention row,
+  // whose own click must not fire; Escape closes this overlay only.
+  function openQuestionFrom(e) {
+    const more = e.target.closest?.("[data-q-more]");
+    if (!more) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    openQuestion(more.dataset.qName || "", more.dataset.qFull || "");
+  }
+  document.addEventListener("click", openQuestionFrom, true);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && closeQuestion()) { e.preventDefault(); e.stopImmediatePropagation(); return; }
+    if (e.key === "Enter" || e.key === " ") openQuestionFrom(e);
+  }, true);
+
   function queueOverlayEl() {
     let ov = document.getElementById("queue-overlay");
     if (ov) return ov;
@@ -1577,7 +1648,7 @@
     pane.innerHTML =
       `<div class="dr-k">Issue</div><div class="dr-v">${issue}${synthetic ? " (gris, ce n'est pas un échec)" : ""}</div>` +
       `<div class="dr-k">Durée · coût</div><div class="dr-v">${esc(dur)} · ${esc(cost)}</div>` +
-      (q ? `<div class="dr-k">Question posée</div><div class="dr-v">${esc(q)}</div>` : "") +
+      (q ? `<div class="dr-k">Question posée</div><div class="dr-v q-full">${esc(q)}</div>` : "") +
       `<div class="dr-k">Texte servi</div><div class="dr-v md">${
         servedText ? (typeof global.mdToHtml === "function" ? global.mdToHtml(servedText) : esc(servedText).replace(/\n/g, "<br>")) : "—"
       }</div>` +
@@ -1773,7 +1844,7 @@
     syncRailVisibility, toggleRailSheet, openSearch, renderSearch,
     missionsHtml, orchestraActivityHtml, extractDispatches, findMission,
     label, glyph, fmtAge, snapRow, snapStale, snapAgeMs, healthFlag, alarming, railRank,
-    goBack, openQueueDetail, closeQueueDetail, registerQueueAction,
+    goBack, openQueueDetail, closeQueueDetail, registerQueueAction, questionHtml, questionShort, openQuestion,
     get diveName() { return dive.name; },
     get queueDetailId() { return queueDetail.id; },
     set returnFocus(el) { dive.returnFocus = el; },

@@ -1039,6 +1039,63 @@ export async function browserChecks(sb, t) {
       });
       return after.slice(0, 120);
     });
+    // User (2026-11-05): « Ta question n'est pas claire et incomplete, corrige la ».
+    await check(B, 'question-full', 'Question de 1 000 caractères : entière dans la bulle ; attention et cadre replient avec « lire la suite », qui montre tout sans ouvrir le volet ; la citation de la réponse se dit extrait', async () => {
+      if (!(await page.evaluate(() => !!window.TurnCore?.questionOf && !!window.Salle?.questionHtml))) NA('question coupée dans cet état du code');
+      // Its own end marker: the HTTP walk of the same name leaves a real question in the chef's thread.
+      const END = 'FIN-QUESTION-NAVIGATEUR';
+      const q = await page.evaluate((end) => {
+        let s = 'Le rapport peut garder les réponses brutes ou seulement leur synthèse.';
+        while (s.length < 1000 - end.length - 1) s += ' Choix numéro ' + s.length;
+        s = s.slice(0, 1000 - end.length - 1) + ' ' + end;
+        const m = App.musicians.get('alpha');
+        window.__qfSaved = { state: m.state, lastLine: m.lastLine, draft: document.querySelector('#composer-input').value };
+        m.lastLine = s; m.setState('input');
+        App.chat.push({ role: 'question', source: 'alpha', text: s, ts: Date.now() });
+        App.renderChat(); Salle.renderAttention(); Salle.renderRail();
+        return s;
+      }, END);
+      let openedAttention = false;
+      try {
+        assert(q.length === 1000, `fixture : ${q.length}`);
+        const bubble = page.locator('.cv-bubble.is-question', { hasText: END });
+        assert(await until(async () => (await bubble.count()) === 1, 5000), `bulle absente (${await bubble.count()})`);
+        assert((await bubble.locator('.cv-body').textContent()).trim() === q, 'bulle : question pas entière');
+        if (await page.locator('#attention .att-list').isHidden()) { await page.click('#attention .att-line'); openedAttention = true; }
+        const more = page.locator('#attention .att-item', { hasText: 'alpha' }).locator('[data-q-more]');
+        assert(await until(async () => (await more.count()) === 1, 5000), 'attention : pas de « lire la suite »');
+        assert(/lire la suite/.test(await more.textContent()) && await more.isVisible(), 'attention : lien invisible');
+        await more.click();
+        const ov = page.locator('#question-overlay');
+        assert(await ov.isVisible(), 'overlay absent');
+        assert((await ov.locator('.q-full-text').textContent()).trim() === q, 'overlay : question pas entière');
+        await page.keyboard.press('Escape');
+        assert(await ov.isHidden(), 'Échap ne ferme pas');
+        const card = page.locator('.rail-card[data-name="alpha"] [data-q-more]');
+        if (await card.count()) {
+          await card.click();
+          assert(await ov.isVisible() && (await page.evaluate(() => Salle.diveName)) !== 'alpha', 'cadre : le lien doit montrer la question sans ouvrir le volet');
+          await ov.locator('.qdv-close').click();
+        }
+        await page.evaluate(() => App.answerViaChef('alpha'));
+        const draft = await page.locator('#composer-input').inputValue();
+        assert(/extrait/.test(draft) && /question complète dans le journal de alpha/.test(draft) && !draft.includes(END), `citation : ${draft}`);
+        assert(await page.locator('#composer-context [data-q-more]').count() === 1, 'contexte de la réponse : pas de « lire la suite »');
+        return 'bulle, attention, overlay et citation vérifiés';
+      } finally {
+        // Whatever happened: the following walks read alpha's real state.
+        await page.evaluate((end) => {
+          const m = App.musicians.get('alpha'), s = window.__qfSaved;
+          document.getElementById('question-overlay')?.setAttribute('hidden', '');
+          App.composer.answerFor = null; App.renderComposerContext();
+          document.querySelector('#composer-input').value = s.draft;
+          m.lastLine = s.lastLine; m.setState(s.state);
+          App.chat = App.chat.filter(b => !String(b.text || '').includes(end));
+          App.renderChat(); Salle.renderAttention(); Salle.renderRail();
+        }, END);
+        if (openedAttention) await page.click('#attention .att-line').catch(() => {});
+      }
+    });
     // User report (2026-10-22): « a l'instant je ne vois dans pilotage sur
     // l'application : 1 en cours » / « après avoir relancé l'application je vois
     // bien les 2 tâches en cours ». A missed live event is corrected by the snapshot.

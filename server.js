@@ -2675,7 +2675,7 @@ function scanProjectState(name) {
       state = hasTool ? 'live' : (hasThink ? 'think' : 'live');
     } else if (t === 'result') {
       const isErr = !!ev.is_error || (typeof ev.subtype === 'string' && ev.subtype.startsWith('error'));
-      const needs = /^NEEDS_USER_INPUT:\s*(.*)$/m.exec(lastAssistantText || '');
+      const needs = globalThis.TurnCore.questionOf(lastAssistantText);
       if (isConductorStop(ev)) {
         stopped = stopInfo(ev);
         state = 'error';
@@ -2685,9 +2685,9 @@ function scanProjectState(name) {
       } else if (isErr) {
         state = 'error';
         lastLine = ev.subtype || 'échec du tour';
-      } else if (needs) {
+      } else if (needs !== null) {
         state = 'input';
-        lastLine = needs[1].trim().slice(0, 140);
+        lastLine = needs;
       } else {
         const evTs = ev.timestamp ? Date.parse(ev.timestamp) : Date.now();
         if (!readTs || evTs > readTs) { state = 'unread'; unreadCount++; }
@@ -3484,7 +3484,7 @@ const autoAnswer = AutoAnswer.createAutoAnswer({
     autoChefCard(rec);
   },
   onUndo(rec) {
-    autoChefCard(rec, `↩ ${AutoAnswer.MARK} annulée par l'utilisateur — ${rec.undone.done.join(' ; ')}\nDemande : ${String(rec.question).replace(/\s+/g, ' ').slice(0, 300)}`);
+    autoChefCard(rec, `↩ ${AutoAnswer.MARK} annulée par l'utilisateur — ${rec.undone.done.join(' ; ')}\nDemande : ${String(rec.question).replace(/\s+/g, ' ')}`);
   },
 });
 const AUTO_SWEEP_MS = Number(process.env.ORCH_AUTO_ANSWER_SWEEP_MS) || 30_000;
@@ -4950,7 +4950,7 @@ function reduceMusician(name, ev) {
     state = hasTool ? 'live' : (hasThink ? 'think' : 'live');
   } else if (t === 'result') {
     const isErr = !!ev.is_error || (typeof ev.subtype === 'string' && ev.subtype.startsWith('error'));
-    const needs = /^NEEDS_USER_INPUT:\s*(.*)$/m.exec(lastAssistantText || '');
+    const needs = globalThis.TurnCore.questionOf(lastAssistantText);
     // NEEDS_CHEF_INPUT is a DIFFERENT wait: the musician finished its turn but is
     // blocked on a chef decision. The state string stays `unread` (locked
     // vocabulary) — `awaitingChef` is an ADDITIVE flag so the UI can say
@@ -4960,7 +4960,7 @@ function reduceMusician(name, ev) {
     if (isConductorStop(ev))    { stopped = stopInfo(ev); state = 'error'; lastLine = stopped.reason || globalThis.TurnCore.stopWord(stopped).toLowerCase(); awaitingChef = false; }
     else if (isErr && ev.synthetic)  { state = 'idle'; awaitingChef = false; }
     else if (isErr)             { state = 'error'; lastLine = ev.subtype || 'échec du tour'; awaitingChef = false; }
-    else if (needs)             { state = 'input'; lastLine = needs[1].trim().slice(0, 600); awaitingChef = false; }
+    else if (needs !== null)    { state = 'input'; lastLine = needs; awaitingChef = false; }
     else {
       if (ev.result) lastLine = ev.result.replace(/\s+/g, ' ').trim().slice(0, 600);
       state = 'unread';

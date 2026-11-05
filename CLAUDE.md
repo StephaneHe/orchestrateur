@@ -528,6 +528,32 @@ lancée en arrière-plan tourne ; le serveur retient alors la file
 
 ---
 
+## Une question à l'utilisateur : entière, et compréhensible seule (0.165.0)
+
+Remarque utilisateur (2026-11-05) sur une question affichée sur une carte : « Ta
+question n'est pas claire et incomplete, corrige la, et fais attention pour les
+suivantes ».
+
+- **Lecture unique** : `TurnCore.questionOf` (`public/turn-core.js`), tout le texte
+  après la sentinelle, toutes les lignes. **Jamais de regex à une ligne ni de
+  `slice` sur une question** (`needsInput`, `lastLine` en état `input`, journal,
+  registre) : l'affichage décide de la longueur, pas la donnée.
+- **Affichage** : `Salle.questionHtml(texte, {name, max})` donne l'extrait arrêté
+  entre deux mots et « lire la suite » (`[data-q-more]`, écouteur en capture : le
+  cadre ou la ligne qui le contient ne s'ouvre pas) → `#question-overlay` (✕, Échap
+  en capture, clic hors zone, « Répondre via le chef »). Résumé sur une ligne :
+  `Salle.questionShort` (avec « … »). **Toute nouvelle surface passe par eux.**
+- **Citation** : `TurnCore.answerPrefix` ; partielle, elle dit « extrait, n
+  caractères sur N ». Le chef lit la question complète dans le journal du musicien.
+- **Règle injectée** : `data/question-rule.md` (source unique), `questionRule()` de
+  `scripts/question-rule.mjs`, ajoutée par `dispatch.mjs` hors de `stepRules` : tours
+  des musiciens, étapes de pipeline, branches et relecture du mode double, tous
+  fournisseurs ; jamais le chef ni ses slots.
+- **L'app Android** reçoit la question entière mais coupe encore sa citation à 160
+  caractères (`FleetScreen.kt`) : tâche séparée.
+- Redémarrage nécessaire (`server.js`, `turn-core.js` servi).
+- Recettes : `_test_question_full.mjs`, HTTP et navigateur `question-full`.
+
 ## Provider et model d'un dispatch (`dispatch.mjs`)
 
 - `--provider claude|codex` et `--model <id>` choisissent le provider et le

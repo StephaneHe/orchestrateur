@@ -905,7 +905,7 @@ export const statusText = (s) => STATUS_TEXT[s] || s;
 /** Card text (fil, journal, log of the process). */
 export function decisionText(rec) {
   const head = `${MARK} — ${decisionWhat(rec)}`;
-  const lines = [head, `Élément : ${decisionTarget(rec).label}`, `Demande : ${String(rec.question || '').replace(/\s+/g, ' ').slice(0, 300)}`];
+  const lines = [head, `Élément : ${decisionTarget(rec).label}`, `Demande : ${String(rec.question || '').replace(/\s+/g, ' ')}`];
   if (rec.answer) lines.push(`Réponse : ${rec.decision ? `[${rec.decision}] ` : ''}${String(rec.answer).slice(0, 1200)}`);
   if (rec.reason) lines.push(`Raison : ${rec.reason}`);
   if (rec.limitPause) lines.push('Limite de pipeline : une seule réponse automatique par exécution, point de retour obligatoire, jamais « abandonner » ; la limite suivante de cette exécution vous attendra.');
@@ -1068,7 +1068,7 @@ export function createAutoAnswer(deps) {
     const { idle } = state();
     const { backlog } = classifyWaits({ waits, settings: v.settings, idle, presented: readPresented(deps.logsDir), ledger: readLedger(deps.logsDir) });
     v.backlog = backlog.sort((a, b) => a.since - b.since).slice(0, 200).map(w => ({ key: w.key, kind: w.kind, project: w.project, lane: w.lane || 0,
-      since: new Date(w.since).toISOString(), question: String(w.question || '').slice(0, 300), reason: w.backlog, reasonText: w.backlogText,
+      since: new Date(w.since).toISOString(), question: String(w.question || ''), reason: w.backlog, reasonText: w.backlogText,
       ...(w.context?.gapKey ? { gapKey: w.context.gapKey } : {}), ...(w.context?.run ? { run: w.context.run } : {}) }));
     return v;
   }

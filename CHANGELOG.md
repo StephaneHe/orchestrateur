@@ -11,6 +11,16 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.165.0] - 2026-11-05
+
+### Fixed
+- (server) A question to the user (`NEEDS_USER_INPUT`) is never cut any more (user, 2026-11-05: "Ta question n'est pas claire et incomplete"). It was read as one line and cut at 160 characters in `/api/pupitre`, 140 and 600 in the server's state, 140 in the client, 240 in the journal, 600 in the request registry, 300 in the auto-answer cards. `TurnCore.questionOf` is now the single reader: the whole text after the sentinel, every line. Server restart needed.
+- (server) Where a question does not fit (attention band, rail card, journal, Projects view, composer context), its excerpt stops between two words and "lire la suite" opens the whole text in `#question-overlay`, with "Répondre via le chef"; the card itself does not open. The thread bubble and the "Question posée" pane show it whole.
+- (server) The quote opening an answer through the chef says when it is an extract, how long the question is and where to read it (`TurnCore.answerPrefix`), so that neither the user nor the chef takes it for the whole question.
+
+### Added
+- (server) Rule on how to ask (`data/question-rule.md`, `scripts/question-rule.mjs`), appended to every musician turn and pipeline step, any provider, both branches and the synthesis of a dual run, never the chef: a question to the user stands on its own, in plain language, with what changes, the choices and a recommendation; a technical or work-organisation question goes to the chef; a detail without effect on the product is decided and reported. New suite `_test_question_full.mjs`, HTTP and browser walks `question-full`.
+
 ## [0.164.1] - 2026-11-05
 
 ### Fixed

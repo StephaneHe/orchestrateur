@@ -51,7 +51,7 @@ function renderTable(rows) {
       ? `ATTEND AUTORISATION : ${r.awaitingPermission.tool} — ${String(r.awaitingPermission.preview || '').slice(0, 60)}${r.awaitingPermission.deadline ? ` (reste ${fmtAge(r.awaitingPermission.deadline - Date.now())})` : ''} — ne pas tuer`
       // 0.82.0: the turn is over but its process lives on and holds the queue.
       : r.queueHeld ? `FILE RETENUE — ${holdLine(r.queueHeld)} — ne pas tuer sans décision`
-      : r.needsInput ? `needs: ${r.needsInput}`
+      : r.needsInput ? `needs: ${r.needsInput.replace(/\s+/g, ' ')}`
       : r.stalled ? (r.lanes?.some(l => l.stalled) ? `STALL — ${r.lanes.filter(l => l.stalled).map(l => `couloir ${l.lane} muet depuis ${fmtAge(l.silentMs)}`).join(', ')} — consider intervention` : 'STALL — consider intervention')
       : r.lanes?.length && r.logState !== 'live' && r.logState !== 'think' ? r.lanes.map(l => l.activity).join(' | ')
       // 0.47.2 : attente d'un fournisseur lent et tours d'essai, sans alarme.

@@ -2298,6 +2298,9 @@ const LANG_WORK = langMod.workingLanguage(ROOT, LANG_MODEL, LANG_TARGET);
 // dual branch, not a pipeline step that writes machine-read artefacts).
 if (!DUAL_BRANCH && (!PIPE_STEP || ID_MARK_STEPS.has(PIPE_STEP.key.replace(/^\d+-/, '')))) prompt = prompt + idRefRule();
 prompt = prompt + CODE_PRINCIPLES;
+// How to ask the user (user, 2026-11-05): every musician turn and pipeline step, any
+// provider (scripts/question-rule.mjs, data/question-rule.md). The chef routes questions.
+if (!CHEF_TARGET) prompt = prompt + (await import('./question-rule.mjs')).questionRule();
 if (projectName !== CONDUCTOR) prompt = prompt + permissionExplainRule(langMod.LANGS[LANG_TARGET]?.name || 'français');
 prompt = prompt + langMod.languageRule(LANG_TARGET, LANG_WORK.working);
 // Le portier ne vérifie que ce qui est destiné à l'utilisateur : ni une branche

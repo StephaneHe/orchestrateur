@@ -106,7 +106,7 @@
         ${phase}<span class="aa-acts">${acts}</span></div>
       <div class="aa-more"${open ? "" : " hidden"}>
         <div class="aa-why"><strong>Pourquoi à votre place :</strong> ${esc(d.why_inactive || "")}</div>
-        <div class="aa-q">Demande : ${esc(String(d.question || "").replace(/\s+/g, " ").slice(0, 300))}</div>
+        <div class="aa-q">Demande : ${window.Salle?.questionHtml ? window.Salle.questionHtml(d.question) : esc(String(d.question || ""))}</div>
         ${d.answer ? `<div class="aa-a">Réponse : ${d.decision ? `[${esc(d.decision)}] ` : ""}${esc(String(d.answer).slice(0, 600))}</div>` : ""}
         ${d.reason ? `<div class="aa-r">Raison : ${esc(d.reason)}</div>` : ""}
         ${d.why && d.status !== "applied" ? `<div class="aa-r">${esc(d.why)}</div>` : ""}
@@ -165,7 +165,7 @@
       <ul class="aa-list">${b.map(w => `<li class="aa-item" data-aa-backlog="${esc(w.key)}"><div class="aa-line"><span class="aa-when">${esc(day(w.since))}</span>
         <span class="aa-kind">${esc(KIND[w.kind] || w.kind)}</span>
         <span class="aa-on">${w.kind === "gap" ? targetHtml({ type: "gap", label: `lacune « ${w.gapKey || w.key} »` }) : targetHtml({ type: w.run ? "run" : "project", id: w.run, project: w.project, label: w.run ? `exécution ${w.run}` : w.project || "—" })}</span></div>
-        <div class="aa-q">${esc(w.question)}</div><div class="aa-r aa-dim">${esc(w.reasonText || w.reason)}</div></li>`).join("")}</ul></details>`;
+        <div class="aa-q">${window.Salle?.questionHtml ? window.Salle.questionHtml(w.question) : esc(w.question)}</div><div class="aa-r aa-dim">${esc(w.reasonText || w.reason)}</div></li>`).join("")}</ul></details>`;
   }
 
   function renderOverlay() {

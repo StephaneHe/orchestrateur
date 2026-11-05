@@ -2159,6 +2159,34 @@ async function apiChecks(sb) {
       `réveil : compte rendu incomplet : ${String(w?.text).slice(0, 400)}`);
     return `notification ${n.report.length} car., réveil complet`;
   });
+  // User (2026-11-05): « Ta question n'est pas claire et incomplete, corrige la » —
+  // a question cut at 160 characters on the card, whole in the musician's result.
+  await check(S, 'question-full', 'Question de 1 000 caractères : entière dans /api/pupitre, /api/config, la carte du chef et le journal, plus jamais coupée', async () => {
+    if (!/questionOf/.test(fs.readFileSync(path.join(sb.root, 'public', 'turn-core.js'), 'utf8'))) NA('question coupée dans cet état du code');
+    const logFile = path.join(sb.root, 'logs', 'zeta.jsonl');
+    const at = (s) => new Date(Date.now() + s).toISOString();
+    let q = 'Le rapport peut garder les réponses brutes ou seulement leur synthèse.';
+    while (q.length < 984) q += ' Choix numéro ' + q.length;
+    q = q.slice(0, 984) + ' FIN-DE-QUESTION';
+    assert(q.length === 1000, `taille de la fixture : ${q.length}`);
+    const text = `Bilan du tour.\nNEEDS_USER_INPUT: ${q}`;
+    for (const ev of [
+      { type: 'user_prompt', text: 'Fais le point', source: 'chef', timestamp: at(0) },
+      { type: 'system', subtype: 'init', session_id: 's-question-full', timestamp: at(1) },
+      { type: 'assistant', message: { content: [{ type: 'text', text }] }, timestamp: at(2) },
+      { type: 'result', subtype: 'success', result: text, num_turns: 1, duration_ms: 3000, duration_api_ms: 2000, stop_reason: 'end_turn', timestamp: at(3) },
+    ]) fs.appendFileSync(logFile, JSON.stringify(ev) + '\n');
+    const row = await until(async () => { const r = (await json('/api/pupitre')).fleet.find(x => x.name === 'zeta'); return r?.needsInput ? r : null; }, 10_000);
+    assert(row?.needsInput === q, `/api/pupitre : ${row?.needsInput?.length} caractères`);
+    const cfg = (await json('/api/config')).projects.find(p => p.name === 'zeta');
+    assert(cfg.lastLine === q, `/api/config : ${cfg.lastLine?.length} caractères`);
+    const card = await until(async () => readLog('chef').filter(e => e.type === 'notification' && e.source === 'zeta' && e.outcome === 'question').pop() || null, 10_000);
+    assert(card?.summary === q, `carte du chef : ${card?.summary?.length} caractères`);
+    const turn = (await json('/api/project/zeta/journal?n=1')).turns?.[0];
+    assert(turn?.question === q, `journal : ${turn?.question?.length} caractères`);
+    await post('/api/question/zeta/resolve', { note: 'recette', by: 'regression' });
+    return '1000 caractères partout';
+  });
   // User request (2026-10-22): « peut-on le mettre dans le code à la place ou en
   // plus de ta mémoire ? » — a pipeline run awaited by the chef that pauses on a
   // question to the USER wakes the chef (« ⇄ attend ta décision »); a plain

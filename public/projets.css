@@ -140,6 +140,7 @@
 .pv-chip-model { color: var(--fg-2); max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
 .pv-line  { grid-area: l; font-size: 0.7188rem; color: var(--fg-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pv-tile[data-kind="question"] .pv-line { color: var(--fg-0); }
+.pv-line.is-question { white-space: normal; }
 .pv-age   { grid-area: a; font-size: 0.6563rem; color: var(--fg-2); white-space: nowrap; text-align: right; }
 .pv-age.is-live { color: var(--fg-1); }
 .projects.is-stale .pv-age { color: var(--fg-3); }

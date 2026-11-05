@@ -274,11 +274,11 @@ class Musician {
       this.totalCacheReadTokens += cacheRead;
       this.totalCacheCreateTokens += cacheCreate;
       this.lastTurnUsage = { inTok, outTok, cacheRead, cacheCreate, cost, ctxUsed, ctxMax };
-      const needs = /^NEEDS_USER_INPUT:\s*(.*)$/m.exec(this.lastAssistantText || "");
+      const needs = window.TurnCore.questionOf(this.lastAssistantText);
       // NEEDS_CHEF_INPUT = the turn is over but the musician is blocked on a chef
       // decision. State stays `unread` (locked vocabulary); this ADDITIVE flag is
       // what stops the card from claiming "terminé".
-      this.awaitingChef = !needs && (
+      this.awaitingChef = needs === null && (
         NEEDS_CHEF_INPUT_RE.test(this.lastAssistantText || "") ||
         (typeof raw.result === "string" && NEEDS_CHEF_INPUT_RE.test(raw.result))
       );
@@ -295,8 +295,8 @@ class Musician {
       } else if (isErr) {
         this.lastLine = raw.subtype || "échec du tour";
         this.setState("error");
-      } else if (needs) {
-        this.lastLine = needs[1].trim().slice(0, 140);
+      } else if (needs !== null) {
+        this.lastLine = needs;
         this.setState("input");             // musician explicitly asked a question
       } else {
         // Only count this result as unread if it happened AFTER the last
@@ -2362,7 +2362,7 @@ const App = {
     this.composer.answerFor = { name, question: q };
     const input = $("#composer-input");
     if (input) {
-      const prefix = `Réponse pour ${name} à sa question « ${q.slice(0, 160)}${q.length > 160 ? "…" : ""} » : `;
+      const prefix = window.TurnCore.answerPrefix(name, q);
       if (!input.value.startsWith(prefix)) input.value = prefix + input.value.replace(/^@\S+\s*/, "");
       input.focus();
       input.setSelectionRange(input.value.length, input.value.length);
@@ -2413,7 +2413,7 @@ const App = {
     el.hidden = false;
     el.innerHTML =
       `<span class="cc-label">${ctx.kg ? "🧠 Corriger la source d’un fait de la mémoire — propriétaire :" : ctx.todo && ctx.discuss ? "💬 Discussion (rien ne sera lancé) — item TODO de" : ctx.todo ? "Item TODO de" : ctx.about ? "Au chef, à propos de" : "Réponse via le chef pour"} ${esc(ctx.name)}${ctx.todo ? " — Entrée ou ➤ pour l’envoyer au chef" : ""}</span>` +
-      (ctx.question ? `<span class="cc-quote">« ${esc(ctx.question.slice(0, 160))} »</span>` : `<span class="cc-quote"></span>`) +
+      (ctx.question ? `<span class="cc-quote is-question">« ${Salle.questionHtml(ctx.question, { name: ctx.todo ? "" : ctx.name, max: 160 })} »</span>` : `<span class="cc-quote"></span>`) +
       `<button class="cc-close" aria-label="Retirer le contexte">✕</button>`;
     $(".cc-close", el).addEventListener("click", () => {
       this.composer.answerFor = null;

@@ -245,11 +245,11 @@ export function deriveState(lines) {
       state = hasTool ? 'live' : (hasThink ? 'think' : 'live');
     } else if (t === 'result') {
       const isErr = !!ev.is_error || (typeof ev.subtype === 'string' && ev.subtype.startsWith('error'));
-      const needs = /^NEEDS_USER_INPUT:\s*(.*)$/m.exec(lastAssistantText);
+      const needs = TurnCore.questionOf(lastAssistantText);
       if (isConductorStop(ev)) stopped = stopInfo(ev);
       if (isErr && ev.synthetic) state = 'idle';          // crash/restart — no question posed
-      else state = isErr ? 'error' : (needs ? 'input' : 'unread');
-      awaitingChef = !isErr && !needs &&
+      else state = isErr ? 'error' : (needs !== null ? 'input' : 'unread');
+      awaitingChef = !isErr && needs === null &&
         (/NEEDS_CHEF_INPUT:/i.test(lastAssistantText || '') ||
          (typeof ev.result === 'string' && /NEEDS_CHEF_INPUT:/i.test(ev.result)));
       turnStartTs = null;                                  // turn is over
@@ -510,7 +510,7 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
   // Seulement si la question est ENCORE ouverte : avant 0.25.0 le texte de la
   // dernière question restait remonté pendant le tour suivant et après un
   // acquittement (fleet-status affichait « needs: … » indéfiniment).
-  const needs = state === 'input' ? /^NEEDS_USER_INPUT:\s*(.*)$/m.exec(lastAssistantText || '') : null;
+  const needs = state === 'input' ? TurnCore.questionOf(lastAssistantText) : null;
   const turnElapsedMs = inFlight && turnStartTs ? (now - turnStartTs) : null;
   const lastTurn = lastTurnOf(lines);
   // Le `result` du CLI n'est pas horodaté : s'il est le dernier événement, sa
@@ -577,7 +577,7 @@ export function scanProject(name, logsDir = DEFAULT_LOGS) {
     pidAlive: alive,
     model: model || null,
     provider: provider || null,
-    needsInput: needs ? needs[1].trim().slice(0, 160) : null,
+    needsInput: needs || null,
     // Additif : dernier acquittement (« répondue via le chef »), pour l'UI.
     questionResolved: resolution,
     // Additif 0.134.0 : début (ms) du dernier tour ouvert dans la fenêtre — une
