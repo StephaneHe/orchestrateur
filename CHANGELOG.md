@@ -11,6 +11,18 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.163.0] - 2026-11-05
+
+### Added
+- (server) Clicking a file reference in the thread now always offers a way to open it, instead of « ⚠ Identifiant inconnu » for anything outside a project. The overlay of `public/id-links.js` shows the path and an « Ouvrir » button that works from the PC and the phone: text viewer (Markdown rendered with raw HTML left as text, other texts escaped), the existing `/api/media` player, or a download. A missing file and a refused one are told apart, each with the path and « Copier ». A relative path resolves in the thread's project. A known identifier (TODO item, run, version) keeps its information and gains the file behind it. A `[[https://…]]` is a direct link in a new tab; no other scheme is accepted.
+- (server) `GET /api/file` and `scripts/file-access.mjs`, the single allowlist: `I:Dev`, `I:orchestrateur`, `I:Enregistrements`, and the `anonymise` and `etude` session folders. Always refused, even under a root: the `brut` and `responses` trees, `.env*`, `.token`, `*.key`, `*.pem`, `credentials*`, `auth.json`, `.git`, `attachments`, plus secrets of the same nature found on this machine (`.orchestrateur-secret`, `.credentials*`, `secrets`, keystores, private keys, `.netrc`, `.npmrc`). Also refused: `..`, UNC paths, symbolic links, junctions, 8.3 short names, alternate data streams, trailing dots. A text is always `text/plain`, `no-store`, `nosniff`, up to 2 MiB; beyond that, or for any other format, an attachment. Server restart needed.
+
+### Changed
+- (server) `GET /api/media` uses the same allowlist and refusals, so it also plays the new roots and no longer serves images from `.git` or named `.env*`. This server's own uploads stay served for the thread's previews. It now sends `nosniff`.
+
+### Security
+- (server) `GET /api/identify` no longer reports the size or date of a refused file.
+
 ## [0.162.3] - 2026-11-03
 
 ### Fixed

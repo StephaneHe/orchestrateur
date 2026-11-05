@@ -48,6 +48,16 @@ code a.idref { color: inherit; }
   min-height: 2.25rem; padding: 0 0.9rem; font-size: 0.8125rem; cursor: pointer;
   background: transparent; color: var(--st-live); border: 1px solid rgba(45, 255, 122, 0.35); border-radius: 5px;
 }
+a.idov-link { display: inline-flex; align-items: center; text-decoration: none; }
+.idov-dialog.idov-wide { width: min(60rem, calc(100vw - 2rem)); }
+.idov-file { display: flex; flex-direction: column; gap: 0.4rem; }
+.idov-file-path code { font-family: var(--font-mono, monospace); font-size: 0.75rem; color: var(--fg-1); overflow-wrap: anywhere; }
+.idov-file-note { margin: 0; color: var(--fg-1); font-weight: 600; line-height: 1.5; }
+.idov-file-missing { color: var(--st-think); }
+.idov-file-refused { color: var(--st-error); }
+.idov-viewer { min-height: 0; overflow-wrap: anywhere; }
+.idov-text { margin: 0; white-space: pre-wrap; font-family: var(--font-mono, monospace); font-size: 0.75rem; color: var(--fg-1); }
+.idov-media { display: block; max-width: 100%; max-height: 70vh; }
 .idov-unknown { margin: 0; color: var(--st-think); font-weight: 600; }
 .idov-msg, .idov-loading { margin: 0; color: var(--fg-2); line-height: 1.5; }
 @media (max-width: 767.98px) {

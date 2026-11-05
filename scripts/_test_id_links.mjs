@@ -110,7 +110,7 @@ const projects = [{ name: 'chef', path: path.join(T, 'chef') }, { name: 'alpha',
 fs.mkdirSync(projects[0].path);
 const todoOf = (p) => { try { return parseTodo(fs.readFileSync(path.join(p.path, 'TODO_LIST.md'), 'utf8'), { project: p.name }); } catch { return null; } };
 const ctx = (contextProject = null) => ({ root: SRV, logsDir: LOGS, projects, conductor: 'chef', todoOf, pipelines: PIPELINES,
-  assignments: { 'routage.classifier': { provider: 'anthropic', model: 'claude-haiku-5-5' } }, serverVersion: '0.107.0', contextProject });
+  assignments: { 'routage.classifier': { provider: 'anthropic', model: 'claude-haiku-5-5' } }, serverVersion: '0.107.0', contextProject, fileRoots: [A, SRV, LOGS, projects[0].path] });
 const R = (id, kind = '', p = null) => resolveId(id, kind, ctx(p));
 
 r = await R('t-1a2b3c');

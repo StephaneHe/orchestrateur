@@ -16,12 +16,12 @@
 (function (global) {
   "use strict";
 
-  const KINDS = ["todo", "run", "queue", "attente", "commit", "version", "projet", "fichier", "case"];
+  const KINDS = ["todo", "run", "queue", "attente", "commit", "version", "projet", "fichier", "case", "url"];
   const ALIASES = {
     todo: "todo", tache: "todo", "tâche": "todo", item: "todo", run: "run", execution: "run", "exécution": "run",
     queue: "queue", attente: "attente", pending: "attente", commit: "commit", sha: "commit", version: "version",
     projet: "projet", project: "projet", musicien: "projet", fichier: "fichier", file: "fichier", chemin: "fichier",
-    path: "fichier", case: "case", slot: "case",
+    path: "fichier", case: "case", slot: "case", url: "url", lien: "url",
   };
   // Project names that are generic words are linked only when marked [[…]]. A
   // lowercase name (maybe an everyday word) is not linked right after a
@@ -29,7 +29,7 @@
   const COMMON_WORDS = new Set(["index", "test", "tests", "demo", "app", "server", "serveur", "docs", "notes",
     "data", "main", "home", "api", "web", "core", "chef", "projet", "lab"]);
   const DETERMINER = "(?<!(?:^|[^\\p{L}])(?:le|la|les|l'|l’|de|du|des|un|une|en|ma|ta|sa|ce|cette|mon|ton|son|the|a|an|this|my)\\s+)";
-  const FILE_EXT = "mjs|cjs|js|jsx|ts|tsx|json|jsonl|ndjson|md|kt|kts|java|gradle|css|html|htm|ps1|psm1|py|sh|bat|cmd|txt|log|yml|yaml|toml|xml|csv|sql|apk|png|jpg|jpeg|gif|webp|mp4|webm|mov|svg|lock|env|go|rs|c|h|cpp";
+  const FILE_EXT = "mjs|cjs|js|jsx|ts|tsx|json|jsonl|ndjson|md|kt|kts|java|gradle|css|html|htm|ps1|psm1|py|sh|bat|cmd|txt|log|yml|yaml|toml|xml|csv|sql|apk|png|jpg|jpeg|gif|webp|mp4|webm|mov|svg|lock|env|go|rs|c|h|cpp|srt|vtt|pdf";
   const NOT_FILES = /^(?:node|vue|next|nuxt|express|three|d3|chart|react|socket\.io|p5)\.js$/i;
 
   let vocab = { projects: [], slots: [], conductor: null };
@@ -37,6 +37,8 @@
 
   const escRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const escAttr = (s) => String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const HTTP_URL_RE = /^https?:\/\/[^\s<>"'`]+$/i;
 
   function build() {
     const names = (vocab.projects || [])
@@ -98,6 +100,8 @@
       ` title="Qu’est-ce que c’est ? (cliquer)">${text}</a>`;
   }
 
+  const urlLink = (url) => `<a class="idref-url" href="${escAttr(url)}" target="_blank" rel="noopener noreferrer">${escAttr(url)}</a>`;
+
   /** Replaces identifiers in one text node (already HTML-escaped). */
   function linkText(t) {
     rx.lastIndex = 0;
@@ -106,6 +110,7 @@
       if (g.explicit !== undefined) {
         const { kind, value } = splitExplicit(unesc(g.explicit));
         if (!value) return m;
+        if (HTTP_URL_RE.test(value)) return urlLink(value);
         return link(escAttr(value), value, kind) + (!kind || kind === "fichier" ? mediaPreview(value) : "");
       }
       if (g.file !== undefined) return NOT_FILES.test(m) ? m : link(m, unesc(m), "fichier") + mediaPreview(unesc(m));
@@ -122,7 +127,8 @@
 
   /** Sanitized HTML → same HTML with identifiers turned into links. */
   function linkify(html) {
-    const s = String(html || "");
+    // The Markdown path has already made a link of a bare URL: only its [[ ]] remain to drop.
+    const s = String(html || "").replace(/\[\[(?:(?:url|lien|fichier|file|chemin|path)\s*:\s*)?(<a\b[^>]*\bhref="https?:[^>]*>[^<]*<\/a>)\]\]/gi, "$1");
     if (!s) return s;
     let skip = 0;             // depth inside <a> / <pre>
     const out = [];
@@ -147,12 +153,30 @@
     return String(text || "").replace(/\[\[([^\[\]\n]{1,200})\]\]/g, (m, inner) => splitExplicit(inner).value || m);
   }
 
-  const pure = { linkify, strip, setVocab, splitExplicit, KINDS };
+  const fileUrl = (p, download) => `/api/file?path=${encodeURIComponent(p)}${download ? "&download=1" : ""}`;
+
+  /** The file part of the overlay: the path and how to open it, or which of missing / refused it is. */
+  function fileBlockHtml(file) {
+    if (!file) return "";
+    const p = file.path || "";
+    const copy = `<button type="button" class="idov-link idov-copy" data-file-copy="${esc(p)}">Copier</button>`;
+    const shown = `<div class="idov-file-path"><code>${esc(p)}</code></div>`;
+    const block = (status, note, actions) => `<div class="idov-file" data-file-status="${status}">${note}${shown}<div class="idov-links">${actions}</div></div>`;
+    if (file.status === "refused") return block("refused", `<p class="idov-file-note idov-file-refused">🔒 Fichier non autorisé : ${esc(file.reason || "accès refusé")}.</p>`, copy);
+    if (file.status === "missing") return block("missing", `<p class="idov-file-note idov-file-missing">⚠ Fichier introuvable : il n’existe pas à cet emplacement.</p>`, copy);
+    if (file.status === "directory") return block("directory", `<p class="idov-file-note">C’est un dossier : il n’y a rien à ouvrir.</p>`, copy);
+    const open = file.open || "download";
+    const action = open === "download"
+      ? `<a class="idov-link idov-open" href="${esc(fileUrl(p, true))}" download>Ouvrir (télécharger)</a>`
+      : `<button type="button" class="idov-link idov-open" data-file-open="${esc(open)}" data-file-path="${esc(p)}">Ouvrir</button>`;
+    return block("ok", "", action + copy);
+  }
+
+  const pure = { linkify, strip, setVocab, splitExplicit, fileBlockHtml, KINDS };
   if (typeof document === "undefined") { global.IdLinks = pure; return; }
 
   // ── Overlay ────────────────────────────────────────────────────────────────
-  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  const ov = { el: null, returnFocus: null, seq: 0, current: null };
+  const ov = { el: null, returnFocus: null, seq: 0, current: null, last: null };
 
   function overlayEl() {
     if (ov.el) return ov.el;
@@ -168,6 +192,11 @@
       </section>`;
     el.addEventListener("click", (e) => {
       if (e.target.closest("[data-idov-close]")) { close(); return; }
+      const c = e.target.closest("[data-file-copy]");
+      if (c) { copyPath(c); return; }
+      const o = e.target.closest("[data-file-open]");
+      if (o) { openFile(o.dataset.fileOpen, o.dataset.filePath); return; }
+      if (e.target.closest("[data-file-back]")) { render(ov.last); return; }
       const a = e.target.closest("[data-idov-link]");
       if (a) { e.preventDefault(); follow(JSON.parse(a.dataset.idovLink)); }
     });
@@ -191,14 +220,67 @@
     return d.toLocaleString("fr-FR", { dateStyle: "medium", timeStyle: /T\d\d:\d\d/.test(String(s)) ? "short" : undefined });
   }
 
+  async function copyPath(btn) {
+    const text = btn.dataset.fileCopy || "";
+    try { await navigator.clipboard.writeText(text); }
+    catch {
+      // navigator.clipboard does not exist over plain http (the phone, through Tailscale).
+      const ta = Object.assign(document.createElement("textarea"), { value: text });
+      btn.parentNode.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); } catch { /* the path stays on screen */ }
+      ta.remove();
+    }
+    btn.textContent = "Copié ✓";
+  }
+
+  function mediaHtml(kind, p) {
+    const src = esc(`/api/media?path=${encodeURIComponent(p)}`);
+    if (kind === "image") return `<img class="idov-media" alt="${esc(p.split(/[\\/]/).pop())}" src="${src}">`;
+    return kind === "video"
+      ? `<video class="idov-media" controls playsinline src="${src}"></video>`
+      : `<audio class="idov-media" controls src="${src}"></audio>`;
+  }
+
+  /** The integrated viewer: a text fetched from /api/file, or the existing media player. */
+  async function openFile(kind, p) {
+    const el = overlayEl();
+    const seq = ++ov.seq;
+    const body = el.querySelector(".idov-body");
+    const back = `<div class="idov-links"><button type="button" class="idov-link" data-file-back>← Retour</button>` +
+      `<a class="idov-link" href="${esc(fileUrl(p, true))}" download>Télécharger</a></div>`;
+    el.querySelector(".idov-dialog").classList.add("idov-wide");
+    if (kind !== "text") { body.innerHTML = `${back}<div class="idov-viewer" data-viewer="${esc(kind)}">${mediaHtml(kind, p)}</div>`; return; }
+    body.innerHTML = `${back}<p class="idov-loading">Lecture de « ${esc(p)} »…</p>`;
+    let html;
+    try {
+      const resp = await fetch(fileUrl(p));
+      if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).error || `HTTP ${resp.status}`);
+      // Grown past the viewer's limit since the overlay opened: the server answers with an attachment.
+      if (/attachment/i.test(resp.headers.get("content-disposition") || "")) throw new Error("fichier devenu trop gros pour la visionneuse : téléchargez-le");
+      const text = await resp.text();
+      // html:false: raw HTML in a document stays text, whatever it contains.
+      html = /\.(?:md|markdown)$/i.test(p) && typeof global.mdToHtml === "function"
+        ? `<div class="idov-viewer md" data-viewer="markdown">${global.mdToHtml(text, { html: false, idrefs: false })}</div>`
+        : `<pre class="idov-viewer idov-text" data-viewer="text">${esc(text)}</pre>`;
+    } catch (e) {
+      html = `<p class="idov-file-note idov-file-refused">Impossible d’ouvrir ce fichier : ${esc(e.message)}.</p>`;
+    }
+    if (seq !== ov.seq || el.hidden) return;
+    body.innerHTML = back + html;
+  }
+
   function render(r) {
     const el = overlayEl();
     const dialog = el.querySelector(".idov-dialog");
+    ov.last = r;
+    dialog.classList.remove("idov-wide");
     dialog.dataset.known = r.known ? "1" : "0";
     dialog.dataset.kind = r.kind || "";
     el.querySelector(".idov-kind").textContent = r.kindLabel || (r.known ? "Identifiant" : "Identifiant inconnu");
     el.querySelector(".idov-title").textContent = r.known ? (r.title || r.id) : r.id;
     const body = el.querySelector(".idov-body");
+    if (!r.known && r.file) { body.innerHTML = fileBlockHtml(r.file); return; }
+    if (!r.known && r.kind === "url") { body.innerHTML = `<p class="idov-file-note idov-file-refused">🔒 ${esc(r.message)}</p>`; return; }
     if (!r.known) {
       body.innerHTML = `<p class="idov-unknown">⚠ Identifiant inconnu</p><p class="idov-msg">${esc(r.message || "L’orchestrateur ne trouve pas cet identifiant.")}</p>`;
       return;
@@ -212,7 +294,9 @@
       ${st || proj || date ? `<div class="idov-tags">${st}${proj}${date}</div>` : ""}
       ${r.summary ? `<p class="idov-summary">${esc(r.summary).replace(/\n/g, "<br>")}</p>` : ""}
       ${rows ? `<div class="idov-rows">${rows}</div>` : ""}
-      ${links ? `<div class="idov-links">${links}</div>` : ""}`;
+      ${r.url ? `<div class="idov-links"><a class="idov-link idov-open" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">Ouvrir</a></div>` : ""}
+      ${fileBlockHtml(r.file)}
+      ${links ?`<div class="idov-links">${links}</div>` : ""}`;
   }
 
   async function open(id, kind, project) {

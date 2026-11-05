@@ -93,6 +93,7 @@ import { readGitGraph, GIT_N_DEFAULT, GIT_N_MAX } from './scripts/git-graph-core
 import { releaseList, lastRelease } from './scripts/release-notes.mjs';
 import { listRequests, buildRequest, TASK_STATES } from './scripts/request-map.mjs';
 import { resolveId, idVocabulary } from './scripts/id-resolve.mjs';
+import { accessFile, splitLine, MEDIA_TYPES } from './scripts/file-access.mjs';
 import { mountGatewayRoutes } from './scripts/responses-gateway.mjs';
 import './public/attach-policy.js';   // sets globalThis.AttachPolicy (chat attachments, 0.108.0)
 // Clés NVIDIA / OpenRouter saisies dans la page Models (0.43.0).
@@ -2866,23 +2867,39 @@ function todoOf(project) {
   todoCache.set(project.name, { key, items });
   return items;
 }
-// Read-only media viewer (0.154.0): images, videos and sounds under the fleet roots only,
-// path resolved (realpath) before the check; videos and sounds honour Range via sendFile.
-const MEDIA_TYPES = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
-  '.webp': 'image/webp', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime',
-  '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.flac': 'audio/flac', '.opus': 'audio/ogg' };
+// Read-only media viewer (0.154.0): images, videos and sounds allowed by file-access.mjs
+// (0.163.0, one allowlist with /api/file), plus this server's own uploads, whose previews
+// the thread shows; videos and sounds honour Range via sendFile.
 app.get('/api/media', (req, res) => {
+  res.set('X-Content-Type-Options', 'nosniff');
   const raw = typeof req.query.path === 'string' ? req.query.path : '';
   const type = MEDIA_TYPES[path.extname(raw).toLowerCase()];
   if (!raw || raw.includes('\0') || !type) return res.status(404).end();
   let real;
   try { real = fs.realpathSync(path.resolve(raw)); } catch { return res.status(404).end(); }
-  const roots = ['I:\\Dev', __dirname, ATTACHMENTS_DIR].map(r => { try { return fs.realpathSync(r); } catch { return path.resolve(r); } });
-  const under = roots.some(r => real.toLowerCase().startsWith(r.toLowerCase() + path.sep));
-  if (!under || !MEDIA_TYPES[path.extname(real).toLowerCase()]) return res.status(404).end();
+  let uploads;
+  try { uploads = fs.realpathSync(ATTACHMENTS_DIR); } catch { uploads = path.resolve(ATTACHMENTS_DIR); }
+  const isUpload = real.toLowerCase().startsWith(uploads.toLowerCase() + path.sep);
+  if (!isUpload && accessFile(raw).status !== 'ok') return res.status(404).end();
+  if (!MEDIA_TYPES[path.extname(real).toLowerCase()]) return res.status(404).end();
   try { if (!fs.statSync(real).isFile()) return res.status(404).end(); } catch { return res.status(404).end(); }
   res.type(type);
   res.sendFile(real, { acceptRanges: true, dotfiles: 'allow' }, (err) => { if (err && !res.headersSent) res.status(404).end(); });
+});
+// Opening a file cited in the thread (0.163.0, scripts/file-access.mjs). A text comes back as
+// text/plain whatever its extension (an .html or .svg never runs here); anything else, or a
+// text above TEXT_VIEW_MAX, is an attachment. GET only.
+app.get('/api/file', (req, res) => {
+  res.set({ 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; sandbox" });
+  const raw = typeof req.query.path === 'string' ? req.query.path : '';
+  const project = (config.projects || []).find(p => p?.name === req.query.project && p.path);
+  const a = accessFile(splitLine(raw).target, { base: project?.path || null });
+  if (a.status === 'refused') return res.status(403).json({ ok: false, status: a.status, code: a.code, path: a.path, error: a.reason });
+  if (a.status !== 'ok') return res.status(404).json({ ok: false, status: a.status, path: a.path, error: a.status === 'directory' ? 'c’est un dossier' : 'fichier introuvable' });
+  const inline = a.open === 'text' && req.query.download !== '1';
+  if (inline) res.set('Content-Type', 'text/plain; charset=utf-8');
+  else { res.attachment(path.basename(a.path)); res.set('Content-Type', 'application/octet-stream'); }
+  res.sendFile(a.path, { dotfiles: 'allow', cacheControl: false, etag: false, lastModified: false }, (err) => { if (err && !res.headersSent) res.status(404).end(); });
 });
 app.get('/api/todo', (req, res) => {
   const only = typeof req.query.project === 'string' && req.query.project ? req.query.project : null;

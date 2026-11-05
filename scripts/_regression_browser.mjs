@@ -2577,6 +2577,78 @@ export async function browserChecks(sb, t) {
       }
       return `liens ${refs.join(', ')} ; connu, inconnu et case expliqués ; ${todoOk}`;
     });
+    // User request (2026-11-05): « Je voudrais que si c'est un identifiant, que ca remonte les
+    // informations, mais que de toutes facons ca me fasse un lien pour ouvrir le fichier (local ou web) ».
+    await check(B, 'file-open', 'Ouvrir un fichier cité : un chemin n’affiche jamais « Identifiant inconnu » ; visionneuse (Markdown sans HTML brut ni script, texte échappé), lecteur d’image, téléchargement ; absent et non autorisé dits clairement avec Copier ; URL en lien direct', async () => {
+      if (!fs.existsSync(path.join(sb.root, 'scripts', 'file-access.mjs'))) NA('ouverture de fichier absente de cet état du code');
+      const dir = path.join(sb.root, 'fichiers-fictifs-nav');
+      fs.mkdirSync(dir, { recursive: true });
+      const at = (n) => path.join(dir, n);
+      fs.writeFileSync(at('doc.md'), '# Titre fictif\n\n<img src=x onerror="window.__xss=1"><script>window.__xss=1</script>\n\n[piège](javascript:window.__xss=1)\n');
+      fs.writeFileSync(at('note.txt'), '<b>texte brut</b>');
+      fs.writeFileSync(at('a.zip'), 'PK-fictif');
+      fs.writeFileSync(at('.env'), 'FICTIF');
+      fs.writeFileSync(at('image.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64'));
+      const text = `FILEOPEN [[fichier:${at('doc.md')}]] [[${at('note.txt')}]] [[${at('a.zip')}]] [[${at('image.png')}]] [[${at('absent.md')}]] [[${at('.env')}]] [[https://exemple.test/page]]`;
+      appendLog('chef', [
+        { type: 'user_prompt', text: 'Recette fichiers' },
+        { type: 'system', subtype: 'init', model: 'claude-opus-5-5' },
+        { type: 'assistant', message: { content: [{ type: 'text', text }] } },
+        { type: 'result', subtype: 'success', is_error: false, num_turns: 1, duration_ms: 1000, duration_api_ms: 800, result: text },
+      ]);
+      await tp.goto(`${sb.url}/?token=${sb.token}`);
+      await tp.locator('.brand').waitFor();
+      const bubble = tp.locator('#cv-scroll .cv-bubble.is-conductor', { hasText: 'FILEOPEN' }).last();
+      assert(await until(async () => (await bubble.count()) > 0, 10_000), 'bulle absente');
+      const openRef = async (name) => {
+        await bubble.locator(`a.idref[data-idref$="${name}"]`).first().click();
+        assert(await until(async () => (await tp.locator('#idref-overlay .idov-file').count()) > 0, 5000), `pas de bloc fichier pour ${name}`);
+        const body = await tp.locator('#idref-overlay .idov-dialog').textContent();
+        assert(!/Identifiant inconnu/.test(body), `« Identifiant inconnu » pour ${name} : ${body}`);
+        return body;
+      };
+      const closeOv = async () => { await tp.keyboard.press('Escape'); assert(await until(async () => !(await visible(tp, '#idref-overlay')), 2000), 'overlay non fermé'); };
+      await openRef('doc.md');
+      await tp.click('#idref-overlay .idov-open');
+      const mdView = tp.locator('#idref-overlay .idov-viewer[data-viewer="markdown"]');
+      assert(await until(async () => (await mdView.count()) > 0, 5000), 'visionneuse Markdown absente');
+      assert((await mdView.locator('h1').textContent()) === 'Titre fictif', 'Markdown non rendu');
+      assert((await mdView.locator('img, script').count()) === 0, 'HTML brut interprété');
+      assert(/onerror/.test(await mdView.textContent()), 'le HTML brut doit rester du texte');
+      assert((await mdView.locator('a[href^="javascript"]').count()) === 0, 'lien javascript: rendu');
+      assert((await tp.evaluate(() => window.__xss)) === undefined, 'script exécuté');
+      await shot(tp, 'file-open-markdown');
+      await tp.click('#idref-overlay [data-file-back]');
+      assert(await until(async () => (await tp.locator('#idref-overlay .idov-open').count()) > 0, 2000), '« Retour » ne ramène pas au panneau');
+      await closeOv();
+      await openRef('note.txt');
+      await tp.click('#idref-overlay .idov-open');
+      const txt = tp.locator('#idref-overlay pre.idov-viewer[data-viewer="text"]');
+      assert(await until(async () => (await txt.count()) > 0, 5000), 'visionneuse de texte absente');
+      assert((await txt.textContent()) === '<b>texte brut</b>' && (await txt.locator('b').count()) === 0, 'texte non échappé');
+      await closeOv();
+      await openRef('image.png');
+      await tp.click('#idref-overlay .idov-open');
+      assert(await until(async () => tp.evaluate(() => { const i = document.querySelector('#idref-overlay img.idov-media'); return !!i && i.complete && i.naturalWidth === 1 && /^\/api\/media\?/.test(i.getAttribute('src')); }), 5000), 'lecteur d’image absent');
+      await closeOv();
+      await openRef('a.zip');
+      const dl = await tp.locator('#idref-overlay a.idov-open').getAttribute('href');
+      assert(/^\/api\/file\?.*download=1$/.test(dl), `téléchargement : ${dl}`);
+      await closeOv();
+      let body = await openRef('absent.md');
+      assert(/introuvable/.test(body) && !/non autorisé/.test(body) && /absent\.md/.test(body) && (await tp.locator('#idref-overlay [data-file-copy]').count()) === 1 && (await tp.locator('#idref-overlay .idov-open').count()) === 0, `absent : ${body}`);
+      await closeOv();
+      await bubble.locator('a.idref[data-idref$=".env"]').first().click();
+      assert(await until(async () => (await tp.locator('#idref-overlay .idov-file[data-file-status="refused"]').count()) > 0, 5000), 'refus non affiché');
+      body = await tp.locator('#idref-overlay .idov-dialog').textContent();
+      assert(/non autorisé/.test(body) && !/introuvable|Identifiant inconnu|FICTIF/.test(body) && (await tp.locator('#idref-overlay .idov-open').count()) === 0, `refus : ${body}`);
+      await tp.click('#idref-overlay [data-file-copy]');
+      assert(await until(async () => /Copié/.test(await tp.locator('#idref-overlay [data-file-copy]').textContent()), 2000), 'Copier sans effet');
+      await closeOv();
+      const url = await bubble.locator('a[href="https://exemple.test/page"]').evaluate((a) => ({ target: a.target, rel: a.rel, idref: a.classList.contains('idref'), around: a.parentElement.textContent }));
+      assert(url.target === '_blank' && /noopener/.test(url.rel) && !url.idref && !/\[\[/.test(url.around), `URL : ${JSON.stringify(url)}`);
+      return 'Markdown sans script, texte échappé, image, téléchargement, absent, non autorisé, URL directe';
+    });
     await check(B, 'tts-settings', 'Lecture audio : réglages (voix, vitesse), lecture automatique d\'une nouvelle réponse, désactivation à chaud', async () => {
       if (!(await tp.evaluate(() => !!window.Tts))) NA('lecture audio absente de cet état du code');
       await tp.click('#btn-tweaks');

@@ -1482,6 +1482,39 @@ async function apiChecks(sb) {
     for (const method of ['POST', 'PUT', 'DELETE']) assert((await fetch(sb.url + '/api/identify?id=t-a10001', { method, headers: H })).status === 404, `${method} accepté`);
     return `t-a10001, ${sha.slice(0, 7)}, v9.8.7 (omega), alpha, TODO_LIST.md, routage.classifier expliqués ; t-ffffff inconnu ; chemins hors projets refusés`;
   });
+  // 0.163.0 — user request (2026-11-05): « Je voudrais que si c'est un identifiant, que ca
+  // remonte les informations, mais que de toutes facons ca me fasse un lien pour ouvrir le fichier (local ou web) ».
+  await check(S, 'file-open', 'Ouvrir un fichier cité : GET /api/identify dit si le chemin est ouvrable, absent ou non autorisé ; GET /api/file sert le texte (text/plain, no-store, nosniff) ou un téléchargement, refuse .env, UNC et ..', async () => {
+    if (!fs.existsSync(path.join(sb.root, 'scripts', 'file-access.mjs'))) NA('ouverture de fichier absente de cet état du code');
+    const dir = path.join(sb.root, 'fichiers-fictifs-http');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'doc.md'), '# Fictif\n');
+    fs.writeFileSync(path.join(dir, 'a.zip'), 'PK-fictif');
+    fs.writeFileSync(path.join(dir, '.env'), 'FICTIF');
+    const idf = (id, q = {}) => json(`/api/identify?${new URLSearchParams({ id, ...q })}`);
+    const file = (p) => fetch(`${sb.url}/api/file?path=${encodeURIComponent(p)}`, { headers: H });
+    let r = await idf(path.join(dir, 'doc.md'));
+    assert(r.known && r.file?.status === 'ok' && r.file.open === 'text', `ouvrable : ${JSON.stringify(r).slice(0, 200)}`);
+    r = await idf(path.join(dir, 'absent.md'));
+    assert(r.file?.status === 'missing', `absent : ${JSON.stringify(r).slice(0, 200)}`);
+    r = await idf(path.join(dir, '.env'));
+    assert(r.file?.status === 'refused', `sensible : ${JSON.stringify(r).slice(0, 200)}`);
+    r = await idf('t-a10001');
+    assert(r.known && r.kind === 'todo' && r.file?.status === 'ok', `identifiant connu sans son fichier : ${JSON.stringify(r).slice(0, 200)}`);
+    r = await idf('https://exemple.test/a');
+    assert(r.kind === 'url' && r.url === 'https://exemple.test/a', `URL : ${JSON.stringify(r).slice(0, 200)}`);
+    let res = await file(path.join(dir, 'doc.md'));
+    assert(res.status === 200 && /^text\/plain/.test(res.headers.get('content-type')) && res.headers.get('cache-control') === 'no-store' && res.headers.get('x-content-type-options') === 'nosniff', `texte : ${res.status} ${res.headers.get('content-type')} ${res.headers.get('cache-control')}`);
+    await res.arrayBuffer();
+    res = await file(path.join(dir, 'a.zip'));
+    assert(res.status === 200 && /attachment/.test(res.headers.get('content-disposition') || ''), `téléchargement : ${res.headers.get('content-disposition')}`);
+    await res.arrayBuffer();
+    for (const bad of [path.join(dir, '.env'), '\\\\127.0.0.1\\c$\\x.txt', `${dir}\\..\\..\\package.json`, 'C:\\Windows\\win.ini']) {
+      res = await file(bad);
+      assert(res.status === 403 && !(await res.text()).includes('FICTIF'), `accepté : ${bad} → ${res.status}`);
+    }
+    return 'ouvrable, absent, sensible, identifiant, URL ; texte, téléchargement ; .env, UNC, .. et hors racine refusés';
+  });
   // 0.56.0 — phase 7 : relevé de la mise en service générale (« une semaine sans contournement »).
   await check(S, 'pipeline-health', 'Pipelines, phase 7 : relevé de la mise en service — exécutions, tours hors pipeline, tours ordinaires, refus (moteur et porte), pauses, jours complets sans contournement', async () => {
     if (!fs.existsSync(path.join(sb.root, 'scripts', 'pipeline-health.mjs'))) NA('relevé absent de cet état du code');

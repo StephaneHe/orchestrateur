@@ -1565,6 +1565,32 @@ ce qu'est cet identifiant ».
   encore les balises brutes.** Redémarrage nécessaire (routes, journal).
 - Recettes : `_test_id_links.mjs`, HTTP `identify`, navigateur `id-links`.
 
+## Ouvrir un fichier cité (0.163.0)
+
+Demande utilisateur (2026-11-05) : « Je voudrais que si c'est un identifiant, que
+ca remonte les informations, mais que de toutes facons ca me fasse un lien pour
+ouvrir le fichier (local ou web) ».
+
+- **`scripts/file-access.mjs`, seule source** de la liste d'autorisation et des
+  refus : `pathVerdict` (sur le texte seul, aucun accès disque : un chemin refusé
+  ne révèle jamais s'il existe), `accessFile` (compare le chemin réel au chemin
+  demandé : lien, jonction, nom court 8.3 refusés). Utilisé par `GET /api/file`,
+  `GET /api/media` (ses propres pièces jointes exceptées) et le bloc `file` de
+  `GET /api/identify`. **Ne jamais créer de seconde liste.** Aucune variable
+  d'environnement ne l'élargit ; `ctx.fileRoots` et l'option `roots` servent aux tests.
+- `file {status: ok|directory|missing|refused, path, open?, reason?, code?}`.
+  `known` reste faux pour un chemin absent ou refusé ; c'est `file` qui dit lequel
+  des deux, et le client n'affiche plus « Identifiant inconnu » dans ces cas.
+- Chemin relatif : dans le projet du fil ; sans projet (fil du chef), le premier
+  projet qui l'a. Identifiant adossé à un fichier : `filePath` du résolveur.
+- `/api/file` : texte = `text/plain` quelle que soit l'extension (un .html ou un
+  .svg ne s'exécute jamais), jusqu'à `TEXT_VIEW_MAX` (2 Mio) ; sinon pièce jointe.
+- Visionneuse : `mdToHtml(text, {html: false, idrefs: false})`. URL :
+  `a.idref-url`, http(s) seulement, y compris côté serveur (`kind: 'url'`).
+- Redémarrage nécessaire (routes). **L'app Android n'a pas encore ces actions.**
+- Recettes : `_test_file_open.mjs` (données fictives uniquement), HTTP et navigateur
+  `file-open`.
+
 ## Lecture audio des réponses du chef (0.35.0)
 
 Demande utilisateur : « implémente une fonction de lecture audio des réponses,

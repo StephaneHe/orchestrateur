@@ -17,15 +17,19 @@
 //   projet   a config.json name     config.json
 //   fichier  a path                 stat only, inside a project folder
 //   case     pipeline.step[.variant]  page Models (model-routing.json)
+//   url      http(s) only           the link itself (0.163.0)
 // READ-ONLY: no write, no content of a file, `git log` only (argv array,
 // GIT_OPTIONAL_LOCKS=0). An identifier nothing knows gets `known: false` and a
-// plain explanation, never an error.
+// plain explanation, never an error. A path always carries a `file` block
+// (scripts/file-access.mjs): ok, directory, missing or refused, known or not;
+// an identifier backed by a file (TODO list, CHANGELOG, run.json) carries it too.
 // ============================================================================
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { parseChangelog } from './release-notes.mjs';
+import { accessFile, splitLine } from './file-access.mjs';
 import { readPending, idOf as pendingIdOf, titleOf as pendingTitleOf } from './routage-pending.mjs';
 
 export const KINDS = {
@@ -38,6 +42,7 @@ export const KINDS = {
   projet: 'Projet (musicien)',
   fichier: 'Fichier',
   case: 'Case de la page Models',
+  url: 'Lien web',
 };
 // Prefixes a model may write in [[kind:value]]; the canonical ones come first.
 export const KIND_ALIASES = {
@@ -50,6 +55,7 @@ export const KIND_ALIASES = {
   projet: 'projet', project: 'projet', musicien: 'projet',
   fichier: 'fichier', file: 'fichier', chemin: 'fichier', path: 'fichier',
   case: 'case', slot: 'case',
+  url: 'url', lien: 'url',
 };
 
 export const TODO_RE = /^t-[0-9a-f]{6}$/;
@@ -59,6 +65,9 @@ export const VERSION_RE = /^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/;
 export const HEX8_RE = /^[0-9a-f]{8}$/;
 export const SHA_RE = /^[0-9a-f]{7,40}$/;
 export const SLOT_RE = /^[a-z0-9-]+\.[a-z0-9-]+(?:\.[a-z0-9-]+)?$/;
+const HTTP_URL_RE = /^https?:\/\/[^\s<>"'`]+$/i;
+// A scheme of two letters or more: "I:\x" is a drive, "a.js:12" a line number.
+const SCHEME_RE = /^[a-z][a-z0-9+.-]+:(?!\d)/i;
 const MAX_ID = 300;
 
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
@@ -108,6 +117,24 @@ function orderedProjects(ctx) {
   return out;
 }
 
+const access = (target, base, ctx) => accessFile(target, { base, ...(ctx.fileRoots ? { roots: ctx.fileRoots } : {}) });
+
+/**
+ * The file a path designates. A relative path resolves in the thread's project;
+ * with no project (the chef's thread), in the first project that has it.
+ */
+function locateFile(id, ctx) {
+  const { target } = splitLine(id);
+  if (path.isAbsolute(target) || /^[\\/]/.test(target)) return access(target, null, ctx);
+  const context = (ctx.projects || []).find(p => p?.name === ctx.contextProject && p.path);
+  const results = (context ? [context] : orderedProjects(ctx)).map(p => access(target, p.path, ctx));
+  const found = results.find(f => f.status === 'ok' || f.status === 'directory');
+  if (found) return found;
+  if (!results.length) return access(target, null, ctx);
+  if (context || results.every(f => f.status === 'refused')) return results[0];
+  return { status: 'missing', path: target };
+}
+
 const RESOLVERS = {
   todo(id, ctx) {
     for (const p of orderedProjects(ctx)) {
@@ -116,6 +143,7 @@ const RESOLVERS = {
       if (!i) continue;
       const state = i.rejected ? 'rejeté par l’utilisateur' : i.status === 'done' ? 'fait' : i.status === 'progress' ? 'en cours' : 'à faire';
       return {
+        filePath: path.join(p.path, 'TODO_LIST.md'),
         title: i.title, project: p.name, state, tone: i.rejected ? 'muted' : i.status === 'done' ? 'ok' : i.status === 'progress' ? 'live' : 'todo',
         date: i.addedAt || null,
         summary: clip(i.detailFull || i.detail || '', 600) || null,
@@ -135,6 +163,7 @@ const RESOLVERS = {
     const done = (st.steps || []).filter(s => s.status && !['failed', 'refused', 'running'].includes(s.status)).length;
     const STATUS = { running: 'en cours', paused: 'en pause', done: 'terminée', failed: 'en échec', abandoned: 'abandonnée' };
     return {
+      filePath: path.join(ctx.logsDir, 'runs', id, 'run.json'),
       title: `${pl?.label || st.pipeline}${st.mode ? ` (${st.mode})` : ''} — ${st.project}`,
       project: st.project, state: STATUS[st.status] || st.status, tone: st.status === 'done' ? 'ok' : st.status === 'running' ? 'live' : st.status === 'paused' ? 'todo' : 'bad',
       date: st.createdAt || null,
@@ -213,6 +242,7 @@ const RESOLVERS = {
       const isServer = path.resolve(p.path) === path.resolve(ctx.root || '');
       const items = entry.sections.flatMap(s => s.items.map(i => `${s.name} : ${clip(i, 220)}`));
       return {
+        filePath: path.join(p.path, 'CHANGELOG.md'),
         title: `Version ${v}${p.name ? ` de ${p.name}` : ''}`, project: p.name || null,
         state: isServer && ctx.serverVersion ? (ctx.serverVersion === v ? 'version servie par ce serveur'
           : `ce serveur sert la ${ctx.serverVersion}`) : null, tone: isServer && ctx.serverVersion === v ? 'ok' : 'neutral',
@@ -246,29 +276,24 @@ const RESOLVERS = {
   },
 
   fichier(id, ctx) {
-    const m = /^(.*?)(?::(\d+)(?::\d+)?)?$/.exec(id);
-    const rel = m[1], line = m[2] || null;
-    if (!rel || /\0/.test(rel)) return null;
-    // An absolute path belongs to the deepest project folder that contains it.
-    const candidates = orderedProjects(ctx);
-    if (path.isAbsolute(rel)) candidates.sort((a, b) => path.resolve(b.path).length - path.resolve(a.path).length);
-    for (const p of candidates) {
-      const base = path.resolve(p.path);
-      const full = path.isAbsolute(rel) ? path.resolve(rel) : path.resolve(base, rel);
-      const inside = full === base || full.startsWith(base + path.sep);
-      if (!inside) continue;
-      let st;
-      try { st = fs.statSync(full); } catch { continue; }
-      const relPath = path.relative(base, full).replace(/\\/g, '/') || '.';
-      return {
-        title: relPath, project: p.name || null, state: st.isDirectory() ? 'dossier' : 'fichier', tone: 'neutral',
-        date: st.mtime.toISOString(),
-        fields: [field('Projet', p.name || 'orchestrateur (ce serveur)'), field('Chemin', full), field('Ligne', line),
-          field('Taille', st.isDirectory() ? null : `${st.size.toLocaleString('fr-FR')} octets`), field('Modifié le', st.mtime.toISOString())].filter(Boolean),
-        links: p.name ? [{ label: `Volet de ${p.name}`, musician: p.name }] : [],
-      };
-    }
-    return null;
+    const { line } = splitLine(id);
+    const file = locateFile(id, ctx);
+    if (file.status !== 'ok' && file.status !== 'directory') return null;
+    const full = file.path;
+    // The deepest project folder that contains it; a file outside every project stays known.
+    const isIn = (p) => { const b = path.resolve(p.path).toLowerCase(); return full.toLowerCase() === b || full.toLowerCase().startsWith(b + path.sep); };
+    const owner = [...orderedProjects(ctx)].sort((a, b) => path.resolve(b.path).length - path.resolve(a.path).length).find(isIn);
+    const st = fs.statSync(full);
+    const isDir = file.status === 'directory';
+    return {
+      file,
+      title: owner ? path.relative(path.resolve(owner.path), full).replace(/\\/g, '/') || '.' : full,
+      project: owner?.name || null, state: isDir ? 'dossier' : 'fichier', tone: 'neutral',
+      date: st.mtime.toISOString(),
+      fields: [owner ? field('Projet', owner.name || 'orchestrateur (ce serveur)') : null, field('Chemin', full), field('Ligne', line),
+        field('Taille', isDir ? null : `${st.size.toLocaleString('fr-FR')} octets`), field('Modifié le', st.mtime.toISOString())].filter(Boolean),
+      links: owner?.name ? [{ label: `Volet de ${owner.name}`, musician: owner.name }] : [],
+    };
   },
 
   case(id, ctx) {
@@ -305,17 +330,26 @@ export async function resolveId(raw, kindHint, ctx) {
   const hint = KIND_ALIASES[String(kindHint || '').toLowerCase()] || ex.kind;
   const c = { gitLog, ...ctx };
   if (!value) return { ok: true, known: false, id: '', kind: null, message: 'Identifiant vide.' };
+  if (HTTP_URL_RE.test(value)) return { ok: true, known: true, id: value, kind: 'url', kindLabel: KINDS.url, title: value, url: value, links: [] };
+  if (hint === 'url' || (!hint && SCHEME_RE.test(value))) {
+    return { ok: true, known: false, id: value, kind: 'url', kindLabel: KINDS.url, message: `« ${value} » n’est pas ouvert : seuls les liens http(s) sont acceptés.` };
+  }
   const kinds = hint ? [hint] : guessKinds(value, c);
   for (const kind of kinds) {
     const fn = RESOLVERS[kind];
     if (!fn) continue;
     let r = null;
     try { r = await fn(kind === 'version' && !/^v/.test(value) ? `v${value}` : value, c); } catch { r = null; }
-    if (r) return { ok: true, known: true, id: value, kind, kindLabel: KINDS[kind], ...r };
+    if (r) {
+      const { filePath, file, ...info } = r;
+      const backing = file || (filePath && access(filePath, null, c));
+      return { ok: true, known: true, id: value, kind, kindLabel: KINDS[kind], ...info, ...(backing && backing.status !== 'missing' ? { file: backing } : {}) };
+    }
   }
   const guess = kinds[0] || null;
   return {
     ok: true, known: false, id: value, kind: guess, kindLabel: guess ? KINDS[guess] : null,
+    ...(kinds.includes('fichier') ? { file: locateFile(value, c) } : {}),
     message: guess
       ? `« ${value} » a la forme d’un identifiant de type « ${KINDS[guess]} », mais l’orchestrateur ne le trouve pas${kinds.length > 1 ? ` (cherché aussi comme ${kinds.slice(1).map(k => KINDS[k]).join(', ')})` : ''} : il a peut-être été supprimé, mal recopié, ou il appartient à un autre poste.`
       : `« ${value} » n’a la forme d’aucun identifiant connu (tâche, exécution, file, commit, version, projet, fichier, case de la page Models) et l’orchestrateur ne le trouve nulle part.`,

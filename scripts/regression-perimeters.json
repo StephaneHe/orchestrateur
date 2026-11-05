@@ -1376,7 +1376,8 @@
         "scripts/todo-order.mjs",
         "scripts/release-notes.mjs",
         "scripts/git-graph-core.mjs",
-        "scripts/id-resolve.mjs"
+        "scripts/id-resolve.mjs",
+        "scripts/file-access.mjs"
       ],
       "suites": [
         "_test_todo.mjs",
@@ -1385,12 +1386,14 @@
         "_test_todo_reject.mjs",
         "_test_release_list.mjs",
         "_test_release_groups.mjs",
-        "_test_git_graph.mjs"
+        "_test_git_graph.mjs",
+        "_test_file_open.mjs"
       ],
       "uses": [
         {
           "perimeter": "client",
           "suites": [
+            "_test_file_open.mjs",
             "_test_git_graph.mjs",
             "_test_release_groups.mjs",
             "_test_release_list.mjs",
@@ -1403,6 +1406,7 @@
         {
           "perimeter": "dispatch",
           "suites": [
+            "_test_file_open.mjs",
             "_test_git_graph.mjs",
             "_test_release_groups.mjs",
             "_test_release_list.mjs",
@@ -1415,6 +1419,7 @@
         {
           "perimeter": "noyau",
           "suites": [
+            "_test_file_open.mjs",
             "_test_git_graph.mjs",
             "_test_release_groups.mjs",
             "_test_release_list.mjs",
@@ -1427,6 +1432,7 @@
         {
           "perimeter": "outillage",
           "suites": [
+            "_test_file_open.mjs",
             "_test_release_groups.mjs",
             "_test_release_list.mjs"
           ]
@@ -1434,6 +1440,7 @@
         {
           "perimeter": "pipelines",
           "suites": [
+            "_test_file_open.mjs",
             "_test_git_graph.mjs",
             "_test_release_groups.mjs",
             "_test_release_list.mjs",
@@ -1446,6 +1453,7 @@
         {
           "perimeter": "routage",
           "suites": [
+            "_test_file_open.mjs",
             "_test_git_graph.mjs",
             "_test_release_groups.mjs",
             "_test_release_list.mjs",
@@ -1458,6 +1466,7 @@
         {
           "perimeter": "serveur",
           "suites": [
+            "_test_file_open.mjs",
             "_test_git_graph.mjs",
             "_test_release_groups.mjs",
             "_test_release_list.mjs",
