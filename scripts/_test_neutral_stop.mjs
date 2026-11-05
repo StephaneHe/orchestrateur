@@ -38,7 +38,7 @@ const TurnCore = globalThis.TurnCore;
 const iso = (msAgo) => new Date(Date.now() - msAgo).toISOString();
 
 // Modules d'affichage du navigateur, tels quels, dans un bac à sable.
-const sandbox = { TurnCore, console, location: { search: '', hash: '' }, performance };
+const sandbox = { TurnCore, console, location: { search: '', hash: '' }, performance, document: { querySelector: () => null, getElementById: () => null, addEventListener() {} } };
 sandbox.window = sandbox; sandbox.globalThis = sandbox;
 vm.createContext(sandbox);
 for (const f of ['salle.js', 'projets.js', 'pupitre-row.js']) {

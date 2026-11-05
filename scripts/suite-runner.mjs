@@ -81,6 +81,10 @@ export const SERIAL_SUITES = new Set([
   '_test_defect_blocks.mjs',       // 112 s alone, > 300 s (suite timeout) under parallel load (0.162.1)
   '_test_design.mjs',              // 108 s alone (real headless captures), > 300 s under parallel load (0.162.1)
   '_test_tests_per_item.mjs',      // 220 s alone, killed at 300 s on its last check in a full run (0.162.3)
+  '_test_pipeline_engine.mjs',     // 108 s alone, killed at 300 s under parallel load (0.165.1)
+  '_test_pipeline_media.mjs',      // 105 s alone, killed at 300 s under parallel load (0.165.1)
+  '_test_code_deliver.mjs',        // 115 s alone, 299 s under parallel load, one second from the cap (0.165.1)
+  '_test_smart_pause.mjs',         // 115 s alone, 297 s under parallel load, three seconds from the cap (0.165.1)
 ]);
 
 // Suites known to run close to the default 300 s cap even alone get their own
@@ -99,10 +103,15 @@ export const SERIAL_SUITES = new Set([
 // _test_tests_per_item.mjs at 300 s (18 of 19 green; 220 s alone). Measured alone the
 // same day: _test_pipeline_gates.mjs 768 s (240 s in 0.138.0). The bisect then
 // blamed a commit that touches neither. Both suites slowed down steadily.
+// 0.165.1: the after-the-fact full run of 0ee567b killed _test_aside_rework.mjs at
+// 300 s (234 s alone) and _test_pipeline_speed.mjs at 600 s, every check green so far.
+// Not a slowdown of the code: _test_pipeline_media.mjs takes the same time alone at
+// 0b09680 (101, 114 s) and at 0ee567b (109 s).
 export const SUITE_TIMEOUT_MS = Object.freeze({
   '_test_pipeline_gates.mjs': 1_200_000,
   '_test_tests_per_item.mjs': 600_000,
-  '_test_pipeline_speed.mjs': 600_000,
+  '_test_aside_rework.mjs': 600_000,
+  '_test_pipeline_speed.mjs': 1_200_000,
   '_test_item_delivery.mjs': 600_000,
   '_test_release_prebump.mjs': 600_000,
   '_test_item_review.mjs': 600_000,

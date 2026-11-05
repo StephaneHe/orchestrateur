@@ -503,6 +503,12 @@
           "suites": [
             "_test_projects_view.mjs"
           ]
+        },
+        {
+          "perimeter": "panneaux",
+          "suites": [
+            "_test_android_media.mjs"
+          ]
         }
       ],
       "stages": [

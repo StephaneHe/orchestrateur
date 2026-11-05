@@ -11,6 +11,12 @@ server/dashboard and the Android companion app. Entries are prefixed
 
 ## [Unreleased]
 
+## [0.165.1] - 2026-11-06
+
+### Fixed
+- (regression) After-the-fact full run of 0ee567b, six suites red. `_test_android_media.mjs` still looked for `MEDIA_TYPES` in `server.js`, moved to `scripts/file-access.mjs` in 0.163.0: it now reads the module. `_test_neutral_stop.mjs` loads `salle.js` in a sandbox without `document`, which `salle.js` uses at load since 0.165.0: the sandbox now has the stub `_test_projects_view.mjs` already uses. No product code changed.
+- (regression) Four suites were killed at their time cap with every check green so far, and pass alone. `_test_pipeline_engine.mjs` and `_test_pipeline_media.mjs` now run serially, with `_test_code_deliver.mjs` and `_test_smart_pause.mjs` (299 s and 297 s under parallel load, next in line); `_test_aside_rework.mjs` gets a 600 s cap and `_test_pipeline_speed.mjs` 1200 s.
+
 ## [0.165.0] - 2026-11-05
 
 ### Fixed

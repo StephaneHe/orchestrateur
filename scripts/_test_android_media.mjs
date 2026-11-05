@@ -15,7 +15,8 @@ const ok = (c, l) => { c ? pass++ : fail++; console.log(`  ${c ? '✓' : '✗'} 
 const read = (p) => { try { return fs.readFileSync(path.join(ROOT, p), 'utf8'); } catch { return ''; } };
 
 const kt = read('android/app/src/main/java/com/orchestrateur/data/MediaLinks.kt');
-const srv = read(['server', 'js'].join('.'));
+// The media route's types moved to the single allowlist module in 0.163.0.
+const srv = read('scripts/file-access.mjs');
 
 ok(kt.includes('object MediaLinks'), 'app has a MediaLinks object');
 ok(kt.includes('/api/media?path='), 'app builds the same /api/media?path= route as the web');
@@ -23,7 +24,7 @@ ok(kt.includes('&token=') && /fun\s+token\(\)/.test(read('android/app/src/main/j
 ok(fs.existsSync(path.join(ROOT, 'android/app/src/test/java/com/orchestrateur/data/MediaLinksTest.kt')), 'JVM test MediaLinksTest exists');
 
 // Same extensions as the server route: every one must be recognised.
-const serverExt = [...(srv.match(/const MEDIA_TYPES = \{([^}]*)\}/s)?.[1] || '').matchAll(/'\.(\w+)'/g)].map(m => m[1]).sort();
+const serverExt = [...(srv.match(/const MEDIA_TYPES = Object\.freeze\(\{([^}]*)\}/s)?.[1] || '').matchAll(/'\.(\w+)'/g)].map(m => m[1]).sort();
 ok(serverExt.length > 0 && serverExt.every(e => kt.includes(`"${e}"`)), `app recognises every server media extension (${serverExt.join(',')})`);
 ok(/fun\s+kindOf/.test(kt) && /fun\s+url/.test(kt), 'MediaLinks exposes kindOf() and url()');
 
